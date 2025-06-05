@@ -9,7 +9,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace VoiceAssistant.Extensions;
+namespace Hartsy.Extensions.VoiceAssistant;
 
 /// <summary>Manages the Python backend process lifecycle for voice processing services
 /// including RealtimeSTT, Chatterbox TTS, and wake word detection</summary>
@@ -221,7 +221,7 @@ public class VoiceBackendManager : IDisposable
         }
         try
         {
-            JObject request = new JObject
+            JObject request = new()
             {
                 ["command"] = "health_check",
                 ["timestamp"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -335,7 +335,7 @@ public class VoiceBackendManager : IDisposable
             {
                 try
                 {
-                    ProcessStartInfo psi = new ProcessStartInfo
+                    ProcessStartInfo psi = new()
                     {
                         FileName = cmd,
                         Arguments = "--version",
