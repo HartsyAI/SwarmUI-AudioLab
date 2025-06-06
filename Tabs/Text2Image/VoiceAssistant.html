@@ -1,62 +1,198 @@
-<!-- Voice Assistant Tab for SwarmUI -->
+<!-- Voice Assistant Tab for SwarmUI Text2Image -->
 <div class="voice-assistant-tab">
-    <div class="voice-assistant-container">
-        <div class="voice-controls">
-            <div class="voice-status" id="voiceStatus">
-                <i class="fas fa-microphone-slash"></i> Ready
-            </div>
-            <button id="toggleListening" class="btn btn-primary">
-                <i class="fas fa-microphone"></i> Start Listening
-            </button>
-            <div class="voice-settings">
-                <div class="form-group">
-                    <label for="voiceLanguage">Language</label>
-                    <select id="voiceLanguage" class="form-control">
-                        <option value="en-US">English (US)</option>
-                        <option value="en-GB">English (UK)</option>
-                        <option value="es-ES">Spanish</option>
-                        <option value="fr-FR">French</option>
-                        <option value="de-DE">German</option>
-                        <option value="it-IT">Italian</option>
-                        <option value="pt-BR">Portuguese</option>
-                        <option value="ru-RU">Russian</option>
-                        <option value="ja-JP">Japanese</option>
-                        <option value="ko-KR">Korean</option>
-                        <option value="zh-CN">Chinese</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="ttsVoice">Voice</label>
-                    <select id="ttsVoice" class="form-control">
-                        <option value="default">Default</option>
-                        <option value="male">Male</option>
-                        <option value="female">Female</option>
-                        <option value="neural">Neural</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="voiceVolume">Volume</label>
-                    <input type="range" id="voiceVolume" min="0" max="1" step="0.1" value="0.8" class="form-control">
-                </div>
-            </div>
-        </div>
-        
-        <div class="transcript-container">
-            <div class="transcript-header">
-                <h4>Transcript</h4>
-                <button id="clearTranscript" class="btn btn-sm btn-outline-secondary">
-                    <i class="fas fa-trash"></i> Clear
+    <div class="voice-assistant-header">
+        <h3><i class="fas fa-microphone"></i> Voice Assistant</h3>
+        <p class="text-muted">Control SwarmUI with voice commands for hands-free image generation</p>
+    </div>
+
+    <div class="voice-assistant-content">
+        <!-- Service Status Section -->
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Service Status</h5>
+                <button id="refreshStatus" class="btn btn-sm btn-outline-secondary">
+                    <i class="fas fa-sync"></i> Refresh
                 </button>
             </div>
-            <div id="transcript" class="transcript-content">
-                <!-- Transcript will appear here -->
+            <div class="card-body">
+                <div id="serviceStatus" class="service-status">
+                    <div class="status-indicator">
+                        <span id="statusIcon" class="status-icon">
+                            <i class="fas fa-circle text-secondary"></i>
+                        </span>
+                        <span id="statusText">Checking service...</span>
+                    </div>
+                </div>
+                <div class="service-controls mt-3">
+                    <button id="startService" class="btn btn-success me-2">
+                        <i class="fas fa-play"></i> Start Service
+                    </button>
+                    <button id="stopService" class="btn btn-danger me-2">
+                        <i class="fas fa-stop"></i> Stop Service
+                    </button>
+                    <button id="checkInstallation" class="btn btn-info">
+                        <i class="fas fa-tools"></i> Check Installation
+                    </button>
+                </div>
+
+                <!-- Installation Progress Section -->
+                <div id="installationProgress" class="installation-progress mt-3" style="display: none;">
+                    <div class="progress-header">
+                        <h6><i class="fas fa-download"></i> Installing Dependencies</h6>
+                        <small class="text-muted">This may take several minutes on first run...</small>
+                    </div>
+                    <div class="progress mt-2">
+                        <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                    </div>
+                    <div id="installationStatus" class="installation-status mt-2">
+                        <small class="text-muted">Preparing installation...</small>
+                    </div>
+                </div>
+
+                <!-- Installation Details Section -->
+                <div id="installationDetails" class="installation-details mt-3" style="display: none;">
+                    <div class="card border-info">
+                        <div class="card-header bg-info text-white">
+                            <h6 class="mb-0"><i class="fas fa-info-circle"></i> Installation Information</h6>
+                        </div>
+                        <div class="card-body">
+                            <div id="installationInfo">
+                                <!-- Installation details will be populated here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
-        
-        <div class="command-history">
-            <h4>Command History</h4>
-            <div id="commandHistory" class="history-content">
-                <!-- Command history will appear here -->
+
+        <!-- Voice Controls Section -->
+        <div class="card mb-3">
+            <div class="card-header">
+                <h5 class="mb-0">Voice Controls</h5>
+            </div>
+            <div class="card-body">
+                <div class="voice-controls-row">
+                    <div class="voice-button-container">
+                        <button id="toggleRecording" class="btn btn-primary btn-lg voice-record-btn" disabled>
+                            <i class="fas fa-microphone"></i>
+                            <span class="btn-text">Start Listening</span>
+                        </button>
+                        <div id="recordingStatus" class="recording-status mt-2">
+                            <span class="status-text">Ready to listen</span>
+                        </div>
+                    </div>
+
+                    <div class="voice-settings">
+                        <div class="form-group">
+                            <label for="voiceLanguage" class="form-label">Language</label>
+                            <select id="voiceLanguage" class="form-select">
+                                <option value="en-US">English (US)</option>
+                                <option value="en-GB">English (UK)</option>
+                                <option value="es-ES">Spanish</option>
+                                <option value="fr-FR">French</option>
+                                <option value="de-DE">German</option>
+                                <option value="it-IT">Italian</option>
+                                <option value="pt-BR">Portuguese</option>
+                                <option value="ru-RU">Russian</option>
+                                <option value="ja-JP">Japanese</option>
+                                <option value="ko-KR">Korean</option>
+                                <option value="zh-CN">Chinese</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="ttsVoice" class="form-label">Voice</label>
+                            <select id="ttsVoice" class="form-select">
+                                <option value="default">Default</option>
+                                <option value="male">Male</option>
+                                <option value="female">Female</option>
+                                <option value="neural">Neural</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="voiceVolume" class="form-label">Volume: <span id="volumeValue">0.8</span></label>
+                            <input type="range" id="voiceVolume" class="form-range" min="0" max="1" step="0.1" value="0.8">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Text Alternative Section -->
+        <div class="card mb-3">
+            <div class="card-header">
+                <h5 class="mb-0">Text Commands</h5>
+            </div>
+            <div class="card-body">
+                <div class="input-group">
+                    <input type="text" id="textCommand" class="form-control" placeholder="Type a command or image description..." maxlength="500">
+                    <button id="sendTextCommand" class="btn btn-outline-primary">
+                        <i class="fas fa-paper-plane"></i> Send
+                    </button>
+                </div>
+                <small class="form-text text-muted mt-1">
+                    Try: "Generate a sunset over mountains" or "Create a cyberpunk portrait"
+                </small>
+            </div>
+        </div>
+
+        <!-- Transcript and History Section -->
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Current Transcript</h5>
+                        <button id="clearTranscript" class="btn btn-sm btn-outline-secondary">
+                            <i class="fas fa-eraser"></i> Clear
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div id="currentTranscript" class="transcript-display">
+                            <div class="empty-state">
+                                <i class="fas fa-microphone-slash text-muted"></i>
+                                <p class="text-muted mb-0">No transcript available</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Command History</h5>
+                        <button id="clearHistory" class="btn btn-sm btn-outline-secondary">
+                            <i class="fas fa-trash"></i> Clear
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div id="commandHistory" class="history-display">
+                            <div class="empty-state">
+                                <i class="fas fa-history text-muted"></i>
+                                <p class="text-muted mb-0">No commands yet</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Error Display -->
+        <div id="errorAlert" class="alert alert-danger mt-3" style="display: none;">
+            <div class="d-flex align-items-center">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                <span id="errorMessage"></span>
+                <button type="button" class="btn-close ms-auto" onclick="hideError()"></button>
+            </div>
+        </div>
+
+        <!-- Success Display -->
+        <div id="successAlert" class="alert alert-success mt-3" style="display: none;">
+            <div class="d-flex align-items-center">
+                <i class="fas fa-check-circle me-2"></i>
+                <span id="successMessage"></span>
+                <button type="button" class="btn-close ms-auto" onclick="hideSuccess()"></button>
             </div>
         </div>
     </div>

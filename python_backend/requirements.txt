@@ -1,21 +1,96 @@
-# Core dependencies
-fastapi>=0.95.0
-uvicorn>=0.21.0
+# SwarmUI Voice Assistant Backend Requirements
+# Production-ready dependencies for STT/TTS voice processing in SwarmUI environment
+
+# IMPORTANT: For SwarmUI installations, use the embedded Python environment
+# Do NOT use regular pip install. Follow these steps:
+
+# For Windows (SwarmUI with ComfyUI):
+# 1. Navigate to: SwarmUI\dlbackend\comfy\python_embeded\
+# 2. Run: python.exe -m pip install -r requirements.txt
+
+# For Linux/Mac:
+# 1. Navigate to your SwarmUI directory
+# 2. Use the same Python that SwarmUI uses: ./dlbackend/ComfyUI/venv/bin/python -m pip install -r requirements.txt
+
+# Core FastAPI dependencies (required)
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6
-pydantic>=1.10.4
+pydantic>=2.5.0
+
+# Audio processing and numerical computing (required)
 numpy>=1.24.0
 scipy>=1.10.0
 
-# Speech-to-Text
-# Note: Install RealtimeSTT if available, or use a different STT library
-# git+https://github.com/RealtimeSTT/RealtimeSTT.git
+# HTTP client for external API calls (required)
+httpx>=0.25.0
 
-# Text-to-Speech
-# Note: Install ChatterboxTTS if available, or use a different TTS library
-# git+https://github.com/username/ChatterboxTTS.git
-
-# Development
+# Development and testing dependencies (optional)
 python-dotenv>=1.0.0
-pytest>=7.2.0
-pytest-asyncio>=0.20.3
-httpx>=0.23.0
+
+# Speech-to-Text: RealtimeSTT (recommended)
+# This is the primary STT library we support
+RealtimeSTT>=0.3.0
+
+# Alternative STT options (install only one):
+# speech-recognition>=3.10.0  # Basic speech recognition
+# openai-whisper>=20231117    # OpenAI Whisper for high-quality STT
+
+# Text-to-Speech: ChatterboxTTS (recommended)
+# This is the primary TTS library we support
+chatterbox-tts>=0.1.1
+
+# Alternative TTS options (install only one):
+# gTTS>=2.5.0                # Google Text-to-Speech
+# pyttsx3>=2.90             # Cross-platform TTS
+# edge-tts>=6.1.0           # Microsoft Edge TTS
+
+# Audio I/O libraries (may be needed for some systems)
+# Uncomment if you get audio device errors
+# pyaudio>=0.2.11           # Cross-platform audio I/O
+# sounddevice>=0.4.6        # Audio recording/playback
+
+# Platform-specific notes:
+# Windows: Should work out of the box with SwarmUI's embedded Python
+# Linux: May need: sudo apt-get install portaudio19-dev python3-dev
+# macOS: May need: brew install portaudio
+
+# GPU acceleration (optional, for better performance):
+# If you have NVIDIA GPU and want faster processing:
+# torch>=2.1.0+cu118 --index-url https://download.pytorch.org/whl/cu118
+# torchaudio>=2.1.0+cu118 --index-url https://download.pytorch.org/whl/cu118
+
+# Manual installation steps for SwarmUI:
+# 
+# 1. First, ensure SwarmUI is working properly
+# 2. Locate SwarmUI's Python environment:
+#    - Windows: SwarmUI\dlbackend\comfy\python_embeded\python.exe
+#    - Linux/Mac: SwarmUI/dlbackend/ComfyUI/venv/bin/python
+# 
+# 3. Install core dependencies:
+#    Windows: dlbackend\comfy\python_embeded\python.exe -m pip install fastapi uvicorn numpy scipy
+#    Linux/Mac: ./dlbackend/ComfyUI/venv/bin/python -m pip install fastapi uvicorn numpy scipy
+# 
+# 4. Install STT library (choose one):
+#    For RealtimeSTT: python -m pip install RealtimeSTT
+#    For basic STT: python -m pip install speech-recognition
+# 
+# 5. Install TTS library (choose one):
+#    For ChatterboxTTS: python -m pip install chatterbox-tts
+#    For gTTS: python -m pip install gTTS
+# 
+# 6. Test installation by running the voice server manually:
+#    python voice_server.py --port 7831
+# 
+# Troubleshooting:
+# - If RealtimeSTT fails to install, use speech-recognition instead
+# - If ChatterboxTTS fails to install, use gTTS instead
+# - For CUDA support, install PyTorch with CUDA first
+# - Check SwarmUI logs for specific error messages
+
+# Minimal working setup (if full installation fails):
+fastapi>=0.104.0
+uvicorn>=0.24.0
+numpy>=1.24.0
+# Plus either RealtimeSTT OR speech-recognition
+# Plus either chatterbox-tts OR gTTS
