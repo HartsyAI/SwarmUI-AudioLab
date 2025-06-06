@@ -1,238 +1,163 @@
-﻿using SwarmUI.Utils;
-using Newtonsoft.Json.Linq;
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Net.Http;
 using System.Text;
-using System.Threading;
+using System.Text.Json;
+using System.IO;
 using System.Threading.Tasks;
+using StableSwarmUI.Utils;
+using StableSwarmUI.Core;
+using FreneticUtilities.FreneticExtensions;
 
 namespace Hartsy.Extensions.VoiceAssistant;
 
-/// <summary>Manages the Python backend process lifecycle for voice processing services
-/// including RealtimeSTT, Chatterbox TTS, and wake word detection</summary>
-public class VoiceBackendManager : IDisposable
+public partial class VoiceAssistant
 {
-    /// <summary>Python backend process</summary>
-    public Process PythonProcess { get; set; }
+    #region Backend Process Management
 
-    /// <summary>Backend service status</summary>
-    public bool IsBackendRunning { get; set; } = false;
-
-    /// <summary>Backend service URL</summary>
-    public string BackendUrl { get; set; } = "http://localhost:7830";
-
-    /// <summary>Last successful health check timestamp</summary>
-    public DateTime LastHealthCheck { get; set; } = DateTime.MinValue;
-
-    /// <summary>Last error message from backend</summary>
-    public string LastError { get; set; } = string.Empty;
-
-    /// <summary>HTTP client for backend communication</summary>
-    public readonly HttpClient httpClient; // TODO: Use SwarmUI's HttpClientManager for better integration
-
-    /// <summary>Process cancellation token source</summary>
-    public CancellationTokenSource cancellationTokenSource;
-
-    /// <summary>Backend startup timeout in milliseconds</summary>
-    public const int StartupTimeoutMs = 30000;
-
-    /// <summary>Health check timeout in milliseconds</summary>
-    public const int HealthCheckTimeoutMs = 5000;
-
-    /// <summary>Maximum restart attempts</summary>
-    public const int MaxRestartAttempts = 3;
-
-    /// <summary>Current restart attempt count</summary>
-    public int restartAttempts = 0;
-
-    /// <summary>Lock object for thread safety</summary>
-    public readonly object processLock = new object();
-
-    public VoiceBackendManager()
+    private async Task<bool> StartBackend()
     {
-        httpClient = new HttpClient
+        lock (BackendLock)
         {
-            Timeout = TimeSpan.FromMilliseconds(HealthCheckTimeoutMs)
-        };
-        cancellationTokenSource = new CancellationTokenSource();
-    }
-
-    /// <summary>Start the Python backend service</summary>
-    /// <returns>True if backend started successfully, false otherwise</returns>
-    public async Task<bool> StartBackendAsync()
-    {
-        lock (processLock)
-        {
-            if (IsBackendRunning && PythonProcess != null && !PythonProcess.HasExited)
+            if (IsBackendRunning && PythonBackend != null && !PythonBackend.HasExited)
             {
-                Logs.Debug("[VoiceAssistant] Backend already running");
+                Logs.Info("[VoiceAssistant] Backend is already running");
                 return true;
             }
-        }
-        try
-        {
-            Logs.Init("[VoiceAssistant] Starting Python backend service");
-            // Find Python executable
-            string pythonPath = GetPythonExecutablePath();
-            if (string.IsNullOrEmpty(pythonPath))
-            {
-                LastError = "Python executable not found";
-                Logs.Error($"[VoiceAssistant] {LastError}");
-                return false;
-            }
-            // Get Python script path
-            string scriptPath = GetPythonScriptPath();
-            if (!File.Exists(scriptPath))
-            {
-                LastError = $"Python script not found at: {scriptPath}";
-                Logs.Error($"[VoiceAssistant] {LastError}");
-                return false;
-            }
-            // Create process start info
-            ProcessStartInfo startInfo = CreateProcessStartInfo(pythonPath, scriptPath);
-            // Start the process
-            lock (processLock)
-            {
-                PythonProcess = new Process
-                {
-                    StartInfo = startInfo,
-                    EnableRaisingEvents = true
-                };
-                PythonProcess.OutputDataReceived += OnProcessOutputReceived;
-                PythonProcess.ErrorDataReceived += OnProcessErrorReceived;
-                PythonProcess.Exited += OnProcessExited;
-                if (!PythonProcess.Start())
-                {
-                    LastError = "Failed to start Python process";
-                    Logs.Error($"[VoiceAssistant] {LastError}");
-                    return false;
-                }
-                PythonProcess.BeginOutputReadLine();
-                PythonProcess.BeginErrorReadLine();
-            }
-            // Wait for backend to be ready
-            bool isReady = await WaitForStartupAsync(StartupTimeoutMs);
-            if (isReady)
-            {
-                IsBackendRunning = true;
-                LastHealthCheck = DateTime.UtcNow;
-                restartAttempts = 0;
-                Logs.Init($"[VoiceAssistant] Python backend started successfully (PID: {PythonProcess.Id})");
-                return true;
-            }
-            else
-            {
-                LastError = "Backend startup timeout";
-                Logs.Error($"[VoiceAssistant] {LastError}");
-                await StopBackendAsync();
-                return false;
-            }
-        }
-        catch (Exception ex)
-        {
-            LastError = $"Exception starting backend: {ex.Message}";
-            Logs.Error($"[VoiceAssistant] {LastError}");
-            await StopBackendAsync();
-            return false;
-        }
-    }
 
-    /// <summary>Stop the Python backend service gracefully</summary>
-    public async Task StopBackendAsync()
-    {
-        try
-        {
-            Logs.Init("[VoiceAssistant] Stopping Python backend service");
-            lock (processLock)
+            // Clean up any existing process
+            if (PythonBackend != null)
             {
-                if (PythonProcess == null)
-                {
-                    IsBackendRunning = false;
-                    return;
-                }
+                try { PythonBackend.Dispose(); } catch { }
+                PythonBackend = null;
             }
-            // Try graceful shutdown first
+
             try
             {
-                await SendShutdownSignalAsync();
-                await Task.Delay(2000); // Give process time to shutdown gracefully
+                // Get the path to the Python backend script
+                string scriptPath = Path.Combine(ExtensionDirectory, "python_backend", "voice_server.py");
+                if (!File.Exists(scriptPath))
+                {
+                    Logs.Error($"[VoiceAssistant] Backend script not found at: {scriptPath}");
+                    return false;
+                }
+
+                // Use PythonLaunchHelper to start the process
+                PythonBackend = PythonLaunchHelper.LaunchGeneric(
+                    script: scriptPath,
+                    autoOutput: true,
+                    args: Array.Empty<string>()
+                );
+                PythonBackend.EnableRaisingEvents = true;
+                PythonBackend.Exited += (sender, e) => {
+                    Logs.Info("[VoiceAssistant] Backend process exited");
+                    IsBackendRunning = false;
+                    PythonBackend?.Dispose();
+                    PythonBackend = null;
+                };
+
+                // Set up logging
+                PythonBackend.OutputDataReceived += (sender, e) => 
+                {
+                    if (!string.IsNullOrEmpty(e?.Data))
+                        Logs.Info($"[VoiceBackend] {e.Data}");
+                };
+                PythonBackend.ErrorDataReceived += (sender, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e?.Data))
+                        Logs.Error($"[VoiceBackend] {e.Data}");
+                };
+
+                // Give the backend some time to start
+                await Task.Delay(2000);
+
+                // Verify the backend is running
+                bool isHealthy = await CheckBackendHealth();
+                if (!isHealthy)
+                {
+                    Logs.Warning("[VoiceAssistant] Backend started but health check failed");
+                    return false;
+                }
+
+                IsBackendRunning = true;
+                Logs.Info("[VoiceAssistant] Backend started successfully");
+                
+                // Notify webhook if configured
+                _ = WebhookManager.WaitUntilCanStartGenerating().ContinueWith(t => {
+                    if (t.IsFaulted)
+                        Logs.Error($"[VoiceAssistant] Error notifying webhook: {t.Exception}");
+                });
+                
+                return true;
             }
             catch (Exception ex)
             {
-                Logs.Debug($"[VoiceAssistant] Graceful shutdown failed: {ex.Message}");
+                Logs.Error($"[VoiceAssistant] Failed to start backend: {ex}");
+                return false;
             }
-            lock (processLock)
+        }
+    }
+
+    private async Task StopBackend()
+    {
+        lock (BackendLock)
+        {
+            if (!IsBackendRunning || PythonBackend == null)
             {
-                if (PythonProcess != null && !PythonProcess.HasExited)
-                {
-                    try
-                    {
-                        // Force kill if still running
-                        PythonProcess.Kill();
-                        if (!PythonProcess.WaitForExit(5000))
-                        {
-                            Logs.Error("[VoiceAssistant] Failed to terminate Python process within timeout");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Logs.Error($"[VoiceAssistant] Error killing Python process: {ex}");
-                    }
-                }
-                PythonProcess?.Dispose();
-                PythonProcess = null;
-                IsBackendRunning = false;
+                Logs.Info("[VoiceAssistant] Backend is not running");
+                return;
             }
-            Logs.Init("[VoiceAssistant] Python backend stopped");
-        }
-        catch (Exception ex)
-        {
-            Logs.Error($"[VoiceAssistant] Error stopping backend: {ex}");
+
+            try
+            {
+                // Send shutdown request to the backend
+                using var client = NetworkBackendUtils.MakeHttpClient();
+                client.Timeout = TimeSpan.FromSeconds(5);
+                _ = client.PostAsync($"{BackendUrl}/shutdown", null).ContinueWith(t => 
+                {
+                    if (t.IsFaulted)
+                    {
+                        Logs.Debug($"[VoiceAssistant] Error sending shutdown: {t.Exception?.Message}");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Logs.Debug($"[VoiceAssistant] Error sending shutdown to backend: {ex.Message}");
+            }
+
+            try
+            {
+                // Give it a moment to shut down gracefully
+                if (!PythonBackend.WaitForExit(3000))
+                {
+                    try { PythonBackend.Kill(true); } 
+                    catch (Exception ex) { Logs.Debug($"[VoiceAssistant] Error killing process: {ex.Message}"); }
+                }
+                PythonBackend.Dispose();
+                PythonBackend = null;
+                IsBackendRunning = false;
+                Logs.Info("[VoiceAssistant] Backend stopped");
+                
+                // Notify webhook that generation is done
+                _ = WebhookManager.TryMarkDoneGenerating().ContinueWith(t => {
+                    if (t.IsFaulted)
+                        Logs.Error($"[VoiceAssistant] Error notifying webhook: {t.Exception}");
+                });
+            }
+            catch (Exception ex)
+            {
+                Logs.Error($"[VoiceAssistant] Error stopping backend: {ex}");
+            }
         }
     }
 
-    /// <summary>Restart the Python backend service</summary>
-    /// <returns>True if restart was successful, false otherwise</returns>
-    public async Task<bool> RestartBackendAsync()
+    private async Task<bool> CheckBackendHealth()
     {
-        if (restartAttempts >= MaxRestartAttempts)
-        {
-            LastError = $"Maximum restart attempts ({MaxRestartAttempts}) exceeded";
-            Logs.Error($"[VoiceAssistant] {LastError}");
-            return false;
-        }
-        restartAttempts++;
-        Logs.Init($"[VoiceAssistant] Restarting backend (attempt {restartAttempts}/{MaxRestartAttempts})");
-        await StopBackendAsync();
-        await Task.Delay(3000); // Wait before restart
-        return await StartBackendAsync();
-    }
-
-    /// <summary>Check if the Python backend is healthy and responding</summary>
-    /// <returns>True if backend is healthy, false otherwise</returns>
-    public async Task<bool> CheckHealthAsync()
-    {
-        if (!IsBackendRunning)
-        {
-            return false;
-        }
         try
         {
-            JObject request = new()
-            {
-                ["command"] = "health_check",
-                ["timestamp"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
-            };
-            JObject response = await SendRequestAsync<JObject>("health", request);
-            if (response != null && response["status"]?.ToString() == "healthy")
-            {
-                LastHealthCheck = DateTime.UtcNow;
-                return true;
-            }
-            return false;
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var response = await HttpClient.GetAsync($"{BackendUrl}/health", cts.Token);
+            return response.IsSuccessStatusCode;
         }
         catch (Exception ex)
         {
@@ -241,266 +166,211 @@ public class VoiceBackendManager : IDisposable
         }
     }
 
-    /// <summary>Send HTTP request to Python backend</summary>
-    /// <typeparam name="T">Response type</typeparam>
-    /// <param name="endpoint">API endpoint</param>
-    /// <param name="data">Request data</param>
-    /// <returns>Response object or null if failed</returns>
-    public async Task<T> SendRequestAsync<T>(string endpoint, object data) where T : class
+    private async Task StartPythonBackendSafe()
     {
-        if (!IsBackendRunning)
-        {
-            throw new InvalidOperationException("Python backend is not running");
-        }
-
         try
         {
-            string url = $"{BackendUrl}/api/{endpoint.TrimStart('/')}";
-            string jsonContent = data is string ? data.ToString() : JObject.FromObject(data).ToString();
-            using StringContent content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
-            using HttpResponseMessage response = await httpClient.PostAsync(url, content);
-            if (response.IsSuccessStatusCode)
-            {
-                string responseContent = await response.Content.ReadAsStringAsync();
-                if (typeof(T) == typeof(string))
-                {
-                    return responseContent as T;
-                }
-                return JObject.Parse(responseContent).ToObject<T>();
-            }
-            else
-            {
-                string errorContent = await response.Content.ReadAsStringAsync();
-                Logs.Error($"[VoiceAssistant] Backend request failed: {response.StatusCode} - {errorContent}");
-                return null;
-            }
+            await StartBackend();
         }
         catch (Exception ex)
         {
-            Logs.Error($"[VoiceAssistant] Backend request exception: {ex}");
-            return null;
+            Logs.Error($"[VoiceAssistant] Error in StartPythonBackendSafe: {ex.Message}");
         }
     }
 
-    /// <summary>Wait for the Python backend to start up and be ready</summary>
-    /// <param name="timeoutMs">Timeout in milliseconds</param>
-    /// <returns>True if backend is ready, false if timeout</returns>
-    public async Task<bool> WaitForStartupAsync(int timeoutMs)
+    private async Task StopPythonBackendSafe()
     {
-        int elapsed = 0;
-        int checkInterval = 1000; // Check every second
-        while (elapsed < timeoutMs)
+        try
+        {
+            await StopBackend();
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] Error in StopPythonBackendSafe: {ex.Message}");
+        }
+    }
+
+    #endregion
+
+    #region API Endpoint Handlers
+
+    private async Task<object> ProcessVoiceCommand(dynamic data)
+    {
+        // Notify that we're starting to process a command
+        await WebhookManager.WaitUntilCanStartGenerating();
+        
+        try
+        {
+            if (!IsBackendRunning || !await CheckBackendHealth())
+            {
+                Logs.Warning("[VoiceAssistant] Backend not running, attempting to start...");
+                if (!await StartBackend())
+                {
+                    await WebhookManager.TryMarkDoneGenerating();
+                    return new { success = false, error = "Voice backend is not available" };
+                }
+            }
+
+            string audioBase64 = data.audioData;
+            if (string.IsNullOrEmpty(audioBase64))
+            {
+                await WebhookManager.TryMarkDoneGenerating();
+                return new { success = false, error = "No audio data provided" };
+            }
+
+            // Send audio to backend for processing
+            var request = new 
+            {
+                audio_data = audioBase64,
+                language = VoiceLanguage?.Value ?? "en-US"
+            };
+
+            var content = new StringContent(JsonSerializer.Serialize(request), Encoding.UTF8, "application/json");
+            var response = await HttpClient.PostAsync($"{BackendUrl}/process", content);
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                return new { success = false, error = $"Backend error: {response.StatusCode}" };
+            }
+
+            var result = await response.Content.ReadAsStringAsync();
+            var responseObj = JsonSerializer.Deserialize<Dictionary<string, object>>(result);
+            
+            // Process the command and generate response
+            var commandResponse = await ProcessCommand(responseObj["text"]?.ToString() ?? "");
+            
+            return new { 
+                success = true, 
+                text = commandResponse.Text,
+                audio = commandResponse.AudioBase64,
+                command = commandResponse.Command
+            };
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] Error processing voice command: {ex}");
+            return new { success = false, error = ex.Message };
+        }
+        finally
+        {
+            // Ensure we mark as done even if an exception occurs
+            await WebhookManager.TryMarkDoneGenerating();
+        }
+    }
+
+    private async Task<object> ProcessTextCommand(dynamic data)
+    {
+        try
+        {
+            string text = data.text;
+            if (string.IsNullOrEmpty(text))
+            {
+                return new { success = false, error = "No text provided" };
+            }
+
+            var commandResponse = await ProcessCommand(text);
+            return new { 
+                success = true, 
+                text = commandResponse.Text,
+                audio = commandResponse.AudioBase64,
+                command = commandResponse.Command
+            };
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] Error processing text command: {ex}");
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    private async Task<object> GetBackendStatus()
+    {
+        bool isHealthy = await CheckBackendHealth();
+        return new 
+        { 
+            running = isHealthy,
+            url = BackendUrl,
+            version = "1.0.0"
+        };
+    }
+
+    #endregion
+
+    #region Command Processing
+
+    private class CommandResponse
+    {
+        public string Text { get; set; } = string.Empty;
+        public string? AudioBase64 { get; set; }
+        public string? Command { get; set; }
+    }
+
+    private async Task<CommandResponse> ProcessCommand(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return new CommandResponse { Text = "I didn't catch that. Could you please repeat?" };
+        }
+
+        text = text.Trim().ToLower();
+        var response = new CommandResponse();
+
+        // Simple command processing - can be expanded
+        if (text.Contains("hello") || text.Contains("hi") || text.Contains("hey"))
+        {
+            response.Text = "Hello! How can I assist you with image generation today?";
+        }
+        else if (text.Contains("help") || text.Contains("what can you do"))
+        {
+            response.Text = "I can help you generate images. Try saying something like 'Generate a landscape with mountains and a lake' or 'Create a portrait of a cyberpunk character'.";
+        }
+        else if (text.Contains("generate") || text.Contains("create") || text.Contains("make") || text.Contains("draw"))
+        {
+            // This would be connected to your image generation logic
+            response.Text = $"Generating image based on: {text}";
+            response.Command = "generate_image";
+            // You would add parameters to the command here
+        }
+        else
+        {
+            response.Text = $"I'll try to generate an image based on: {text}";
+            response.Command = "generate_image";
+            // You would add parameters to the command here
+        }
+
+        // Generate TTS for the response if backend is available
+        if (IsBackendRunning && await CheckBackendHealth())
         {
             try
             {
-                if (await CheckHealthAsync())
+                var ttsRequest = new 
                 {
-                    return true;
-                }
-            }
-            catch
-            {
-                // Ignore exceptions during startup checks
-            }
-            await Task.Delay(checkInterval);
-            elapsed += checkInterval;
-            // Check if process has exited
-            lock (processLock)
-            {
-                if (PythonProcess?.HasExited == true)
-                {
-                    Logs.Error("[VoiceAssistant] Python process exited during startup");
-                    return false;
-                }
-            }
-        }
-        return false;
-    }
+                    text = response.Text,
+                    voice = TTSVoice?.Value ?? "default",
+                    language = VoiceLanguage?.Value ?? "en-US"
+                };
 
-    /// <summary>Get the Python executable path for the backend</summary>
-    /// <returns>Python executable path or null if not found</returns>
-    public string GetPythonExecutablePath()
-    {
-        try
-        {
-            // Try SwarmUI's ComfyUI Python environment first
-            string comfyPythonPath = Path.Combine("dlbackend", "comfy", "python_embeded", "python.exe");
-            if (File.Exists(comfyPythonPath))
-            {
-                return Path.GetFullPath(comfyPythonPath);
-            }
-            // Try system Python
-            string[] pythonCommands = { "python", "python3", "py" };
-            foreach (string cmd in pythonCommands)
-            {
-                try
+                var content = new StringContent(JsonSerializer.Serialize(ttsRequest), Encoding.UTF8, "application/json");
+                var ttsResponse = await HttpClient.PostAsync($"{BackendUrl}/tts/synthesize", content);
+                
+                if (ttsResponse.IsSuccessStatusCode)
                 {
-                    ProcessStartInfo psi = new()
+                    var result = await ttsResponse.Content.ReadAsStringAsync();
+                    var ttsResult = JsonSerializer.Deserialize<Dictionary<string, string>>(result);
+                    if (ttsResult != null && ttsResult.ContainsKey("audio"))
                     {
-                        FileName = cmd,
-                        Arguments = "--version",
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        CreateNoWindow = true
-                    };
-                    using Process process = Process.Start(psi);
-                    if (process != null)
-                    {
-                        process.WaitForExit(3000);
-                        if (process.ExitCode == 0)
-                        {
-                            return cmd;
-                        }
+                        response.AudioBase64 = ttsResult["audio"];
                     }
                 }
-                catch
-                {
-                    // Continue to next command
-                }
             }
-            return null;
-        }
-        catch (Exception ex)
-        {
-            Logs.Error($"[VoiceAssistant] Error finding Python executable: {ex}");
-            return null;
-        }
-    }
-
-    /// <summary>Get the Python script path for the voice backend</summary>
-    /// <returns>Absolute path to the Python script</returns>
-    public string GetPythonScriptPath()
-    {
-        return Path.GetFullPath(Path.Combine("src", "Extensions", "VoiceAssistant", "python_backend", "voice_server.py"));
-    }
-
-    /// <summary>Create process start info for the Python backend</summary>
-    /// <param name="pythonPath">Python executable path</param>
-    /// <param name="scriptPath">Python script path</param>
-    /// <returns>Configured ProcessStartInfo</returns>
-    public ProcessStartInfo CreateProcessStartInfo(string pythonPath, string scriptPath)
-    {
-        ProcessStartInfo startInfo = new ProcessStartInfo
-        {
-            FileName = pythonPath,
-            Arguments = $"\"{scriptPath}\" --port=7830 --host=localhost",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true,
-            CreateNoWindow = true,
-            WorkingDirectory = Environment.CurrentDirectory
-        };
-        // Set environment variables
-        Dictionary<string, string> envVars = GetEnvironmentVariables();
-        foreach (KeyValuePair<string, string> kvp in envVars)
-        {
-            startInfo.EnvironmentVariables[kvp.Key] = kvp.Value;
-        }
-        return startInfo;
-    }
-
-    /// <summary>Get environment variables for the Python process</summary>
-    /// <returns>Dictionary of environment variables</returns>
-    public Dictionary<string, string> GetEnvironmentVariables()
-    {
-        Dictionary<string, string> envVars = new Dictionary<string, string>();
-        try
-        {
-            // Set CUDA paths if available
-            string cudaPath = Environment.GetEnvironmentVariable("CUDA_PATH");
-            if (!string.IsNullOrEmpty(cudaPath))
+            catch (Exception ex)
             {
-                envVars["CUDA_PATH"] = cudaPath;
-            }
-            // Set Python path for voice assistant modules
-            string pythonPath = Path.Combine(Environment.CurrentDirectory, "src", "Extensions", "VoiceAssistant", "python_backend");
-            envVars["PYTHONPATH"] = pythonPath;
-            // Disable Python buffering for real-time output
-            envVars["PYTHONUNBUFFERED"] = "1";
-            // Set voice assistant configuration
-            envVars["VOICE_ASSISTANT_CONFIG"] = VoiceAssistant.ConfigManager?.GetPythonEnvironmentConfig() ?? "{}";
-        }
-        catch (Exception ex)
-        {
-            Logs.Error($"[VoiceAssistant] Error setting environment variables: {ex}");
-        }
-        return envVars;
-    }
-
-    /// <summary>Send shutdown signal to the Python backend</summary>
-    public async Task SendShutdownSignalAsync()
-    {
-        try
-        {
-            JObject request = new JObject
-            {
-                ["command"] = "shutdown",
-                ["timestamp"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
-            };
-            await SendRequestAsync<JObject>("shutdown", request);
-        }
-        catch (Exception ex)
-        {
-            Logs.Debug($"[VoiceAssistant] Error sending shutdown signal: {ex}");
-        }
-    }
-
-    /// <summary>Handle Python process output</summary>
-    public void OnProcessOutputReceived(object sender, DataReceivedEventArgs e)
-    {
-        if (!string.IsNullOrEmpty(e.Data))
-        {
-            Logs.Debug($"[VoiceAssistant|Python] {e.Data}");
-        }
-    }
-
-    /// <summary>Handle Python process error output</summary>
-    public void OnProcessErrorReceived(object sender, DataReceivedEventArgs e)
-    {
-        if (!string.IsNullOrEmpty(e.Data))
-        {
-            Logs.Error($"[VoiceAssistant|Python] ERROR: {e.Data}");
-            LastError = e.Data;
-        }
-    }
-
-    /// <summary>Handle Python process exit</summary>
-    public void OnProcessExited(object sender, EventArgs e)
-    {
-        lock (processLock)
-        {
-            if (PythonProcess != null)
-            {
-                int exitCode = PythonProcess.ExitCode;
-                Logs.Error($"[VoiceAssistant] Python process exited with code: {exitCode}");
-                IsBackendRunning = false;
-                // Try automatic restart if enabled and not too many attempts
-                if (VoiceAssistant.EnableVoiceAssistant.Value && restartAttempts < MaxRestartAttempts)
-                {
-                    Task.Run(async () =>
-                    {
-                        await Task.Delay(5000); // Wait 5 seconds before restart
-                        await RestartBackendAsync();
-                    });
-                }
+                Logs.Error($"[VoiceAssistant] Error generating TTS: {ex}");
             }
         }
+
+        return response;
     }
 
-    /// <summary>Dispose of resources</summary>
-    public void Dispose()
-    {
-        try
-        {
-            cancellationTokenSource?.Cancel();
-            StopBackendAsync().Wait(5000);
-            httpClient?.Dispose();
-            cancellationTokenSource?.Dispose();
-        }
-        catch (Exception ex)
-        {
-            Logs.Error($"[VoiceAssistant] Error disposing VoiceBackendManager: {ex}");
-        }
-    }
+    #endregion
 }
