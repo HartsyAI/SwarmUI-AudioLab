@@ -1,6 +1,6 @@
 /**
- * Voice Assistant Frontend for SwarmUI
- * Provides voice-controlled image generation and UI interaction
+ * Voice Assistant Frontend for SwarmUI - Production Ready with Progress Tracking
+ * Provides voice-controlled image generation and UI interaction with real-time installation progress
  */
 
 class SwarmVoiceAssistant {
@@ -24,6 +24,18 @@ class SwarmVoiceAssistant {
         // UI element references
         this.elements = {};
 
+        // System information
+        this.systemInfo = {
+            sttEngine: 'Not initialized',
+            ttsEngine: 'Not initialized',
+            backendStatus: 'Disconnected',
+            lastHealthCheck: 'Never'
+        };
+
+        // Progress tracking
+        this.progressPollingInterval = null;
+        this.isInstallingDependencies = false;
+
         // Initialize when DOM is ready
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => this.initialize());
@@ -43,7 +55,7 @@ class SwarmVoiceAssistant {
      * Initialize the voice assistant
      */
     async initialize() {
-        console.log('[VoiceAssistant] Initializing SwarmUI Voice Assistant');
+        console.log('[VoiceAssistant] Initializing SwarmUI Voice Assistant v1.0 with Progress Tracking');
 
         try {
             // Cache DOM elements
@@ -77,7 +89,8 @@ class SwarmVoiceAssistant {
             'toggleRecording', 'recordingStatus', 'voiceLanguage', 'ttsVoice', 'voiceVolume',
             'volumeValue', 'textCommand', 'sendTextCommand', 'currentTranscript', 'commandHistory',
             'clearTranscript', 'clearHistory', 'errorAlert', 'errorMessage', 'successAlert', 'successMessage',
-            'installationProgress', 'progressBar', 'installationStatus', 'installationDetails', 'installationInfo'
+            'warningAlert', 'warningMessage', 'installationProgress', 'progressBar', 'installationStatus',
+            'installationDetails', 'installationInfo', 'sttEngine', 'ttsEngine', 'backendStatus', 'lastHealthCheck'
         ];
 
         elementIds.forEach(id => {
@@ -160,6 +173,10 @@ class SwarmVoiceAssistant {
             audioContext: hasAudioContext
         });
 
+        if (!hasMediaDevices) {
+            this.showWarning('Microphone access not available. Please use HTTPS or localhost.');
+        }
+
         return hasMediaDevices && hasMediaRecorder && hasAudioContext;
     }
 
@@ -171,6 +188,7 @@ class SwarmVoiceAssistant {
 
         try {
             this.updateStatusIcon('checking');
+            this.updateSystemInfo('lastHealthCheck', 'Checking...');
 
             const result = await this.makeAPICall('GetVoiceStatus', {});
 
@@ -183,7 +201,14 @@ class SwarmVoiceAssistant {
                     healthy: this.serviceHealthy
                 });
 
+                this.updateSystemInfo('backendStatus', this.serviceRunning && this.serviceHealthy ? 'Connected' : 'Disconnected');
+                this.updateSystemInfo('lastHealthCheck', new Date().toLocaleTimeString());
                 this.updateUI();
+
+                // Get detailed service information if available
+                if (this.serviceRunning && this.serviceHealthy) {
+                    await this.updateServiceDetails();
+                }
             } else {
                 throw new Error(result.error || 'Failed to get service status');
             }
@@ -193,57 +218,88 @@ class SwarmVoiceAssistant {
             this.serviceHealthy = false;
             this.updateStatusIcon('error');
             this.updateStatusText('Service unavailable');
+            this.updateSystemInfo('backendStatus', 'Error');
+            this.updateSystemInfo('lastHealthCheck', new Date().toLocaleTimeString());
             this.showError('Failed to check service status: ' + error.message);
         }
     }
 
     /**
-     * Start the voice service
+     * Update detailed service information
+     */
+    async updateServiceDetails() {
+        try {
+            // This would call a detailed status endpoint if available
+            // For now, we'll set generic information
+            this.updateSystemInfo('sttEngine', 'RealtimeSTT/speech-recognition');
+            this.updateSystemInfo('ttsEngine', 'Chatterbox TTS/gTTS');
+        } catch (error) {
+            console.warn('[VoiceAssistant] Could not get detailed service info:', error);
+        }
+    }
+
+    /**
+     * Update system information display
+     */
+    updateSystemInfo(key, value) {
+        this.systemInfo[key] = value;
+        if (this.elements[key]) {
+            this.elements[key].textContent = value;
+        }
+    }
+
+    /**
+     * Start the voice service with real-time progress tracking
      */
     async startService() {
-        console.log('[VoiceAssistant] Starting voice service');
+        console.log('[VoiceAssistant] Starting voice service with progress tracking');
 
         try {
             this.updateStatusIcon('starting');
             this.updateStatusText('Starting service...');
             this.updateUI();
 
-            // Step 1: Check installation status
+            // Check installation status first
             this.showSuccess('Checking installation status...');
-            this.showInstallationProgress(true, 10, 'Checking Python environment...');
+            this.showInstallationProgress(true, 5, 'Checking Python environment...');
 
             const installStatus = await this.makeAPICall('CheckInstallationStatus', {});
 
             if (installStatus.success) {
-                this.updateInstallationProgress(20, 'Python environment detected');
+                this.updateInstallationProgress(10, 'Python environment detected');
 
                 if (!installStatus.dependencies_installed) {
-                    // Show installation progress
-                    this.showSuccess('Installing dependencies automatically... This may take several minutes on first run.');
-                    this.updateInstallationProgress(30, 'Installing core packages (FastAPI, NumPy, etc.)...');
+                    // Dependencies need installation - start progress tracking
+                    this.isInstallingDependencies = true;
+                    this.showSuccess('Installing dependencies automatically... This will take several minutes. Real-time progress shown below.');
+                    this.updateInstallationProgress(15, 'Starting dependency installation...');
+
+                    // Start polling for progress updates
+                    this.startProgressPolling();
 
                     console.log('[VoiceAssistant] Dependencies need installation:', installStatus.installation_details);
-
-                    // Simulate progress during installation
-                    this.simulateInstallationProgress();
                 } else {
                     this.updateInstallationProgress(80, 'Dependencies already installed');
                 }
             } else {
-                this.updateInstallationProgress(15, 'Warning: Could not fully check installation status');
+                this.updateInstallationProgress(12, 'Warning: Could not fully check installation status');
             }
 
-            // Step 2: Start the service (this will install dependencies if needed)
+            // Start the service (this will trigger dependency installation if needed)
             this.updateInstallationProgress(90, 'Starting voice service backend...');
             const result = await this.makeAPICall('StartVoiceService', {});
 
             if (result.success) {
+                // Stop progress polling
+                this.stopProgressPolling();
+
                 this.updateInstallationProgress(100, 'Voice service started successfully!');
 
                 // Hide progress after a delay
                 setTimeout(() => {
                     this.showInstallationProgress(false);
-                }, 2000);
+                    this.isInstallingDependencies = false;
+                }, 3000);
 
                 if (result.first_time_setup) {
                     this.showSuccess('Voice service started successfully! Dependencies were installed automatically.');
@@ -252,21 +308,25 @@ class SwarmVoiceAssistant {
                 }
                 await this.checkServiceStatus(); // Refresh status
             } else {
+                this.stopProgressPolling();
                 this.showInstallationProgress(false);
+                this.isInstallingDependencies = false;
                 throw new Error(result.error || 'Failed to start service');
             }
         } catch (error) {
             console.error('[VoiceAssistant] Error starting service:', error);
+            this.stopProgressPolling();
             this.showInstallationProgress(false);
+            this.isInstallingDependencies = false;
 
             // Provide helpful error messages based on common issues
             let errorMessage = error.message;
             if (errorMessage.includes('dependencies')) {
-                errorMessage += '\n\nThis appears to be a dependency issue. The system will automatically install required packages when you start the service. This process may take 5-10 minutes on first run.';
+                errorMessage += '\n\nThis appears to be a dependency issue. The system will automatically install required packages when you start the service. This process may take 5-15 minutes on first run.';
             } else if (errorMessage.includes('Python')) {
                 errorMessage += '\n\nThis appears to be a Python environment issue. Please ensure SwarmUI is properly installed with its Python backend.';
             } else if (errorMessage.includes('timeout') || errorMessage.includes('time')) {
-                errorMessage += '\n\nThe installation process may be taking longer than expected. Please wait a few more minutes and try again.';
+                errorMessage += '\n\nThe installation process may be taking longer than expected. Large packages like TorchAudio can take 10+ minutes to download and install.';
             }
 
             this.showError('Failed to start voice service: ' + errorMessage);
@@ -275,30 +335,83 @@ class SwarmVoiceAssistant {
     }
 
     /**
-     * Simulate installation progress for better user feedback
+     * Start polling for installation progress updates
      */
-    simulateInstallationProgress() {
-        const steps = [
-            { progress: 35, text: 'Installing FastAPI and web server components...' },
-            { progress: 45, text: 'Installing NumPy and scientific computing libraries...' },
-            { progress: 55, text: 'Installing Speech-to-Text library (RealtimeSTT)...' },
-            { progress: 70, text: 'Installing Text-to-Speech library (ChatterboxTTS)...' },
-            { progress: 80, text: 'Finalizing installation and testing imports...' },
-        ];
+    startProgressPolling() {
+        if (this.progressPollingInterval) {
+            clearInterval(this.progressPollingInterval);
+        }
 
-        let currentStep = 0;
-        const stepInterval = setInterval(() => {
-            if (currentStep < steps.length) {
-                const step = steps[currentStep];
-                this.updateInstallationProgress(step.progress, step.text);
-                currentStep++;
-            } else {
-                clearInterval(stepInterval);
+        console.log('[VoiceAssistant] Starting progress polling');
+
+        this.progressPollingInterval = setInterval(async () => {
+            try {
+                const progressResult = await this.makeAPICall('GetInstallationProgress', {});
+
+                if (progressResult.success) {
+                    this.updateRealTimeProgress(progressResult);
+
+                    // Stop polling if complete or error
+                    if (progressResult.is_complete || progressResult.has_error) {
+                        this.stopProgressPolling();
+
+                        if (progressResult.has_error) {
+                            this.showError('Installation failed: ' + progressResult.error_message);
+                            this.showInstallationProgress(false);
+                        }
+                    }
+                } else {
+                    // API call failed, stop polling
+                    this.stopProgressPolling();
+                }
+            } catch (error) {
+                console.warn('[VoiceAssistant] Progress polling error:', error);
+                // Continue polling despite errors
             }
-        }, 3000); // Update every 3 seconds
+        }, 1000); // Poll every second
+    }
 
-        // Clear the interval after 20 seconds max
-        setTimeout(() => clearInterval(stepInterval), 20000);
+    /**
+     * Stop polling for installation progress updates
+     */
+    stopProgressPolling() {
+        if (this.progressPollingInterval) {
+            clearInterval(this.progressPollingInterval);
+            this.progressPollingInterval = null;
+            console.log('[VoiceAssistant] Stopped progress polling');
+        }
+    }
+
+    /**
+     * Update progress display with real-time data from backend
+     */
+    updateRealTimeProgress(progressData) {
+        const progress = progressData.progress || 0;
+        const currentStep = progressData.current_step || '';
+        const currentPackage = progressData.current_package || '';
+        const downloadProgress = progressData.download_progress || 0;
+        const statusMessage = progressData.status_message || '';
+
+        // Update main progress bar
+        if (this.elements.progressBar) {
+            this.elements.progressBar.style.width = `${progress}%`;
+            this.elements.progressBar.setAttribute('aria-valuenow', progress);
+        }
+
+        // Create detailed status message
+        let detailedMessage = statusMessage;
+        if (currentPackage && downloadProgress > 0) {
+            detailedMessage = `${currentStep}: ${currentPackage} (${downloadProgress}% downloaded)`;
+        } else if (currentPackage) {
+            detailedMessage = `${currentStep}: ${currentPackage}`;
+        } else if (currentStep) {
+            detailedMessage = currentStep;
+        }
+
+        // Update status text
+        this.updateInstallationInfo(detailedMessage);
+
+        console.log(`[VoiceAssistant] Progress update: ${progress}% - ${detailedMessage}`);
     }
 
     /**
@@ -315,6 +428,8 @@ class SwarmVoiceAssistant {
 
             if (result.success) {
                 this.showSuccess('Voice service stopped successfully');
+                this.updateSystemInfo('sttEngine', 'Not initialized');
+                this.updateSystemInfo('ttsEngine', 'Not initialized');
                 await this.checkServiceStatus(); // Refresh status
             } else {
                 throw new Error(result.error || 'Failed to stop service');
@@ -364,11 +479,16 @@ class SwarmVoiceAssistant {
                 }
             });
 
-            // Set up MediaRecorder
-            this.mediaRecorder = new MediaRecorder(stream, {
-                mimeType: 'audio/webm;codecs=opus'
-            });
+            // Set up MediaRecorder with WebM format (supported by most browsers)
+            let mimeType = 'audio/webm;codecs=opus';
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+                mimeType = 'audio/webm';
+                if (!MediaRecorder.isTypeSupported(mimeType)) {
+                    mimeType = 'audio/wav';
+                }
+            }
 
+            this.mediaRecorder = new MediaRecorder(stream, { mimeType });
             this.audioChunks = [];
 
             this.mediaRecorder.ondataavailable = (event) => {
@@ -379,7 +499,7 @@ class SwarmVoiceAssistant {
 
             this.mediaRecorder.onstop = async () => {
                 console.log('[VoiceAssistant] Recording stopped, processing audio');
-                const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
+                const audioBlob = new Blob(this.audioChunks, { type: mimeType });
                 await this.processAudio(audioBlob);
 
                 // Stop all tracks to release microphone
@@ -771,7 +891,8 @@ class SwarmVoiceAssistant {
                 <div class="alert alert-warning mt-3">
                     <i class="fas fa-exclamation-triangle"></i>
                     <strong>Dependencies Missing:</strong> Some required packages are not installed. 
-                    Click "Start Service" to automatically install them.
+                    Click "Start Service" to automatically install them. This process includes downloading 
+                    large packages like TorchAudio (~200MB) and may take 10-15 minutes.
                 </div>
             `;
         } else {
@@ -828,6 +949,10 @@ class SwarmVoiceAssistant {
             this.elements.installationStatus.innerHTML = `<small class="text-muted">${text}</small>`;
         }
     }
+
+    /**
+     * Update UI based on current state
+     */
     updateUI() {
         // Update service status
         if (this.serviceRunning && this.serviceHealthy) {
@@ -843,16 +968,16 @@ class SwarmVoiceAssistant {
 
         // Update service control buttons
         if (this.elements.startService) {
-            this.elements.startService.disabled = this.serviceRunning;
+            this.elements.startService.disabled = this.serviceRunning || this.isInstallingDependencies;
         }
         if (this.elements.stopService) {
-            this.elements.stopService.disabled = !this.serviceRunning;
+            this.elements.stopService.disabled = !this.serviceRunning || this.isInstallingDependencies;
         }
 
         // Update recording button
         const recordButton = this.elements.toggleRecording;
         if (recordButton) {
-            const canRecord = this.serviceRunning && this.serviceHealthy && !this.isProcessing;
+            const canRecord = this.serviceRunning && this.serviceHealthy && !this.isProcessing && !this.isInstallingDependencies;
             recordButton.disabled = !canRecord;
 
             if (this.isRecording) {
@@ -876,6 +1001,9 @@ class SwarmVoiceAssistant {
             } else if (this.isProcessing) {
                 statusElement.className = 'recording-status processing';
                 statusElement.innerHTML = '<span class="status-text">Processing...</span>';
+            } else if (this.isInstallingDependencies) {
+                statusElement.className = 'recording-status processing';
+                statusElement.innerHTML = '<span class="status-text">Installing dependencies...</span>';
             } else if (this.serviceRunning && this.serviceHealthy) {
                 statusElement.className = 'recording-status ready';
                 statusElement.innerHTML = '<span class="status-text">Ready to listen</span>';
@@ -887,7 +1015,7 @@ class SwarmVoiceAssistant {
 
         // Update text command button
         if (this.elements.sendTextCommand) {
-            this.elements.sendTextCommand.disabled = this.isProcessing;
+            this.elements.sendTextCommand.disabled = this.isProcessing || this.isInstallingDependencies;
         }
     }
 
@@ -929,8 +1057,8 @@ class SwarmVoiceAssistant {
             this.elements.errorMessage.textContent = message;
             this.elements.errorAlert.style.display = 'block';
 
-            // Auto-hide after 5 seconds
-            setTimeout(() => this.hideError(), 5000);
+            // Auto-hide after 8 seconds for errors
+            setTimeout(() => this.hideError(), 8000);
         }
     }
 
@@ -943,8 +1071,22 @@ class SwarmVoiceAssistant {
             this.elements.successMessage.textContent = message;
             this.elements.successAlert.style.display = 'block';
 
-            // Auto-hide after 3 seconds
-            setTimeout(() => this.hideSuccess(), 3000);
+            // Auto-hide after 4 seconds
+            setTimeout(() => this.hideSuccess(), 4000);
+        }
+    }
+
+    /**
+     * Show warning message
+     */
+    showWarning(message) {
+        console.warn('[VoiceAssistant] Warning:', message);
+        if (this.elements.warningAlert && this.elements.warningMessage) {
+            this.elements.warningMessage.textContent = message;
+            this.elements.warningAlert.style.display = 'block';
+
+            // Auto-hide after 6 seconds
+            setTimeout(() => this.hideWarning(), 6000);
         }
     }
 
@@ -963,6 +1105,15 @@ class SwarmVoiceAssistant {
     hideSuccess() {
         if (this.elements.successAlert) {
             this.elements.successAlert.style.display = 'none';
+        }
+    }
+
+    /**
+     * Hide warning message
+     */
+    hideWarning() {
+        if (this.elements.warningAlert) {
+            this.elements.warningAlert.style.display = 'none';
         }
     }
 
@@ -1020,8 +1171,14 @@ function hideSuccess() {
     }
 }
 
+function hideWarning() {
+    if (window.swarmVoiceAssistant) {
+        window.swarmVoiceAssistant.hideWarning();
+    }
+}
+
 // Initialize when script loads
 (() => {
-    console.log('[VoiceAssistant] Voice Assistant script loaded');
+    console.log('[VoiceAssistant] Voice Assistant script loaded - Production v1.0 with Progress Tracking');
     window.swarmVoiceAssistant = new SwarmVoiceAssistant();
 })();

@@ -9,11 +9,12 @@ using System.Text;
 using System.Threading.Tasks;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 
 namespace Hartsy.Extensions.VoiceAssistant;
 
 /// <summary>
-/// SwarmUI Voice Assistant Extension - Production Ready MVP
+/// SwarmUI Voice Assistant Extension - Production Ready with Fixed Progress Tracking
 /// Provides speech-to-text, text-to-speech, and voice command processing integrated into SwarmUI.
 /// This extension manages a Python backend for STT/TTS processing and registers API endpoints
 /// for voice interaction with the SwarmUI interface.
@@ -61,39 +62,77 @@ public class VoiceAssistant : Extension
     /// <summary>
     /// Extension directory path for locating Python backend files.
     /// Computed dynamically to handle different SwarmUI installation locations.
+    /// FIXED: Now uses correct "SwarmUI-VoiceAssistant" directory name.
     /// </summary>
     public static string ExtensionDirectory = "";
 
     /// <summary>
-    /// API endpoint handler for checking installation status of dependencies.
-    /// Provides detailed information about what's installed and what's missing.
-    /// Why useful: Allows frontend to show installation progress and help users troubleshoot.
+    /// Progress tracking for installation processes.
+    /// Allows real-time progress updates to be sent to the frontend.
     /// </summary>
+    public static InstallationProgressTracker ProgressTracker;
+
+    /// <summary>
+    /// API endpoint handler for getting real-time installation progress.
+    /// Provides detailed progress information during dependency installation.
+    /// </summary>
+    public static async Task<JObject> GetInstallationProgress(Session session, JObject input)
+    {
+        try
+        {
+            if (ProgressTracker == null)
+            {
+                return new JObject
+                {
+                    ["success"] = false,
+                    ["error"] = "No installation in progress"
+                };
+            }
+
+            return new JObject
+            {
+                ["success"] = true,
+                ["progress"] = ProgressTracker.OverallProgress,
+                ["current_step"] = ProgressTracker.CurrentStep,
+                ["current_package"] = ProgressTracker.CurrentPackage,
+                ["download_progress"] = ProgressTracker.DownloadProgress,
+                ["status_message"] = ProgressTracker.StatusMessage,
+                ["is_complete"] = ProgressTracker.IsComplete,
+                ["has_error"] = ProgressTracker.HasError,
+                ["error_message"] = ProgressTracker.ErrorMessage
+            };
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] Error getting installation progress: {ex.Message}");
+            return CreateErrorResponse($"Failed to get installation progress: {ex.Message}");
+        }
+    }
+
+    /// <summary>API endpoint handler for checking installation status of dependencies.
+    /// Updated to reflect the no-fallback policy and stricter requirements.</summary>
     public static async Task<JObject> CheckInstallationStatus(Session session, JObject input)
     {
         try
         {
             Logs.Debug($"[VoiceAssistant] Checking installation status for session: {session.ID}");
-
-            // Detect Python environment
+            // Detect Python environment - strict SwarmUI requirement
             PythonEnvironmentInfo pythonInfo = DetectPythonEnvironment();
-
             if (pythonInfo == null)
             {
                 return new JObject
                 {
                     ["success"] = false,
-                    ["error"] = "Could not detect Python environment",
-                    ["python_detected"] = false
+                    ["error"] = "SwarmUI Python environment not found. Voice Assistant requires SwarmUI with ComfyUI backend installed.",
+                    ["python_detected"] = false,
+                    ["requires_comfyui"] = true,
+                    ["no_fallbacks"] = true
                 };
             }
-
             // Check if dependencies are installed
             bool depsInstalled = await CheckDependenciesInstalled(pythonInfo);
-
             // Get detailed status
             JObject detailedStatus = await GetDetailedInstallationStatus(pythonInfo);
-
             JObject result = new()
             {
                 ["success"] = true,
@@ -102,9 +141,11 @@ public class VoiceAssistant : Extension
                 ["operating_system"] = pythonInfo.OperatingSystem,
                 ["is_embedded_python"] = pythonInfo.IsEmbedded,
                 ["dependencies_installed"] = depsInstalled,
-                ["installation_details"] = detailedStatus
+                ["installation_details"] = detailedStatus,
+                ["required_libraries"] = new JArray { "RealtimeSTT", "Chatterbox TTS" },
+                ["no_fallbacks"] = true,
+                ["strict_requirements"] = true
             };
-
             return result;
         }
         catch (Exception ex)
@@ -114,39 +155,29 @@ public class VoiceAssistant : Extension
         }
     }
 
-    /// <summary>
-    /// Gets detailed status of individual package installations.
-    /// Tests each package separately to provide granular installation information.
-    /// </summary>
+    /// <summary>Gets detailed status of individual package installations.
+    /// Tests only primary packages.</summary>
     public static async Task<JObject> GetDetailedInstallationStatus(PythonEnvironmentInfo pythonInfo)
     {
         JObject status = new()
         {
-            // Test core packages
             ["core_packages"] = await TestPackageGroup(pythonInfo,
         [
-            "fastapi", "uvicorn", "numpy", "scipy", "pydantic"
+            "fastapi", "uvicorn", "numpy", "scipy", "pydantic", "torchaudio"
         ]),
-
-            // Test STT packages
             ["stt_packages"] = await TestPackageGroup(pythonInfo,
         [
-            "RealtimeSTT", "speech_recognition"
+            "RealtimeSTT"
         ]),
-
-            // Test TTS packages
             ["tts_packages"] = await TestPackageGroup(pythonInfo,
         [
-            "chatterbox_tts", "gtts", "pyttsx3"
+            "chatterbox"
         ])
         };
-
         return status;
     }
 
-    /// <summary>
-    /// Tests a group of packages to see which ones are installed and working.
-    /// </summary>
+    /// <summary>Tests a group of packages to see which ones are installed and working.</summary>
     public static async Task<JObject> TestPackageGroup(PythonEnvironmentInfo pythonInfo, string[] packages)
     {
         JObject results = [];
@@ -156,14 +187,14 @@ public class VoiceAssistant : Extension
             try
             {
                 string testScript = $@"
-try:
-    import {package}
-    print('SUCCESS')
-except ImportError:
-    print('NOT_INSTALLED')
-except Exception as e:
-    print(f'ERROR: {{e}}')
-";
+                    try:
+                        import {package}
+                        print('SUCCESS')
+                    except ImportError:
+                        print('NOT_INSTALLED')
+                    except Exception as e:
+                        print(f'ERROR: {{e}}')
+                    ";
 
                 bool success = await RunPythonScript(pythonInfo, testScript, $"test {package}");
                 results[package] = success;
@@ -175,6 +206,52 @@ except Exception as e:
         }
 
         return results;
+    }
+
+    #endregion
+
+    #region Progress Tracking
+
+    /// <summary>
+    /// Class for tracking installation progress with real-time updates.
+    /// Provides detailed progress information for frontend display.
+    /// </summary>
+    public class InstallationProgressTracker
+    {
+        public int OverallProgress { get; set; } = 0;
+        public string CurrentStep { get; set; } = "";
+        public string CurrentPackage { get; set; } = "";
+        public int DownloadProgress { get; set; } = 0;
+        public string StatusMessage { get; set; } = "";
+        public bool IsComplete { get; set; } = false;
+        public bool HasError { get; set; } = false;
+        public string ErrorMessage { get; set; } = "";
+
+        public void UpdateProgress(int overall, string step, string package = "", int download = 0, string message = "")
+        {
+            OverallProgress = overall;
+            CurrentStep = step;
+            CurrentPackage = package;
+            DownloadProgress = download;
+            StatusMessage = message;
+
+            Logs.Info($"[VoiceAssistant] Progress: {overall}% - {step} - {message}");
+        }
+
+        public void SetError(string error)
+        {
+            HasError = true;
+            ErrorMessage = error;
+            Logs.Error($"[VoiceAssistant] Installation error: {error}");
+        }
+
+        public void SetComplete()
+        {
+            IsComplete = true;
+            OverallProgress = 100;
+            StatusMessage = "Installation completed successfully!";
+            Logs.Info("[VoiceAssistant] Installation completed successfully");
+        }
     }
 
     #endregion
@@ -211,8 +288,8 @@ except Exception as e:
 
         try
         {
-            // Calculate extension directory path for Python backend location
-            ExtensionDirectory = Path.Combine("src", "Extensions", "VoiceAssistant");
+            // FIXED: Calculate extension directory path using correct folder name
+            ExtensionDirectory = Path.Combine("src", "Extensions", "SwarmUI-VoiceAssistant");
             Logs.Debug($"[VoiceAssistant] Extension directory: {ExtensionDirectory}");
 
             // Register JavaScript files for frontend voice interaction
@@ -224,8 +301,8 @@ except Exception as e:
             Logs.Debug("[VoiceAssistant] Registered voice-assistant.css stylesheet");
 
             // Configure HTTP client for backend communication
-            // Timeout set to 30 seconds to handle longer STT/TTS processing times
-            HttpClient.Timeout = TimeSpan.FromSeconds(30);
+            // Timeout set to 45 seconds to handle longer STT/TTS processing times
+            HttpClient.Timeout = TimeSpan.FromSeconds(45);
             HttpClient.DefaultRequestHeaders.Add("User-Agent", "SwarmUI-VoiceAssistant/1.0");
             Logs.Debug("[VoiceAssistant] HTTP client configured for backend communication");
 
@@ -256,9 +333,11 @@ except Exception as e:
             API.RegisterAPICall(StopVoiceService, false, PermManageService);
             API.RegisterAPICall(GetVoiceStatus, false, PermCheckStatus);
             API.RegisterAPICall(ProcessTextCommand, false, PermProcessVoice);
+            API.RegisterAPICall(CheckInstallationStatus, false, PermCheckStatus);
+            API.RegisterAPICall(GetInstallationProgress, false, PermCheckStatus); // NEW: Progress tracking endpoint
 
             Logs.Info("[VoiceAssistant] API endpoints registered successfully");
-            Logs.Debug("[VoiceAssistant] Registered endpoints: process_voice_input, start_voice_service, stop_voice_service, voice_status, process_text_command");
+            Logs.Debug("[VoiceAssistant] Registered endpoints: ProcessVoiceInput, StartVoiceService, StopVoiceService, GetVoiceStatus, ProcessTextCommand, CheckInstallationStatus, GetInstallationProgress");
 
             // Initialize cancellation token for graceful shutdown handling
             BackendCancellation = new CancellationTokenSource();
@@ -390,9 +469,6 @@ except Exception as e:
 
                 Logs.Debug($"[VoiceAssistant] Using backend script: {scriptPath}");
 
-                // Check and install dependencies if needed
-                //await EnsurePythonDependencies();
-
                 // Use SwarmUI's PythonLaunchHelper for proper Python environment setup
                 // This handles Python path resolution, environment cleanup, and process creation
                 PythonBackend = PythonLaunchHelper.LaunchGeneric(
@@ -449,8 +525,8 @@ except Exception as e:
 
     /// <summary>
     /// Ensures Python dependencies are installed for the voice assistant backend.
-    /// Automatically detects OS and SwarmUI's Python environment, then installs required packages.
-    /// Why needed: Libraries may not be installed in SwarmUI's embedded Python environment.
+    /// ONLY works with SwarmUI's Python environment - fails gracefully if not found.
+    /// Why strict: Libraries must be installed in SwarmUI's specific Python environment for compatibility.
     /// </summary>
     public static async Task EnsurePythonDependencies()
     {
@@ -458,33 +534,85 @@ except Exception as e:
         {
             Logs.Info("[VoiceAssistant] Checking and installing Python dependencies...");
 
-            // Detect the operating system and Python environment
+            // Initialize progress tracker
+            ProgressTracker = new InstallationProgressTracker();
+            ProgressTracker.UpdateProgress(5, "Detecting Python environment", "", 0, "Scanning for SwarmUI Python installation...");
+
+            // Detect the SwarmUI Python environment - NO SYSTEM PYTHON FALLBACK
             PythonEnvironmentInfo pythonInfo = DetectPythonEnvironment();
 
             if (pythonInfo == null)
             {
-                Logs.Error("[VoiceAssistant] Could not detect SwarmUI's Python environment");
-                return;
+                ProgressTracker.SetError("SwarmUI Python environment not found. Voice Assistant requires SwarmUI with ComfyUI backend installed.");
+                Logs.Error("[VoiceAssistant] CRITICAL: SwarmUI Python environment not found!");
+                Logs.Error("[VoiceAssistant] Voice Assistant requires SwarmUI with ComfyUI backend properly installed.");
+                Logs.Error("[VoiceAssistant] Please ensure ComfyUI is installed and working in SwarmUI before using Voice Assistant.");
+                throw new Exception("SwarmUI Python environment not found. Please install ComfyUI in SwarmUI first.");
             }
 
-            Logs.Info($"[VoiceAssistant] Detected Python environment: {pythonInfo.PythonPath}");
+            Logs.Info($"[VoiceAssistant] Found SwarmUI Python environment: {pythonInfo.PythonPath}");
             Logs.Info($"[VoiceAssistant] Operating System: {pythonInfo.OperatingSystem}");
+
+            ProgressTracker.UpdateProgress(10, "Checking existing dependencies", "", 0, $"Found SwarmUI Python: {pythonInfo.PythonPath}");
 
             // Check if dependencies are already installed
             if (await CheckDependenciesInstalled(pythonInfo))
             {
-                Logs.Info("[VoiceAssistant] All dependencies are already installed");
+                Logs.Info("[VoiceAssistant] All required dependencies are already installed");
+                ProgressTracker.SetComplete();
                 return;
             }
 
-            // Install dependencies
+            ProgressTracker.UpdateProgress(15, "Starting dependency installation", "", 0, "Installing required packages (no fallbacks)...");
+
+            // Install dependencies - will throw exception if any required package fails
             await InstallDependencies(pythonInfo);
 
         }
         catch (Exception ex)
         {
+            ProgressTracker?.SetError($"Failed to ensure Python dependencies: {ex.Message}");
             Logs.Error($"[VoiceAssistant] Failed to ensure Python dependencies: {ex.Message}");
             Logs.Debug($"[VoiceAssistant] Dependency installation error: {ex}");
+            throw; // Re-throw to fail the entire process
+        }
+    }
+
+    /// <summary>
+    /// Installs required Python dependencies using the detected Python environment.
+    /// Installs core dependencies, RealtimeSTT, and Chatterbox TTS - NO FALLBACKS.
+    /// Throws exception if any required package fails to install.
+    /// </summary>
+    public static async Task InstallDependencies(PythonEnvironmentInfo pythonInfo)
+    {
+        try
+        {
+            Logs.Info("[VoiceAssistant] Installing Python dependencies (primary packages only)...");
+            Logs.Info("[VoiceAssistant] This may take several minutes on first run...");
+
+            ProgressTracker.UpdateProgress(20, "Installing core packages", "", 0, "Starting core package installation...");
+
+            // Step 1: Install core dependencies
+            await InstallCorePackages(pythonInfo);
+
+            ProgressTracker.UpdateProgress(60, "Installing STT library", "", 0, "Installing RealtimeSTT (required)...");
+
+            // Step 2: Install STT library (REQUIRED - no fallbacks)
+            await InstallSTTLibrary(pythonInfo);
+
+            ProgressTracker.UpdateProgress(80, "Installing TTS library", "", 0, "Installing Chatterbox TTS (required)...");
+
+            // Step 3: Install TTS library (REQUIRED - no fallbacks)
+            await InstallTTSLibrary(pythonInfo);
+
+            ProgressTracker.SetComplete();
+            Logs.Info("[VoiceAssistant] All required dependencies installed successfully!");
+        }
+        catch (Exception ex)
+        {
+            ProgressTracker?.SetError($"Dependency installation failed: {ex.Message}");
+            Logs.Error($"[VoiceAssistant] Dependency installation failed: {ex.Message}");
+            throw; // Re-throw to fail the entire process
         }
     }
 
@@ -501,8 +629,8 @@ except Exception as e:
 
     /// <summary>
     /// Detects SwarmUI's Python environment and operating system.
-    /// Handles Windows embedded Python, Linux/Mac virtual environments, and fallbacks.
-    /// Why complex: SwarmUI can use different Python setups depending on installation method.
+    /// ONLY works with SwarmUI/ComfyUI Python environments - does NOT fall back to system Python.
+    /// Why strict: Ensures compatibility with SwarmUI's specific Python setup and dependencies.
     /// </summary>
     public static PythonEnvironmentInfo DetectPythonEnvironment()
     {
@@ -524,7 +652,7 @@ except Exception as e:
             {
                 if (File.Exists(pythonPath))
                 {
-                    Logs.Debug($"[VoiceAssistant] Found Python at: {pythonPath}");
+                    Logs.Debug($"[VoiceAssistant] Found SwarmUI Python at: {pythonPath}");
 
                     bool isEmbedded = pythonPath.Contains("python_embeded") || pythonPath.Contains("python_embedded");
 
@@ -538,17 +666,18 @@ except Exception as e:
                 }
             }
 
-            // Fallback to system Python
-            string systemPython = isWindows ? "python.exe" : "python3";
-            Logs.Warning($"[VoiceAssistant] No SwarmUI Python found, falling back to system Python: {systemPython}");
+            // NO FALLBACK TO SYSTEM PYTHON - fail gracefully
+            Logs.Error("[VoiceAssistant] No SwarmUI Python environment found!");
+            Logs.Error("[VoiceAssistant] Voice Assistant requires SwarmUI with ComfyUI backend installed.");
+            Logs.Error("[VoiceAssistant] Please ensure ComfyUI is properly installed in SwarmUI.");
+            Logs.Error("[VoiceAssistant] Expected Python locations checked:");
 
-            return new PythonEnvironmentInfo
+            foreach (string path in pythonPaths)
             {
-                PythonPath = systemPython,
-                OperatingSystem = osName,
-                PipCommand = $"{systemPython} -m pip",
-                IsEmbedded = false
-            };
+                Logs.Error($"[VoiceAssistant]   - {path}");
+            }
+
+            return null; // Return null instead of falling back to system Python
         }
         catch (Exception ex)
         {
@@ -607,56 +736,41 @@ except Exception as e:
 
             // Create a test script to check imports
             string testScript = $@"
-import sys
-try:
-    import fastapi
-    import uvicorn
-    import numpy
-    import scipy
-    print('CORE_DEPS_OK')
-except ImportError as e:
-    print(f'CORE_DEPS_MISSING: {{e}}')
-    sys.exit(1)
+                import sys
+                try:
+                    import fastapi
+                    import uvicorn
+                    import numpy
+                    import scipy
+                    import torchaudio
+                    print('CORE_DEPS_OK')
+                except ImportError as e:
+                    print(f'CORE_DEPS_MISSING: {{e}}')
+                    sys.exit(1)
 
-# Check optional STT libraries
-stt_available = False
-try:
-    import RealtimeSTT
-    print('REALTIMESTT_OK')
-    stt_available = True
-except ImportError:
-    try:
-        import speech_recognition
-        print('SPEECH_RECOGNITION_OK')
-        stt_available = True
-    except ImportError:
-        print('STT_MISSING')
+                # Check primary STT library
+                stt_available = False
+                try:
+                    import RealtimeSTT
+                    print('REALTIMESTT_OK')
+                    stt_available = True
+                except ImportError:
+                    print('STT_MISSING')
 
-# Check optional TTS libraries  
-tts_available = False
-try:
-    import chatterbox_tts
-    print('CHATTERBOX_TTS_OK')
-    tts_available = True
-except ImportError:
-    try:
-        import gtts
-        print('GTTS_OK')
-        tts_available = True
-    except ImportError:
-        try:
-            import pyttsx3
-            print('PYTTSX3_OK')
-            tts_available = True
-        except ImportError:
-            print('TTS_MISSING')
-
-if stt_available and tts_available:
-    print('ALL_DEPS_OK')
-    sys.exit(0)
-else:
-    sys.exit(1)
-";
+                # Check primary TTS library  
+                tts_available = False
+                try:
+                    import chatterbox
+                    print('CHATTERBOX_TTS_OK')
+                    tts_available = True
+                except ImportError:
+                    print('TTS_MISSING')
+                if stt_available and tts_available:
+                    print('ALL_DEPS_OK')
+                    sys.exit(0)
+                else:
+                    sys.exit(1)
+                ";
 
             // Run the test script
             return await RunPythonScript(pythonInfo, testScript, "dependency check");
@@ -669,41 +783,12 @@ else:
     }
 
     /// <summary>
-    /// Installs required Python dependencies using the detected Python environment.
-    /// Installs core dependencies first, then tries primary STT/TTS libraries with fallbacks.
-    /// </summary>
-    public static async Task InstallDependencies(PythonEnvironmentInfo pythonInfo)
-    {
-        try
-        {
-            Logs.Info("[VoiceAssistant] Installing Python dependencies automatically...");
-            Logs.Info("[VoiceAssistant] This may take a few minutes on first run...");
-
-            // Step 1: Install core dependencies
-            await InstallCorePackages(pythonInfo);
-
-            // Step 2: Install STT library (with fallbacks)
-            await InstallSTTLibrary(pythonInfo);
-
-            // Step 3: Install TTS library (with fallbacks)
-            await InstallTTSLibrary(pythonInfo);
-
-            Logs.Info("[VoiceAssistant] Dependency installation completed successfully!");
-        }
-        catch (Exception ex)
-        {
-            Logs.Error($"[VoiceAssistant] Dependency installation failed: {ex.Message}");
-            throw;
-        }
-    }
-
-    /// <summary>
     /// Installs core packages required for the voice assistant backend.
     /// These are essential packages that must be installed for the server to run.
     /// </summary>
     public static async Task InstallCorePackages(PythonEnvironmentInfo pythonInfo)
     {
-        Logs.Info("[VoiceAssistant] Installing core packages (FastAPI, NumPy, etc.)...");
+        Logs.Info("[VoiceAssistant] Installing core packages (FastAPI, NumPy, TorchAudio, etc.)...");
 
         string[] corePackages = [
             "fastapi>=0.104.0",
@@ -711,73 +796,162 @@ else:
             "numpy>=1.24.0",
             "scipy>=1.10.0",
             "pydantic>=2.5.0",
-            "python-multipart>=0.0.6"
+            "python-multipart>=0.0.6",
+            "httpx>=0.25.0",
+            "torchaudio>=2.0.0"  // This is the big one that takes time
         ];
 
-        foreach (string package in corePackages)
+        for (int i = 0; i < corePackages.Length; i++)
         {
-            await InstallSinglePackage(pythonInfo, package);
+            string package = corePackages[i];
+            int packageProgress = 20 + (int)((i / (float)corePackages.Length) * 40); // 20-60% for core packages
+
+            ProgressTracker.UpdateProgress(packageProgress, "Installing core packages", package, 0, $"Installing {package}...");
+
+            // Special handling for torchaudio (takes longest)
+            if (package.StartsWith("torchaudio"))
+            {
+                await InstallSinglePackageWithProgress(pythonInfo, package, packageProgress);
+            }
+            else
+            {
+                await InstallSinglePackage(pythonInfo, package);
+            }
         }
     }
 
     /// <summary>
-    /// Installs Speech-to-Text library with fallback options.
-    /// Tries RealtimeSTT first, then falls back to speech-recognition if that fails.
+    /// Installs Speech-to-Text library (RealtimeSTT only - no fallbacks).
+    /// Fails if RealtimeSTT cannot be installed.
     /// </summary>
     public static async Task InstallSTTLibrary(PythonEnvironmentInfo pythonInfo)
     {
-        Logs.Info("[VoiceAssistant] Installing Speech-to-Text library...");
+        Logs.Info("[VoiceAssistant] Installing Speech-to-Text library (RealtimeSTT)...");
 
-        // Try RealtimeSTT first (recommended)
-        if (await TryInstallPackage(pythonInfo, "RealtimeSTT"))
+        ProgressTracker.UpdateProgress(65, "Installing STT library", "RealtimeSTT", 0, "Installing RealtimeSTT...");
+
+        // Install RealtimeSTT - NO FALLBACKS
+        if (await TryInstallPackage(pythonInfo, "RealtimeSTT>=0.3.104"))
         {
             Logs.Info("[VoiceAssistant] RealtimeSTT installed successfully");
             return;
         }
 
-        // Fallback to speech-recognition
-        Logs.Warning("[VoiceAssistant] RealtimeSTT failed, trying speech-recognition...");
-        if (await TryInstallPackage(pythonInfo, "speech-recognition"))
-        {
-            Logs.Info("[VoiceAssistant] speech-recognition installed successfully");
-            return;
-        }
-
-        Logs.Warning("[VoiceAssistant] No STT library could be installed - transcription will not be available");
+        // Installation failed - throw exception instead of trying fallbacks
+        ProgressTracker?.SetError("Failed to install RealtimeSTT - no fallback services available");
+        throw new Exception("Failed to install required STT library: RealtimeSTT. Speech recognition will not be available.");
     }
 
     /// <summary>
-    /// Installs Text-to-Speech library with fallback options.
-    /// Tries ChatterboxTTS first, then gTTS, then pyttsx3 as fallbacks.
+    /// Installs Text-to-Speech library (Chatterbox TTS only - no fallbacks).
+    /// Fails if Chatterbox TTS cannot be installed.
     /// </summary>
     public static async Task InstallTTSLibrary(PythonEnvironmentInfo pythonInfo)
     {
-        Logs.Info("[VoiceAssistant] Installing Text-to-Speech library...");
+        Logs.Info("[VoiceAssistant] Installing Text-to-Speech library (Chatterbox TTS)...");
 
-        // Try ChatterboxTTS first (recommended)
-        if (await TryInstallPackage(pythonInfo, "chatterbox-tts"))
+        ProgressTracker.UpdateProgress(85, "Installing TTS library", "chatterbox-tts", 0, "Installing Chatterbox TTS...");
+
+        // Install Chatterbox TTS - NO FALLBACKS
+        if (await TryInstallPackage(pythonInfo, "git+https://github.com/resemble-ai/chatterbox.git"))
         {
-            Logs.Info("[VoiceAssistant] ChatterboxTTS installed successfully");
+            Logs.Info("[VoiceAssistant] Chatterbox TTS installed successfully");
             return;
         }
 
-        // Fallback to gTTS
-        Logs.Warning("[VoiceAssistant] ChatterboxTTS failed, trying gTTS...");
-        if (await TryInstallPackage(pythonInfo, "gTTS"))
-        {
-            Logs.Info("[VoiceAssistant] gTTS installed successfully");
-            return;
-        }
+        // Installation failed - throw exception instead of trying fallbacks
+        ProgressTracker?.SetError("Failed to install Chatterbox TTS - no fallback services available");
+        throw new Exception("Failed to install required TTS library: Chatterbox TTS. Speech synthesis will not be available.");
+    }
 
-        // Fallback to pyttsx3
-        Logs.Warning("[VoiceAssistant] gTTS failed, trying pyttsx3...");
-        if (await TryInstallPackage(pythonInfo, "pyttsx3"))
+    /// <summary>
+    /// Installs a single package with detailed progress tracking.
+    /// Monitors pip output for download progress and installation status.
+    /// </summary>
+    public static async Task InstallSinglePackageWithProgress(PythonEnvironmentInfo pythonInfo, string package, int baseProgress)
+    {
+        try
         {
-            Logs.Info("[VoiceAssistant] pyttsx3 installed successfully");
-            return;
-        }
+            Logs.Debug($"[VoiceAssistant] Installing with progress tracking: {package}");
 
-        Logs.Warning("[VoiceAssistant] No TTS library could be installed - speech synthesis will use built-in audio");
+            ProcessStartInfo startInfo = new()
+            {
+                FileName = pythonInfo.PythonPath,
+                Arguments = $"-m pip install \"{package}\" --no-warn-script-location --progress-bar=off -v",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                WorkingDirectory = Environment.CurrentDirectory
+            };
+
+            // Clean environment for SwarmUI's Python
+            PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[VoiceAssistant] ");
+
+            using Process process = new() { StartInfo = startInfo };
+
+            process.OutputDataReceived += (sender, e) =>
+            {
+                if (!string.IsNullOrEmpty(e?.Data))
+                {
+                    // Parse pip output for progress information
+                    string line = e.Data;
+
+                    if (line.Contains("Downloading"))
+                    {
+                        // Extract download progress if available
+                        var match = Regex.Match(line, @"(\d+)%");
+                        if (match.Success && int.TryParse(match.Groups[1].Value, out int downloadPercent))
+                        {
+                            ProgressTracker.UpdateProgress(baseProgress, "Installing core packages", package, downloadPercent, $"Downloading {package}... {downloadPercent}%");
+                        }
+                        else
+                        {
+                            ProgressTracker.UpdateProgress(baseProgress, "Installing core packages", package, 50, $"Downloading {package}...");
+                        }
+                    }
+                    else if (line.Contains("Installing"))
+                    {
+                        ProgressTracker.UpdateProgress(baseProgress, "Installing core packages", package, 90, $"Installing {package}...");
+                    }
+                    else if (line.Contains("Successfully installed"))
+                    {
+                        ProgressTracker.UpdateProgress(baseProgress, "Installing core packages", package, 100, $"Successfully installed {package}");
+                    }
+
+                    Logs.Debug($"[VoiceAssistant] Pip output: {line}");
+                }
+            };
+
+            process.Start();
+            process.BeginOutputReadLine();
+
+            // Extended timeout for large packages like TorchAudio (15 minutes)
+            bool finished = await Task.Run(() => process.WaitForExit(900000));
+
+            if (!finished)
+            {
+                ProgressTracker.SetError($"Package installation timed out: {package}");
+                Logs.Warning($"[VoiceAssistant] Package installation timed out: {package}");
+                try { process.Kill(); } catch { }
+                throw new Exception($"Installation timed out for {package}");
+            }
+
+            if (process.ExitCode != 0)
+            {
+                string stderr = await process.StandardError.ReadToEndAsync();
+                ProgressTracker.SetError($"Failed to install {package}: {stderr}");
+                throw new Exception($"Failed to install {package}: {stderr}");
+            }
+
+            Logs.Debug($"[VoiceAssistant] Successfully installed: {package}");
+        }
+        catch (Exception ex)
+        {
+            ProgressTracker?.SetError($"Exception installing {package}: {ex.Message}");
+            Logs.Warning($"[VoiceAssistant] Exception installing {package}: {ex.Message}");
+            throw;
+        }
     }
 
     /// <summary>
@@ -793,7 +967,7 @@ else:
             ProcessStartInfo startInfo = new()
             {
                 FileName = pythonInfo.PythonPath,
-                Arguments = $"-m pip install \"{package}\" --no-warn-script-location",
+                Arguments = $"-s -m pip install \"{package}\" --no-warn-script-location",
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
@@ -807,8 +981,8 @@ else:
             using Process process = new() { StartInfo = startInfo };
             process.Start();
 
-            // Wait for completion with timeout (5 minutes max per package)
-            bool finished = await Task.Run(() => process.WaitForExit(300000));
+            // Wait for completion with timeout (10 minutes max per package for large packages like torch)
+            bool finished = await Task.Run(() => process.WaitForExit(600000));
 
             if (!finished)
             {
@@ -865,7 +1039,7 @@ else:
                 ProcessStartInfo startInfo = new()
                 {
                     FileName = pythonInfo.PythonPath,
-                    Arguments = $"\"{tempScript}\"",
+                    Arguments = $"-s \"{tempScript}\"",
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
@@ -1163,8 +1337,8 @@ else:
 
     /// <summary>
     /// API endpoint handler for starting the voice service backend.
-    /// Initializes the Python backend process, installs dependencies if needed, and waits for it to become ready.
-    /// Why separate endpoint: Allows frontend to explicitly control backend lifecycle with real-time feedback.
+    /// Now fails gracefully if SwarmUI environment is not found or required packages can't be installed.
+    /// NO FALLBACKS - requires proper SwarmUI with ComfyUI installation.
     /// </summary>
     public static async Task<JObject> StartVoiceService(Session session, JObject input)
     {
@@ -1194,7 +1368,26 @@ else:
             if (!started)
             {
                 Logs.Error("[VoiceAssistant] Failed to start backend process");
-                return CreateErrorResponse("Failed to start voice service backend. Check logs for details.");
+
+                // Provide more specific error message based on the type of failure
+                string errorMessage = "Failed to start voice service backend.";
+
+                if (ProgressTracker?.HasError == true)
+                {
+                    errorMessage = ProgressTracker.ErrorMessage;
+                }
+
+                // Common failure scenarios with helpful messages
+                if (errorMessage.Contains("Python environment"))
+                {
+                    errorMessage += " Voice Assistant requires SwarmUI with ComfyUI backend properly installed. Please ensure ComfyUI is working in SwarmUI before using Voice Assistant.";
+                }
+                else if (errorMessage.Contains("RealtimeSTT") || errorMessage.Contains("Chatterbox"))
+                {
+                    errorMessage += " Required voice processing libraries could not be installed. This may be due to Python version compatibility or network issues.";
+                }
+
+                return CreateErrorResponse(errorMessage);
             }
 
             // Wait for backend to become healthy
@@ -1203,7 +1396,7 @@ else:
             if (!healthy)
             {
                 Logs.Error("[VoiceAssistant] Backend process started but failed health check");
-                return CreateErrorResponse("Voice service started but is not responding properly. This may be due to missing dependencies.");
+                return CreateErrorResponse("Voice service started but is not responding properly. Required voice processing libraries may not be properly installed.");
             }
 
             JObject result = new()
@@ -1213,7 +1406,9 @@ else:
                 ["backend_running"] = IsBackendRunning,
                 ["backend_healthy"] = true,
                 ["backend_url"] = BackendUrl,
-                ["first_time_setup"] = true // Indicate this included dependency installation
+                ["first_time_setup"] = true,
+                ["required_libraries"] = new JArray { "RealtimeSTT", "Chatterbox TTS" },
+                ["no_fallbacks"] = true
             };
 
             Logs.Info("[VoiceAssistant] Voice service started successfully");
@@ -1223,7 +1418,24 @@ else:
         {
             Logs.Error($"[VoiceAssistant] Error starting voice service: {ex.Message}");
             Logs.Debug($"[VoiceAssistant] Start service stack trace: {ex}");
-            return CreateErrorResponse($"Failed to start voice service: {ex.Message}. If this is your first time, dependencies are being installed automatically which may take several minutes.");
+
+            // Provide helpful error messages for common issues
+            string errorMessage = ex.Message;
+
+            if (errorMessage.Contains("Python environment") || errorMessage.Contains("ComfyUI"))
+            {
+                errorMessage = "Voice Assistant requires SwarmUI with ComfyUI backend installed. Please ensure ComfyUI is properly set up and working in SwarmUI before using Voice Assistant.";
+            }
+            else if (errorMessage.Contains("RealtimeSTT"))
+            {
+                errorMessage = "Failed to install RealtimeSTT speech recognition library. This may be due to Python version compatibility (requires Python 3.9-3.12) or network connectivity issues.";
+            }
+            else if (errorMessage.Contains("Chatterbox") || errorMessage.Contains("TTS"))
+            {
+                errorMessage = "Failed to install Chatterbox TTS speech synthesis library. This may be due to Python version compatibility or network connectivity issues.";
+            }
+
+            return CreateErrorResponse($"Failed to start voice service: {errorMessage}");
         }
     }
 
@@ -1375,7 +1587,7 @@ else:
             string json = data.ToString();
             StringContent content = new(json, Encoding.UTF8, "application/json");
 
-            using CancellationTokenSource cts = new(TimeSpan.FromSeconds(15));
+            using CancellationTokenSource cts = new(TimeSpan.FromSeconds(30));
             HttpResponseMessage response = await HttpClient.PostAsync($"{BackendUrl}{endpoint}", content, cts.Token);
 
             if (!response.IsSuccessStatusCode)
@@ -1535,7 +1747,7 @@ else:
             {
                 if (description.StartsWith(action))
                 {
-                    description = description[  action.Length..].Trim();
+                    description = description[action.Length..].Trim();
                     break;
                 }
             }

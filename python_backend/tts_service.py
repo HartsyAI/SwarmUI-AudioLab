@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 Text-to-Speech Service for SwarmUI Voice Assistant
-Production-ready TTS service using ChatterboxTTS for speech synthesis.
+Production-ready TTS service using Chatterbox TTS for speech synthesis.
 
 This service provides:
 - Text to speech conversion with multiple voices
 - Base64 audio output for web integration
 - Volume and language control
-- Fallback audio generation when ChatterboxTTS unavailable
+- Fallback audio generation when Chatterbox TTS unavailable
 - Comprehensive error handling and logging
 """
 
@@ -16,9 +16,12 @@ import base64
 import io
 import logging
 import time
+import tempfile
+import os
 from typing import Dict, Any, Optional, List
 
 import numpy as np
+import torchaudio
 
 logger = logging.getLogger("VoiceAssistant.TTS")
 
@@ -26,8 +29,8 @@ class TTSService:
     """
     Text-to-Speech service for converting text to spoken audio.
     
-    Handles speech synthesis through ChatterboxTTS library with fallback
-    to generated audio. Provides multiple voice options, language support,
+    Handles speech synthesis through Chatterbox TTS library with fallback
+    to alternative TTS engines. Provides multiple voice options, language support,
     and volume control for production use.
     """
     
@@ -41,7 +44,7 @@ class TTSService:
         """
         self.initialized = False
         self.tts_engine = None
-        self.tts_method = "builtin"  # Default to built-in fallback
+        self.tts_method = "none"
         self.available_voices = ["default", "male", "female", "neural"]
         self.supported_languages = [
             "en-US", "en-GB", "es-ES", "fr-FR", "de-DE", "it-IT",
@@ -50,130 +53,77 @@ class TTSService:
         self.default_voice = "default"
         self.sample_rate = 22050
         self.initialization_error = None
+        self.use_chatterbox = False
         
         logger.debug("TTS service instance created")
     
     async def initialize(self):
         """
         Initialize the TTS service and load the speech synthesis engine.
-        
-        Attempts to load ChatterboxTTS for high-quality speech synthesis.
-        If unavailable, tries alternative TTS libraries as fallbacks.
-        Handles all initialization errors gracefully.
-        
+    
+        ONLY uses Chatterbox TTS - NO FALLBACKS. Fails if Chatterbox TTS is not available.
+    
         Raises:
-            Exception: If initialization fails completely
+            Exception: If Chatterbox TTS initialization fails
         """
         if self.initialized:
             logger.debug("TTS service already initialized")
             return
-            
+        
         try:
-            logger.info("Initializing TTS service")
+            logger.info("Initializing TTS service (Chatterbox TTS only)...")
+        
+            # Try Chatterbox TTS - NO FALLBACKS
+            if await self._try_chatterbox_tts():
+                self.use_chatterbox = True
+                self.tts_method = "chatterbox"
+                logger.info("TTS service initialized with Chatterbox TTS")
+            else:
+                self.initialization_error = "Chatterbox TTS initialization failed"
+                raise Exception("Failed to initialize Chatterbox TTS - no fallback TTS libraries available")
             
-            # Try ChatterboxTTS first (recommended)
-            if self._try_chatterbox_tts():
-                logger.info("Using ChatterboxTTS engine")
-                return
-            
-            # Try gTTS as fallback
-            if self._try_gtts():
-                logger.info("Using gTTS engine as fallback")
-                return
-            
-            # Try pyttsx3 as last resort
-            if self._try_pyttsx3():
-                logger.info("Using pyttsx3 engine as fallback")
-                return
-            
-            # If all else fails, use built-in audio generation
-            logger.warning("No TTS engines available, using built-in audio generation")
-            self.tts_engine = None
-            self.tts_method = "builtin"
             self.initialized = True
-                
+            logger.info(f"TTS service initialization completed successfully with: {self.tts_method}")
+            
         except Exception as e:
             self.initialization_error = str(e)
             logger.error(f"Critical error during TTS service initialization: {e}")
             raise Exception(f"TTS service initialization failed: {e}")
     
-    def _try_chatterbox_tts(self):
-        """Try to initialize ChatterboxTTS."""
+    async def _try_chatterbox_tts(self):
+        """Try to initialize Chatterbox TTS."""
         try:
-            # Import and test ChatterboxTTS
-            try:
-                import chatterbox_tts
-                # Test if we can create an instance
-                self.tts_engine = chatterbox_tts.ChatterboxTTS()
-                self.tts_method = "chatterbox"
-                
-                # Try to get available voices
-                try:
-                    voices = self.tts_engine.list_voices()
-                    if voices:
-                        self.available_voices = voices
-                        logger.info(f"ChatterboxTTS voices available: {self.available_voices}")
-                except:
-                    logger.warning("Could not get voices from ChatterboxTTS, using defaults")
-                
-                self.initialized = True
-                return True
-                
-            except ImportError:
-                logger.debug("ChatterboxTTS not available (not installed)")
-                return False
-            except Exception as e:
-                logger.warning(f"ChatterboxTTS failed to initialize: {e}")
-                return False
-                
+            from chatterbox import ChatterboxTTS
+            
+            # Initialize Chatterbox TTS model
+            # Run in thread pool to avoid blocking
+            self.tts_engine = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: ChatterboxTTS.from_pretrained(device="cuda" if self._has_cuda() else "cpu")
+            )
+            
+            # Get sample rate from the model
+            self.sample_rate = self.tts_engine.sr
+            
+            # Chatterbox TTS supports different exaggeration levels as "voices"
+            self.available_voices = ["default", "expressive", "calm", "dramatic"]
+            
+            logger.info("Chatterbox TTS initialized successfully")
+            return True
+            
+        except ImportError:
+            logger.debug("Chatterbox TTS not available (not installed)")
+            return False
         except Exception as e:
-            logger.debug(f"Error testing ChatterboxTTS: {e}")
+            logger.warning(f"Chatterbox TTS failed to initialize: {e}")
             return False
     
-    def _try_gtts(self):
-        """Try to initialize Google TTS."""
+    def _has_cuda(self):
+        """Check if CUDA is available."""
         try:
-            from gtts import gTTS
-            # Test if we can create an instance
-            test_tts = gTTS(text="test", lang="en")
-            self.tts_engine = gTTS
-            self.tts_method = "gtts"
-            self.available_voices = ["default", "en", "es", "fr", "de", "it", "pt", "ru", "ja", "ko", "zh"]
-            self.initialized = True
-            logger.info("gTTS initialized successfully")
-            return True
+            import torch
+            return torch.cuda.is_available()
         except ImportError:
-            logger.debug("gTTS not available (not installed)")
-            return False
-        except Exception as e:
-            logger.warning(f"gTTS failed to initialize: {e}")
-            return False
-    
-    def _try_pyttsx3(self):
-        """Try to initialize pyttsx3."""
-        try:
-            import pyttsx3
-            self.tts_engine = pyttsx3.init()
-            self.tts_method = "pyttsx3"
-            
-            # Get available voices
-            try:
-                voices = self.tts_engine.getProperty('voices')
-                if voices:
-                    self.available_voices = [voice.id for voice in voices[:5]]  # Limit to 5
-                else:
-                    self.available_voices = ["default"]
-            except:
-                self.available_voices = ["default"]
-            
-            self.initialized = True
-            logger.info("pyttsx3 initialized successfully")
-            return True
-        except ImportError:
-            logger.debug("pyttsx3 not available (not installed)")
-            return False
-        except Exception as e:
-            logger.warning(f"pyttsx3 failed to initialize: {e}")
             return False
     
     async def synthesize(self, text: str, voice: str = "default", 
@@ -187,7 +137,7 @@ class TTSService:
         
         Args:
             text: Text to convert to speech (max 1000 characters)
-            voice: Voice identifier (e.g., 'default', 'male', 'female')
+            voice: Voice identifier (e.g., 'default', 'expressive', 'calm')
             language: Language code for synthesis (e.g., 'en-US')
             volume: Volume level from 0.0 to 1.0
             
@@ -236,15 +186,8 @@ class TTSService:
             volume = max(0.0, min(1.0, float(volume)))
             
             # Perform synthesis based on available engine
-            if self.tts_method == "chatterbox":
+            if self.use_chatterbox:
                 audio_data = await self._synthesize_with_chatterbox(text, voice, language, volume)
-            elif self.tts_method == "gtts":
-                audio_data = await self._synthesize_with_gtts(text, voice, language, volume)
-            elif self.tts_method == "pyttsx3":
-                audio_data = await self._synthesize_with_pyttsx3(text, voice, language, volume)
-            else:
-                # Fallback to built-in audio generation
-                audio_data = await self._synthesize_fallback(text, voice, language, volume)
             
             # Encode audio as base64
             audio_base64 = base64.b64encode(audio_data).decode('utf-8')
@@ -280,375 +223,133 @@ class TTSService:
     async def _synthesize_with_chatterbox(self, text: str, voice: str, 
                                         language: str, volume: float) -> bytes:
         """
-        Perform synthesis using ChatterboxTTS library.
+        Perform synthesis using Chatterbox TTS library.
         
-        Handles ChatterboxTTS API calls in a thread pool to avoid blocking
+        Handles Chatterbox TTS API calls in a thread pool to avoid blocking
         the event loop. Applies voice, language, and volume settings.
         
         Args:
             text: Text to synthesize
-            voice: Voice identifier
+            voice: Voice identifier (maps to exaggeration settings)
             language: Language code
             volume: Volume level
             
         Returns:
-            Raw audio data as bytes
+            Raw audio data as bytes (WAV format)
             
         Raises:
-            Exception: If ChatterboxTTS synthesis fails
+            Exception: If Chatterbox TTS synthesis fails
         """
         try:
-            logger.debug(f"Using ChatterboxTTS for synthesis: voice={voice}, lang={language}")
+            logger.debug(f"Using Chatterbox TTS for synthesis: voice={voice}, lang={language}")
+            
+            # Map voice types to Chatterbox TTS parameters
+            voice_params = self._get_chatterbox_voice_params(voice)
             
             # Run synthesis in thread pool to avoid blocking
-            audio_data = await asyncio.get_event_loop().run_in_executor(
+            audio_tensor = await asyncio.get_event_loop().run_in_executor(
                 None,
                 self._synthesize_sync_chatterbox,
-                text, voice, language, volume
+                text, voice_params, language, volume
             )
             
-            if not audio_data or len(audio_data) < 100:
-                raise Exception("ChatterboxTTS returned empty or invalid audio")
+            # Convert tensor to WAV bytes
+            audio_data = self._tensor_to_wav_bytes(audio_tensor, volume)
             
-            logger.debug(f"ChatterboxTTS synthesis successful: {len(audio_data)} bytes")
+            if not audio_data or len(audio_data) < 100:
+                raise Exception("Chatterbox TTS returned empty or invalid audio")
+            
+            logger.debug(f"Chatterbox TTS synthesis successful: {len(audio_data)} bytes")
             return audio_data
             
         except Exception as e:
-            logger.error(f"ChatterboxTTS synthesis error: {e}")
-            raise Exception(f"ChatterboxTTS processing failed: {e}")
+            logger.error(f"Chatterbox TTS synthesis error: {e}")
+            raise Exception(f"Chatterbox TTS processing failed: {e}")
     
-    async def _synthesize_with_gtts(self, text: str, voice: str, 
-                                  language: str, volume: float) -> bytes:
+    def _get_chatterbox_voice_params(self, voice: str) -> Dict[str, float]:
         """
-        Perform synthesis using Google TTS library.
+        Map voice types to Chatterbox TTS parameters.
         
         Args:
-            text: Text to synthesize
-            voice: Voice identifier (used as language for gTTS)
-            language: Language code
-            volume: Volume level
-            
-        Returns:
-            Raw audio data as bytes
-        """
-        try:
-            logger.debug(f"Using gTTS for synthesis: lang={language}")
-            
-            # Run synthesis in thread pool to avoid blocking
-            audio_data = await asyncio.get_event_loop().run_in_executor(
-                None,
-                self._synthesize_sync_gtts,
-                text, voice, language, volume
-            )
-            
-            if not audio_data or len(audio_data) < 100:
-                raise Exception("gTTS returned empty or invalid audio")
-            
-            logger.debug(f"gTTS synthesis successful: {len(audio_data)} bytes")
-            return audio_data
-            
-        except Exception as e:
-            logger.error(f"gTTS synthesis error: {e}")
-            raise Exception(f"gTTS processing failed: {e}")
-    
-    async def _synthesize_with_pyttsx3(self, text: str, voice: str, 
-                                     language: str, volume: float) -> bytes:
-        """
-        Perform synthesis using pyttsx3 library.
-        
-        Args:
-            text: Text to synthesize
             voice: Voice identifier
-            language: Language code
-            volume: Volume level
             
         Returns:
-            Raw audio data as bytes
+            Dict with Chatterbox TTS parameters
         """
-        try:
-            logger.debug(f"Using pyttsx3 for synthesis: voice={voice}")
-            
-            # Run synthesis in thread pool to avoid blocking
-            audio_data = await asyncio.get_event_loop().run_in_executor(
-                None,
-                self._synthesize_sync_pyttsx3,
-                text, voice, language, volume
-            )
-            
-            if not audio_data or len(audio_data) < 100:
-                raise Exception("pyttsx3 returned empty or invalid audio")
-            
-            logger.debug(f"pyttsx3 synthesis successful: {len(audio_data)} bytes")
-            return audio_data
-            
-        except Exception as e:
-            logger.error(f"pyttsx3 synthesis error: {e}")
-            raise Exception(f"pyttsx3 processing failed: {e}")
+        voice_mapping = {
+            "default": {"exaggeration": 0.5, "cfg_weight": 0.5},
+            "expressive": {"exaggeration": 0.7, "cfg_weight": 0.3},
+            "calm": {"exaggeration": 0.3, "cfg_weight": 0.7},
+            "dramatic": {"exaggeration": 0.8, "cfg_weight": 0.2},
+            "male": {"exaggeration": 0.4, "cfg_weight": 0.6},
+            "female": {"exaggeration": 0.6, "cfg_weight": 0.4},
+            "neural": {"exaggeration": 0.5, "cfg_weight": 0.5}
+        }
+        
+        return voice_mapping.get(voice, voice_mapping["default"])
     
-    def _synthesize_sync_gtts(self, text: str, voice: str, 
-                            language: str, volume: float) -> bytes:
+    def _synthesize_sync_chatterbox(self, text: str, voice_params: Dict[str, float], 
+                                  language: str, volume: float) -> np.ndarray:
         """
-        Synchronous wrapper for gTTS synthesis.
-        """
-        try:
-            import tempfile
-            import os
-            from gtts import gTTS
-            
-            # Extract language code from language parameter
-            lang_code = language.split('-')[0] if '-' in language else language
-            if lang_code not in ['en', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'ja', 'ko', 'zh']:
-                lang_code = 'en'
-            
-            # Create gTTS instance
-            tts = gTTS(text=text, lang=lang_code, slow=False)
-            
-            # Save to temporary file
-            with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
-                temp_path = temp_file.name
-                tts.save(temp_path)
-            
-            try:
-                # Read the audio data
-                with open(temp_path, 'rb') as f:
-                    audio_data = f.read()
-                
-                # Convert MP3 to WAV if needed (simple conversion)
-                return self._convert_audio_to_wav(audio_data, volume)
-                
-            finally:
-                # Clean up temp file
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass
-                    
-        except Exception as e:
-            logger.error(f"gTTS sync synthesis error: {e}")
-            # Fallback to generated audio
-            return self._generate_speech_like_audio(text, volume)
-    
-    def _synthesize_sync_pyttsx3(self, text: str, voice: str, 
-                               language: str, volume: float) -> bytes:
-        """
-        Synchronous wrapper for pyttsx3 synthesis.
-        """
-        try:
-            import tempfile
-            import os
-            
-            # Configure pyttsx3 engine
-            if voice in self.available_voices:
-                self.tts_engine.setProperty('voice', voice)
-            
-            self.tts_engine.setProperty('rate', 200)  # Speech rate
-            self.tts_engine.setProperty('volume', volume)
-            
-            # Save to temporary file
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-                temp_path = temp_file.name
-                self.tts_engine.save_to_file(text, temp_path)
-                self.tts_engine.runAndWait()
-            
-            try:
-                # Read the audio data
-                with open(temp_path, 'rb') as f:
-                    audio_data = f.read()
-                
-                return audio_data
-                
-            finally:
-                # Clean up temp file
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass
-                    
-        except Exception as e:
-            logger.error(f"pyttsx3 sync synthesis error: {e}")
-            # Fallback to generated audio
-            return self._generate_speech_like_audio(text, volume)
-    
-    def _convert_audio_to_wav(self, audio_data: bytes, volume: float) -> bytes:
-        """
-        Convert audio data to WAV format and apply volume.
-        This is a simple conversion - in production you might want to use librosa or pydub.
-        """
-        try:
-            # For now, just return the original data
-            # In a real implementation, you would use a library like pydub:
-            # from pydub import AudioSegment
-            # audio = AudioSegment.from_mp3(io.BytesIO(audio_data))
-            # audio = audio + (20 * math.log10(volume))  # Apply volume
-            # return audio.export(format="wav").read()
-            
-            return audio_data
-        except:
-            # Fallback to generated audio
-            return self._generate_speech_like_audio("Audio conversion failed", volume)
-    
-    def _synthesize_sync_chatterbox(self, text: str, voice: str, 
-                                  language: str, volume: float) -> bytes:
-        """
-        Synchronous wrapper for ChatterboxTTS synthesis.
+        Synchronous wrapper for Chatterbox TTS synthesis.
         
         This method runs in a thread pool to avoid blocking the async event loop.
-        Handles the actual ChatterboxTTS API calls and configuration.
+        Handles the actual Chatterbox TTS API calls and configuration.
         
         Args:
             text: Text to synthesize
-            voice: Voice identifier
+            voice_params: Voice parameters (exaggeration, cfg_weight)
             language: Language code
             volume: Volume level
             
         Returns:
-            Raw audio data as bytes
-            
-        Note:
-            This is a placeholder implementation. In a real deployment, you would
-            replace this with actual ChatterboxTTS API calls based on their documentation.
+            Audio tensor as numpy array
         """
         try:
-            logger.debug(f"Processing text with ChatterboxTTS: '{text[:50]}...'")
+            logger.debug(f"Processing text with Chatterbox TTS: '{text[:50]}...'")
             
-            # PLACEHOLDER IMPLEMENTATION
-            # In a real implementation, you would use something like:
-            # 
-            # # Configure the TTS engine
-            # self.tts_engine.set_voice(voice)
-            # self.tts_engine.set_language(language)
-            # self.tts_engine.set_volume(volume)
-            # 
-            # # Synthesize the text
-            # audio_data = self.tts_engine.synthesize(text)
-            # 
-            # return audio_data
+            # Generate audio using Chatterbox TTS
+            # Note: Chatterbox TTS currently only supports English
+            audio_tensor = self.tts_engine.generate(
+                text,
+                exaggeration=voice_params["exaggeration"],
+                cfg_weight=voice_params["cfg_weight"]
+            )
             
-            # For now, generate a more sophisticated placeholder audio
-            audio_data = self._generate_speech_like_audio(text, volume)
-            
-            # Simulate processing time based on text length
-            processing_time = len(text) * 0.05  # 50ms per character
-            time.sleep(min(processing_time, 2.0))  # Cap at 2 seconds
-            
-            logger.debug(f"ChatterboxTTS placeholder synthesis complete: {len(audio_data)} bytes")
-            return audio_data
+            logger.debug(f"Chatterbox TTS synthesis complete: {audio_tensor.shape}")
+            return audio_tensor.cpu().numpy()
             
         except Exception as e:
-            logger.error(f"ChatterboxTTS sync synthesis error: {e}")
-            raise Exception(f"ChatterboxTTS API call failed: {e}")
+            logger.error(f"Chatterbox TTS sync synthesis error: {e}")
+            raise Exception(f"Chatterbox TTS API call failed: {e}")
     
-    async def _synthesize_fallback(self, text: str, voice: str, 
-                                 language: str, volume: float) -> bytes:
+    def _tensor_to_wav_bytes(self, audio_tensor: np.ndarray, volume: float) -> bytes:
         """
-        Fallback synthesis method when ChatterboxTTS is not available.
-        
-        Generates simple audio tones and patterns that indicate the system
-        is working. In production, this could integrate with alternative
-        TTS services or libraries.
+        Convert audio tensor to WAV format bytes.
         
         Args:
-            text: Text to synthesize
-            voice: Voice identifier
-            language: Language code
-            volume: Volume level
-            
-        Returns:
-            Fallback audio data as bytes
-        """
-        try:
-            logger.debug("Using fallback TTS synthesis")
-            
-            # Simulate processing time
-            await asyncio.sleep(0.2)
-            
-            # Generate audio based on text characteristics
-            audio_data = self._generate_speech_like_audio(text, volume)
-            
-            logger.info(f"Fallback TTS synthesis complete: {len(audio_data)} bytes")
-            return audio_data
-            
-        except Exception as e:
-            logger.error(f"Fallback TTS synthesis error: {e}")
-            raise Exception(f"Fallback synthesis failed: {e}")
-    
-    def _generate_speech_like_audio(self, text: str, volume: float) -> bytes:
-        """
-        Generate speech-like audio patterns for fallback mode.
-        
-        Creates audio with varying tones and patterns that roughly correspond
-        to speech characteristics. This provides audio feedback even when
-        no TTS engine is available.
-        
-        Args:
-            text: Text to base audio patterns on
+            audio_tensor: Audio data as numpy array
             volume: Volume level to apply
             
         Returns:
             WAV format audio data as bytes
         """
         try:
-            # Calculate duration based on text length (typical speech rate)
-            words = len(text.split())
-            duration = max(1.0, words * 0.6)  # ~100 words per minute
-            duration = min(duration, 10.0)  # Cap at 10 seconds
-            
-            # Generate time array
-            t = np.linspace(0, duration, int(self.sample_rate * duration), False)
-            
-            # Create speech-like audio with varying frequencies and patterns
-            audio = np.zeros(len(t))
-            
-            # Base frequency that varies with text characteristics
-            base_freq = 100 + (hash(text) % 100)  # 100-200 Hz base
-            
-            # Add multiple harmonics for speech-like quality
-            for i, char in enumerate(text[:min(len(text), 10)]):
-                char_freq = base_freq + (ord(char) % 50)
-                char_start = (i / len(text)) * duration
-                char_end = min(((i + 1) / len(text)) * duration, duration)
-                
-                # Find time indices for this character
-                start_idx = int(char_start * self.sample_rate)
-                end_idx = int(char_end * self.sample_rate)
-                
-                if start_idx < len(t) and end_idx <= len(t):
-                    char_t = t[start_idx:end_idx]
-                    if len(char_t) > 0:
-                        # Generate character-specific audio
-                        char_audio = 0.3 * np.sin(2 * np.pi * char_freq * char_t)
-                        char_audio += 0.2 * np.sin(2 * np.pi * char_freq * 1.5 * char_t)
-                        char_audio += 0.1 * np.sin(2 * np.pi * char_freq * 2.0 * char_t)
-                        
-                        # Add some variation for consonants vs vowels
-                        if char.lower() in 'aeiou':
-                            char_audio *= 1.2  # Vowels slightly louder
-                        else:
-                            char_audio *= 0.8  # Consonants softer
-                        
-                        audio[start_idx:end_idx] += char_audio
-            
-            # Add some natural speech variations
-            # Slight frequency modulation for natural sound
-            modulation = 0.1 * np.sin(2 * np.pi * 5 * t)  # 5 Hz modulation
-            audio *= (1 + modulation)
+            # Ensure audio is in the right format
+            if len(audio_tensor.shape) > 1:
+                # Convert to mono if stereo
+                audio_tensor = np.mean(audio_tensor, axis=0)
             
             # Apply volume
-            audio *= volume
-            
-            # Apply fade in/out to avoid clicks
-            fade_samples = int(self.sample_rate * 0.05)  # 50ms fade
-            if len(audio) > 2 * fade_samples:
-                audio[:fade_samples] *= np.linspace(0, 1, fade_samples)
-                audio[-fade_samples:] *= np.linspace(1, 0, fade_samples)
+            audio_tensor = audio_tensor * volume
             
             # Normalize to prevent clipping
-            max_amplitude = np.max(np.abs(audio))
+            max_amplitude = np.max(np.abs(audio_tensor))
             if max_amplitude > 0.8:
-                audio *= 0.8 / max_amplitude
+                audio_tensor = audio_tensor * 0.8 / max_amplitude
             
             # Convert to 16-bit PCM
-            audio_int16 = (audio * 32767).astype(np.int16)
+            audio_int16 = (audio_tensor * 32767).astype(np.int16)
             
             # Create WAV file in memory
             wav_io = io.BytesIO()
@@ -658,36 +359,79 @@ class TTSService:
             return wav_io.getvalue()
             
         except Exception as e:
-            logger.error(f"Error generating speech-like audio: {e}")
-            # Final fallback - simple beep
-            return self._generate_simple_beep(volume)
+            logger.error(f"Error converting tensor to WAV: {e}")
+            raise
     
-    def _generate_simple_beep(self, volume: float) -> bytes:
+    def _convert_mp3_to_wav(self, mp3_data: bytes, volume: float) -> bytes:
         """
-        Generate a simple beep tone as final fallback.
-        
-        Creates a basic sine wave tone when all other audio generation fails.
+        Convert MP3 data to WAV format.
         
         Args:
+            mp3_data: MP3 audio data
             volume: Volume level to apply
             
         Returns:
-            WAV format beep audio as bytes
+            WAV format audio data
         """
         try:
-            duration = 1.0  # 1 second beep
-            frequency = 440.0  # A4 note
+            # Try to use torchaudio for conversion if available
+            import tempfile
+            import os
             
-            t = np.linspace(0, duration, int(self.sample_rate * duration), False)
-            audio = volume * 0.5 * np.sin(2 * np.pi * frequency * t)
+            # Save MP3 to temp file
+            with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_mp3:
+                temp_mp3.write(mp3_data)
+                temp_mp3_path = temp_mp3.name
             
-            # Apply fade in/out
-            fade_samples = int(self.sample_rate * 0.1)
-            audio[:fade_samples] *= np.linspace(0, 1, fade_samples)
-            audio[-fade_samples:] *= np.linspace(1, 0, fade_samples)
+            try:
+                # Load with torchaudio
+                waveform, sample_rate = torchaudio.load(temp_mp3_path)
+                
+                # Convert to mono if stereo
+                if waveform.shape[0] > 1:
+                    waveform = torch.mean(waveform, dim=0, keepdim=True)
+                
+                # Resample to our target sample rate if needed
+                if sample_rate != self.sample_rate:
+                    resampler = torchaudio.transforms.Resample(sample_rate, self.sample_rate)
+                    waveform = resampler(waveform)
+                
+                # Apply volume
+                waveform = waveform * volume
+                
+                # Convert to numpy and then to WAV bytes
+                audio_numpy = waveform.squeeze().numpy()
+                return self._numpy_to_wav_bytes(audio_numpy)
+                
+            finally:
+                # Clean up temp file
+                try:
+                    os.unlink(temp_mp3_path)
+                except:
+                    pass
+                    
+        except Exception as e:
+            logger.warning(f"Failed to convert MP3 to WAV: {e}")
+            # Fallback: return the MP3 data as-is (browser can handle it)
+            return mp3_data
+    
+    def _numpy_to_wav_bytes(self, audio_numpy: np.ndarray) -> bytes:
+        """
+        Convert numpy array to WAV bytes.
+        
+        Args:
+            audio_numpy: Audio data as numpy array
             
-            # Convert to 16-bit PCM
-            audio_int16 = (audio * 32767).astype(np.int16)
+        Returns:
+            WAV format audio data as bytes
+        """
+        try:
+            # Normalize and convert to 16-bit PCM
+            max_amplitude = np.max(np.abs(audio_numpy))
+            if max_amplitude > 0.8:
+                audio_numpy = audio_numpy * 0.8 / max_amplitude
+            
+            audio_int16 = (audio_numpy * 32767).astype(np.int16)
             
             # Create WAV file in memory
             wav_io = io.BytesIO()
@@ -697,9 +441,8 @@ class TTSService:
             return wav_io.getvalue()
             
         except Exception as e:
-            logger.error(f"Error generating simple beep: {e}")
-            # Return minimal valid WAV file
-            return b'RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00D\xac\x00\x00\x88X\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00'
+            logger.error(f"Error converting numpy to WAV: {e}")
+            raise
     
     def _write_wav_header(self, wav_io: io.BytesIO, num_samples: int, sample_rate: int):
         """
@@ -794,9 +537,7 @@ class TTSService:
         return {
             "initialized": self.initialized,
             "tts_method": self.tts_method,
-            "has_chatterbox": self.tts_method == "chatterbox",
-            "has_gtts": self.tts_method == "gtts", 
-            "has_pyttsx3": self.tts_method == "pyttsx3",
+            "use_chatterbox": self.use_chatterbox,
             "available_voices": len(self.available_voices),
             "supported_languages": len(self.supported_languages),
             "sample_rate": self.sample_rate,

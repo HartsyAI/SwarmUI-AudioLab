@@ -1,4 +1,4 @@
-# SwarmUI Voice Assistant Backend Requirements
+# SwarmUI Voice Assistant Backend Requirements - FIXED VERSION
 # Production-ready dependencies for STT/TTS voice processing in SwarmUI environment
 
 # IMPORTANT: For SwarmUI installations, use the embedded Python environment
@@ -12,6 +12,11 @@
 # 1. Navigate to your SwarmUI directory
 # 2. Use the same Python that SwarmUI uses: ./dlbackend/ComfyUI/venv/bin/python -m pip install -r requirements.txt
 
+# PYTHON VERSION REQUIREMENTS:
+# - RealtimeSTT: Python >= 3.9, < 3.13
+# - Chatterbox TTS: Python 3.11 recommended (3.10-3.12 should work)
+# - If using Python 3.13, some packages may fail - downgrade to 3.11 or 3.12
+
 # Core FastAPI dependencies (required)
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
@@ -21,44 +26,49 @@ pydantic>=2.5.0
 # Audio processing and numerical computing (required)
 numpy>=1.24.0
 scipy>=1.10.0
+torchaudio>=2.0.0
 
 # HTTP client for external API calls (required)
 httpx>=0.25.0
 
-# Development and testing dependencies (optional)
-python-dotenv>=1.0.0
+# Speech-to-Text: RealtimeSTT (primary STT engine)
+RealtimeSTT
 
-# Speech-to-Text: RealtimeSTT (recommended)
-# This is the primary STT library we support
-RealtimeSTT>=0.3.0
-
-# Alternative STT options (install only one):
-# speech-recognition>=3.10.0  # Basic speech recognition
-# openai-whisper>=20231117    # OpenAI Whisper for high-quality STT
-
-# Text-to-Speech: ChatterboxTTS (recommended)
-# This is the primary TTS library we support
-chatterbox-tts>=0.1.1
-
-# Alternative TTS options (install only one):
-# gTTS>=2.5.0                # Google Text-to-Speech
-# pyttsx3>=2.90             # Cross-platform TTS
-# edge-tts>=6.1.0           # Microsoft Edge TTS
+# Text-to-Speech: Chatterbox TTS (primary TTS engine)
+# Install from git due to PyPI dependency conflicts
+# Note: This may take longer to install as it builds from source
+git+https://github.com/resemble-ai/chatterbox.git
 
 # Audio I/O libraries (may be needed for some systems)
-# Uncomment if you get audio device errors
+# Uncomment if you get audio device errors during RealtimeSTT initialization
 # pyaudio>=0.2.11           # Cross-platform audio I/O
 # sounddevice>=0.4.6        # Audio recording/playback
 
-# Platform-specific notes:
-# Windows: Should work out of the box with SwarmUI's embedded Python
+# Platform-specific audio dependencies:
+# Windows: Usually works out of the box with SwarmUI's embedded Python
 # Linux: May need: sudo apt-get install portaudio19-dev python3-dev
 # macOS: May need: brew install portaudio
 
-# GPU acceleration (optional, for better performance):
-# If you have NVIDIA GPU and want faster processing:
-# torch>=2.1.0+cu118 --index-url https://download.pytorch.org/whl/cu118
-# torchaudio>=2.1.0+cu118 --index-url https://download.pytorch.org/whl/cu118
+# PyTorch with CUDA support (optional, for better performance):
+# If you have NVIDIA GPU and want faster processing, install CUDA-enabled PyTorch:
+# For CUDA 11.8:
+# torch>=2.5.1+cu118 --index-url https://download.pytorch.org/whl/cu118
+# torchaudio>=2.5.1+cu118 --index-url https://download.pytorch.org/whl/cu118
+
+# For CUDA 12.1:
+# torch>=2.5.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+# torchaudio>=2.5.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+
+# Installation order for best compatibility:
+# 1. Install core dependencies first:
+#    pip install fastapi uvicorn numpy scipy torchaudio
+# 
+# 2. Install primary engines:
+#    pip install RealtimeSTT
+#    pip install git+https://github.com/resemble-ai/chatterbox.git
+# 
+# 3. For GPU acceleration (optional):
+#    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 # Manual installation steps for SwarmUI:
 # 
@@ -67,30 +77,27 @@ chatterbox-tts>=0.1.1
 #    - Windows: SwarmUI\dlbackend\comfy\python_embeded\python.exe
 #    - Linux/Mac: SwarmUI/dlbackend/ComfyUI/venv/bin/python
 # 
-# 3. Install core dependencies:
-#    Windows: dlbackend\comfy\python_embeded\python.exe -m pip install fastapi uvicorn numpy scipy
-#    Linux/Mac: ./dlbackend/ComfyUI/venv/bin/python -m pip install fastapi uvicorn numpy scipy
-# 
-# 4. Install STT library (choose one):
-#    For RealtimeSTT: python -m pip install RealtimeSTT
-#    For basic STT: python -m pip install speech-recognition
-# 
-# 5. Install TTS library (choose one):
-#    For ChatterboxTTS: python -m pip install chatterbox-tts
-#    For gTTS: python -m pip install gTTS
+# 3. Install core dependencies first:
+#    Windows: dlbackend\comfy\python_embeded\python.exe -m pip install fastapi uvicorn numpy scipy torchaudio
+#    Linux/Mac: ./dlbackend/ComfyUI/venv/bin/python -m pip install fastapi uvicorn numpy scipy torchaudio
+#
+# 4. Install STT engine:
+#    Windows: dlbackend\comfy\python_embeded\python.exe -m pip install RealtimeSTT
+#    Linux/Mac: ./dlbackend/ComfyUI/venv/bin/python -m pip install RealtimeSTT
+#
+# 5. Install TTS engine:
+#    Windows: dlbackend\comfy\python_embeded\python.exe -m pip install git+https://github.com/resemble-ai/chatterbox.git
+#    Linux/Mac: ./dlbackend/ComfyUI/venv/bin/python -m pip install git+https://github.com/resemble-ai/chatterbox.git
 # 
 # 6. Test installation by running the voice server manually:
 #    python voice_server.py --port 7831
 # 
-# Troubleshooting:
-# - If RealtimeSTT fails to install, use speech-recognition instead
-# - If ChatterboxTTS fails to install, use gTTS instead
-# - For CUDA support, install PyTorch with CUDA first
-# - Check SwarmUI logs for specific error messages
+# 7. Check server health:
+#    Open http://localhost:7831/health in your browser
 
-# Minimal working setup (if full installation fails):
-fastapi>=0.104.0
-uvicorn>=0.24.0
-numpy>=1.24.0
-# Plus either RealtimeSTT OR speech-recognition
-# Plus either chatterbox-tts OR gTTS
+# Troubleshooting:
+# - If Python 3.13 is detected, packages may fail. Ensure SwarmUI uses Python 3.11 or 3.12
+# - For CUDA support, ensure you have compatible NVIDIA drivers and CUDA toolkit
+# - Check SwarmUI logs for specific error messages during extension startup
+# - Use the /install-help endpoint for real-time dependency status
+# - If "uvicorn not found" error occurs, there's a Python environment mismatch

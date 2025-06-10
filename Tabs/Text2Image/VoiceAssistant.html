@@ -1,4 +1,4 @@
-<!-- Voice Assistant Tab for SwarmUI Text2Image -->
+<!-- Voice Assistant Tab for SwarmUI Text2Image - Production Ready -->
 <div class="voice-assistant-tab">
     <div class="voice-assistant-header">
         <h3><i class="fas fa-microphone"></i> Voice Assistant</h3>
@@ -39,7 +39,7 @@
                 <div id="installationProgress" class="installation-progress mt-3" style="display: none;">
                     <div class="progress-header">
                         <h6><i class="fas fa-download"></i> Installing Dependencies</h6>
-                        <small class="text-muted">This may take several minutes on first run...</small>
+                        <small class="text-muted">Installing RealtimeSTT and Chatterbox TTS - this may take several minutes...</small>
                     </div>
                     <div class="progress mt-2">
                         <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
@@ -101,9 +101,12 @@
                         </div>
 
                         <div class="form-group">
-                            <label for="ttsVoice" class="form-label">Voice</label>
+                            <label for="ttsVoice" class="form-label">Voice Style</label>
                             <select id="ttsVoice" class="form-select">
                                 <option value="default">Default</option>
+                                <option value="expressive">Expressive</option>
+                                <option value="calm">Calm</option>
+                                <option value="dramatic">Dramatic</option>
                                 <option value="male">Male</option>
                                 <option value="female">Female</option>
                                 <option value="neural">Neural</option>
@@ -178,6 +181,25 @@
             </div>
         </div>
 
+        <!-- System Info Section (expandable) -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <button class="btn btn-link p-0 text-decoration-none" type="button" data-bs-toggle="collapse" data-bs-target="#systemInfo" aria-expanded="false" aria-controls="systemInfo">
+                    <h6 class="mb-0"><i class="fas fa-info-circle"></i> System Information</h6>
+                </button>
+            </div>
+            <div class="collapse" id="systemInfo">
+                <div class="card-body">
+                    <div id="systemDetails" class="system-details">
+                        <p><strong>STT Engine:</strong> <span id="sttEngine">Not initialized</span></p>
+                        <p><strong>TTS Engine:</strong> <span id="ttsEngine">Not initialized</span></p>
+                        <p><strong>Backend Status:</strong> <span id="backendStatus">Disconnected</span></p>
+                        <p><strong>Last Health Check:</strong> <span id="lastHealthCheck">Never</span></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Error Display -->
         <div id="errorAlert" class="alert alert-danger mt-3" style="display: none;">
             <div class="d-flex align-items-center">
@@ -193,6 +215,15 @@
                 <i class="fas fa-check-circle me-2"></i>
                 <span id="successMessage"></span>
                 <button type="button" class="btn-close ms-auto" onclick="hideSuccess()"></button>
+            </div>
+        </div>
+
+        <!-- Warning Display -->
+        <div id="warningAlert" class="alert alert-warning mt-3" style="display: none;">
+            <div class="d-flex align-items-center">
+                <i class="fas fa-exclamation-circle me-2"></i>
+                <span id="warningMessage"></span>
+                <button type="button" class="btn-close ms-auto" onclick="hideWarning()"></button>
             </div>
         </div>
     </div>
