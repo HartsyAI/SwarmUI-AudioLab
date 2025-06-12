@@ -1,4 +1,4 @@
-﻿using SwarmUI.Utils;
+using SwarmUI.Utils;
 using System.IO;
 
 namespace Hartsy.Extensions.VoiceAssistant.Configuration;
@@ -22,7 +22,11 @@ public static class ServiceConfiguration
 
     // Installation Configuration
     public static readonly TimeSpan InstallationTimeout = TimeSpan.FromMinutes(30);
-    public static readonly TimeSpan PackageInstallTimeout = TimeSpan.FromMinutes(10);
+    /// <summary>
+    /// Timeout for package installations. Increased to 30 minutes to accommodate slow package builds like halo, PyTorch, etc.
+    /// Some packages require significant build time, especially when compiling wheels.
+    /// </summary>
+    public static readonly TimeSpan PackageInstallTimeout = TimeSpan.FromMinutes(30);
     public static readonly int MaxInstallationRetries = 3;
 
     // API Configuration
@@ -39,14 +43,45 @@ public static class ServiceConfiguration
     // Required Dependencies
     public static readonly string[] CorePackages =
     {
+        // API Server Requirements
         "fastapi>=0.104.0",
         "uvicorn[standard]>=0.24.0",
         "python-multipart>=0.0.6",
         "pydantic>=2.5.0",
-        "numpy>=1.24.0",
-        "scipy>=1.10.0",
-        "torchaudio>=2.0.0",
-        "httpx>=0.25.0"
+        "httpx>=0.25.0",
+        "websockets==15.0.1",
+        "websocket-client==1.8.0",
+        
+        // Core Audio/ML Dependencies
+        "numpy>=1.26.0",
+        "scipy==1.15.2",
+        // PyTorch dependencies - using version 2.6.0 which is required by chatterbox-tts
+        // and has CUDA support for ComfyUI compatibility
+        "torch==2.6.0+cu126",  // CUDA 12.6 compatible version
+        "torchvision==0.21.0+cu126",  // Matching version with CUDA support
+        "torchaudio==2.6.0+cu126",  // Matching version with CUDA support
+        "soundfile==0.13.1",
+        "librosa==0.11.0",
+        
+        // RealtimeSTT Dependencies
+        "PyAudio==0.2.14",
+        "faster-whisper==1.1.1",
+        "pvporcupine==1.9.5",
+        "webrtcvad-wheels==2.0.14",
+        "openwakeword>=0.4.0",
+        "halo==0.0.31",       // Known problematic dependency
+        "log_symbols>=0.0.14", // Dependency of halo
+        "spinners>=0.0.24",    // Dependency of halo
+        "termcolor>=1.1.0",    // Dependency of halo
+        "colorama>=0.3.9",     // Dependency of halo
+        
+        // Chatterbox TTS Dependencies
+        "s3tokenizer",
+        "transformers==4.46.3",
+        "diffusers==0.29.0",
+        "resemble-perth==1.0.1",
+        "conformer==0.3.2",
+        "safetensors==0.5.3"
     };
 
     public static readonly string PrimarySTTEngine = "RealtimeSTT";

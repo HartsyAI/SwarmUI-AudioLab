@@ -234,7 +234,25 @@ public static class VoiceAssistantAPI
         {
             Logs.Debug($"[VoiceAssistant] {operation} request from session: {session.ID}");
 
-            // Get health information through service layer
+            // Check if installation is in progress
+            if (PythonBackendService.Instance.IsInstalling)
+            {
+                Logs.Debug("[VoiceAssistant] Skipping health check during installation");
+                var installResponse = new ServiceStatusResponse
+                {
+                    Success = true,
+                    BackendRunning = false,
+                    BackendHealthy = false,
+                    BackendUrl = Configuration.ServiceConfiguration.BackendUrl,
+                    ProcessId = 0,
+                    HasExited = false,
+                    Message = "Installation in progress, status check deferred"
+                };
+                return installResponse.ToJObject();
+            }
+
+            // Performing backend health check
+            Logs.Debug("[VoiceAssistant] Performing backend health check");
             var healthInfo = await PythonBackendService.Instance.GetHealthAsync();
 
             var response = new ServiceStatusResponse

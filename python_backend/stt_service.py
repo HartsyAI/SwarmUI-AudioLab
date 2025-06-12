@@ -99,7 +99,7 @@ class STTService:
                 use_microphone=False,  # We'll feed audio chunks manually
                 spinner=False,  # Disable spinner for server use
                 level=logging.WARNING,  # Reduce log verbosity
-                init_logging=False,  # We handle logging ourselves
+                # init_logging parameter removed - not supported in installed version
                 handle_buffer_overflow=True,
                 beam_size=5,
                 batch_size=16

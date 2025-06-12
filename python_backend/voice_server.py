@@ -19,6 +19,12 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any
 
+# Add current directory to Python path to ensure modules in this directory can be imported
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+    print(f"Added current directory to Python path: {current_dir}")
+
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -90,6 +96,9 @@ async def lifespan(app: FastAPI):
     - Graceful cleanup during shutdown
     - Resource management for STT/TTS services
     """
+    # Declare global variables at the beginning of the function
+    global stt_service_available, tts_service_available
+    
     logger.info("Starting Voice Assistant Backend Server")
     
     try:

@@ -1,4 +1,4 @@
-﻿using SwarmUI.Utils;
+using SwarmUI.Utils;
 using Hartsy.Extensions.VoiceAssistant.Configuration;
 using Hartsy.Extensions.VoiceAssistant.Models;
 using Hartsy.Extensions.VoiceAssistant.Common;
@@ -79,6 +79,19 @@ public class PythonBackendService : IDisposable
     {
         EnsureInitialized();
 
+        // Check for ongoing installation first, before taking lock
+        if (_dependencyInstaller.IsInstalling)
+        {
+            Logs.Info("[VoiceAssistant] Installation in progress, deferring backend start");
+            return new ServiceStatusResponse
+            {
+                Success = false,
+                Message = "Dependencies are currently being installed. Please wait for installation to complete before starting the backend.",
+                BackendRunning = false,
+                BackendHealthy = false
+            };
+        }
+
         lock (_serviceLock)
         {
             if (IsBackendRunning)
@@ -109,8 +122,21 @@ public class PythonBackendService : IDisposable
                 }
             }
 
-            // Check and install dependencies if needed
+            // Check and install dependencies if needed - lock prevents concurrent installation attempts
             await EnsureDependenciesAsync();
+
+            // Check again if another thread started installation while we were waiting
+            if (_dependencyInstaller.IsInstalling)
+            {
+                Logs.Info("[VoiceAssistant] Another thread started installation, deferring backend start");
+                return new ServiceStatusResponse
+                {
+                    Success = false,
+                    Message = "Dependencies are currently being installed. Please wait for installation to complete before starting the backend.",
+                    BackendRunning = false,
+                    BackendHealthy = false
+                };
+            }
 
             // Start the Python process
             bool started = await _pythonProcess.StartAsync(_pythonEnvironment.PythonPath);

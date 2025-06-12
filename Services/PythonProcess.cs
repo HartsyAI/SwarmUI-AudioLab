@@ -1,4 +1,4 @@
-﻿using SwarmUI.Utils;
+using SwarmUI.Utils;
 using System.Diagnostics;
 using Hartsy.Extensions.VoiceAssistant.Configuration;
 using Hartsy.Extensions.VoiceAssistant.Models;
@@ -84,12 +84,49 @@ public class PythonProcess : IDisposable
 
                 Logs.Info("[VoiceAssistant] Starting Python backend process");
 
-                // Use SwarmUI's PythonLaunchHelper for proper environment setup
-                _process = PythonLaunchHelper.LaunchGeneric(
-                    script: ServiceConfiguration.PythonBackendScript,
-                    autoOutput: false, // We handle output ourselves for better logging
-                    args: ["--port", ServiceConfiguration.BackendPort.ToString(), "--host", ServiceConfiguration.BackendHost]
-                );
+                // Create a custom ProcessStartInfo to ensure proper working directory
+                string backendDir = Path.GetDirectoryName(ServiceConfiguration.PythonBackendScript);
+                ProcessStartInfo startInfo = new()
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    WorkingDirectory = backendDir // Set working directory to python_backend folder
+                };
+                
+                // Get just the filename without the path for the script
+                string scriptFileName = Path.GetFileName(ServiceConfiguration.PythonBackendScript);
+                
+                // Configure Python environment and launch the process
+                if (File.Exists("./dlbackend/comfy/python_embeded/python.exe"))
+                {
+                    startInfo.FileName = "./dlbackend/comfy/python_embeded/python.exe";
+                    startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(Path.GetFullPath("./dlbackend/comfy/python_embeded"));
+                    PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[VoiceAssistant] ");
+                }
+                else if (File.Exists("./dlbackend/ComfyUI/venv/bin/python"))
+                {
+                    startInfo.FileName = "./dlbackend/ComfyUI/venv/bin/python";
+                    PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[VoiceAssistant] ");
+                    startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(Path.GetFullPath("./dlbackend/ComfyUI/venv/bin"));
+                }
+                else
+                {
+                    // Fall back to specified Python path
+                    startInfo.FileName = pythonPath;
+                    PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[VoiceAssistant] ");
+                }
+                
+                // Add script and arguments - using only the filename since we're already in the right directory
+                startInfo.ArgumentList.Add("-s");
+                startInfo.ArgumentList.Add(scriptFileName);
+                startInfo.ArgumentList.Add("--port");
+                startInfo.ArgumentList.Add(ServiceConfiguration.BackendPort.ToString());
+                startInfo.ArgumentList.Add("--host");
+                startInfo.ArgumentList.Add(ServiceConfiguration.BackendHost);
+                
+                // Start the process
+                _process = new Process { StartInfo = startInfo };
+                _process.Start();
 
                 if (_process == null)
                 {

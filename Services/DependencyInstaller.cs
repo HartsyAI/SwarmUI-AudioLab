@@ -1,4 +1,4 @@
-﻿using SwarmUI.Utils;
+using SwarmUI.Utils;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Hartsy.Extensions.VoiceAssistant.Configuration;
@@ -330,23 +330,62 @@ public class DependencyInstaller
 
     /// <summary>
     /// Installs a single package with detailed progress tracking.
+    /// Includes automatic retry for transient failures.
     /// </summary>
-    private async Task InstallSinglePackageWithProgressAsync(PythonEnvironmentInfo pythonInfo, string package, InstallationProgressTracker tracker)
+    private async Task InstallSinglePackageWithProgressAsync(PythonEnvironmentInfo pythonInfo, string package, InstallationProgressTracker tracker, int retryCount = 0, int maxRetries = 3)
     {
         try
         {
             Logs.Debug($"[VoiceAssistant] Installing package: {package}");
 
+            // Set up environment variables to make git more verbose
+            Dictionary<string, string> extraEnv = new Dictionary<string, string>
+            {
+                // Make git more verbose
+                { "GIT_CURL_VERBOSE", "1" },
+                { "GIT_TRACE", "1" },
+                { "GIT_TRACE_PACKET", "1" },
+                // Make pip and git clone show progress
+                { "PIP_VERBOSE", "3" } // More verbose pip output
+            };
+
+            // Configure with binary packages preferred and max verbosity
+            string arguments = $"-m pip install \"{package}\" --no-warn-script-location --progress-bar=on -vvv --prefer-binary";
+            
+            // For PyTorch packages, add the extra index URL for CUDA-enabled versions
+            if (package.Contains("torch") && !package.StartsWith("git+"))
+            {
+                // Use the PyTorch index for CUDA packages
+                arguments += " --extra-index-url https://download.pytorch.org/whl/cu126";
+                Logs.Info($"[VoiceAssistant] Using PyTorch CUDA index for package: {package} with CUDA 12.6");
+            }
+            
             var startInfo = new ProcessStartInfo
             {
                 FileName = pythonInfo.PythonPath,
-                Arguments = $"-m pip install \"{package}\" --no-warn-script-location --progress-bar=off -v",
+                Arguments = arguments,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 WorkingDirectory = Environment.CurrentDirectory
             };
+
+            // Add our extra environment variables
+            foreach (var kvp in extraEnv)
+            {
+                startInfo.EnvironmentVariables[kvp.Key] = kvp.Value;
+            }
+            
+            // Track if this is a git-based install
+            bool isGitInstall = package.StartsWith("git+", StringComparison.OrdinalIgnoreCase);
+            if (isGitInstall)
+            {
+                Logs.Info($"[VoiceAssistant] Installing from Git: {package} (this may take longer and show limited progress)");
+            }
+            
+            // Log command for debugging
+            Logs.Info($"[VoiceAssistant] Running pip command: {startInfo.FileName} {startInfo.Arguments}");
 
             // Clean environment for SwarmUI's Python
             PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[VoiceAssistant] ");
@@ -381,23 +420,80 @@ public class DependencyInstaller
                     Logs.Debug($"[VoiceAssistant] Pip: {line}");
                 }
             };
+            
+            // Also handle standard error output to catch errors
+            StringBuilder errorOutput = new StringBuilder();
+            process.ErrorDataReceived += (sender, e) =>
+            {
+                if (!string.IsNullOrEmpty(e?.Data))
+                {
+                    errorOutput.AppendLine(e.Data);
+                    Logs.Debug($"[VoiceAssistant] Pip Error: {e.Data}");
+                    
+                    // Log critical errors at warning level so they're more visible
+                    if (e.Data.Contains("ERROR:") || e.Data.Contains("fatal:") || 
+                        e.Data.Contains("Failed") || e.Data.Contains("Error:"))
+                    {
+                        Logs.Warning($"[VoiceAssistant] Pip installation issue detected: {e.Data}");
+                    }
+                    
+                    // Update last activity time
+                    lastUpdate = DateTime.Now;
+                }
+            };
 
             process.Start();
             process.BeginOutputReadLine();
+            process.BeginErrorReadLine(); // Make sure we read stderr as well
 
-            // Wait with timeout
-            bool finished = await Task.Run(() => process.WaitForExit((int)ServiceConfiguration.PackageInstallTimeout.TotalMilliseconds));
+            // Start a heartbeat task to provide periodic updates during long-running operations
+            var tokenSource = new CancellationTokenSource();
+            var heartbeatTask = StartHeartbeatUpdatesAsync(package, tracker, lastUpdate, tokenSource.Token);
 
-            if (!finished)
+            try
             {
-                try { process.Kill(); } catch { }
-                throw new TimeoutException($"Package installation timed out: {package}");
+                // Wait with timeout
+                bool finished = await Task.Run(() => process.WaitForExit((int)ServiceConfiguration.PackageInstallTimeout.TotalMilliseconds));
+
+                if (!finished)
+                {
+                    try { process.Kill(); } catch { }
+                    
+                    if (retryCount < maxRetries)
+                    {
+                        Logs.Warning($"[VoiceAssistant] Package installation timed out: {package}. Retrying ({retryCount+1}/{maxRetries})...");
+                        // Exponential backoff between retries
+                        await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, retryCount)));
+                        await InstallSinglePackageWithProgressAsync(pythonInfo, package, tracker, retryCount + 1, maxRetries);
+                        return;
+                    }
+                    
+                    throw new TimeoutException($"Package installation timed out after {retryCount + 1} attempts: {package}");
+                }
+
+                if (process.ExitCode != 0)
+                {
+                    var stderr = errorOutput.ToString();
+                    Logs.Error($"[VoiceAssistant] Package installation error: {package} - Exit code: {process.ExitCode}");
+                    
+                    if (retryCount < maxRetries)
+                    {
+                        Logs.Warning($"[VoiceAssistant] Failed to install {package}. Retrying ({retryCount+1}/{maxRetries})...");
+                        // Exponential backoff between retries
+                        await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, retryCount)));
+                        await InstallSinglePackageWithProgressAsync(pythonInfo, package, tracker, retryCount + 1, maxRetries);
+                        return;
+                    }
+                    
+                    throw new InvalidOperationException($"Failed to install {package} after {retryCount + 1} attempts: {stderr}");
+                }
             }
-
-            if (process.ExitCode != 0)
+            finally
             {
-                var stderr = await process.StandardError.ReadToEndAsync();
-                throw new InvalidOperationException($"Failed to install {package}: {stderr}");
+                // Stop the heartbeat task
+                tokenSource.Cancel();
+                try { await Task.WhenAny(heartbeatTask, Task.Delay(1000)); } catch { }
+                tokenSource.Dispose();
             }
 
             Logs.Debug($"[VoiceAssistant] Successfully installed: {package}");
@@ -448,6 +544,89 @@ public class DependencyInstaller
         {
             Logs.Debug($"[VoiceAssistant] Error checking package {packageName}: {ex.Message}");
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Provides periodic heartbeat updates during long-running package installations.
+    /// Ensures users know the process is still running even when there's no visible pip output.
+    /// </summary>
+    private async Task StartHeartbeatUpdatesAsync(string package, InstallationProgressTracker tracker, DateTime lastUpdateTime, CancellationToken cancellationToken)
+    {
+        // Dictionary of known slow packages and operations with time estimates
+        var slowOperations = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "halo", "Building wheel for halo can take 5-10+ minutes" },
+            { "torch", "PyTorch installation can take 10-15+ minutes depending on your network" },
+            { "torchaudio", "TorchAudio installation can take 10+ minutes" },
+            { "numpy", "NumPy compilation can take several minutes" },
+            { "chatterbox", "Chatterbox TTS installation downloads models and can take 15+ minutes" }
+        };
+
+        // Get custom message if this is known to be a slow package
+        string customTimeMessage = string.Empty;
+        foreach (var slowOp in slowOperations)
+        {
+            if (package.Contains(slowOp.Key, StringComparison.OrdinalIgnoreCase))
+            {
+                customTimeMessage = slowOp.Value;
+                break;
+            }
+        }
+
+        // Show initial message for slow operations
+        if (!string.IsNullOrEmpty(customTimeMessage))
+        {
+            Logs.Info($"[VoiceAssistant] Note: {customTimeMessage}");
+            tracker.UpdateProgress(tracker.Progress, tracker.CurrentStep, package, tracker.DownloadProgress, 
+                $"{tracker.StatusMessage} - {customTimeMessage}");
+        }
+
+        int heartbeatCount = 0;
+        var startTime = DateTime.Now;
+
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(15000, cancellationToken); // Check every 15 seconds
+                
+                // If more than 15 seconds passed since last update, show a heartbeat
+                var timeSinceUpdate = DateTime.Now - lastUpdateTime;
+                if (timeSinceUpdate.TotalSeconds > 15)
+                {
+                    heartbeatCount++;
+                    var elapsedMinutes = (DateTime.Now - startTime).TotalMinutes;
+                    
+                    // Every 4th heartbeat (1 minute) show a more detailed update
+                    if (heartbeatCount % 4 == 0)
+                    {
+                        string message = $"Still working - {elapsedMinutes:F1} minutes elapsed";
+                        if (!string.IsNullOrEmpty(customTimeMessage))
+                        {
+                            message += $" - {customTimeMessage}";
+                        }
+                        
+                        Logs.Info($"[VoiceAssistant] Installation heartbeat: {message}");
+                        tracker.UpdateProgress(tracker.Progress, tracker.CurrentStep, package, tracker.DownloadProgress, 
+                            $"{tracker.StatusMessage} - {message}");
+                    }
+                    // Simple heartbeat for other intervals
+                    else
+                    {
+                        Logs.Debug($"[VoiceAssistant] Installation still in progress ({elapsedMinutes:F1} min elapsed) - {package}");
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when cancellation is requested
+        }
+        catch (Exception ex)
+        {
+            // Just log any errors, don't let heartbeat issues affect the main installation
+            Logs.Debug($"[VoiceAssistant] Heartbeat error: {ex.Message}");
         }
     }
 
