@@ -1,5 +1,5 @@
 ﻿/**
- * Voice Assistant UI Module
+ * Voice Assistant UI Module - Complete Redesign
  * Handles all DOM manipulation, user interface updates, and user interactions.
  * Provides a clean interface between the core application logic and the HTML elements.
  */
@@ -11,19 +11,40 @@ class VoiceAssistantUI {
 
         // Event handlers
         this.eventHandlers = {
-            refreshStatus: null,
+            // Service control
+            refreshServiceStatus: null,
             startService: null,
             stopService: null,
-            checkInstallation: null,
-            toggleRecording: null,
-            sendTextCommand: null,
-            volumeChange: null,
-            clearTranscript: null,
+            confirmInstallation: null,
+
+            // Mode switching
+            switchMode: null,
+
+            // STT mode
+            sttStartRecording: null,
+            sttStopRecording: null,
+
+            // TTS mode
+            ttsSpeak: null,
+            ttsStop: null,
+
+            // STS mode
+            stsStartConversation: null,
+            stsStopConversation: null,
+
+            // Utility
+            clearConsole: null,
             clearHistory: null
         };
 
-        // Auto-hide timers
+        // UI state
+        this.currentMode = 'stt';
+        this.consoleLines = [];
+        this.maxConsoleLines = 100;
         this.autoHideTimers = {};
+
+        // Bootstrap modal instances
+        this.modals = {};
 
         console.log('[VoiceAssistant] UI module initialized');
     }
@@ -41,6 +62,9 @@ class VoiceAssistantUI {
             // Set up event listeners
             this.setupEventListeners();
 
+            // Initialize modals
+            this.initializeModals();
+
             // Initialize UI state
             this.initializeUI();
 
@@ -57,12 +81,40 @@ class VoiceAssistantUI {
      */
     cacheElements() {
         const elementIds = [
-            'refreshStatus', 'startService', 'stopService', 'checkInstallation', 'statusIcon', 'statusText',
-            'toggleRecording', 'recordingStatus', 'voiceLanguage', 'ttsVoice', 'voiceVolume',
-            'volumeValue', 'textCommand', 'sendTextCommand', 'currentTranscript', 'commandHistory',
-            'clearTranscript', 'clearHistory', 'errorAlert', 'errorMessage', 'successAlert', 'successMessage',
-            'warningAlert', 'warningMessage', 'installationProgress', 'progressBar', 'installationStatus',
-            'installationDetails', 'installationInfo', 'sttEngine', 'ttsEngine', 'backendStatus', 'lastHealthCheck'
+            // Service control
+            'refreshServiceStatus', 'primaryServiceButton', 'serviceStatusIcon', 'serviceStatusText',
+            'dependenciesCounter', 'coreDependencies', 'aiEngines',
+
+            // Console
+            'consoleOutput', 'clearConsole', 'autoScrollConsole',
+
+            // Mode tabs
+            'sttModeTab', 'ttsModeTab', 'stsModeTab', 'commandsModeTab',
+
+            // Mode panels
+            'sttMode', 'ttsMode', 'stsMode', 'commandsMode',
+
+            // STT elements
+            'sttRecordButton', 'sttRecordingStatus', 'sttLanguage', 'sttConfidence', 'sttTranscription',
+
+            // TTS elements
+            'ttsTextInput', 'ttsCharCount', 'ttsVoice', 'ttsVolume', 'ttsVolumeNumber',
+            'ttsSpeakButton', 'ttsStopButton',
+
+            // STS elements
+            'stsStartButton', 'stsStatus', 'stsUserSpeech', 'stsAiResponse', 'stsPlayResponse',
+
+            // History
+            'sessionHistory', 'clearHistory',
+
+            // Modals
+            'installationModal', 'installationProgressModal', 'confirmInstallation',
+            'packagesToInstall', 'installationProgressText', 'installationProgressPercent',
+            'installationProgressBar', 'currentPackage', 'packageProgress', 'installationLiveOutput',
+
+            // Alerts
+            'successAlert', 'successMessage', 'errorAlert', 'errorMessage',
+            'warningAlert', 'warningMessage', 'infoAlert', 'infoMessage'
         ];
 
         elementIds.forEach(id => {
@@ -77,498 +129,654 @@ class VoiceAssistantUI {
      * Set up event listeners for UI elements
      */
     setupEventListeners() {
-        // Service control buttons
-        if (this.elements.refreshStatus) {
-            this.elements.refreshStatus.addEventListener('click', () => {
-                if (this.eventHandlers.refreshStatus) {
-                    this.eventHandlers.refreshStatus();
+        // Service control
+        this.elements.refreshServiceStatus?.addEventListener('click', () => {
+            this.eventHandlers.refreshServiceStatus?.();
+        });
+
+        this.elements.primaryServiceButton?.addEventListener('click', () => {
+            this.handlePrimaryServiceButton();
+        });
+
+        this.elements.confirmInstallation?.addEventListener('click', () => {
+            this.eventHandlers.confirmInstallation?.();
+            this.hideModal('installationModal');
+        });
+
+        // Mode tabs
+        document.querySelectorAll('.mode-tab').forEach(tab => {
+            tab.addEventListener('click', (e) => {
+                const mode = e.currentTarget.dataset.mode;
+                if (mode && !e.currentTarget.disabled) {
+                    this.switchMode(mode);
+                    this.eventHandlers.switchMode?.(mode);
                 }
             });
-        }
+        });
 
-        if (this.elements.startService) {
-            this.elements.startService.addEventListener('click', () => {
-                if (this.eventHandlers.startService) {
-                    this.eventHandlers.startService();
-                }
-            });
-        }
+        // STT controls
+        this.elements.sttRecordButton?.addEventListener('click', () => {
+            if (this.elements.sttRecordButton.classList.contains('recording')) {
+                this.eventHandlers.sttStopRecording?.();
+            } else {
+                this.eventHandlers.sttStartRecording?.();
+            }
+        });
 
-        if (this.elements.stopService) {
-            this.elements.stopService.addEventListener('click', () => {
-                if (this.eventHandlers.stopService) {
-                    this.eventHandlers.stopService();
-                }
-            });
-        }
+        // TTS controls
+        this.elements.ttsSpeakButton?.addEventListener('click', () => {
+            const text = this.elements.ttsTextInput?.value?.trim();
+            if (text) {
+                this.eventHandlers.ttsSpeak?.(text);
+            }
+        });
 
-        if (this.elements.checkInstallation) {
-            this.elements.checkInstallation.addEventListener('click', () => {
-                if (this.eventHandlers.checkInstallation) {
-                    this.eventHandlers.checkInstallation();
-                }
-            });
-        }
+        this.elements.ttsStopButton?.addEventListener('click', () => {
+            this.eventHandlers.ttsStop?.();
+        });
 
-        // Voice recording button
-        if (this.elements.toggleRecording) {
-            this.elements.toggleRecording.addEventListener('click', () => {
-                if (this.eventHandlers.toggleRecording) {
-                    this.eventHandlers.toggleRecording();
-                }
-            });
-        }
+        this.elements.ttsTextInput?.addEventListener('input', (e) => {
+            this.updateCharCount(e.target.value);
+        });
 
-        // Text command input
-        if (this.elements.sendTextCommand) {
-            this.elements.sendTextCommand.addEventListener('click', () => {
-                if (this.eventHandlers.sendTextCommand && this.elements.textCommand) {
-                    this.eventHandlers.sendTextCommand(this.elements.textCommand.value);
-                }
-            });
-        }
+        // TTS volume slider sync
+        this.elements.ttsVolume?.addEventListener('input', (e) => {
+            this.elements.ttsVolumeNumber.value = e.target.value;
+            this.updateSliderBackground(e.target);
+        });
 
-        if (this.elements.textCommand) {
-            this.elements.textCommand.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter' && this.eventHandlers.sendTextCommand) {
-                    this.eventHandlers.sendTextCommand(this.elements.textCommand.value);
-                }
-            });
-        }
+        this.elements.ttsVolumeNumber?.addEventListener('input', (e) => {
+            this.elements.ttsVolume.value = e.target.value;
+            this.updateSliderBackground(this.elements.ttsVolume);
+        });
 
-        // Volume slider
-        if (this.elements.voiceVolume) {
-            this.elements.voiceVolume.addEventListener('input', (e) => {
-                if (this.elements.volumeValue) {
-                    this.elements.volumeValue.textContent = e.target.value;
-                }
-                if (this.eventHandlers.volumeChange) {
-                    this.eventHandlers.volumeChange(parseFloat(e.target.value));
-                }
-            });
-        }
+        // STS controls
+        this.elements.stsStartButton?.addEventListener('click', () => {
+            if (this.elements.stsStartButton.classList.contains('recording')) {
+                this.eventHandlers.stsStopConversation?.();
+            } else {
+                this.eventHandlers.stsStartConversation?.();
+            }
+        });
 
-        // Clear buttons
-        if (this.elements.clearTranscript) {
-            this.elements.clearTranscript.addEventListener('click', () => {
-                if (this.eventHandlers.clearTranscript) {
-                    this.eventHandlers.clearTranscript();
-                }
-            });
-        }
+        this.elements.stsPlayResponse?.addEventListener('click', () => {
+            // TODO: Implement audio playback for STS responses
+            console.log('[VoiceAssistant] TODO: Implement STS response playback');
+        });
 
-        if (this.elements.clearHistory) {
-            this.elements.clearHistory.addEventListener('click', () => {
-                if (this.eventHandlers.clearHistory) {
-                    this.eventHandlers.clearHistory();
-                }
-            });
-        }
+        // Console controls
+        this.elements.clearConsole?.addEventListener('click', () => {
+            this.clearConsole();
+            this.eventHandlers.clearConsole?.();
+        });
 
-        // Alert close buttons (global functions)
-        window.hideError = () => this.hideError();
-        window.hideSuccess = () => this.hideSuccess();
-        window.hideWarning = () => this.hideWarning();
+        // History controls
+        this.elements.clearHistory?.addEventListener('click', () => {
+            this.clearHistory();
+            this.eventHandlers.clearHistory?.();
+        });
+
+        // Global alert close handlers
+        window.hideVoiceAlert = (type) => this.hideAlert(type);
+
+        console.log('[VoiceAssistant] Event listeners set up');
+    }
+
+    /**
+     * Initialize Bootstrap modals
+     */
+    initializeModals() {
+        try {
+            // Initialize modals if Bootstrap is available
+            if (window.bootstrap) {
+                this.modals.installation = new bootstrap.Modal(this.elements.installationModal);
+                this.modals.installationProgress = new bootstrap.Modal(this.elements.installationProgressModal);
+            }
+        } catch (error) {
+            console.warn('[VoiceAssistant] Bootstrap modals not available:', error);
+        }
     }
 
     /**
      * Initialize UI state
      */
     initializeUI() {
-        // Clear transcript and history displays
-        this.clearTranscript();
-        this.updateHistoryDisplay([]);
+        // Set initial mode
+        this.switchMode('stt');
+
+        // Initialize dependencies display
+        this.updateDependenciesDisplay([]);
+
+        // Initialize console
+        this.addConsoleMessage('info', 'Voice Assistant UI initialized');
+
+        // Clear history
+        this.clearHistory();
 
         // Hide all alerts
         this.hideAllAlerts();
 
-        // Hide installation progress
-        this.hideInstallationProgress();
+        // Initialize volume slider
+        this.updateSliderBackground(this.elements.ttsVolume);
 
-        // Set default values
-        if (this.elements.volumeValue) {
-            this.elements.volumeValue.textContent = '0.8';
-        }
+        // Initialize char count
+        this.updateCharCount('');
     }
 
     /**
      * Event handler registration methods
      */
-    onRefreshStatus(handler) { this.eventHandlers.refreshStatus = handler; }
+    onRefreshServiceStatus(handler) { this.eventHandlers.refreshServiceStatus = handler; }
     onStartService(handler) { this.eventHandlers.startService = handler; }
     onStopService(handler) { this.eventHandlers.stopService = handler; }
-    onCheckInstallation(handler) { this.eventHandlers.checkInstallation = handler; }
-    onToggleRecording(handler) { this.eventHandlers.toggleRecording = handler; }
-    onSendTextCommand(handler) { this.eventHandlers.sendTextCommand = handler; }
-    onVolumeChange(handler) { this.eventHandlers.volumeChange = handler; }
-    onClearTranscript(handler) { this.eventHandlers.clearTranscript = handler; }
+    onConfirmInstallation(handler) { this.eventHandlers.confirmInstallation = handler; }
+    onSwitchMode(handler) { this.eventHandlers.switchMode = handler; }
+    onSTTStartRecording(handler) { this.eventHandlers.sttStartRecording = handler; }
+    onSTTStopRecording(handler) { this.eventHandlers.sttStopRecording = handler; }
+    onTTSSpeak(handler) { this.eventHandlers.ttsSpeak = handler; }
+    onTTSStop(handler) { this.eventHandlers.ttsStop = handler; }
+    onSTSStartConversation(handler) { this.eventHandlers.stsStartConversation = handler; }
+    onSTSStopConversation(handler) { this.eventHandlers.stsStopConversation = handler; }
+    onClearConsole(handler) { this.eventHandlers.clearConsole = handler; }
     onClearHistory(handler) { this.eventHandlers.clearHistory = handler; }
+
+    /**
+     * Handle primary service button click (Install/Start/Stop)
+     */
+    handlePrimaryServiceButton() {
+        const buttonText = this.elements.primaryServiceButton?.textContent || '';
+
+        if (buttonText.includes('Install')) {
+            this.showInstallationModal();
+        } else if (buttonText.includes('Start')) {
+            this.eventHandlers.startService?.();
+        } else if (buttonText.includes('Stop')) {
+            this.eventHandlers.stopService?.();
+        }
+    }
 
     /**
      * Update service status display
      */
-    updateServiceStatus(status, text) {
-        if (this.elements.statusIcon) {
+    updateServiceStatus(status, text, isHealthy = false, isRunning = false) {
+        if (this.elements.serviceStatusIcon) {
             const iconMap = {
-                'online': '<i class="fas fa-circle text-success"></i>',
-                'offline': '<i class="fas fa-circle text-secondary"></i>',
-                'warning': '<i class="fas fa-circle text-warning"></i>',
-                'error': '<i class="fas fa-circle text-danger"></i>',
-                'checking': '<i class="fas fa-circle text-info spinning"></i>',
-                'starting': '<i class="fas fa-circle text-info spinning"></i>',
-                'stopping': '<i class="fas fa-circle text-warning spinning"></i>'
+                'online': '<i class="fas fa-circle" style="color: var(--green);"></i>',
+                'offline': '<i class="fas fa-circle" style="color: var(--text-soft);"></i>',
+                'warning': '<i class="fas fa-circle" style="color: var(--emphasis);"></i>',
+                'error': '<i class="fas fa-circle" style="color: var(--red);"></i>',
+                'checking': '<i class="fas fa-spinner fa-spin" style="color: var(--text);"></i>',
+                'starting': '<i class="fas fa-spinner fa-spin" style="color: var(--emphasis);"></i>',
+                'stopping': '<i class="fas fa-spinner fa-spin" style="color: var(--emphasis);"></i>',
+                'installing': '<i class="fas fa-cog fa-spin" style="color: var(--emphasis);"></i>'
             };
 
-            this.elements.statusIcon.innerHTML = iconMap[status] || iconMap['offline'];
+            this.elements.serviceStatusIcon.innerHTML = iconMap[status] || iconMap['offline'];
         }
 
-        if (this.elements.statusText) {
-            this.elements.statusText.textContent = text;
+        if (this.elements.serviceStatusText) {
+            this.elements.serviceStatusText.textContent = text;
         }
 
-        // Update last health check time
-        if (this.elements.lastHealthCheck) {
-            this.elements.lastHealthCheck.textContent = new Date().toLocaleTimeString();
-        }
+        // Update primary button based on service state
+        this.updatePrimaryServiceButton(isHealthy, isRunning);
     }
 
     /**
-     * Update UI state based on application state
+     * Update primary service button state
      */
-    updateState(state) {
-        // Update service control buttons
-        if (this.elements.startService) {
-            this.elements.startService.disabled = state.serviceRunning || state.isInstallingDependencies;
-        }
-        if (this.elements.stopService) {
-            this.elements.stopService.disabled = !state.serviceRunning || state.isInstallingDependencies;
-        }
+    updatePrimaryServiceButton(isHealthy, isRunning, dependenciesInstalled = true) {
+        const button = this.elements.primaryServiceButton;
+        if (!button) return;
 
-        // Update recording button
-        this.updateRecordingButton(state);
-
-        // Update recording status
-        this.updateRecordingStatus(state);
-
-        // Update text command button
-        if (this.elements.sendTextCommand) {
-            this.elements.sendTextCommand.disabled = state.isProcessing || state.isInstallingDependencies;
-        }
-    }
-
-    /**
-     * Update recording button appearance and state
-     */
-    updateRecordingButton(state) {
-        const recordButton = this.elements.toggleRecording;
-        if (!recordButton) return;
-
-        const canRecord = state.serviceRunning && state.serviceHealthy && !state.isProcessing && !state.isInstallingDependencies;
-        recordButton.disabled = !canRecord;
-
-        if (state.isRecording) {
-            recordButton.className = 'btn btn-danger btn-lg voice-record-btn recording';
-            recordButton.innerHTML = '<i class="fas fa-stop"></i><span class="btn-text">Stop Recording</span>';
-        } else if (state.isProcessing) {
-            recordButton.className = 'btn btn-warning btn-lg voice-record-btn processing';
-            recordButton.innerHTML = '<i class="fas fa-cog fa-spin"></i><span class="btn-text">Processing...</span>';
+        if (!dependenciesInstalled) {
+            button.innerHTML = '<i class="fas fa-download"></i> Install Dependencies';
+            button.disabled = false;
+            button.className = 'basic-button btn-primary';
+        } else if (!isRunning) {
+            button.innerHTML = '<i class="fas fa-play"></i> Start Service';
+            button.disabled = false;
+            button.className = 'basic-button btn-primary';
+        } else if (isRunning && isHealthy) {
+            button.innerHTML = '<i class="fas fa-stop"></i> Stop Service';
+            button.disabled = false;
+            button.className = 'basic-button';
         } else {
-            recordButton.className = 'btn btn-primary btn-lg voice-record-btn';
-            recordButton.innerHTML = '<i class="fas fa-microphone"></i><span class="btn-text">Start Listening</span>';
+            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting...';
+            button.disabled = true;
+            button.className = 'basic-button';
         }
     }
 
     /**
-     * Update recording status text
+     * Update dependencies display
      */
-    updateRecordingStatus(state) {
-        const statusElement = this.elements.recordingStatus;
-        if (!statusElement) return;
+    updateDependenciesDisplay(dependencies) {
+        // Update counter
+        const installed = dependencies.filter(dep => dep.status === 'installed').length;
+        const total = dependencies.length;
 
-        if (state.isRecording) {
-            statusElement.className = 'recording-status listening';
-            statusElement.innerHTML = '<span class="status-text">Listening...</span>';
-        } else if (state.isProcessing) {
-            statusElement.className = 'recording-status processing';
-            statusElement.innerHTML = '<span class="status-text">Processing...</span>';
-        } else if (state.isInstallingDependencies) {
-            statusElement.className = 'recording-status processing';
-            statusElement.innerHTML = '<span class="status-text">Installing dependencies...</span>';
-        } else if (state.serviceRunning && state.serviceHealthy) {
-            statusElement.className = 'recording-status ready';
-            statusElement.innerHTML = '<span class="status-text">Ready to listen</span>';
-        } else {
-            statusElement.className = 'recording-status';
-            statusElement.innerHTML = '<span class="status-text">Service not ready</span>';
+        if (this.elements.dependenciesCounter) {
+            this.elements.dependenciesCounter.textContent = `${installed}/${total} installed`;
         }
+
+        // Group dependencies by category
+        const corePackages = dependencies.filter(dep => dep.category === 'core');
+        const aiEngines = dependencies.filter(dep => dep.category === 'ai');
+
+        this.updateDependencyCategory('coreDependencies', corePackages);
+        this.updateDependencyCategory('aiEngines', aiEngines);
     }
 
     /**
-     * Get current settings from UI elements
+     * Update a dependency category display
      */
-    getCurrentSettings() {
-        return {
-            language: this.elements.voiceLanguage?.value || 'en-US',
-            voice: this.elements.ttsVoice?.value || 'default',
-            volume: parseFloat(this.elements.voiceVolume?.value || '0.8')
-        };
-    }
+    updateDependencyCategory(elementId, packages) {
+        const container = this.elements[elementId];
+        if (!container) return;
 
-    /**
-     * Update transcript display
-     */
-    updateTranscript(text) {
-        const transcriptElement = this.elements.currentTranscript;
-        if (!transcriptElement) return;
-
-        transcriptElement.innerHTML = `
-            <div class="transcript-item">
-                <div class="timestamp">${new Date().toLocaleTimeString()}</div>
-                <div class="content">${this.escapeHtml(text)}</div>
-            </div>
-        `;
-    }
-
-    /**
-     * Clear transcript display
-     */
-    clearTranscript() {
-        const transcriptElement = this.elements.currentTranscript;
-        if (transcriptElement) {
-            transcriptElement.innerHTML = `
-                <div class="empty-state">
-                    <i class="fas fa-microphone-slash text-muted"></i>
-                    <p class="text-muted mb-0">No transcript available</p>
-                </div>
-            `;
-        }
-    }
-
-    /**
-     * Update command history display
-     */
-    updateHistoryDisplay(commandHistory) {
-        const historyElement = this.elements.commandHistory;
-        if (!historyElement) return;
-
-        if (commandHistory.length === 0) {
-            historyElement.innerHTML = `
-                <div class="empty-state">
-                    <i class="fas fa-history text-muted"></i>
-                    <p class="text-muted mb-0">No commands yet</p>
-                </div>
-            `;
+        if (packages.length === 0) {
+            container.innerHTML = '<div class="dependency-loading">Checking...</div>';
             return;
         }
 
-        const historyHTML = commandHistory.map(item => `
-            <div class="history-item">
-                <div class="timestamp">${item.timestamp.toLocaleTimeString()}</div>
-                <div class="command-type">${item.type}</div>
-                <div class="content">${this.escapeHtml(item.input)}</div>
-                <div class="response">${this.escapeHtml(item.response)}</div>
+        const html = packages.map(pkg => `
+            <div class="dependency-item">
+                <span class="dependency-status ${pkg.status}">
+                    ${this.getDependencyStatusIcon(pkg.status)}
+                </span>
+                <span class="dependency-name">${pkg.name}</span>
+                ${pkg.version ? `<span class="dependency-version">${pkg.version}</span>` : ''}
             </div>
         `).join('');
 
-        historyElement.innerHTML = historyHTML;
+        container.innerHTML = html;
     }
 
     /**
-     * Clear text input
+     * Get dependency status icon
      */
-    clearTextInput() {
-        if (this.elements.textCommand) {
-            this.elements.textCommand.value = '';
+    getDependencyStatusIcon(status) {
+        const icons = {
+            'installed': '✅',
+            'missing': '❌',
+            'installing': '⚙️',
+            'error': '⚠️'
+        };
+        return icons[status] || '❓';
+    }
+
+    /**
+     * Switch between modes (STT/TTS/STS/Commands)
+     */
+    switchMode(mode) {
+        this.currentMode = mode;
+
+        // Update tabs
+        document.querySelectorAll('.mode-tab').forEach(tab => {
+            tab.classList.remove('active');
+            if (tab.dataset.mode === mode) {
+                tab.classList.add('active');
+            }
+        });
+
+        // Update panels
+        document.querySelectorAll('.mode-panel').forEach(panel => {
+            panel.classList.remove('active');
+        });
+
+        const activePanel = this.elements[`${mode}Mode`];
+        if (activePanel) {
+            activePanel.classList.add('active');
+        }
+
+        this.addConsoleMessage('info', `Switched to ${mode.toUpperCase()} mode`);
+    }
+
+    /**
+     * Update STT recording state
+     */
+    updateSTTRecordingState(isRecording, isProcessing = false) {
+        const button = this.elements.sttRecordButton;
+        const status = this.elements.sttRecordingStatus;
+
+        if (!button || !status) return;
+
+        if (isRecording) {
+            button.innerHTML = '<i class="fas fa-stop"></i><span class="button-text">Stop Recording</span>';
+            button.classList.add('recording');
+            status.textContent = 'Listening...';
+            status.className = 'recording-status listening';
+        } else if (isProcessing) {
+            button.innerHTML = '<i class="fas fa-cog fa-spin"></i><span class="button-text">Processing...</span>';
+            button.classList.remove('recording');
+            button.classList.add('processing');
+            status.textContent = 'Processing audio...';
+            status.className = 'recording-status processing';
+        } else {
+            button.innerHTML = '<i class="fas fa-microphone"></i><span class="button-text">Start Listening</span>';
+            button.classList.remove('recording', 'processing');
+            status.textContent = 'Ready to listen';
+            status.className = 'recording-status ready';
         }
     }
 
     /**
-     * Show/hide installation progress
+     * Update STT transcription display
      */
-    showInstallationProgress(show, progress = 0, status = '') {
-        if (this.elements.installationProgress) {
-            this.elements.installationProgress.style.display = show ? 'block' : 'none';
+    updateSTTTranscription(text, confidence = null) {
+        const transcription = this.elements.sttTranscription;
+        const confidenceDisplay = this.elements.sttConfidence;
+
+        if (transcription) {
+            if (text) {
+                transcription.textContent = text;
+                transcription.classList.remove('empty');
+            } else {
+                transcription.textContent = 'Click "Start Listening" to begin speech recognition';
+                transcription.classList.add('empty');
+            }
         }
 
-        if (show) {
-            this.updateInstallationProgress(progress, status);
+        if (confidenceDisplay && confidence !== null) {
+            confidenceDisplay.textContent = `${Math.round(confidence * 100)}%`;
         }
     }
 
     /**
-     * Hide installation progress
+     * Update TTS controls state
      */
-    hideInstallationProgress() {
-        this.showInstallationProgress(false);
+    updateTTSControlsState(isSpeaking, canSpeak = true) {
+        const speakButton = this.elements.ttsSpeakButton;
+        const stopButton = this.elements.ttsStopButton;
+
+        if (speakButton) {
+            speakButton.disabled = !canSpeak || isSpeaking;
+            if (isSpeaking) {
+                speakButton.innerHTML = '<i class="fas fa-cog fa-spin"></i> Speaking...';
+            } else {
+                speakButton.innerHTML = '<i class="fas fa-volume-up"></i> Speak Text';
+            }
+        }
+
+        if (stopButton) {
+            stopButton.disabled = !isSpeaking;
+        }
+    }
+
+    /**
+     * Update TTS character count
+     */
+    updateCharCount(text) {
+        const charCount = this.elements.ttsCharCount;
+        if (charCount) {
+            charCount.textContent = text.length;
+
+            // Color coding for character count
+            if (text.length > 800) {
+                charCount.style.color = 'var(--red)';
+            } else if (text.length > 600) {
+                charCount.style.color = 'var(--emphasis)';
+            } else {
+                charCount.style.color = 'var(--text-soft)';
+            }
+        }
+
+        // Update speak button state
+        const speakButton = this.elements.ttsSpeakButton;
+        if (speakButton) {
+            speakButton.disabled = text.trim().length === 0;
+        }
+    }
+
+    /**
+     * Update STS conversation state
+     */
+    updateSTSConversationState(isActive, userSpeech = '', aiResponse = '') {
+        const button = this.elements.stsStartButton;
+        const status = this.elements.stsStatus;
+        const userBubble = this.elements.stsUserSpeech;
+        const aiBubble = this.elements.stsAiResponse;
+        const playButton = this.elements.stsPlayResponse;
+
+        if (button) {
+            if (isActive) {
+                button.innerHTML = '<i class="fas fa-stop"></i><span class="button-text">Stop Conversation</span>';
+                button.classList.add('recording');
+            } else {
+                button.innerHTML = '<i class="fas fa-comments"></i><span class="button-text">Start Conversation</span>';
+                button.classList.remove('recording');
+            }
+        }
+
+        if (status) {
+            status.textContent = isActive ? 'Listening for conversation...' : 'Ready for conversation';
+            status.className = isActive ? 'recording-status listening' : 'recording-status ready';
+        }
+
+        if (userBubble) {
+            if (userSpeech) {
+                userBubble.textContent = userSpeech;
+                userBubble.classList.remove('empty');
+            } else {
+                userBubble.textContent = 'Start conversation to see your speech here';
+                userBubble.classList.add('empty');
+            }
+        }
+
+        if (aiBubble) {
+            if (aiResponse) {
+                aiBubble.textContent = aiResponse;
+                aiBubble.classList.remove('empty');
+                if (playButton) {
+                    playButton.style.display = 'flex';
+                }
+            } else {
+                aiBubble.textContent = 'AI responses will appear here';
+                aiBubble.classList.add('empty');
+                if (playButton) {
+                    playButton.style.display = 'none';
+                }
+            }
+        }
+    }
+
+    /**
+     * Add message to console output
+     */
+    addConsoleMessage(type, message, timestamp = null) {
+        const ts = timestamp || new Date().toLocaleTimeString();
+        const line = { type, message, timestamp: ts };
+
+        this.consoleLines.push(line);
+
+        // Limit console lines
+        if (this.consoleLines.length > this.maxConsoleLines) {
+            this.consoleLines = this.consoleLines.slice(-this.maxConsoleLines);
+        }
+
+        this.updateConsoleDisplay();
+    }
+
+    /**
+     * Update console display
+     */
+    updateConsoleDisplay() {
+        const console = this.elements.consoleOutput;
+        if (!console) return;
+
+        const html = this.consoleLines.map(line => `
+            <div class="console-line console-${line.type}">
+                <span class="console-timestamp">[${line.timestamp}]</span>
+                <span class="console-message">${this.escapeHtml(line.message)}</span>
+            </div>
+        `).join('');
+
+        console.innerHTML = html;
+
+        // Auto-scroll if enabled
+        if (this.elements.autoScrollConsole?.checked) {
+            console.scrollTop = console.scrollHeight;
+        }
+    }
+
+    /**
+     * Clear console output
+     */
+    clearConsole() {
+        this.consoleLines = [];
+        this.updateConsoleDisplay();
+    }
+
+    /**
+     * Add item to session history
+     */
+    addHistoryItem(mode, input, response, timestamp = null) {
+        const historyContainer = this.elements.sessionHistory;
+        if (!historyContainer) return;
+
+        const ts = timestamp || new Date().toLocaleTimeString();
+        const isEmpty = historyContainer.querySelector('.history-empty');
+
+        if (isEmpty) {
+            historyContainer.innerHTML = '';
+        }
+
+        const historyItem = document.createElement('div');
+        historyItem.className = 'history-item fade-in-up';
+        historyItem.innerHTML = `
+            <div class="history-timestamp">${ts}</div>
+            <div class="history-mode">${mode.toUpperCase()}</div>
+            <div class="history-content">${this.escapeHtml(input)}</div>
+            <div class="history-response">${this.escapeHtml(response)}</div>
+        `;
+
+        historyContainer.insertBefore(historyItem, historyContainer.firstChild);
+
+        // Limit history items
+        const items = historyContainer.querySelectorAll('.history-item');
+        if (items.length > 20) {
+            items[items.length - 1].remove();
+        }
+    }
+
+    /**
+     * Clear session history
+     */
+    clearHistory() {
+        const historyContainer = this.elements.sessionHistory;
+        if (historyContainer) {
+            historyContainer.innerHTML = `
+                <div class="history-empty">
+                    <i class="fas fa-history"></i>
+                    <p>No interactions yet. Start using voice features to see history here.</p>
+                </div>
+            `;
+        }
+    }
+
+    /**
+     * Show installation confirmation modal
+     */
+    showInstallationModal() {
+        if (this.modals.installation) {
+            this.modals.installation.show();
+        } else {
+            // Fallback for when Bootstrap is not available
+            const modal = this.elements.installationModal;
+            if (modal) {
+                modal.style.display = 'block';
+                modal.classList.add('show');
+            }
+        }
+    }
+
+    /**
+     * Show installation progress modal
+     */
+    showInstallationProgressModal() {
+        if (this.modals.installationProgress) {
+            this.modals.installationProgress.show();
+        } else {
+            // Fallback for when Bootstrap is not available
+            const modal = this.elements.installationProgressModal;
+            if (modal) {
+                modal.style.display = 'block';
+                modal.classList.add('show');
+            }
+        }
+    }
+
+    /**
+     * Hide a modal
+     */
+    hideModal(modalId) {
+        const modalKey = modalId.replace('Modal', '');
+        if (this.modals[modalKey]) {
+            this.modals[modalKey].hide();
+        } else {
+            // Fallback
+            const modal = this.elements[modalId];
+            if (modal) {
+                modal.style.display = 'none';
+                modal.classList.remove('show');
+            }
+        }
     }
 
     /**
      * Update installation progress
      */
-    updateInstallationProgress(progress, status) {
-        if (this.elements.progressBar) {
-            this.elements.progressBar.style.width = `${progress}%`;
-            this.elements.progressBar.setAttribute('aria-valuenow', progress);
+    updateInstallationProgress(progress, step, currentPackage = '', packageProgress = '', liveOutput = '') {
+        // Update progress bar
+        const progressBar = this.elements.installationProgressBar;
+        const progressText = this.elements.installationProgressText;
+        const progressPercent = this.elements.installationProgressPercent;
+
+        if (progressBar) {
+            progressBar.style.width = `${progress}%`;
+            progressBar.setAttribute('aria-valuenow', progress);
         }
 
-        this.updateInstallationInfo(status);
-    }
-
-    /**
-     * Update real-time progress from API
-     */
-    updateRealTimeProgress(progressData) {
-        const progress = progressData.progress || 0;
-        const currentStep = progressData.current_step || '';
-        const currentPackage = progressData.current_package || '';
-        const downloadProgress = progressData.download_progress || 0;
-        const statusMessage = progressData.status_message || '';
-
-        // Update main progress bar
-        if (this.elements.progressBar) {
-            this.elements.progressBar.style.width = `${progress}%`;
-            this.elements.progressBar.setAttribute('aria-valuenow', progress);
+        if (progressText) {
+            progressText.textContent = step;
         }
 
-        // Create detailed status message
-        let detailedMessage = statusMessage;
-        if (currentPackage && downloadProgress > 0) {
-            detailedMessage = `${currentStep}: ${currentPackage} (${downloadProgress}% downloaded)`;
-        } else if (currentPackage) {
-            detailedMessage = `${currentStep}: ${currentPackage}`;
-        } else if (currentStep) {
-            detailedMessage = currentStep;
+        if (progressPercent) {
+            progressPercent.textContent = `${progress}%`;
         }
 
-        // Update status text
-        this.updateInstallationInfo(detailedMessage);
-    }
+        // Update current package
+        if (this.elements.currentPackage) {
+            this.elements.currentPackage.textContent = currentPackage || '--';
+        }
 
-    /**
-     * Update installation status text
-     */
-    updateInstallationInfo(text) {
-        if (this.elements.installationStatus) {
-            this.elements.installationStatus.innerHTML = `<small class="text-muted">${text}</small>`;
+        if (this.elements.packageProgress) {
+            this.elements.packageProgress.textContent = packageProgress || '--';
+        }
+
+        // Update live output
+        if (this.elements.installationLiveOutput && liveOutput) {
+            const output = this.elements.installationLiveOutput;
+            output.textContent += liveOutput + '\n';
+            output.scrollTop = output.scrollHeight;
         }
     }
 
     /**
-     * Show/hide installation details panel
+     * Update slider background for volume control
      */
-    showInstallationDetails(show) {
-        if (this.elements.installationDetails) {
-            this.elements.installationDetails.style.display = show ? 'block' : 'none';
-        }
+    updateSliderBackground(slider) {
+        if (!slider) return;
+
+        const value = (slider.value - slider.min) / (slider.max - slider.min) * 100;
+        slider.style.setProperty('--range-value', `${value}%`);
     }
 
     /**
-     * Display installation check results
+     * Show alert message
      */
-    displayInstallationResults(result) {
-        const info = this.elements.installationInfo;
-        if (!info) return;
-
-        let html = `
-            <div class="row">
-                <div class="col-md-6">
-                    <h6><i class="fas fa-cog"></i> System Information</h6>
-                    <ul class="list-unstyled">
-                        <li><strong>Python Detected:</strong> ${result.python_detected ? '✅ Yes' : '❌ No'}</li>
-                        <li><strong>Operating System:</strong> ${result.operating_system || 'Unknown'}</li>
-                        <li><strong>Python Type:</strong> ${result.is_embedded_python ? 'Embedded' : 'Virtual Environment'}</li>
-                        <li><strong>Dependencies:</strong> ${result.dependencies_installed ? '✅ Installed' : '⚠️ Missing'}</li>
-                    </ul>
-                </div>
-                <div class="col-md-6">
-                    <h6><i class="fas fa-puzzle-piece"></i> Package Status</h6>
-        `;
-
-        if (result.installation_details) {
-            const details = result.installation_details;
-
-            // Core packages
-            if (details.core_packages) {
-                html += '<p><strong>Core Packages:</strong></p><ul class="list-unstyled">';
-                Object.entries(details.core_packages).forEach(([pkg, installed]) => {
-                    html += `<li>${installed ? '✅' : '❌'} ${pkg}</li>`;
-                });
-                html += '</ul>';
-            }
-
-            // STT packages
-            if (details.stt_packages) {
-                html += '<p><strong>Speech-to-Text:</strong></p><ul class="list-unstyled">';
-                Object.entries(details.stt_packages).forEach(([pkg, installed]) => {
-                    html += `<li>${installed ? '✅' : '❌'} ${pkg}</li>`;
-                });
-                html += '</ul>';
-            }
-
-            // TTS packages
-            if (details.tts_packages) {
-                html += '<p><strong>Text-to-Speech:</strong></p><ul class="list-unstyled">';
-                Object.entries(details.tts_packages).forEach(([pkg, installed]) => {
-                    html += `<li>${installed ? '✅' : '❌'} ${pkg}</li>`;
-                });
-                html += '</ul>';
-            }
-        }
-
-        html += `
-                </div>
-            </div>
-        `;
-
-        if (!result.dependencies_installed) {
-            html += `
-                <div class="alert alert-warning mt-3">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <strong>Dependencies Missing:</strong> Some required packages are not installed. 
-                    Click "Start Service" to automatically install them. This process includes downloading 
-                    large packages like TorchAudio (~200MB) and may take 10-15 minutes.
-                </div>
-            `;
-        } else {
-            html += `
-                <div class="alert alert-success mt-3">
-                    <i class="fas fa-check-circle"></i>
-                    <strong>Ready:</strong> All dependencies are installed and ready to use.
-                </div>
-            `;
-        }
-
-        info.innerHTML = html;
-    }
-
-    /**
-     * Show error message
-     */
-    showError(message) {
-        console.error('[VoiceAssistant] Error:', message);
-        this.showAlert('error', message, 8000);
-    }
-
-    /**
-     * Show success message
-     */
-    showSuccess(message) {
-        console.log('[VoiceAssistant] Success:', message);
-        this.showAlert('success', message, 4000);
-    }
-
-    /**
-     * Show warning message
-     */
-    showWarning(message) {
-        console.warn('[VoiceAssistant] Warning:', message);
-        this.showAlert('warning', message, 6000);
-    }
-
-    /**
-     * Generic alert display method
-     */
-    showAlert(type, message, autoHideDelay = 0) {
+    showAlert(type, message, autoHideDelay = 5000) {
         const alertElement = this.elements[`${type}Alert`];
         const messageElement = this.elements[`${type}Message`];
 
@@ -607,41 +815,89 @@ class VoiceAssistantUI {
     }
 
     /**
-     * Hide error message
-     */
-    hideError() {
-        this.hideAlert('error');
-    }
-
-    /**
-     * Hide success message
-     */
-    hideSuccess() {
-        this.hideAlert('success');
-    }
-
-    /**
-     * Hide warning message
-     */
-    hideWarning() {
-        this.hideAlert('warning');
-    }
-
-    /**
      * Hide all alerts
      */
     hideAllAlerts() {
-        ['error', 'success', 'warning'].forEach(type => {
+        ['success', 'error', 'warning', 'info'].forEach(type => {
             this.hideAlert(type);
         });
     }
 
     /**
-     * Update system information display
+     * Convenience methods for different alert types
      */
-    updateSystemInfo(key, value) {
-        if (this.elements[key]) {
-            this.elements[key].textContent = value;
+    showSuccess(message, autoHide = true) {
+        this.showAlert('success', message, autoHide ? 4000 : 0);
+        this.addConsoleMessage('success', message);
+    }
+
+    showError(message, autoHide = true) {
+        this.showAlert('error', message, autoHide ? 8000 : 0);
+        this.addConsoleMessage('error', message);
+    }
+
+    showWarning(message, autoHide = true) {
+        this.showAlert('warning', message, autoHide ? 6000 : 0);
+        this.addConsoleMessage('warning', message);
+    }
+
+    showInfo(message, autoHide = true) {
+        this.showAlert('info', message, autoHide ? 5000 : 0);
+        this.addConsoleMessage('info', message);
+    }
+
+    /**
+     * Get current settings from UI
+     */
+    getCurrentSettings() {
+        return {
+            mode: this.currentMode,
+            stt: {
+                language: this.elements.sttLanguage?.value || 'en-US'
+            },
+            tts: {
+                voice: this.elements.ttsVoice?.value || 'default',
+                volume: parseFloat(this.elements.ttsVolume?.value || '0.8')
+            }
+        };
+    }
+
+    /**
+     * Update UI state based on application state
+     */
+    updateState(state) {
+        // Update service status
+        if (state.isInstalling) {
+            this.updateServiceStatus('installing', 'Installing dependencies...', false, false);
+        } else if (state.serviceRunning && state.serviceHealthy) {
+            this.updateServiceStatus('online', 'Service online', true, true);
+        } else if (state.serviceRunning && !state.serviceHealthy) {
+            this.updateServiceStatus('warning', 'Service starting...', false, true);
+        } else {
+            this.updateServiceStatus('offline', 'Service offline', false, false);
+        }
+
+        // Update button states based on service availability
+        const serviceReady = state.serviceRunning && state.serviceHealthy && !state.isInstalling;
+
+        // STT button
+        if (this.elements.sttRecordButton) {
+            this.elements.sttRecordButton.disabled = !serviceReady;
+        }
+
+        // TTS buttons
+        if (this.elements.ttsSpeakButton) {
+            const hasText = this.elements.ttsTextInput?.value?.trim().length > 0;
+            this.elements.ttsSpeakButton.disabled = !serviceReady || !hasText;
+        }
+
+        if (this.elements.ttsStopButton) {
+            this.elements.ttsStopButton.disabled = !serviceReady;
+        }
+
+        // STS button
+        if (this.elements.stsStartButton) {
+            this.elements.stsStartButton.disabled = !serviceReady;
         }
     }
 
@@ -655,53 +911,6 @@ class VoiceAssistantUI {
     }
 
     /**
-     * Add CSS animation class
-     */
-    addAnimation(element, animationClass, duration = 1000) {
-        if (element && animationClass) {
-            element.classList.add(animationClass);
-            setTimeout(() => {
-                element.classList.remove(animationClass);
-            }, duration);
-        }
-    }
-
-    /**
-     * Show loading state for an element
-     */
-    showLoading(elementId, show = true) {
-        const element = this.elements[elementId] || document.getElementById(elementId);
-        if (element) {
-            if (show) {
-                element.classList.add('loading');
-            } else {
-                element.classList.remove('loading');
-            }
-        }
-    }
-
-    /**
-     * Update button state (enabled/disabled with visual feedback)
-     */
-    updateButtonState(buttonId, enabled = true, text = null) {
-        const button = this.elements[buttonId] || document.getElementById(buttonId);
-        if (button) {
-            button.disabled = !enabled;
-            if (text) {
-                button.textContent = text;
-            }
-
-            if (enabled) {
-                button.classList.remove('btn-secondary');
-                button.classList.add('btn-primary');
-            } else {
-                button.classList.remove('btn-primary');
-                button.classList.add('btn-secondary');
-            }
-        }
-    }
-
-    /**
      * Clean up UI resources
      */
     destroy() {
@@ -712,10 +921,17 @@ class VoiceAssistantUI {
             });
             this.autoHideTimers = {};
 
+            // Dispose modals
+            Object.values(this.modals).forEach(modal => {
+                if (modal && modal.dispose) {
+                    modal.dispose();
+                }
+            });
+
             // Remove global functions
-            if (window.hideError) delete window.hideError;
-            if (window.hideSuccess) delete window.hideSuccess;
-            if (window.hideWarning) delete window.hideWarning;
+            if (window.hideVoiceAlert) {
+                delete window.hideVoiceAlert;
+            }
 
             console.log('[VoiceAssistant] UI module destroyed');
         } catch (error) {

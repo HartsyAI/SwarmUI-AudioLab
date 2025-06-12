@@ -9,9 +9,9 @@ using Hartsy.Extensions.VoiceAssistant.Models;
 namespace Hartsy.Extensions.VoiceAssistant.Services;
 
 /// <summary>
-/// HTTP client service for communicating with the Python backend.
+/// HTTP client service for communicating with the Python backend using modern endpoints.
 /// Handles all HTTP communication, timeouts, and response parsing for backend services.
-/// Implements singleton pattern for resource management.
+/// Implements singleton pattern for resource management with support for STT, TTS, and pipeline operations.
 /// </summary>
 public class BackendHttpClient : IDisposable
 {
@@ -93,7 +93,13 @@ public class BackendHttpClient : IDisposable
                     var services = healthData["services"];
                     var sttReady = services["stt"]?.Value<bool>() ?? false;
                     var ttsReady = services["tts"]?.Value<bool>() ?? false;
+
                     healthInfo.IsHealthy = sttReady && ttsReady;
+                    healthInfo.Services = new Dictionary<string, bool>
+                    {
+                        ["stt"] = sttReady,
+                        ["tts"] = ttsReady
+                    };
                 }
 
                 Logs.Debug($"[VoiceAssistant] Health check passed: {healthInfo.IsHealthy}");
@@ -123,12 +129,14 @@ public class BackendHttpClient : IDisposable
         return healthInfo;
     }
 
+    #region Modern STT/TTS Endpoints
+
     /// <summary>
-    /// Calls the STT (Speech-to-Text) service endpoint.
+    /// Calls the pure STT (Speech-to-Text) service endpoint with enhanced options support.
     /// </summary>
-    /// <param name="request">STT request data</param>
+    /// <param name="request">STT request data with options</param>
     /// <returns>STT response data</returns>
-    public async Task<JObject> CallSTTServiceAsync(STTRequest request)
+    public async Task<JObject> CallSTTServiceAsync(dynamic request)
     {
         EnsureInitialized();
 
@@ -142,6 +150,35 @@ public class BackendHttpClient : IDisposable
                 ["language"] = request.Language
             };
 
+            // Add options if provided
+            if (request.Options != null)
+            {
+                var optionsObj = new JObject();
+
+                if (request.Options.ReturnConfidence != null)
+                    optionsObj["return_confidence"] = request.Options.ReturnConfidence;
+
+                if (request.Options.ReturnAlternatives != null)
+                    optionsObj["return_alternatives"] = request.Options.ReturnAlternatives;
+
+                if (!string.IsNullOrEmpty(request.Options.ModelPreference))
+                    optionsObj["model_preference"] = request.Options.ModelPreference;
+
+                // Add custom options if any
+                if (request.Options.CustomOptions != null && request.Options.CustomOptions.Count > 0)
+                {
+                    foreach (var customOption in request.Options.CustomOptions)
+                    {
+                        optionsObj[customOption.Key] = JToken.FromObject(customOption.Value);
+                    }
+                }
+
+                if (optionsObj.Count > 0)
+                {
+                    requestData["options"] = optionsObj;
+                }
+            }
+
             return await PostToBackendAsync("/stt/transcribe", requestData);
         }
         catch (Exception ex)
@@ -152,17 +189,17 @@ public class BackendHttpClient : IDisposable
     }
 
     /// <summary>
-    /// Calls the TTS (Text-to-Speech) service endpoint.
+    /// Calls the pure TTS (Text-to-Speech) service endpoint with enhanced options support.
     /// </summary>
-    /// <param name="request">TTS request data</param>
+    /// <param name="request">TTS request data with options</param>
     /// <returns>TTS response data</returns>
-    public async Task<JObject> CallTTSServiceAsync(TTSRequest request)
+    public async Task<JObject> CallTTSServiceAsync(dynamic request)
     {
         EnsureInitialized();
 
         try
         {
-            Logs.Debug($"[VoiceAssistant] Calling TTS service for text: '{request.Text.Truncate(50)}'");
+            Logs.Debug($"[VoiceAssistant] Calling TTS service for text: '{request.Text?.ToString()?.Substring(0, Math.Min(50, request.Text?.ToString()?.Length ?? 0))}...'");
 
             var requestData = new JObject
             {
@@ -172,6 +209,35 @@ public class BackendHttpClient : IDisposable
                 ["volume"] = request.Volume
             };
 
+            // Add options if provided
+            if (request.Options != null)
+            {
+                var optionsObj = new JObject();
+
+                if (request.Options.Speed != null && request.Options.Speed != 1.0f)
+                    optionsObj["speed"] = request.Options.Speed;
+
+                if (request.Options.Pitch != null && request.Options.Pitch != 1.0f)
+                    optionsObj["pitch"] = request.Options.Pitch;
+
+                if (!string.IsNullOrEmpty(request.Options.Format) && request.Options.Format != "wav")
+                    optionsObj["format"] = request.Options.Format;
+
+                // Add custom options if any
+                if (request.Options.CustomOptions != null && request.Options.CustomOptions.Count > 0)
+                {
+                    foreach (var customOption in request.Options.CustomOptions)
+                    {
+                        optionsObj[customOption.Key] = JToken.FromObject(customOption.Value);
+                    }
+                }
+
+                if (optionsObj.Count > 0)
+                {
+                    requestData["options"] = optionsObj;
+                }
+            }
+
             return await PostToBackendAsync("/tts/synthesize", requestData);
         }
         catch (Exception ex)
@@ -180,6 +246,143 @@ public class BackendHttpClient : IDisposable
             throw new InvalidOperationException($"TTS service call failed: {ex.Message}", ex);
         }
     }
+
+    /// <summary>
+    /// Calls the pipeline processing endpoint for configurable workflows.
+    /// </summary>
+    /// <param name="inputType">Type of input (audio|text)</param>
+    /// <param name="inputData">Input data</param>
+    /// <param name="pipelineSteps">List of pipeline steps to execute</param>
+    /// <returns>Pipeline response data</returns>
+    public async Task<JObject> CallPipelineServiceAsync(string inputType, string inputData, List<PipelineStep> pipelineSteps)
+    {
+        EnsureInitialized();
+
+        try
+        {
+            Logs.Debug($"[VoiceAssistant] Calling pipeline service with {pipelineSteps.Count} steps");
+
+            var requestData = new JObject
+            {
+                ["input_type"] = inputType,
+                ["input_data"] = inputData,
+                ["pipeline_steps"] = new JArray()
+            };
+
+            // Convert pipeline steps to JSON
+            var stepsArray = (JArray)requestData["pipeline_steps"];
+            foreach (var step in pipelineSteps)
+            {
+                var stepObj = new JObject
+                {
+                    ["type"] = step.Type,
+                    ["enabled"] = step.Enabled,
+                    ["config"] = step.Config
+                };
+                stepsArray.Add(stepObj);
+            }
+
+            return await PostToBackendAsync("/pipeline/process", requestData);
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] Pipeline service call failed: {ex.Message}");
+            throw new InvalidOperationException($"Pipeline service call failed: {ex.Message}", ex);
+        }
+    }
+
+    #endregion
+
+    #region Legacy Support Methods (For Compatibility During Transition)
+
+    /// <summary>
+    /// Legacy method for backwards compatibility during transition.
+    /// Converts old-style voice input to new STT + optional TTS pipeline.
+    /// TODO: Remove this method once frontend is fully migrated.
+    /// </summary>
+    [Obsolete("Use CallSTTServiceAsync and CallTTSServiceAsync instead")]
+    public async Task<JObject> CallLegacyVoiceInputAsync(string audioData, string language, string voice, float volume)
+    {
+        try
+        {
+            Logs.Debug("[VoiceAssistant] Processing legacy voice input call");
+
+            // Convert to pipeline call
+            var pipelineSteps = new List<PipelineStep>
+            {
+                new PipelineStep
+                {
+                    Type = "stt",
+                    Enabled = true,
+                    Config = new JObject { ["language"] = language }
+                }
+            };
+
+            // Add TTS step if voice is specified
+            if (!string.IsNullOrEmpty(voice) && voice != "none")
+            {
+                pipelineSteps.Add(new PipelineStep
+                {
+                    Type = "tts",
+                    Enabled = true,
+                    Config = new JObject
+                    {
+                        ["voice"] = voice,
+                        ["language"] = language,
+                        ["volume"] = volume
+                    }
+                });
+            }
+
+            return await CallPipelineServiceAsync("audio", audioData, pipelineSteps);
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] Legacy voice input call failed: {ex.Message}");
+            throw new InvalidOperationException($"Legacy voice input processing failed: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// Legacy method for backwards compatibility during transition.
+    /// Converts old-style text command to new TTS call.
+    /// TODO: Remove this method once frontend is fully migrated.
+    /// </summary>
+    [Obsolete("Use CallTTSServiceAsync instead")]
+    public async Task<JObject> CallLegacyTextCommandAsync(string text, string voice, string language, float volume)
+    {
+        try
+        {
+            Logs.Debug("[VoiceAssistant] Processing legacy text command call");
+
+            // Convert to pipeline call
+            var pipelineSteps = new List<PipelineStep>
+            {
+                new PipelineStep
+                {
+                    Type = "tts",
+                    Enabled = true,
+                    Config = new JObject
+                    {
+                        ["voice"] = voice,
+                        ["language"] = language,
+                        ["volume"] = volume
+                    }
+                }
+            };
+
+            return await CallPipelineServiceAsync("text", text, pipelineSteps);
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] Legacy text command call failed: {ex.Message}");
+            throw new InvalidOperationException($"Legacy text command processing failed: {ex.Message}", ex);
+        }
+    }
+
+    #endregion
+
+    #region Service Management
 
     /// <summary>
     /// Sends a shutdown signal to the Python backend.
@@ -243,6 +446,69 @@ public class BackendHttpClient : IDisposable
     }
 
     /// <summary>
+    /// Tests connectivity to specific backend endpoints.
+    /// </summary>
+    /// <returns>Connectivity test results</returns>
+    public async Task<Dictionary<string, bool>> TestEndpointConnectivityAsync()
+    {
+        var results = new Dictionary<string, bool>();
+
+        try
+        {
+            var endpoints = new[]
+            {
+                "/health",
+                "/status",
+                "/stt/transcribe",
+                "/tts/synthesize",
+                "/pipeline/process"
+            };
+
+            foreach (var endpoint in endpoints)
+            {
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+                    // For GET endpoints
+                    if (endpoint == "/health" || endpoint == "/status")
+                    {
+                        var response = await _httpClient.GetAsync(ServiceConfiguration.GetBackendEndpoint(endpoint), cts.Token);
+                        results[endpoint] = response.IsSuccessStatusCode;
+                    }
+                    else
+                    {
+                        // For POST endpoints, just check if they respond (even with method not allowed)
+                        var response = await _httpClient.PostAsync(
+                            ServiceConfiguration.GetBackendEndpoint(endpoint),
+                            new StringContent("{}", Encoding.UTF8, "application/json"),
+                            cts.Token);
+
+                        // Accept both success and method not allowed as "endpoint exists"
+                        results[endpoint] = response.IsSuccessStatusCode ||
+                                          response.StatusCode == System.Net.HttpStatusCode.MethodNotAllowed ||
+                                          response.StatusCode == System.Net.HttpStatusCode.BadRequest;
+                    }
+                }
+                catch
+                {
+                    results[endpoint] = false;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] Endpoint connectivity test failed: {ex.Message}");
+        }
+
+        return results;
+    }
+
+    #endregion
+
+    #region Private Helper Methods
+
+    /// <summary>
     /// Posts JSON data to a backend endpoint.
     /// </summary>
     /// <param name="endpoint">The endpoint path (starting with /)</param>
@@ -296,6 +562,8 @@ public class BackendHttpClient : IDisposable
             throw new ObjectDisposedException(nameof(BackendHttpClient));
         }
     }
+
+    #endregion
 
     /// <summary>
     /// Disposes of the HTTP client resources.

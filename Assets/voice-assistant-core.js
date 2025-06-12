@@ -1,18 +1,26 @@
 /**
- * Voice Assistant Core - Main Coordination Module
+ * Voice Assistant Core - Updated Main Coordination Module
  * Handles application state, voice recording, audio processing, and service coordination.
- * Acts as the central hub between UI and API components.
+ * Acts as the central hub between UI and API components with support for multiple modes.
  */
 
 class VoiceAssistantCore {
     constructor() {
         // Application state
         this.state = {
-            isRecording: false,
-            isProcessing: false,
+            // Service state
             serviceRunning: false,
             serviceHealthy: false,
-            isInstallingDependencies: false
+            isInstalling: false,
+            dependenciesInstalled: false,
+
+            // Mode state
+            currentMode: 'stt',
+
+            // Activity state
+            isRecording: false,
+            isProcessing: false,
+            isSpeaking: false
         };
 
         // Audio context and recording
@@ -20,25 +28,32 @@ class VoiceAssistantCore {
         this.audioChunks = [];
         this.audioContext = null;
         this.recordingTimeout = null;
+        this.currentAudio = null;
 
         // Session management
         this.sessionId = this.generateSessionId();
 
-        // Command history
-        this.commandHistory = [];
-        this.maxHistoryItems = 20;
+        // Dependencies tracking
+        this.dependencies = [];
+        this.dependencyCheckInterval = null;
 
         // Configuration
         this.config = {
             maxRecordingDuration: 30000, // 30 seconds
             maxAudioSize: 50 * 1024 * 1024, // 50MB
             autoStopTimeout: 30000,
-            healthCheckInterval: 30000
+            healthCheckInterval: 30000,
+            dependencyCheckInterval: 10000,
+            progressPollingInterval: 1000
         };
 
-        // Dependencies
+        // Module dependencies
         this.api = null;
         this.ui = null;
+
+        // Progress tracking
+        this.progressPollingTimer = null;
+        this.healthCheckTimer = null;
 
         console.log('[VoiceAssistant] Core module initialized');
     }
@@ -48,7 +63,7 @@ class VoiceAssistantCore {
      */
     async initialize(apiModule, uiModule) {
         try {
-            console.log('[VoiceAssistant] Initializing Voice Assistant Core v1.0');
+            console.log('[VoiceAssistant] Initializing Voice Assistant Core v2.0');
 
             // Store dependencies
             this.api = apiModule;
@@ -65,6 +80,9 @@ class VoiceAssistantCore {
 
             // Initial service status check
             await this.checkServiceStatus();
+
+            // Check dependencies status
+            await this.checkDependenciesStatus();
 
             // Start health monitoring
             this.startHealthMonitoring();
@@ -90,20 +108,28 @@ class VoiceAssistantCore {
      */
     setupEventHandlers() {
         // Service control handlers
-        this.ui.onRefreshStatus(() => this.checkServiceStatus());
+        this.ui.onRefreshServiceStatus(() => this.checkServiceStatus());
         this.ui.onStartService(() => this.startService());
         this.ui.onStopService(() => this.stopService());
-        this.ui.onCheckInstallation(() => this.checkInstallationStatus());
+        this.ui.onConfirmInstallation(() => this.startInstallation());
 
-        // Voice control handlers
-        this.ui.onToggleRecording(() => this.toggleRecording());
-        this.ui.onSendTextCommand((text) => this.sendTextCommand(text));
+        // Mode switching
+        this.ui.onSwitchMode((mode) => this.switchMode(mode));
 
-        // Settings handlers
-        this.ui.onVolumeChange((volume) => this.handleVolumeChange(volume));
+        // STT mode handlers
+        this.ui.onSTTStartRecording(() => this.startSTTRecording());
+        this.ui.onSTTStopRecording(() => this.stopSTTRecording());
 
-        // History management handlers
-        this.ui.onClearTranscript(() => this.clearTranscript());
+        // TTS mode handlers
+        this.ui.onTTSSpeak((text) => this.speakText(text));
+        this.ui.onTTSStop(() => this.stopSpeaking());
+
+        // STS mode handlers
+        this.ui.onSTSStartConversation(() => this.startSTSConversation());
+        this.ui.onSTSStopConversation(() => this.stopSTSConversation());
+
+        // Utility handlers
+        this.ui.onClearConsole(() => this.clearConsole());
         this.ui.onClearHistory(() => this.clearHistory());
 
         console.log('[VoiceAssistant] Event handlers set up');
@@ -131,6 +157,38 @@ class VoiceAssistantCore {
     }
 
     /**
+     * Switch between modes (STT/TTS/STS/Commands)
+     */
+    switchMode(mode) {
+        // Stop any current activity when switching modes
+        this.stopAllActivity();
+
+        this.state.currentMode = mode;
+        this.ui.addConsoleMessage('info', `Switched to ${mode.toUpperCase()} mode`);
+
+        // Update UI state
+        this.updateUI();
+    }
+
+    /**
+     * Stop all current audio activity
+     */
+    stopAllActivity() {
+        // Stop recording if active
+        if (this.state.isRecording) {
+            this.stopRecording();
+        }
+
+        // Stop speaking if active
+        if (this.state.isSpeaking) {
+            this.stopSpeaking();
+        }
+
+        // Reset processing state
+        this.state.isProcessing = false;
+    }
+
+    /**
      * Check the status of the voice service
      */
     async checkServiceStatus() {
@@ -145,7 +203,9 @@ class VoiceAssistantCore {
                 this.updateServiceState(result);
                 this.ui.updateServiceStatus(
                     this.getServiceStatusIcon(),
-                    this.getServiceStatusText()
+                    this.getServiceStatusText(),
+                    this.state.serviceHealthy,
+                    this.state.serviceRunning
                 );
             } else {
                 throw new Error(result.error || 'Failed to get service status');
@@ -157,51 +217,123 @@ class VoiceAssistantCore {
                 backend_healthy: false
             });
             this.ui.updateServiceStatus('error', 'Service unavailable');
-            this.ui.showError('Failed to check service status: ' + error.message);
+            this.ui.addConsoleMessage('error', 'Failed to check service status: ' + error.message);
+        }
+
+        this.updateUI();
+    }
+
+    /**
+     * Check dependencies installation status
+     */
+    async checkDependenciesStatus() {
+        console.log('[VoiceAssistant] Checking dependencies status');
+
+        try {
+            const result = await this.api.checkInstallationStatus();
+
+            if (result.success) {
+                this.state.dependenciesInstalled = result.dependencies_installed || false;
+                this.parseDependenciesFromResult(result);
+                this.ui.updateDependenciesDisplay(this.dependencies);
+
+                // Update primary button state
+                this.ui.updatePrimaryServiceButton(
+                    this.state.serviceHealthy,
+                    this.state.serviceRunning,
+                    this.state.dependenciesInstalled
+                );
+            } else {
+                this.ui.addConsoleMessage('warning', 'Could not check dependencies: ' + result.error);
+            }
+        } catch (error) {
+            console.error('[VoiceAssistant] Error checking dependencies:', error);
+            this.ui.addConsoleMessage('error', 'Error checking dependencies: ' + error.message);
         }
     }
 
     /**
-     * Start the voice service with progress tracking
+     * Parse dependencies from installation status result
+     */
+    parseDependenciesFromResult(result) {
+        this.dependencies = [];
+
+        if (result.installation_details) {
+            const details = result.installation_details;
+
+            // Core packages
+            if (details.core_packages) {
+                Object.entries(details.core_packages).forEach(([name, installed]) => {
+                    this.dependencies.push({
+                        name: name,
+                        category: 'core',
+                        status: installed ? 'installed' : 'missing'
+                    });
+                });
+            }
+
+            // STT packages
+            if (details.stt_packages) {
+                Object.entries(details.stt_packages).forEach(([name, installed]) => {
+                    this.dependencies.push({
+                        name: name,
+                        category: 'ai',
+                        status: installed ? 'installed' : 'missing'
+                    });
+                });
+            }
+
+            // TTS packages
+            if (details.tts_packages) {
+                Object.entries(details.tts_packages).forEach(([name, installed]) => {
+                    this.dependencies.push({
+                        name: name,
+                        category: 'ai',
+                        status: installed ? 'installed' : 'missing'
+                    });
+                });
+            }
+        }
+
+        // Add default dependencies if none found
+        if (this.dependencies.length === 0) {
+            this.dependencies = [
+                { name: 'FastAPI', category: 'core', status: 'missing' },
+                { name: 'NumPy', category: 'core', status: 'missing' },
+                { name: 'PyTorch', category: 'core', status: 'missing' },
+                { name: 'RealtimeSTT', category: 'ai', status: 'missing' },
+                { name: 'Chatterbox TTS', category: 'ai', status: 'missing' }
+            ];
+        }
+    }
+
+    /**
+     * Start the voice service or show installation modal
      */
     async startService() {
+        if (!this.state.dependenciesInstalled) {
+            this.ui.showInstallationModal();
+            return;
+        }
+
         console.log('[VoiceAssistant] Starting voice service');
 
         try {
             this.ui.updateServiceStatus('starting', 'Starting service...');
-            this.state.isInstallingDependencies = true;
-            this.updateUI();
+            this.ui.addConsoleMessage('info', 'Starting voice service...');
 
-            // Show initial progress
-            this.ui.showInstallationProgress(true, 5, 'Checking Python environment...');
-
-            // Start the service
             const result = await this.api.startVoiceService();
 
             if (result.success) {
-                // Start polling for progress if dependencies are being installed
-                this.startProgressPolling();
-
                 this.ui.showSuccess('Voice service started successfully');
-                await this.checkServiceStatus(); // Refresh status
+                this.ui.addConsoleMessage('success', 'Voice service started');
+                await this.checkServiceStatus();
             } else {
-                this.stopProgressPolling();
-                this.ui.hideInstallationProgress();
-                this.state.isInstallingDependencies = false;
                 throw new Error(result.error || 'Failed to start service');
             }
         } catch (error) {
             console.error('[VoiceAssistant] Error starting service:', error);
-            this.stopProgressPolling();
-            this.ui.hideInstallationProgress();
-            this.state.isInstallingDependencies = false;
-
-            let errorMessage = error.message;
-            if (errorMessage.includes('dependencies')) {
-                errorMessage += '\n\nThis appears to be a dependency issue. The system will automatically install required packages when you start the service.';
-            }
-
-            this.ui.showError('Failed to start voice service: ' + errorMessage);
+            this.ui.showError('Failed to start voice service: ' + error.message);
             await this.checkServiceStatus();
         }
     }
@@ -213,12 +345,17 @@ class VoiceAssistantCore {
         console.log('[VoiceAssistant] Stopping voice service');
 
         try {
+            // Stop any current activity
+            this.stopAllActivity();
+
             this.ui.updateServiceStatus('stopping', 'Stopping service...');
+            this.ui.addConsoleMessage('info', 'Stopping voice service...');
 
             const result = await this.api.stopVoiceService();
 
             if (result.success) {
                 this.ui.showSuccess('Voice service stopped successfully');
+                this.ui.addConsoleMessage('success', 'Voice service stopped');
                 await this.checkServiceStatus();
             } else {
                 throw new Error(result.error || 'Failed to stop service');
@@ -231,31 +368,262 @@ class VoiceAssistantCore {
     }
 
     /**
-     * Toggle voice recording
+     * Start installation process
      */
-    async toggleRecording() {
-        if (this.state.isRecording) {
-            await this.stopRecording();
-        } else {
-            await this.startRecording();
+    async startInstallation() {
+        console.log('[VoiceAssistant] Starting dependency installation');
+
+        try {
+            this.state.isInstalling = true;
+            this.updateUI();
+
+            // Show progress modal
+            this.ui.showInstallationProgressModal();
+            this.ui.updateInstallationProgress(0, 'Starting installation...', '', '', 'Beginning dependency installation...\n');
+
+            this.ui.addConsoleMessage('info', 'Starting dependency installation');
+
+            // Start the installation
+            const result = await this.api.startVoiceService();
+
+            if (result.success) {
+                // Start progress polling
+                this.startProgressPolling();
+                this.ui.addConsoleMessage('info', 'Installation in progress');
+            } else {
+                this.state.isInstalling = false;
+                this.ui.hideModal('installationProgressModal');
+                throw new Error(result.error || 'Failed to start installation');
+            }
+        } catch (error) {
+            console.error('[VoiceAssistant] Installation failed:', error);
+            this.state.isInstalling = false;
+            this.ui.hideModal('installationProgressModal');
+            this.ui.showError('Installation failed: ' + error.message);
+            this.updateUI();
         }
     }
 
     /**
-     * Start voice recording
+     * Start progress polling for installation
+     */
+    startProgressPolling() {
+        if (this.progressPollingTimer) {
+            clearInterval(this.progressPollingTimer);
+        }
+
+        console.log('[VoiceAssistant] Starting installation progress polling');
+
+        this.progressPollingTimer = setInterval(async () => {
+            try {
+                const progressResult = await this.api.getInstallationProgress();
+
+                if (progressResult.success) {
+                    // Update UI with progress
+                    this.ui.updateInstallationProgress(
+                        progressResult.progress || 0,
+                        progressResult.current_step || 'Installing...',
+                        progressResult.current_package || '',
+                        progressResult.download_progress ? `${progressResult.download_progress}%` : '',
+                        progressResult.status_message || ''
+                    );
+
+                    // Update console
+                    if (progressResult.status_message) {
+                        this.ui.addConsoleMessage('info', progressResult.status_message);
+                    }
+
+                    // Check if complete or error
+                    if (progressResult.is_complete) {
+                        this.stopProgressPolling();
+                        this.state.isInstalling = false;
+                        this.ui.showSuccess('Dependencies installed successfully!');
+                        this.ui.addConsoleMessage('success', 'Installation completed successfully');
+
+                        // Hide modal after delay
+                        setTimeout(() => {
+                            this.ui.hideModal('installationProgressModal');
+                        }, 3000);
+
+                        // Refresh status
+                        await this.checkServiceStatus();
+                        await this.checkDependenciesStatus();
+                    } else if (progressResult.has_error) {
+                        this.stopProgressPolling();
+                        this.state.isInstalling = false;
+                        this.ui.hideModal('installationProgressModal');
+                        this.ui.showError('Installation failed: ' + progressResult.error_message);
+                        this.ui.addConsoleMessage('error', 'Installation failed: ' + progressResult.error_message);
+                    }
+                } else {
+                    // Polling failed, stop trying
+                    this.stopProgressPolling();
+                    this.ui.addConsoleMessage('warning', 'Lost connection to installation progress');
+                }
+            } catch (error) {
+                console.warn('[VoiceAssistant] Progress polling error:', error);
+                // Continue polling despite errors
+            }
+        }, this.config.progressPollingInterval);
+    }
+
+    /**
+     * Stop progress polling
+     */
+    stopProgressPolling() {
+        if (this.progressPollingTimer) {
+            clearInterval(this.progressPollingTimer);
+            this.progressPollingTimer = null;
+            console.log('[VoiceAssistant] Stopped installation progress polling');
+        }
+    }
+
+    /**
+     * Start STT recording
+     */
+    async startSTTRecording() {
+        if (!this.ensureServiceReady()) return;
+
+        console.log('[VoiceAssistant] Starting STT recording');
+
+        try {
+            await this.startRecording();
+            this.ui.updateSTTRecordingState(true, false);
+            this.ui.addConsoleMessage('info', 'STT: Started listening');
+        } catch (error) {
+            console.error('[VoiceAssistant] STT recording failed:', error);
+            this.ui.showError('Failed to start recording: ' + error.message);
+        }
+    }
+
+    /**
+     * Stop STT recording
+     */
+    async stopSTTRecording() {
+        console.log('[VoiceAssistant] Stopping STT recording');
+
+        try {
+            await this.stopRecording();
+            this.ui.updateSTTRecordingState(false, true);
+            this.ui.addConsoleMessage('info', 'STT: Processing audio');
+        } catch (error) {
+            console.error('[VoiceAssistant] STT stop failed:', error);
+            this.ui.showError('Failed to stop recording: ' + error.message);
+        }
+    }
+
+    /**
+     * Speak text using TTS
+     */
+    async speakText(text) {
+        if (!this.ensureServiceReady()) return;
+
+        console.log('[VoiceAssistant] Speaking text via TTS:', text.substring(0, 50) + '...');
+
+        try {
+            this.state.isSpeaking = true;
+            this.ui.updateTTSControlsState(true, false);
+            this.ui.addConsoleMessage('info', `TTS: Speaking "${text.substring(0, 30)}..."`);
+
+            // TODO: Add separate TTS testing endpoint
+            // For now, use the text command endpoint
+            const settings = this.ui.getCurrentSettings();
+            const payload = {
+                session_id: this.sessionId,
+                text: text,
+                voice: settings.tts.voice,
+                volume: settings.tts.volume
+            };
+
+            const result = await this.api.processTextCommand(payload);
+
+            if (result.success) {
+                // Play TTS response if available
+                if (result.audio_response) {
+                    await this.playAudioResponse(result.audio_response);
+                }
+
+                this.ui.addHistoryItem('tts', text, 'Text spoken successfully');
+                this.ui.showSuccess('Text spoken successfully');
+                this.ui.addConsoleMessage('success', 'TTS: Text spoken successfully');
+            } else {
+                throw new Error(result.error || 'TTS failed');
+            }
+        } catch (error) {
+            console.error('[VoiceAssistant] TTS failed:', error);
+            this.ui.showError('Text-to-speech failed: ' + error.message);
+            this.ui.addConsoleMessage('error', 'TTS: Failed - ' + error.message);
+        } finally {
+            this.state.isSpeaking = false;
+            this.ui.updateTTSControlsState(false, true);
+            this.updateUI();
+        }
+    }
+
+    /**
+     * Stop current TTS playback
+     */
+    stopSpeaking() {
+        console.log('[VoiceAssistant] Stopping TTS playback');
+
+        try {
+            // Stop current audio if playing
+            if (this.currentAudio) {
+                this.currentAudio.pause();
+                this.currentAudio.currentTime = 0;
+                this.currentAudio = null;
+            }
+
+            this.state.isSpeaking = false;
+            this.ui.updateTTSControlsState(false, true);
+            this.ui.addConsoleMessage('info', 'TTS: Playback stopped');
+            this.updateUI();
+        } catch (error) {
+            console.error('[VoiceAssistant] Error stopping TTS:', error);
+        }
+    }
+
+    /**
+     * Start STS conversation
+     */
+    async startSTSConversation() {
+        if (!this.ensureServiceReady()) return;
+
+        console.log('[VoiceAssistant] Starting STS conversation');
+
+        try {
+            await this.startRecording();
+            this.ui.updateSTSConversationState(true);
+            this.ui.addConsoleMessage('info', 'STS: Started conversation');
+        } catch (error) {
+            console.error('[VoiceAssistant] STS conversation failed:', error);
+            this.ui.showError('Failed to start conversation: ' + error.message);
+        }
+    }
+
+    /**
+     * Stop STS conversation
+     */
+    async stopSTSConversation() {
+        console.log('[VoiceAssistant] Stopping STS conversation');
+
+        try {
+            await this.stopRecording();
+            this.ui.updateSTSConversationState(false);
+            this.ui.addConsoleMessage('info', 'STS: Conversation stopped');
+        } catch (error) {
+            console.error('[VoiceAssistant] STS stop failed:', error);
+            this.ui.showError('Failed to stop conversation: ' + error.message);
+        }
+    }
+
+    /**
+     * Start voice recording (common for STT and STS)
      */
     async startRecording() {
-        if (!this.state.serviceRunning || !this.state.serviceHealthy) {
-            this.ui.showError('Voice service is not available. Please start the service first.');
+        if (this.state.isRecording) {
             return;
         }
-
-        if (this.state.isProcessing) {
-            this.ui.showError('Please wait for current processing to complete.');
-            return;
-        }
-
-        console.log('[VoiceAssistant] Starting voice recording');
 
         try {
             // Request microphone access
@@ -280,7 +648,6 @@ class VoiceAssistantCore {
             };
 
             this.mediaRecorder.onstop = async () => {
-                console.log('[VoiceAssistant] Recording stopped, processing audio');
                 const audioBlob = new Blob(this.audioChunks, { type: mimeType });
                 await this.processAudio(audioBlob);
 
@@ -298,7 +665,6 @@ class VoiceAssistantCore {
             // Start recording
             this.mediaRecorder.start();
             this.state.isRecording = true;
-            this.updateUI();
 
             // Auto-stop after configured duration
             this.recordingTimeout = setTimeout(() => {
@@ -317,14 +683,12 @@ class VoiceAssistantCore {
     }
 
     /**
-     * Stop voice recording
+     * Stop voice recording (common for STT and STS)
      */
     async stopRecording() {
         if (!this.state.isRecording || !this.mediaRecorder) {
             return;
         }
-
-        console.log('[VoiceAssistant] Stopping voice recording');
 
         try {
             if (this.recordingTimeout) {
@@ -337,7 +701,6 @@ class VoiceAssistantCore {
             }
 
             this.state.isRecording = false;
-            this.updateUI();
 
         } catch (error) {
             console.error('[VoiceAssistant] Error stopping recording:', error);
@@ -346,7 +709,7 @@ class VoiceAssistantCore {
     }
 
     /**
-     * Process recorded audio through the voice pipeline
+     * Process recorded audio based on current mode
      */
     async processAudio(audioBlob) {
         if (this.state.isProcessing) {
@@ -371,45 +734,15 @@ class VoiceAssistantCore {
             // Get current settings
             const settings = this.ui.getCurrentSettings();
 
-            const payload = {
-                session_id: this.sessionId,
-                audio_data: audioData,
-                language: settings.language,
-                voice: settings.voice,
-                volume: settings.volume
-            };
-
-            console.log('[VoiceAssistant] Sending audio for processing');
-
-            const result = await this.api.processVoiceInput(payload);
-
-            if (result.success) {
-                // Update transcript
-                if (result.transcription) {
-                    this.ui.updateTranscript(result.transcription);
-                }
-
-                // Add to history
-                this.addToHistory({
-                    type: 'voice',
-                    input: result.transcription || 'Audio processed',
-                    response: result.ai_response || 'Command processed',
-                    timestamp: new Date()
-                });
-
-                // Play TTS response if available
-                if (result.audio_response) {
-                    await this.playAudioResponse(result.audio_response);
-                }
-
-                this.ui.showSuccess('Voice command processed successfully');
-            } else {
-                throw new Error(result.error || 'Failed to process voice input');
+            if (this.state.currentMode === 'stt') {
+                await this.processSTTAudio(audioData, settings);
+            } else if (this.state.currentMode === 'sts') {
+                await this.processSTSAudio(audioData, settings);
             }
 
         } catch (error) {
             console.error('[VoiceAssistant] Error processing audio:', error);
-            this.ui.showError('Failed to process voice input: ' + error.message);
+            this.ui.showError('Failed to process audio: ' + error.message);
         } finally {
             this.state.isProcessing = false;
             this.updateUI();
@@ -417,89 +750,62 @@ class VoiceAssistantCore {
     }
 
     /**
-     * Send text command
+     * Process audio for STT mode
      */
-    async sendTextCommand(text) {
-        if (!text || !text.trim()) {
-            this.ui.showError('Please enter a text command');
-            return;
+    async processSTTAudio(audioData, settings) {
+        // TODO: Create separate STT testing endpoint or use existing processVoiceInput
+        const payload = {
+            session_id: this.sessionId,
+            audio_data: audioData,
+            language: settings.stt.language
+        };
+
+        const result = await this.api.processVoiceInput(payload);
+
+        if (result.success && result.transcription) {
+            this.ui.updateSTTTranscription(result.transcription, result.confidence);
+            this.ui.addHistoryItem('stt', 'Audio input', result.transcription);
+            this.ui.addConsoleMessage('success', `STT: "${result.transcription}"`);
+        } else {
+            throw new Error(result.error || 'STT failed');
         }
 
-        console.log('[VoiceAssistant] Sending text command:', text);
-
-        try {
-            this.state.isProcessing = true;
-            this.updateUI();
-
-            // Get current settings
-            const settings = this.ui.getCurrentSettings();
-
-            const payload = {
-                session_id: this.sessionId,
-                text: text.trim(),
-                voice: settings.voice,
-                language: settings.language,
-                volume: settings.volume
-            };
-
-            const result = await this.api.processTextCommand(payload);
-
-            if (result.success) {
-                // Clear input
-                this.ui.clearTextInput();
-
-                // Update transcript
-                this.ui.updateTranscript(text);
-
-                // Add to history
-                this.addToHistory({
-                    type: 'text',
-                    input: text,
-                    response: result.text || 'Command processed',
-                    timestamp: new Date()
-                });
-
-                // Play TTS response if available
-                if (result.audio_response) {
-                    await this.playAudioResponse(result.audio_response);
-                }
-
-                this.ui.showSuccess('Text command processed successfully');
-            } else {
-                throw new Error(result.error || 'Failed to process text command');
-            }
-
-        } catch (error) {
-            console.error('[VoiceAssistant] Error processing text command:', error);
-            this.ui.showError('Failed to process text command: ' + error.message);
-        } finally {
-            this.state.isProcessing = false;
-            this.updateUI();
-        }
+        this.ui.updateSTTRecordingState(false, false);
     }
 
     /**
-     * Check installation status
+     * Process audio for STS mode (full pipeline)
      */
-    async checkInstallationStatus() {
-        console.log('[VoiceAssistant] Checking installation status');
+    async processSTSAudio(audioData, settings) {
+        const payload = {
+            session_id: this.sessionId,
+            audio_data: audioData,
+            language: settings.stt.language,
+            voice: settings.tts.voice,
+            volume: settings.tts.volume
+        };
 
-        try {
-            this.ui.showInstallationDetails(true);
-            this.ui.updateInstallationInfo('Checking Python environment and dependencies...');
+        const result = await this.api.processVoiceInput(payload);
 
-            const result = await this.api.checkInstallationStatus();
+        if (result.success) {
+            // Update conversation display
+            this.ui.updateSTSConversationState(
+                false,
+                result.transcription || 'Audio processed',
+                result.ai_response || 'Response generated'
+            );
 
-            if (result.success) {
-                this.ui.displayInstallationResults(result);
-            } else {
-                this.ui.showError('Failed to check installation status: ' + result.error);
-                this.ui.showInstallationDetails(false);
+            // Add to history
+            this.ui.addHistoryItem('sts', result.transcription || 'Audio input', result.ai_response || 'AI response');
+
+            // Play TTS response if available
+            if (result.audio_response) {
+                await this.playAudioResponse(result.audio_response);
             }
-        } catch (error) {
-            console.error('[VoiceAssistant] Error checking installation status:', error);
-            this.ui.showError('Error checking installation status: ' + error.message);
-            this.ui.showInstallationDetails(false);
+
+            this.ui.addConsoleMessage('success', 'STS: Conversation completed');
+        } else {
+            throw new Error(result.error || 'STS failed');
         }
     }
 
@@ -510,24 +816,26 @@ class VoiceAssistantCore {
         try {
             console.log('[VoiceAssistant] Playing TTS audio response');
 
-            // Initialize audio context if needed
-            if (!this.audioContext) {
-                const AudioContext = window.AudioContext || window.webkitAudioContext;
-                this.audioContext = new AudioContext();
-            }
-
-            // Decode base64 to array buffer
+            // Create audio blob from base64
             const audioData = Uint8Array.from(atob(base64Audio), c => c.charCodeAt(0));
+            const audioBlob = new Blob([audioData], { type: 'audio/wav' });
+            const audioUrl = URL.createObjectURL(audioBlob);
 
-            // Decode audio data
-            const audioBuffer = await this.audioContext.decodeAudioData(audioData.buffer);
+            // Create and play audio element
+            this.currentAudio = new Audio(audioUrl);
 
-            // Create and play audio source
-            const source = this.audioContext.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(this.audioContext.destination);
-            source.start(0);
+            this.currentAudio.onended = () => {
+                URL.revokeObjectURL(audioUrl);
+                this.currentAudio = null;
+            };
 
+            this.currentAudio.onerror = (error) => {
+                console.error('[VoiceAssistant] Audio playback error:', error);
+                URL.revokeObjectURL(audioUrl);
+                this.currentAudio = null;
+            };
+
+            await this.currentAudio.play();
             console.log('[VoiceAssistant] TTS audio playback started');
 
         } catch (error) {
@@ -537,107 +845,32 @@ class VoiceAssistantCore {
     }
 
     /**
-     * Add item to command history
+     * Clear console output
      */
-    addToHistory(item) {
-        this.commandHistory.unshift(item);
-
-        // Limit history size
-        if (this.commandHistory.length > this.maxHistoryItems) {
-            this.commandHistory = this.commandHistory.slice(0, this.maxHistoryItems);
-        }
-
-        this.ui.updateHistoryDisplay(this.commandHistory);
+    clearConsole() {
+        this.ui.addConsoleMessage('info', 'Console cleared');
     }
 
     /**
-     * Clear transcript
-     */
-    clearTranscript() {
-        this.ui.clearTranscript();
-    }
-
-    /**
-     * Clear command history
+     * Clear session history
      */
     clearHistory() {
-        this.commandHistory = [];
-        this.ui.updateHistoryDisplay(this.commandHistory);
-    }
-
-    /**
-     * Handle volume change
-     */
-    handleVolumeChange(volume) {
-        console.log('[VoiceAssistant] Volume changed to:', volume);
-        // Volume is handled per-request, no persistent state needed
-    }
-
-    /**
-     * Start progress polling for installation
-     */
-    startProgressPolling() {
-        if (this.progressPollingInterval) {
-            clearInterval(this.progressPollingInterval);
-        }
-
-        console.log('[VoiceAssistant] Starting progress polling');
-
-        this.progressPollingInterval = setInterval(async () => {
-            try {
-                const progressResult = await this.api.getInstallationProgress();
-
-                if (progressResult.success) {
-                    this.ui.updateRealTimeProgress(progressResult);
-
-                    // Stop polling if complete or error
-                    if (progressResult.is_complete || progressResult.has_error) {
-                        this.stopProgressPolling();
-
-                        if (progressResult.has_error) {
-                            this.ui.showError('Installation failed: ' + progressResult.error_message);
-                            this.ui.hideInstallationProgress();
-                        } else {
-                            // Hide progress after delay
-                            setTimeout(() => {
-                                this.ui.hideInstallationProgress();
-                                this.state.isInstallingDependencies = false;
-                                this.updateUI();
-                            }, 3000);
-                        }
-                    }
-                } else {
-                    this.stopProgressPolling();
-                }
-            } catch (error) {
-                console.warn('[VoiceAssistant] Progress polling error:', error);
-                // Continue polling despite errors
-            }
-        }, 1000); // Poll every second
-    }
-
-    /**
-     * Stop progress polling
-     */
-    stopProgressPolling() {
-        if (this.progressPollingInterval) {
-            clearInterval(this.progressPollingInterval);
-            this.progressPollingInterval = null;
-            console.log('[VoiceAssistant] Stopped progress polling');
-        }
+        this.ui.addConsoleMessage('info', 'Session history cleared');
     }
 
     /**
      * Start health monitoring
      */
     startHealthMonitoring() {
-        if (this.healthMonitoringInterval) {
-            clearInterval(this.healthMonitoringInterval);
+        if (this.healthCheckTimer) {
+            clearInterval(this.healthCheckTimer);
         }
 
-        this.healthMonitoringInterval = setInterval(async () => {
+        this.healthCheckTimer = setInterval(async () => {
             try {
-                await this.checkServiceStatus();
+                if (!this.state.isInstalling) {
+                    await this.checkServiceStatus();
+                }
             } catch (error) {
                 console.debug('[VoiceAssistant] Health monitoring error:', error);
                 // Don't show errors for automatic health checks
@@ -645,6 +878,28 @@ class VoiceAssistantCore {
         }, this.config.healthCheckInterval);
 
         console.log('[VoiceAssistant] Health monitoring started');
+    }
+
+    /**
+     * Ensure service is ready for operations
+     */
+    ensureServiceReady() {
+        if (!this.state.serviceRunning || !this.state.serviceHealthy) {
+            this.ui.showError('Voice service is not available. Please start the service first.');
+            return false;
+        }
+
+        if (this.state.isInstalling) {
+            this.ui.showError('Dependencies are being installed. Please wait for completion.');
+            return false;
+        }
+
+        if (this.state.isProcessing) {
+            this.ui.showError('Please wait for current processing to complete.');
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -664,7 +919,9 @@ class VoiceAssistantCore {
      * Get service status icon
      */
     getServiceStatusIcon() {
-        if (this.state.serviceRunning && this.state.serviceHealthy) {
+        if (this.state.isInstalling) {
+            return 'installing';
+        } else if (this.state.serviceRunning && this.state.serviceHealthy) {
             return 'online';
         } else if (this.state.serviceRunning && !this.state.serviceHealthy) {
             return 'warning';
@@ -677,7 +934,9 @@ class VoiceAssistantCore {
      * Get service status text
      */
     getServiceStatusText() {
-        if (this.state.serviceRunning && this.state.serviceHealthy) {
+        if (this.state.isInstalling) {
+            return 'Installing dependencies...';
+        } else if (this.state.serviceRunning && this.state.serviceHealthy) {
             return 'Service online';
         } else if (this.state.serviceRunning && !this.state.serviceHealthy) {
             return 'Service starting...';
@@ -729,18 +988,20 @@ class VoiceAssistantCore {
      */
     destroy() {
         try {
-            // Stop any ongoing recording
-            if (this.state.isRecording) {
-                this.stopRecording();
-            }
+            // Stop any ongoing activity
+            this.stopAllActivity();
 
             // Clear intervals
-            if (this.progressPollingInterval) {
-                clearInterval(this.progressPollingInterval);
+            if (this.progressPollingTimer) {
+                clearInterval(this.progressPollingTimer);
             }
 
-            if (this.healthMonitoringInterval) {
-                clearInterval(this.healthMonitoringInterval);
+            if (this.healthCheckTimer) {
+                clearInterval(this.healthCheckTimer);
+            }
+
+            if (this.dependencyCheckInterval) {
+                clearInterval(this.dependencyCheckInterval);
             }
 
             if (this.recordingTimeout) {
@@ -750,6 +1011,12 @@ class VoiceAssistantCore {
             // Clean up audio context
             if (this.audioContext) {
                 this.audioContext.close();
+            }
+
+            // Clean up current audio
+            if (this.currentAudio) {
+                this.currentAudio.pause();
+                this.currentAudio = null;
             }
 
             console.log('[VoiceAssistant] Core module destroyed');
