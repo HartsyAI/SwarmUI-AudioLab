@@ -448,3 +448,114 @@ public class BackendHealthInfo
     public Dictionary<string, bool> Services { get; set; } = new();
 }
 #endregion
+
+#region Server-Side Recording Models
+
+/// <summary>Request model for server-side recording operations.</summary>
+public class RecordingRequest : BaseRequest
+{
+    public int Duration { get; set; } = 10; // Duration in seconds
+    public string Language { get; set; } = "en-US";
+    public string Mode { get; set; } = "stt"; // stt, sts, or raw
+    public Dictionary<string, object> Options { get; set; } = new();
+
+    public override void Validate()
+    {
+        base.Validate();
+        
+        // Validate duration (1-30 seconds)
+        if (Duration < 1 || Duration > 30)
+        {
+            throw new ArgumentException("Duration must be between 1 and 30 seconds");
+        }
+        
+        Common.ErrorHandling.Validation.RequireValidLanguage(Language);
+        
+        string[] validModes = new[] { "stt", "sts", "raw" };
+        if (!validModes.Contains(Mode.ToLower()))
+        {
+            throw new ArgumentException($"Mode must be one of: {string.Join(", ", validModes)}");
+        }
+    }
+}
+
+/// <summary>Response model for recording operations.</summary>
+public class RecordingResponse : BaseResponse
+{
+    public bool IsRecording { get; set; }
+    public string RecordingId { get; set; } = string.Empty;
+    public int Duration { get; set; }
+    public string Mode { get; set; } = string.Empty;
+    public string AudioData { get; set; } = string.Empty; // Base64 encoded when recording completes
+    public string Transcription { get; set; } = string.Empty; // For STT mode
+    public string AIResponse { get; set; } = string.Empty; // For STS mode
+    public RecordingMetadata Metadata { get; set; } = new();
+
+    public override JObject ToJObject()
+    {
+        JObject result = base.ToJObject();
+        result["is_recording"] = IsRecording;
+        result["recording_id"] = RecordingId;
+        result["duration"] = Duration;
+        result["mode"] = Mode;
+        
+        if (!string.IsNullOrEmpty(AudioData))
+            result["audio_data"] = AudioData;
+        if (!string.IsNullOrEmpty(Transcription))
+            result["transcription"] = Transcription;
+        if (!string.IsNullOrEmpty(AIResponse))
+            result["ai_response"] = AIResponse;
+            
+        result["metadata"] = Metadata.ToJObject();
+        return result;
+    }
+}
+
+/// <summary>Response model for recording status queries.</summary>
+public class RecordingStatusResponse : BaseResponse
+{
+    public bool IsRecording { get; set; }
+    public string RecordingId { get; set; } = string.Empty;
+    public int ElapsedSeconds { get; set; }
+    public int TotalDuration { get; set; }
+    public string Status { get; set; } = string.Empty; // "idle", "recording", "processing", "completed"
+
+    public override JObject ToJObject()
+    {
+        JObject result = base.ToJObject();
+        result["is_recording"] = IsRecording;
+        result["recording_id"] = RecordingId;
+        result["elapsed_seconds"] = ElapsedSeconds;
+        result["total_duration"] = TotalDuration;
+        result["status"] = Status;
+        return result;
+    }
+}
+
+/// <summary>Metadata for recording operations.</summary>
+public class RecordingMetadata
+{
+    public string DeviceUsed { get; set; } = string.Empty;
+    public int SampleRate { get; set; } = 16000;
+    public string AudioFormat { get; set; } = "wav";
+    public int AudioChannels { get; set; } = 1;
+    public double ActualDuration { get; set; } = 0.0;
+    public DateTime StartTime { get; set; } = DateTime.UtcNow;
+    public DateTime? EndTime { get; set; }
+
+    public JObject ToJObject()
+    {
+        return new JObject
+        {
+            ["device_used"] = DeviceUsed,
+            ["sample_rate"] = SampleRate,
+            ["audio_format"] = AudioFormat,
+            ["audio_channels"] = AudioChannels,
+            ["actual_duration"] = ActualDuration,
+            ["start_time"] = StartTime.ToString("O"),
+            ["end_time"] = EndTime?.ToString("O")
+        };
+    }
+}
+
+#endregion

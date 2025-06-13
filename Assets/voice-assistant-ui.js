@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Voice Assistant UI Module - Complete Redesign
  * Handles all DOM manipulation, user interface updates, and user interactions.
  * Provides a clean interface between the core application logic and the HTML elements.
@@ -165,8 +165,12 @@ class VoiceAssistantUI {
 
         // TTS controls
         this.elements.ttsSpeakButton?.addEventListener('click', () => {
+            console.log('[VoiceAssistant] [DEBUG] TTS Speak button clicked');
+            console.log('[VoiceAssistant] [DEBUG] Click event stack:', new Error().stack);
+            
             const text = this.elements.ttsTextInput?.value?.trim();
             if (text) {
+                console.log('[VoiceAssistant] [DEBUG] Calling ttsSpeak handler with text:', text.substring(0, 30) + '...');
                 this.eventHandlers.ttsSpeak?.(text);
             }
         });
@@ -273,7 +277,12 @@ class VoiceAssistantUI {
     onSwitchMode(handler) { this.eventHandlers.switchMode = handler; }
     onSTTStartRecording(handler) { this.eventHandlers.sttStartRecording = handler; }
     onSTTStopRecording(handler) { this.eventHandlers.sttStopRecording = handler; }
-    onTTSSpeak(handler) { this.eventHandlers.ttsSpeak = handler; }
+    onTTSSpeak(handler) {
+        console.log('[VoiceAssistant] [DEBUG] Registering TTS speak handler');
+        console.log('[VoiceAssistant] [DEBUG] Previous handler existed:', !!this.eventHandlers.ttsSpeak);
+        console.log('[VoiceAssistant] [DEBUG] Registration stack:', new Error().stack);
+        this.eventHandlers.ttsSpeak = handler;
+    }
     onTTSStop(handler) { this.eventHandlers.ttsStop = handler; }
     onSTSStartConversation(handler) { this.eventHandlers.stsStartConversation = handler; }
     onSTSStopConversation(handler) { this.eventHandlers.stsStopConversation = handler; }

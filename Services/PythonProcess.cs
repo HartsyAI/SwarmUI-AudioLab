@@ -345,13 +345,39 @@ public class PythonProcess : IDisposable
 
     /// <summary>
     /// Handles process error data.
+    /// Only logs as Error if the message appears to be an actual error.
+    /// Many Python libraries output regular information to stderr.
     /// </summary>
     private void OnErrorDataReceived(object sender, DataReceivedEventArgs e)
     {
         if (!string.IsNullOrEmpty(e?.Data))
         {
-            Logs.Error($"[VoiceBackend] {e.Data}");
-            ErrorReceived?.Invoke(this, e.Data);
+            string data = e.Data;
+            
+            // Check if this is actually an error message or just informational
+            bool isActualError = data.Contains("Error") ||
+                                data.Contains("ERROR") ||
+                                data.Contains("Exception") ||
+                                data.Contains("exception") ||
+                                data.Contains("CRITICAL") ||
+                                data.Contains("failed") ||
+                                data.Contains("Failed") ||
+                                data.Contains("FAILED") ||
+                                data.Contains("warning") ||
+                                data.Contains("WARNING");
+                                
+            // UVICORN and FastAPI often output regular logs to stderr
+            if (isActualError)
+            {
+                Logs.Error($"[VoiceBackend] {data}");
+            }
+            else 
+            {
+                // Log as Info for clarity - avoids duplicate messages
+                Logs.Info($"[VoiceBackend] {data}");
+            }
+            
+            ErrorReceived?.Invoke(this, data);
         }
     }
 

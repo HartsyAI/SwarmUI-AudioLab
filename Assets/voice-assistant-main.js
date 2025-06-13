@@ -1,11 +1,11 @@
 /**
- * Voice Assistant Main Integration Script - Updated for New Architecture
+ * Voice Assistant Main Integration Script - Updated for Generic Endpoints
  * Initializes and connects all Voice Assistant modules with enhanced error handling.
  * This script runs when the DOM is ready and sets up the complete system.
  */
 
 (() => {
-    console.log('[VoiceAssistant] Main integration script loaded - v2.0 Complete UI Redesign');
+    console.log('[VoiceAssistant] Main integration script loaded - v2.0 Generic Endpoints');
 
     // Global system state
     let systemInitialized = false;
@@ -67,8 +67,8 @@
             systemInitialized = true;
 
             // Show success notification
-            ui.showSuccess('Voice Assistant initialized successfully!');
-            ui.addConsoleMessage('success', 'Voice Assistant v2.0 ready - All modules loaded');
+            ui.showSuccess('Voice Assistant initialized successfully with generic endpoints!');
+            ui.addConsoleMessage('success', 'Voice Assistant v2.0 ready - Generic endpoints loaded');
 
             console.log('[VoiceAssistant] System initialization completed successfully');
             console.log('[VoiceAssistant] Global access available via: window.swarmVoiceAssistant');
@@ -106,7 +106,7 @@
     }
 
     /**
-     * Create global interface for external access
+     * Create global interface for external access with updated methods
      */
     function createGlobalInterface(core, api, ui) {
         return {
@@ -118,6 +118,7 @@
             // Version info
             version: '2.0.0',
             buildDate: new Date().toISOString(),
+            endpointVersion: 'generic',
 
             // Convenience methods for external access
             async getStatus() {
@@ -158,6 +159,56 @@
                 }
             },
 
+            // Generic endpoint access
+            async processSTT(audioData, language = 'en-US', options = {}) {
+                try {
+                    return await api.processSTT(audioData, language, options);
+                } catch (error) {
+                    console.error('[VoiceAssistant] Error processing STT:', error);
+                    return { error: error.message };
+                }
+            },
+
+            async processTTS(text, voice = 'default', language = 'en-US', volume = 0.8, options = {}) {
+                try {
+                    return await api.processTTS(text, voice, language, volume, options);
+                } catch (error) {
+                    console.error('[VoiceAssistant] Error processing TTS:', error);
+                    return { error: error.message };
+                }
+            },
+
+            async processPipeline(inputType, inputData, pipelineSteps, sessionId = null) {
+                try {
+                    return await api.processPipeline(inputType, inputData, pipelineSteps, sessionId);
+                } catch (error) {
+                    console.error('[VoiceAssistant] Error processing pipeline:', error);
+                    return { error: error.message };
+                }
+            },
+
+            async processSpeechToSpeech(audioData, language = 'en-US', voice = 'default', volume = 0.8, options = {}) {
+                try {
+                    return await api.processSpeechToSpeech(audioData, language, voice, volume, options);
+                } catch (error) {
+                    console.error('[VoiceAssistant] Error processing speech-to-speech:', error);
+                    return { error: error.message };
+                }
+            },
+
+            // Pipeline step builders
+            createSTTStep(language, options) {
+                return api.createSTTStep(language, options);
+            },
+
+            createTTSStep(voice, language, volume, options) {
+                return api.createTTSStep(voice, language, volume, options);
+            },
+
+            createCommandStep(processor, options) {
+                return api.createCommandStep(processor, options);
+            },
+
             // Debugging methods
             async testAPI() {
                 try {
@@ -173,7 +224,8 @@
                     return {
                         core: core.state,
                         api: api.getStatistics(),
-                        initialized: systemInitialized
+                        initialized: systemInitialized,
+                        endpointVersion: 'generic'
                     };
                 } catch (error) {
                     console.error('[VoiceAssistant] Error getting state:', error);
@@ -233,9 +285,20 @@
             getSystemInfo() {
                 return {
                     version: '2.0.0',
+                    endpointVersion: 'generic',
                     initialized: systemInitialized,
                     initializationAttempts: initializationAttempts,
                     modules: checkRequiredModules(),
+                    supportedEndpoints: [
+                        'ProcessSTT',
+                        'ProcessTTS', 
+                        'ProcessPipeline',
+                        'GetVoiceStatus',
+                        'StartVoiceService',
+                        'StopVoiceService',
+                        'CheckInstallationStatus',
+                        'GetInstallationProgress'
+                    ],
                     browser: {
                         userAgent: navigator.userAgent,
                         webkitSpeechRecognition: !!window.webkitSpeechRecognition,
@@ -297,6 +360,9 @@
             if (window.speechSynthesis) browserCaps.push('SpeechSynthesis');
 
             ui.addConsoleMessage('info', `Browser capabilities: ${browserCaps.join(', ')}`);
+
+            // Show endpoint information
+            ui.addConsoleMessage('info', 'Generic endpoints: ProcessSTT, ProcessTTS, ProcessPipeline');
 
             console.log('[VoiceAssistant] Initial diagnostics completed');
         } catch (error) {
@@ -439,6 +505,6 @@
     window.initVoiceAssistant = initializeVoiceAssistant;
 
     // Start the initialization process
-    console.log('[VoiceAssistant] Starting initialization process...');
+    console.log('[VoiceAssistant] Starting initialization process with generic endpoints...');
     waitForReady();
 })();

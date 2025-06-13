@@ -9,9 +9,9 @@ using Hartsy.Extensions.VoiceAssistant.Models;
 namespace Hartsy.Extensions.VoiceAssistant.Services;
 
 /// <summary>
-/// HTTP client service for communicating with the Python backend using modern endpoints.
-/// Handles all HTTP communication, timeouts, and response parsing for backend services.
-/// Implements singleton pattern for resource management with support for STT, TTS, and pipeline operations.
+/// HTTP client service for communicating with the Python backend using generic endpoints.
+/// Handles all HTTP communication, timeouts, and response parsing for modern STT, TTS, and pipeline operations.
+/// Implements singleton pattern for resource management with clean separation of concerns.
 /// </summary>
 public class BackendHttpClient : IDisposable
 {
@@ -46,7 +46,7 @@ public class BackendHttpClient : IDisposable
             _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
 
             _isInitialized = true;
-            Logs.Debug("[VoiceAssistant] HTTP client initialized successfully");
+            Logs.Debug("[VoiceAssistant] HTTP client initialized for generic endpoints");
         }
         catch (Exception ex)
         {
@@ -88,9 +88,8 @@ public class BackendHttpClient : IDisposable
                 var healthData = JObject.Parse(content);
 
                 // Extract additional health information if available
-                if (healthData["services"] != null)
+                if (healthData["services"] is JObject services)
                 {
-                    var services = healthData["services"];
                     var sttReady = services["stt"]?.Value<bool>() ?? false;
                     var ttsReady = services["tts"]?.Value<bool>() ?? false;
 
@@ -129,14 +128,14 @@ public class BackendHttpClient : IDisposable
         return healthInfo;
     }
 
-    #region Modern STT/TTS Endpoints
+    #region Generic Processing Endpoints
 
     /// <summary>
-    /// Calls the pure STT (Speech-to-Text) service endpoint with enhanced options support.
+    /// Calls the pure STT (Speech-to-Text) service endpoint.
     /// </summary>
-    /// <param name="request">STT request data with options</param>
+    /// <param name="request">STT request data</param>
     /// <returns>STT response data</returns>
-    public async Task<JObject> CallSTTServiceAsync(dynamic request)
+    public async Task<JObject> CallSTTServiceAsync(STTRequest request)
     {
         EnsureInitialized();
 
@@ -155,22 +154,24 @@ public class BackendHttpClient : IDisposable
             {
                 var optionsObj = new JObject();
 
-                if (request.Options.ReturnConfidence != null)
+                if (request.Options.ReturnConfidence)
                     optionsObj["return_confidence"] = request.Options.ReturnConfidence;
 
-                if (request.Options.ReturnAlternatives != null)
+                if (request.Options.ReturnAlternatives)
                     optionsObj["return_alternatives"] = request.Options.ReturnAlternatives;
 
                 if (!string.IsNullOrEmpty(request.Options.ModelPreference))
                     optionsObj["model_preference"] = request.Options.ModelPreference;
 
                 // Add custom options if any
-                if (request.Options.CustomOptions != null && request.Options.CustomOptions.Count > 0)
+                if (request.Options.CustomOptions?.Count > 0)
                 {
+                    var customObj = new JObject();
                     foreach (var customOption in request.Options.CustomOptions)
                     {
-                        optionsObj[customOption.Key] = JToken.FromObject(customOption.Value);
+                        customObj[customOption.Key] = JToken.FromObject(customOption.Value);
                     }
+                    optionsObj["custom"] = customObj;
                 }
 
                 if (optionsObj.Count > 0)
@@ -189,17 +190,17 @@ public class BackendHttpClient : IDisposable
     }
 
     /// <summary>
-    /// Calls the pure TTS (Text-to-Speech) service endpoint with enhanced options support.
+    /// Calls the pure TTS (Text-to-Speech) service endpoint.
     /// </summary>
-    /// <param name="request">TTS request data with options</param>
+    /// <param name="request">TTS request data</param>
     /// <returns>TTS response data</returns>
-    public async Task<JObject> CallTTSServiceAsync(dynamic request)
+    public async Task<JObject> CallTTSServiceAsync(TTSRequest request)
     {
         EnsureInitialized();
 
         try
         {
-            Logs.Debug($"[VoiceAssistant] Calling TTS service for text: '{request.Text?.ToString()?.Substring(0, Math.Min(50, request.Text?.ToString()?.Length ?? 0))}...'");
+            Logs.Debug($"[VoiceAssistant] Calling TTS service for text: '{request.Text?.Substring(0, Math.Min(50, request.Text?.Length ?? 0))}...'");
 
             var requestData = new JObject
             {
@@ -214,22 +215,24 @@ public class BackendHttpClient : IDisposable
             {
                 var optionsObj = new JObject();
 
-                if (request.Options.Speed != null && request.Options.Speed != 1.0f)
+                if (request.Options.Speed != 1.0f)
                     optionsObj["speed"] = request.Options.Speed;
 
-                if (request.Options.Pitch != null && request.Options.Pitch != 1.0f)
+                if (request.Options.Pitch != 1.0f)
                     optionsObj["pitch"] = request.Options.Pitch;
 
                 if (!string.IsNullOrEmpty(request.Options.Format) && request.Options.Format != "wav")
                     optionsObj["format"] = request.Options.Format;
 
                 // Add custom options if any
-                if (request.Options.CustomOptions != null && request.Options.CustomOptions.Count > 0)
+                if (request.Options.CustomOptions?.Count > 0)
                 {
+                    var customObj = new JObject();
                     foreach (var customOption in request.Options.CustomOptions)
                     {
-                        optionsObj[customOption.Key] = JToken.FromObject(customOption.Value);
+                        customObj[customOption.Key] = JToken.FromObject(customOption.Value);
                     }
+                    optionsObj["custom"] = customObj;
                 }
 
                 if (optionsObj.Count > 0)
@@ -250,28 +253,27 @@ public class BackendHttpClient : IDisposable
     /// <summary>
     /// Calls the pipeline processing endpoint for configurable workflows.
     /// </summary>
-    /// <param name="inputType">Type of input (audio|text)</param>
-    /// <param name="inputData">Input data</param>
-    /// <param name="pipelineSteps">List of pipeline steps to execute</param>
+    /// <param name="request">Pipeline request data</param>
     /// <returns>Pipeline response data</returns>
-    public async Task<JObject> CallPipelineServiceAsync(string inputType, string inputData, List<PipelineStep> pipelineSteps)
+    public async Task<JObject> CallPipelineServiceAsync(PipelineRequest request)
     {
         EnsureInitialized();
 
         try
         {
-            Logs.Debug($"[VoiceAssistant] Calling pipeline service with {pipelineSteps.Count} steps");
+            Logs.Debug($"[VoiceAssistant] Calling pipeline service with {request.PipelineSteps.Count} steps");
 
             var requestData = new JObject
             {
-                ["input_type"] = inputType,
-                ["input_data"] = inputData,
+                ["input_type"] = request.InputType,
+                ["input_data"] = request.InputData,
+                ["session_id"] = request.SessionId,
                 ["pipeline_steps"] = new JArray()
             };
 
             // Convert pipeline steps to JSON
             var stepsArray = (JArray)requestData["pipeline_steps"];
-            foreach (var step in pipelineSteps)
+            foreach (var step in request.PipelineSteps)
             {
                 var stepObj = new JObject
                 {
@@ -288,95 +290,6 @@ public class BackendHttpClient : IDisposable
         {
             Logs.Error($"[VoiceAssistant] Pipeline service call failed: {ex.Message}");
             throw new InvalidOperationException($"Pipeline service call failed: {ex.Message}", ex);
-        }
-    }
-
-    #endregion
-
-    #region Legacy Support Methods (For Compatibility During Transition)
-
-    /// <summary>
-    /// Legacy method for backwards compatibility during transition.
-    /// Converts old-style voice input to new STT + optional TTS pipeline.
-    /// TODO: Remove this method once frontend is fully migrated.
-    /// </summary>
-    [Obsolete("Use CallSTTServiceAsync and CallTTSServiceAsync instead")]
-    public async Task<JObject> CallLegacyVoiceInputAsync(string audioData, string language, string voice, float volume)
-    {
-        try
-        {
-            Logs.Debug("[VoiceAssistant] Processing legacy voice input call");
-
-            // Convert to pipeline call
-            var pipelineSteps = new List<PipelineStep>
-            {
-                new PipelineStep
-                {
-                    Type = "stt",
-                    Enabled = true,
-                    Config = new JObject { ["language"] = language }
-                }
-            };
-
-            // Add TTS step if voice is specified
-            if (!string.IsNullOrEmpty(voice) && voice != "none")
-            {
-                pipelineSteps.Add(new PipelineStep
-                {
-                    Type = "tts",
-                    Enabled = true,
-                    Config = new JObject
-                    {
-                        ["voice"] = voice,
-                        ["language"] = language,
-                        ["volume"] = volume
-                    }
-                });
-            }
-
-            return await CallPipelineServiceAsync("audio", audioData, pipelineSteps);
-        }
-        catch (Exception ex)
-        {
-            Logs.Error($"[VoiceAssistant] Legacy voice input call failed: {ex.Message}");
-            throw new InvalidOperationException($"Legacy voice input processing failed: {ex.Message}", ex);
-        }
-    }
-
-    /// <summary>
-    /// Legacy method for backwards compatibility during transition.
-    /// Converts old-style text command to new TTS call.
-    /// TODO: Remove this method once frontend is fully migrated.
-    /// </summary>
-    [Obsolete("Use CallTTSServiceAsync instead")]
-    public async Task<JObject> CallLegacyTextCommandAsync(string text, string voice, string language, float volume)
-    {
-        try
-        {
-            Logs.Debug("[VoiceAssistant] Processing legacy text command call");
-
-            // Convert to pipeline call
-            var pipelineSteps = new List<PipelineStep>
-            {
-                new PipelineStep
-                {
-                    Type = "tts",
-                    Enabled = true,
-                    Config = new JObject
-                    {
-                        ["voice"] = voice,
-                        ["language"] = language,
-                        ["volume"] = volume
-                    }
-                }
-            };
-
-            return await CallPipelineServiceAsync("text", text, pipelineSteps);
-        }
-        catch (Exception ex)
-        {
-            Logs.Error($"[VoiceAssistant] Legacy text command call failed: {ex.Message}");
-            throw new InvalidOperationException($"Legacy text command processing failed: {ex.Message}", ex);
         }
     }
 
@@ -502,6 +415,269 @@ public class BackendHttpClient : IDisposable
         }
 
         return results;
+    }
+
+    #endregion
+
+    #region Utility Methods
+
+    /// <summary>
+    /// Gets information about supported endpoints and capabilities.
+    /// </summary>
+    /// <returns>Backend capability information</returns>
+    public async Task<JObject> GetBackendCapabilitiesAsync()
+    {
+        try
+        {
+            Logs.Debug("[VoiceAssistant] Getting backend capabilities");
+
+            using var cts = new CancellationTokenSource(ServiceConfiguration.HealthCheckTimeout);
+            var response = await _httpClient.GetAsync(ServiceConfiguration.GetBackendEndpoint("/capabilities"), cts.Token);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var content = await response.Content.ReadAsStringAsync();
+                return JObject.Parse(content);
+            }
+            else
+            {
+                // Return default capabilities if endpoint doesn't exist
+                return new JObject
+                {
+                    ["version"] = "2.0.0",
+                    ["endpoint_version"] = "generic",
+                    ["supported_endpoints"] = new JArray
+                    {
+                        "/stt/transcribe",
+                        "/tts/synthesize",
+                        "/pipeline/process",
+                        "/health", 
+                        "/status",
+                        "/shutdown"
+                    },
+                    ["pipeline_step_types"] = new JArray { "stt", "tts", "command_processing" }
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            Logs.Debug($"[VoiceAssistant] Error getting backend capabilities: {ex.Message}");
+            
+            // Return minimal capabilities on error
+            return new JObject
+            {
+                ["version"] = "unknown",
+                ["endpoint_version"] = "generic",
+                ["error"] = ex.Message
+            };
+        }
+    }
+
+    /// <summary>
+    /// Validates that the backend supports the required endpoints.
+    /// </summary>
+    /// <returns>True if all required endpoints are available</returns>
+    public async Task<bool> ValidateBackendCompatibilityAsync()
+    {
+        try
+        {
+            var connectivity = await TestEndpointConnectivityAsync();
+            
+            var requiredEndpoints = new[] { "/health", "/stt/transcribe", "/tts/synthesize" };
+            var availableEndpoints = connectivity.Where(kvp => kvp.Value).Select(kvp => kvp.Key).ToList();
+            
+            var missingEndpoints = requiredEndpoints.Except(availableEndpoints).ToList();
+            
+            if (missingEndpoints.Any())
+            {
+                Logs.Warning($"[VoiceAssistant] Backend missing required endpoints: {string.Join(", ", missingEndpoints)}");
+                return false;
+            }
+            
+            Logs.Info("[VoiceAssistant] Backend compatibility validated successfully");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] Backend compatibility validation failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    #endregion
+
+    #region Server-Side Recording Services
+
+    /// <summary>Call the server-side recording start service endpoint.</summary>
+    /// <param name="request">Recording request data</param>
+    /// <returns>Recording response data</returns>
+    public async Task<RecordingResponse> CallStartRecordingServiceAsync(RecordingRequest request)
+    {
+        EnsureInitialized();
+
+        try
+        {
+            Logs.Debug($"[VoiceAssistant] Calling server recording start service: Duration={request.Duration}s, Mode={request.Mode}");
+
+            JObject requestData = new JObject
+            {
+                ["session_id"] = request.SessionId,
+                ["duration"] = request.Duration,
+                ["language"] = request.Language,
+                ["mode"] = request.Mode
+            };
+
+            // Add options if provided
+            if (request.Options?.Count > 0)
+            {
+                JObject optionsObj = new JObject();
+                foreach (System.Collections.Generic.KeyValuePair<string, object> option in request.Options)
+                {
+                    optionsObj[option.Key] = JToken.FromObject(option.Value);
+                }
+                requestData["options"] = optionsObj;
+            }
+
+            JObject backendResponse = await PostToBackendAsync("/recording/start", requestData);
+
+            RecordingResponse response = new RecordingResponse
+            {
+                Success = backendResponse?["success"]?.Value<bool>() ?? false,
+                IsRecording = backendResponse?["is_recording"]?.Value<bool>() ?? false,
+                RecordingId = backendResponse?["recording_id"]?.ToString() ?? string.Empty,
+                Duration = backendResponse?["duration"]?.Value<int>() ?? request.Duration,
+                Mode = backendResponse?["mode"]?.ToString() ?? request.Mode
+            };
+
+            // Parse metadata if available
+            if (backendResponse?["metadata"] is JObject metadata)
+            {
+                response.Metadata = new RecordingMetadata
+                {
+                    DeviceUsed = metadata["device_used"]?.ToString() ?? "default",
+                    SampleRate = metadata["sample_rate"]?.Value<int>() ?? 16000,
+                    AudioFormat = metadata["audio_format"]?.ToString() ?? "wav",
+                    AudioChannels = metadata["audio_channels"]?.Value<int>() ?? 1,
+                    StartTime = DateTime.TryParse(metadata["start_time"]?.ToString(), out DateTime startTime) ? startTime : DateTime.UtcNow
+                };
+            }
+
+            if (!response.Success)
+            {
+                response.Message = backendResponse?["error"]?.ToString() ?? "Recording start failed";
+                throw new InvalidOperationException(response.Message);
+            }
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] Server recording start service call failed: {ex.Message}");
+            throw new InvalidOperationException($"Server recording start service call failed: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>Call the server-side recording stop service endpoint.</summary>
+    /// <param name="sessionId">Session ID of the recording to stop</param>
+    /// <returns>Recording response with processed results</returns>
+    public async Task<RecordingResponse> CallStopRecordingServiceAsync(string sessionId)
+    {
+        EnsureInitialized();
+
+        try
+        {
+            Logs.Debug($"[VoiceAssistant] Calling server recording stop service: SessionId={sessionId}");
+
+            JObject requestData = new JObject
+            {
+                ["session_id"] = sessionId
+            };
+
+            JObject backendResponse = await PostToBackendAsync("/recording/stop", requestData);
+
+            RecordingResponse response = new RecordingResponse
+            {
+                Success = backendResponse?["success"]?.Value<bool>() ?? false,
+                IsRecording = backendResponse?["is_recording"]?.Value<bool>() ?? false,
+                RecordingId = backendResponse?["recording_id"]?.ToString() ?? string.Empty,
+                AudioData = backendResponse?["audio_data"]?.ToString() ?? string.Empty,
+                Transcription = backendResponse?["transcription"]?.ToString() ?? string.Empty,
+                AIResponse = backendResponse?["ai_response"]?.ToString() ?? string.Empty
+            };
+
+            // Parse metadata if available
+            if (backendResponse?["metadata"] is JObject metadata)
+            {
+                response.Metadata = new RecordingMetadata
+                {
+                    DeviceUsed = metadata["device_used"]?.ToString() ?? "default",
+                    SampleRate = metadata["sample_rate"]?.Value<int>() ?? 16000,
+                    AudioFormat = metadata["audio_format"]?.ToString() ?? "wav",
+                    AudioChannels = metadata["audio_channels"]?.Value<int>() ?? 1,
+                    ActualDuration = metadata["actual_duration"]?.Value<double>() ?? 0.0
+                };
+
+                if (DateTime.TryParse(metadata["start_time"]?.ToString(), out DateTime startTime))
+                    response.Metadata.StartTime = startTime;
+                if (DateTime.TryParse(metadata["end_time"]?.ToString(), out DateTime endTime))
+                    response.Metadata.EndTime = endTime;
+            }
+
+            if (!response.Success)
+            {
+                response.Message = backendResponse?["error"]?.ToString() ?? "Recording stop failed";
+                throw new InvalidOperationException(response.Message);
+            }
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] Server recording stop service call failed: {ex.Message}");
+            throw new InvalidOperationException($"Server recording stop service call failed: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>Call the server-side recording status service endpoint.</summary>
+    /// <param name="sessionId">Session ID of the recording to check</param>
+    /// <returns>Recording status response</returns>
+    public async Task<RecordingStatusResponse> CallRecordingStatusServiceAsync(string sessionId)
+    {
+        EnsureInitialized();
+
+        try
+        {
+            Logs.Debug($"[VoiceAssistant] Calling server recording status service: SessionId={sessionId}");
+
+            JObject requestData = new JObject
+            {
+                ["session_id"] = sessionId
+            };
+
+            JObject backendResponse = await PostToBackendAsync("/recording/status", requestData);
+
+            RecordingStatusResponse response = new RecordingStatusResponse
+            {
+                Success = backendResponse?["success"]?.Value<bool>() ?? false,
+                IsRecording = backendResponse?["is_recording"]?.Value<bool>() ?? false,
+                RecordingId = backendResponse?["recording_id"]?.ToString() ?? string.Empty,
+                ElapsedSeconds = backendResponse?["elapsed_seconds"]?.Value<int>() ?? 0,
+                TotalDuration = backendResponse?["total_duration"]?.Value<int>() ?? 0,
+                Status = backendResponse?["status"]?.ToString() ?? "unknown"
+            };
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] Server recording status service call failed: {ex.Message}");
+            return new RecordingStatusResponse
+            {
+                Success = false,
+                Message = $"Recording status service call failed: {ex.Message}",
+                Status = "error"
+            };
+        }
     }
 
     #endregion

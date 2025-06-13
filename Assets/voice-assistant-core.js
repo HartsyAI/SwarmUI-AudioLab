@@ -1,5 +1,5 @@
 /**
- * Voice Assistant Core - Updated Main Coordination Module
+ * Voice Assistant Core - Refactored for Generic Endpoints
  * Handles application state, voice recording, audio processing, and service coordination.
  * Acts as the central hub between UI and API components with support for multiple modes.
  */
@@ -20,7 +20,13 @@ class VoiceAssistantCore {
             // Activity state
             isRecording: false,
             isProcessing: false,
-            isSpeaking: false
+            isSpeaking: false,
+
+            // Browser capabilities
+            hasMediaDevices: false,
+            hasMediaRecorder: false,
+            hasAudioContext: false,
+            canRecord: false
         };
 
         // Audio context and recording
@@ -55,7 +61,7 @@ class VoiceAssistantCore {
         this.progressPollingTimer = null;
         this.healthCheckTimer = null;
 
-        console.log('[VoiceAssistant] Core module initialized');
+        console.log('[VoiceAssistant] Core module initialized with generic endpoint support');
     }
 
     /**
@@ -63,7 +69,7 @@ class VoiceAssistantCore {
      */
     async initialize(apiModule, uiModule) {
         try {
-            console.log('[VoiceAssistant] Initializing Voice Assistant Core v2.0');
+            console.log('[VoiceAssistant] Initializing Voice Assistant Core v2.0 with generic endpoints');
 
             // Store dependencies
             this.api = apiModule;
@@ -72,11 +78,8 @@ class VoiceAssistantCore {
             // Set up cross-module communication
             this.setupEventHandlers();
 
-            // Check browser compatibility
-            if (!this.checkBrowserCompatibility()) {
-                this.ui.showError('Your browser does not support voice recording. Please use a modern browser.');
-                return false;
-            }
+            // Check browser compatibility (but don't fail if recording not available)
+            this.checkBrowserCompatibility();
 
             // Initial service status check
             await this.checkServiceStatus();
@@ -137,23 +140,38 @@ class VoiceAssistantCore {
 
     /**
      * Check browser compatibility for voice features
+     * Now returns boolean but doesn't fail initialization completely
      */
     checkBrowserCompatibility() {
         const hasMediaDevices = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
         const hasMediaRecorder = !!(window.MediaRecorder);
         const hasAudioContext = !!(window.AudioContext || window.webkitAudioContext);
 
+        // Update state
+        this.state.hasMediaDevices = hasMediaDevices;
+        this.state.hasMediaRecorder = hasMediaRecorder;
+        this.state.hasAudioContext = hasAudioContext;
+        this.state.canRecord = hasMediaDevices && hasMediaRecorder && hasAudioContext;
+
         console.log('[VoiceAssistant] Browser compatibility:', {
             mediaDevices: hasMediaDevices,
             mediaRecorder: hasMediaRecorder,
-            audioContext: hasAudioContext
+            audioContext: hasAudioContext,
+            canRecord: this.state.canRecord
         });
 
         if (!hasMediaDevices) {
-            this.ui.showWarning('Microphone access not available. Please use HTTPS or localhost.');
+            this.ui.showWarning('Microphone access not available. Voice recording features will be disabled. Please use HTTPS or localhost for full functionality.');
+            this.ui.addConsoleMessage('warning', 'Microphone access not available - voice recording disabled');
+        } else if (!this.state.canRecord) {
+            this.ui.showWarning('Some voice features may not work properly in this browser.');
+            this.ui.addConsoleMessage('warning', 'Limited voice support detected');
+        } else {
+            this.ui.addConsoleMessage('success', 'Full voice support available');
         }
 
-        return hasMediaDevices && hasMediaRecorder && hasAudioContext;
+        // Always return true to allow service management even without recording
+        return true;
     }
 
     /**
@@ -482,6 +500,7 @@ class VoiceAssistantCore {
      * Start STT recording
      */
     async startSTTRecording() {
+        if (!this.ensureRecordingCapable()) return;
         if (!this.ensureServiceReady()) return;
 
         console.log('[VoiceAssistant] Starting STT recording');
@@ -519,35 +538,36 @@ class VoiceAssistantCore {
         if (!this.ensureServiceReady()) return;
 
         console.log('[VoiceAssistant] Speaking text via TTS:', text.substring(0, 50) + '...');
+        console.log('[VoiceAssistant] [DEBUG] TTS call trace:', new Error().stack);
+        console.log('[VoiceAssistant] [DEBUG] Current isSpeaking state:', this.state.isSpeaking);
 
         try {
             this.state.isSpeaking = true;
             this.ui.updateTTSControlsState(true, false);
             this.ui.addConsoleMessage('info', `TTS: Speaking "${text.substring(0, 30)}..."`);
 
-            // TODO: Add separate TTS testing endpoint
-            // For now, use the text command endpoint
+            // Get current settings from UI
             const settings = this.ui.getCurrentSettings();
-            const payload = {
-                session_id: this.sessionId,
-                text: text,
-                voice: settings.tts.voice,
-                volume: settings.tts.volume
-            };
 
-            const result = await this.api.processTextCommand(payload);
+            // Use the new pure TTS endpoint
+            const result = await this.api.processTTS(
+                text,
+                settings.tts.voice,
+                'en-US', // TODO: Get from settings
+                settings.tts.volume
+            );
 
             if (result.success) {
                 // Play TTS response if available
-                if (result.audio_response) {
-                    await this.playAudioResponse(result.audio_response);
+                if (result.audio_data) {
+                    await this.playAudioResponse(result.audio_data);
                 }
 
                 this.ui.addHistoryItem('tts', text, 'Text spoken successfully');
                 this.ui.showSuccess('Text spoken successfully');
                 this.ui.addConsoleMessage('success', 'TTS: Text spoken successfully');
             } else {
-                throw new Error(result.error || 'TTS failed');
+                throw new Error(result.error || result.message || 'TTS failed');
             }
         } catch (error) {
             console.error('[VoiceAssistant] TTS failed:', error);
@@ -587,6 +607,7 @@ class VoiceAssistantCore {
      * Start STS conversation
      */
     async startSTSConversation() {
+        if (!this.ensureRecordingCapable()) return;
         if (!this.ensureServiceReady()) return;
 
         console.log('[VoiceAssistant] Starting STS conversation');
@@ -623,6 +644,10 @@ class VoiceAssistantCore {
     async startRecording() {
         if (this.state.isRecording) {
             return;
+        }
+
+        if (!this.state.canRecord) {
+            throw new Error('Voice recording not available in this browser or connection');
         }
 
         try {
@@ -750,62 +775,80 @@ class VoiceAssistantCore {
     }
 
     /**
-     * Process audio for STT mode
+     * Process audio for STT mode using the new pure STT endpoint
      */
     async processSTTAudio(audioData, settings) {
-        // TODO: Create separate STT testing endpoint or use existing processVoiceInput
-        const payload = {
-            session_id: this.sessionId,
-            audio_data: audioData,
-            language: settings.stt.language
-        };
-
-        const result = await this.api.processVoiceInput(payload);
+        // Use the new pure STT endpoint
+        const result = await this.api.processSTT(
+            audioData,
+            settings.stt.language,
+            {
+                returnConfidence: true,
+                returnAlternatives: false,
+                modelPreference: 'accuracy'
+            }
+        );
 
         if (result.success && result.transcription) {
             this.ui.updateSTTTranscription(result.transcription, result.confidence);
             this.ui.addHistoryItem('stt', 'Audio input', result.transcription);
             this.ui.addConsoleMessage('success', `STT: "${result.transcription}"`);
         } else {
-            throw new Error(result.error || 'STT failed');
+            throw new Error(result.error || result.message || 'STT failed');
         }
 
         this.ui.updateSTTRecordingState(false, false);
     }
 
     /**
-     * Process audio for STS mode (full pipeline)
+     * Process audio for STS mode using the new speech-to-speech convenience method
      */
     async processSTSAudio(audioData, settings) {
-        const payload = {
-            session_id: this.sessionId,
-            audio_data: audioData,
-            language: settings.stt.language,
-            voice: settings.tts.voice,
-            volume: settings.tts.volume
-        };
-
-        const result = await this.api.processVoiceInput(payload);
+        // Use the new speech-to-speech convenience method
+        const result = await this.api.processSpeechToSpeech(
+            audioData,
+            settings.stt.language,
+            settings.tts.voice,
+            settings.tts.volume,
+            {
+                stt: {
+                    returnConfidence: true,
+                    returnAlternatives: false
+                },
+                tts: {
+                    speed: 1.0,
+                    pitch: 1.0,
+                    format: 'wav'
+                }
+            }
+        );
 
         if (result.success) {
+            // Extract results from pipeline
+            const sttResult = result.pipeline_results?.stt;
+            const ttsResult = result.pipeline_results?.tts;
+
+            const transcription = sttResult?.transcription || 'Audio processed';
+            const aiResponse = 'Echo: ' + transcription; // Simple echo for now
+
             // Update conversation display
             this.ui.updateSTSConversationState(
                 false,
-                result.transcription || 'Audio processed',
-                result.ai_response || 'Response generated'
+                transcription,
+                aiResponse
             );
 
             // Add to history
-            this.ui.addHistoryItem('sts', result.transcription || 'Audio input', result.ai_response || 'AI response');
+            this.ui.addHistoryItem('sts', transcription, aiResponse);
 
             // Play TTS response if available
-            if (result.audio_response) {
-                await this.playAudioResponse(result.audio_response);
+            if (ttsResult?.audio_data) {
+                await this.playAudioResponse(ttsResult.audio_data);
             }
 
             this.ui.addConsoleMessage('success', 'STS: Conversation completed');
         } else {
-            throw new Error(result.error || 'STS failed');
+            throw new Error(result.error || result.message || 'STS failed');
         }
     }
 
@@ -842,6 +885,235 @@ class VoiceAssistantCore {
             console.error('[VoiceAssistant] Error playing TTS audio:', error);
             // Don't show error to user for audio playback issues
         }
+    }
+
+    /**
+     * Start STT recording using server-side recording
+     */
+    async startSTTRecording() {
+        if (!this.ensureServiceReady()) return;
+
+        console.log('[VoiceAssistant] Starting server-side STT recording');
+
+        try {
+            this.state.isRecording = true;
+            this.ui.updateSTTRecordingState(true, false);
+            this.ui.addConsoleMessage('info', 'STT: Started server-side recording');
+
+            // Get current settings from UI
+            const settings = this.ui.getCurrentSettings();
+            const duration = 10; // 10 seconds default
+
+            // Start server-side recording
+            const result = await this.api.completeServerRecording(
+                duration,
+                settings.stt.language,
+                'stt',
+                {},
+                (progress) => this.handleRecordingProgress(progress)
+            );
+
+            if (result.success) {
+                if (result.transcription) {
+                    this.ui.updateSTTTranscription(result.transcription, 0.9); // Server-side confidence
+                    this.ui.addHistoryItem('stt', 'Server recording', result.transcription);
+                    this.ui.addConsoleMessage('success', `STT: "${result.transcription}"`);
+                } else {
+                    throw new Error('No transcription received from server recording');
+                }
+            } else {
+                throw new Error(result.error || result.message || 'Server recording failed');
+            }
+
+        } catch (error) {
+            console.error('[VoiceAssistant] Server STT recording failed:', error);
+            this.ui.showError('Server recording failed: ' + error.message);
+            this.ui.addConsoleMessage('error', 'STT: Server recording failed - ' + error.message);
+        } finally {
+            this.state.isRecording = false;
+            this.ui.updateSTTRecordingState(false, false);
+            this.updateUI();
+        }
+    }
+
+    /**
+     * Stop STT recording (for server-side, this is handled automatically)
+     */
+    async stopSTTRecording() {
+        if (!this.state.isRecording) return;
+
+        console.log('[VoiceAssistant] Stopping server-side STT recording');
+        
+        try {
+            // For server-side recording, we can try to stop early
+            const result = await this.api.stopServerRecording();
+            
+            if (result.success && result.transcription) {
+                this.ui.updateSTTTranscription(result.transcription, 0.9);
+                this.ui.addHistoryItem('stt', 'Server recording (stopped early)', result.transcription);
+                this.ui.addConsoleMessage('success', `STT: "${result.transcription}"`);
+            }
+        } catch (error) {
+            console.error('[VoiceAssistant] Error stopping server recording:', error);
+        } finally {
+            this.state.isRecording = false;
+            this.ui.updateSTTRecordingState(false, false);
+            this.updateUI();
+        }
+    }
+
+    /**
+     * Start STS conversation using server-side recording
+     */
+    async startSTSConversation() {
+        if (!this.ensureServiceReady()) return;
+
+        console.log('[VoiceAssistant] Starting server-side STS conversation');
+
+        try {
+            this.state.isRecording = true;
+            this.ui.updateSTSConversationState(true);
+            this.ui.addConsoleMessage('info', 'STS: Started server-side conversation');
+
+            // Get current settings from UI
+            const settings = this.ui.getCurrentSettings();
+            const duration = 10; // 10 seconds default
+
+            // Start server-side STS recording
+            const result = await this.api.completeServerRecording(
+                duration,
+                settings.stt.language,
+                'sts',
+                {
+                    tts_voice: settings.tts.voice,
+                    tts_volume: settings.tts.volume
+                },
+                (progress) => this.handleRecordingProgress(progress)
+            );
+
+            if (result.success) {
+                const transcription = result.transcription || 'Audio processed';
+                const aiResponse = result.ai_response || 'Echo: ' + transcription;
+
+                // Update conversation display
+                this.ui.updateSTSConversationState(
+                    false,
+                    transcription,
+                    aiResponse
+                );
+
+                // Add to history
+                this.ui.addHistoryItem('sts', transcription, aiResponse);
+
+                // Play TTS response if available
+                if (result.audio_data) {
+                    await this.playAudioResponse(result.audio_data);
+                }
+
+                this.ui.addConsoleMessage('success', 'STS: Server conversation completed');
+            } else {
+                throw new Error(result.error || result.message || 'Server STS failed');
+            }
+
+        } catch (error) {
+            console.error('[VoiceAssistant] Server STS conversation failed:', error);
+            this.ui.showError('Server conversation failed: ' + error.message);
+            this.ui.addConsoleMessage('error', 'STS: Server conversation failed - ' + error.message);
+        } finally {
+            this.state.isRecording = false;
+            this.ui.updateSTSConversationState(false);
+            this.updateUI();
+        }
+    }
+
+    /**
+     * Stop STS conversation (for server-side, this is handled automatically)
+     */
+    async stopSTSConversation() {
+        if (!this.state.isRecording) return;
+
+        console.log('[VoiceAssistant] Stopping server-side STS conversation');
+        
+        try {
+            // For server-side recording, we can try to stop early
+            const result = await this.api.stopServerRecording();
+            
+            if (result.success) {
+                const transcription = result.transcription || 'Audio processed';
+                const aiResponse = result.ai_response || 'Echo: ' + transcription;
+
+                this.ui.updateSTSConversationState(false, transcription, aiResponse);
+                this.ui.addHistoryItem('sts', transcription, aiResponse);
+
+                if (result.audio_data) {
+                    await this.playAudioResponse(result.audio_data);
+                }
+
+                this.ui.addConsoleMessage('success', 'STS: Server conversation completed');
+            }
+        } catch (error) {
+            console.error('[VoiceAssistant] Error stopping server STS:', error);
+        } finally {
+            this.state.isRecording = false;
+            this.ui.updateSTSConversationState(false);
+            this.updateUI();
+        }
+    }
+
+    /**
+     * Handle recording progress updates from server
+     */
+    handleRecordingProgress(progress) {
+        try {
+            if (progress.type === 'started') {
+                this.ui.addConsoleMessage('info', 'Server recording started');
+            } else if (progress.type === 'progress') {
+                const data = progress.data;
+                if (data.is_recording) {
+                    const elapsed = data.elapsed_seconds || 0;
+                    const total = data.total_duration || 10;
+                    this.ui.addConsoleMessage('info', `Recording: ${elapsed}/${total} seconds`);
+                } else if (data.status === 'processing') {
+                    this.ui.addConsoleMessage('info', 'Processing recorded audio...');
+                    if (this.state.currentMode === 'stt') {
+                        this.ui.updateSTTRecordingState(false, true);
+                    } else if (this.state.currentMode === 'sts') {
+                        this.ui.updateSTSConversationState(false);
+                    }
+                }
+            } else if (progress.type === 'completed') {
+                this.ui.addConsoleMessage('success', 'Server recording completed');
+            }
+        } catch (error) {
+            console.error('[VoiceAssistant] Error handling recording progress:', error);
+        }
+    }
+
+    /**
+     * Remove browser-based recording methods since we're using server-side recording
+     * These methods are no longer needed but kept as stubs for compatibility
+     */
+    async startRecording() {
+        // Deprecated: Now handled by server-side recording
+        console.warn('[VoiceAssistant] startRecording() is deprecated, use server-side recording methods');
+    }
+
+    async stopRecording() {
+        // Deprecated: Now handled by server-side recording
+        console.warn('[VoiceAssistant] stopRecording() is deprecated, use server-side recording methods');
+    }
+
+    async processAudio(audioBlob) {
+        // Deprecated: Now handled by server-side recording
+        console.warn('[VoiceAssistant] processAudio() is deprecated, server handles audio processing');
+    }
+
+    /**
+     * Update the ensureRecordingCapable method to always return true for server-side recording
+     */
+    ensureRecordingCapable() {
+        // Server-side recording is always available if the service is running
+        return this.ensureServiceReady();
     }
 
     /**
@@ -899,6 +1171,17 @@ class VoiceAssistantCore {
             return false;
         }
 
+        return true;
+    }
+
+    /**
+     * Ensure recording capability is available
+     */
+    ensureRecordingCapable() {
+        if (!this.state.canRecord) {
+            this.ui.showError('Voice recording is not available. Please use HTTPS or localhost and ensure microphone permissions are granted.');
+            return false;
+        }
         return true;
     }
 

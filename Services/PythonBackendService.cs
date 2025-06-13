@@ -8,7 +8,7 @@ using Newtonsoft.Json.Linq;
 namespace Hartsy.Extensions.VoiceAssistant.Services;
 
 /// <summary>
-/// Updated service for coordinating the Python backend with modern, composable endpoints.
+/// Service for coordinating the Python backend with modern, generic endpoints.
 /// Handles STT, TTS, and pipeline processing with proper separation of concerns.
 /// Implements singleton pattern for centralized service management.
 /// </summary>
@@ -48,7 +48,7 @@ public class PythonBackendService : IDisposable
 
         try
         {
-            Logs.Debug("[VoiceAssistant] Initializing Python backend service");
+            Logs.Debug("[VoiceAssistant] Initializing Python backend service with generic endpoints");
 
             // Detect Python environment
             _pythonEnvironment = _dependencyInstaller.DetectPythonEnvironment();
@@ -63,7 +63,7 @@ public class PythonBackendService : IDisposable
             }
 
             _isInitialized = true;
-            Logs.Debug("[VoiceAssistant] Python backend service initialized");
+            Logs.Debug("[VoiceAssistant] Python backend service initialized for generic endpoints");
         }
         catch (Exception ex)
         {
@@ -72,7 +72,7 @@ public class PythonBackendService : IDisposable
         }
     }
 
-    #region Modern Processing Endpoints
+    #region Generic Processing Endpoints
 
     /// <summary>
     /// Process pure Speech-to-Text request.
@@ -84,8 +84,8 @@ public class PythonBackendService : IDisposable
         EnsureInitialized();
         request.Validate();
 
-        var processingTracker = ProgressTracking.GetApiTracker($"stt_{Guid.NewGuid():N}");
-        var startTime = DateTime.UtcNow;
+        ApiProgressTracker processingTracker = ProgressTracking.GetApiTracker($"stt_{Guid.NewGuid():N}");
+        DateTime startTime = DateTime.UtcNow;
 
         try
         {
@@ -97,19 +97,12 @@ public class PythonBackendService : IDisposable
 
             processingTracker.UpdateProgress(30, "Processing", "Transcribing audio...");
 
-            // Call STT service
-            var sttBackendRequest = new STTBackendRequest
-            {
-                AudioData = request.AudioData,
-                Language = request.Language,
-                Options = request.Options
-            };
+            // Call STT service using the generic endpoint
+            JObject backendResponse = await BackendHttpClient.Instance.CallSTTServiceAsync(request);
 
-            var backendResponse = await BackendHttpClient.Instance.CallSTTServiceAsync(sttBackendRequest);
-
-            var response = new STTResponse
+            STTResponse response = new STTResponse
             {
-                Success = true,
+                Success = backendResponse?["success"]?.Value<bool>() ?? false,
                 Transcription = backendResponse?["transcription"]?.ToString() ?? string.Empty,
                 Confidence = backendResponse?["confidence"]?.Value<float>() ?? 0.0f,
                 ProcessingTime = (DateTime.UtcNow - startTime).TotalSeconds
@@ -131,6 +124,12 @@ public class PythonBackendService : IDisposable
                     AudioFormat = metadata["audio_format"]?.ToString() ?? "unknown",
                     SampleRate = metadata["sample_rate"]?.Value<int>() ?? 0
                 };
+            }
+
+            if (!response.Success)
+            {
+                response.Message = backendResponse?["error"]?.ToString() ?? "STT processing failed";
+                throw new InvalidOperationException(response.Message);
             }
 
             if (string.IsNullOrEmpty(response.Transcription))
@@ -159,7 +158,16 @@ public class PythonBackendService : IDisposable
         {
             // Clean up tracker after a delay
             _ = Task.Delay(TimeSpan.FromMinutes(5)).ContinueWith(_ =>
-                ProgressTracking.RemoveTracker(processingTracker.Id));
+            {
+                try
+                {
+                    ProgressTracking.RemoveTracker(processingTracker.Id);
+                }
+                catch (Exception ex)
+                {
+                    Logs.Debug($"[VoiceAssistant] Error cleaning up tracker {processingTracker.Id}: {ex.Message}");
+                }
+            }, TaskScheduler.Current);
         }
     }
 
@@ -173,8 +181,8 @@ public class PythonBackendService : IDisposable
         EnsureInitialized();
         request.Validate();
 
-        var processingTracker = ProgressTracking.GetApiTracker($"tts_{Guid.NewGuid():N}");
-        var startTime = DateTime.UtcNow;
+        ApiProgressTracker processingTracker = ProgressTracking.GetApiTracker($"tts_{Guid.NewGuid():N}");
+        DateTime startTime = DateTime.UtcNow;
 
         try
         {
@@ -186,21 +194,12 @@ public class PythonBackendService : IDisposable
 
             processingTracker.UpdateProgress(30, "Processing", "Generating speech...");
 
-            // Call TTS service
-            var ttsBackendRequest = new TTSBackendRequest
-            {
-                Text = request.Text,
-                Voice = request.Voice,
-                Language = request.Language,
-                Volume = request.Volume,
-                Options = request.Options
-            };
+            // Call TTS service using the generic endpoint
+            JObject backendResponse = await BackendHttpClient.Instance.CallTTSServiceAsync(request);
 
-            var backendResponse = await BackendHttpClient.Instance.CallTTSServiceAsync(ttsBackendRequest);
-
-            var response = new TTSResponse
+            TTSResponse response = new TTSResponse
             {
-                Success = true,
+                Success = backendResponse?["success"]?.Value<bool>() ?? false,
                 AudioData = backendResponse?["audio_data"]?.ToString() ?? string.Empty,
                 Duration = backendResponse?["duration"]?.Value<double>() ?? 0.0,
                 ProcessingTime = (DateTime.UtcNow - startTime).TotalSeconds
@@ -216,6 +215,12 @@ public class PythonBackendService : IDisposable
                     AudioFormat = metadata["audio_format"]?.ToString() ?? request.Options.Format,
                     AudioChannels = metadata["audio_channels"]?.Value<int>() ?? 1
                 };
+            }
+
+            if (!response.Success)
+            {
+                response.Message = backendResponse?["error"]?.ToString() ?? "TTS processing failed";
+                throw new InvalidOperationException(response.Message);
             }
 
             if (string.IsNullOrEmpty(response.AudioData))
@@ -244,7 +249,16 @@ public class PythonBackendService : IDisposable
         {
             // Clean up tracker after a delay
             _ = Task.Delay(TimeSpan.FromMinutes(5)).ContinueWith(_ =>
-                ProgressTracking.RemoveTracker(processingTracker.Id));
+            {
+                try
+                {
+                    ProgressTracking.RemoveTracker(processingTracker.Id);
+                }
+                catch (Exception ex)
+                {
+                    Logs.Debug($"[VoiceAssistant] Error cleaning up tracker {processingTracker.Id}: {ex.Message}");
+                }
+            }, TaskScheduler.Current);
         }
     }
 
@@ -258,8 +272,8 @@ public class PythonBackendService : IDisposable
         EnsureInitialized();
         request.Validate();
 
-        var processingTracker = ProgressTracking.GetApiTracker($"pipeline_{Guid.NewGuid():N}");
-        var startTime = DateTime.UtcNow;
+        ApiProgressTracker processingTracker = ProgressTracking.GetApiTracker($"pipeline_{Guid.NewGuid():N}");
+        DateTime startTime = DateTime.UtcNow;
 
         try
         {
@@ -269,62 +283,49 @@ public class PythonBackendService : IDisposable
             // Ensure backend is available
             await EnsureBackendHealthyAsync();
 
-            var response = new PipelineResponse
+            processingTracker.UpdateProgress(30, "Processing", "Executing pipeline...");
+
+            // Call pipeline service using the generic endpoint
+            JObject backendResponse = await BackendHttpClient.Instance.CallPipelineServiceAsync(request);
+
+            PipelineResponse response = new PipelineResponse
             {
-                Success = true,
+                Success = backendResponse?["success"]?.Value<bool>() ?? false,
                 PipelineResults = new Dictionary<string, JObject>(),
-                ExecutedSteps = new List<string>()
+                ExecutedSteps = new List<string>(),
+                TotalProcessingTime = (DateTime.UtcNow - startTime).TotalSeconds,
+                ProcessingTime = (DateTime.UtcNow - startTime).TotalSeconds
             };
 
-            var currentData = request.InputData;
-            var enabledSteps = request.PipelineSteps.Where(s => s.Enabled).ToList();
-            var totalSteps = enabledSteps.Count;
-
-            Logs.Info($"[VoiceAssistant] Processing pipeline with {totalSteps} steps for input type: {request.InputType}");
-
-            for (int i = 0; i < enabledSteps.Count; i++)
+            // Parse pipeline results
+            if (backendResponse?["pipeline_results"] is JObject pipelineResults)
             {
-                var step = enabledSteps[i];
-                var progressPercent = 20 + (int)((double)i / totalSteps * 70);
-
-                processingTracker.UpdateProgress(progressPercent, $"Step {i + 1}/{totalSteps}", $"Processing {step.Type}...");
-
-                try
+                foreach (JProperty prop in pipelineResults.Properties())
                 {
-                    var stepResult = await ProcessPipelineStepAsync(step, currentData, request.InputType);
-                    response.PipelineResults[step.Type] = stepResult.Data;
-                    response.ExecutedSteps.Add(step.Type);
-
-                    // Update current data for next step
-                    if (stepResult.OutputData != null)
+                    if (prop.Value is JObject stepResult)
                     {
-                        currentData = stepResult.OutputData;
+                        response.PipelineResults[prop.Name] = stepResult;
                     }
-
-                    Logs.Debug($"[VoiceAssistant] Pipeline step '{step.Type}' completed successfully");
-                }
-                catch (Exception stepEx)
-                {
-                    Logs.Error($"[VoiceAssistant] Pipeline step '{step.Type}' failed: {stepEx.Message}");
-
-                    // Add error to results
-                    response.PipelineResults[step.Type] = new JObject
-                    {
-                        ["success"] = false,
-                        ["error"] = stepEx.Message
-                    };
-
-                    response.ExecutedSteps.Add($"{step.Type} (failed)");
-
-                    // Continue with other steps or fail based on configuration
-                    // For now, we'll continue but mark the overall response as failed
-                    response.Success = false;
-                    response.Message = $"Pipeline step '{step.Type}' failed: {stepEx.Message}";
                 }
             }
 
-            response.TotalProcessingTime = (DateTime.UtcNow - startTime).TotalSeconds;
-            response.ProcessingTime = response.TotalProcessingTime;
+            // Parse executed steps
+            if (backendResponse?["executed_steps"] is JArray executedSteps)
+            {
+                response.ExecutedSteps = executedSteps.Select(s => s.ToString()).ToList();
+            }
+
+            // Get total processing time from backend if available
+            if (backendResponse?["total_processing_time"]?.Value<double>() is double backendTime)
+            {
+                response.TotalProcessingTime = backendTime;
+            }
+
+            if (!response.Success)
+            {
+                response.Message = backendResponse?["error"]?.ToString() ?? "Pipeline processing failed";
+                throw new InvalidOperationException(response.Message);
+            }
 
             processingTracker.SetComplete();
             Logs.Info($"[VoiceAssistant] Pipeline processing completed with {response.ExecutedSteps.Count} steps");
@@ -348,124 +349,17 @@ public class PythonBackendService : IDisposable
         {
             // Clean up tracker after a delay
             _ = Task.Delay(TimeSpan.FromMinutes(5)).ContinueWith(_ =>
-                ProgressTracking.RemoveTracker(processingTracker.Id));
+            {
+                try
+                {
+                    ProgressTracking.RemoveTracker(processingTracker.Id);
+                }
+                catch (Exception ex)
+                {
+                    Logs.Debug($"[VoiceAssistant] Error cleaning up tracker {processingTracker.Id}: {ex.Message}");
+                }
+            }, TaskScheduler.Current);
         }
-    }
-
-    #endregion
-
-    #region Pipeline Step Processing
-
-    /// <summary>
-    /// Process a single pipeline step.
-    /// </summary>
-    /// <param name="step">Pipeline step configuration</param>
-    /// <param name="inputData">Input data for the step</param>
-    /// <param name="inputType">Type of the input data</param>
-    /// <returns>Step processing result</returns>
-    private async Task<PipelineStepResult> ProcessPipelineStepAsync(PipelineStep step, string inputData, string inputType)
-    {
-        switch (step.Type.ToLower())
-        {
-            case "stt":
-                return await ProcessSTTPipelineStep(step, inputData);
-
-            case "tts":
-                return await ProcessTTSPipelineStep(step, inputData);
-
-            case "command_processing":
-                return await ProcessCommandPipelineStep(step, inputData);
-
-            default:
-                throw new ArgumentException($"Unknown pipeline step type: {step.Type}");
-        }
-    }
-
-    /// <summary>
-    /// Process STT pipeline step.
-    /// </summary>
-    private async Task<PipelineStepResult> ProcessSTTPipelineStep(PipelineStep step, string audioData)
-    {
-        var sttRequest = new STTRequest
-        {
-            AudioData = audioData,
-            Language = step.Config["language"]?.ToString() ?? "en-US",
-            Options = new STTOptions()
-        };
-
-        // Parse step-specific options
-        if (step.Config["options"] is JObject options)
-        {
-            sttRequest.Options.ReturnConfidence = options["return_confidence"]?.Value<bool>() ?? true;
-            sttRequest.Options.ReturnAlternatives = options["return_alternatives"]?.Value<bool>() ?? false;
-            sttRequest.Options.ModelPreference = options["model_preference"]?.ToString() ?? "accuracy";
-        }
-
-        var sttResponse = await ProcessSTTAsync(sttRequest);
-
-        return new PipelineStepResult
-        {
-            Data = sttResponse.ToJObject(),
-            OutputData = sttResponse.Transcription, // Pass transcription to next step
-            Success = sttResponse.Success
-        };
-    }
-
-    /// <summary>
-    /// Process TTS pipeline step.
-    /// </summary>
-    private async Task<PipelineStepResult> ProcessTTSPipelineStep(PipelineStep step, string text)
-    {
-        var ttsRequest = new TTSRequest
-        {
-            Text = text,
-            Voice = step.Config["voice"]?.ToString() ?? "default",
-            Language = step.Config["language"]?.ToString() ?? "en-US",
-            Volume = step.Config["volume"]?.Value<float>() ?? 0.8f,
-            Options = new TTSOptions()
-        };
-
-        // Parse step-specific options
-        if (step.Config["options"] is JObject options)
-        {
-            ttsRequest.Options.Speed = options["speed"]?.Value<float>() ?? 1.0f;
-            ttsRequest.Options.Pitch = options["pitch"]?.Value<float>() ?? 1.0f;
-            ttsRequest.Options.Format = options["format"]?.ToString() ?? "wav";
-        }
-
-        var ttsResponse = await ProcessTTSAsync(ttsRequest);
-
-        return new PipelineStepResult
-        {
-            Data = ttsResponse.ToJObject(),
-            OutputData = ttsResponse.AudioData, // Pass audio data to next step
-            Success = ttsResponse.Success
-        };
-    }
-
-    /// <summary>
-    /// Process command pipeline step.
-    /// TODO: Implement proper command processing in future versions.
-    /// </summary>
-    private async Task<PipelineStepResult> ProcessCommandPipelineStep(PipelineStep step, string text)
-    {
-        // TODO: Implement actual command processing
-        await Task.Delay(100); // Simulate processing
-
-        var commandResponse = new CommandResponse
-        {
-            Text = "Command processing is not yet implemented. This will be added in a future version.",
-            Command = "placeholder",
-            Confidence = 0.0f,
-            Success = true
-        };
-
-        return new PipelineStepResult
-        {
-            Data = commandResponse.ToJObject(),
-            OutputData = commandResponse.Text, // Pass response text to next step
-            Success = true
-        };
     }
 
     #endregion
@@ -540,6 +434,11 @@ public class PythonBackendService : IDisposable
             }
 
             // Start the Python process
+            if (_pythonEnvironment?.PythonPath == null)
+            {
+                throw new InvalidOperationException("Python path is not defined");
+            }
+
             bool started = await _pythonProcess.StartAsync(_pythonEnvironment.PythonPath);
             if (!started)
             {
@@ -553,10 +452,17 @@ public class PythonBackendService : IDisposable
                 throw new InvalidOperationException("Backend started but failed health check");
             }
 
+            // Validate backend compatibility with generic endpoints
+            var isCompatible = await BackendHttpClient.Instance.ValidateBackendCompatibilityAsync();
+            if (!isCompatible)
+            {
+                Logs.Warning("[VoiceAssistant] Backend may not support all generic endpoints");
+            }
+
             return new ServiceStatusResponse
             {
                 Success = true,
-                Message = "Backend started successfully",
+                Message = "Backend started successfully with generic endpoints",
                 BackendRunning = true,
                 BackendHealthy = true,
                 BackendUrl = ServiceConfiguration.BackendUrl,
@@ -634,46 +540,6 @@ public class PythonBackendService : IDisposable
             };
         }
     }
-
-    #endregion
-
-    #region Helper Classes
-
-    /// <summary>
-    /// Result of processing a single pipeline step.
-    /// </summary>
-    private class PipelineStepResult
-    {
-        public JObject Data { get; set; } = new();
-        public string OutputData { get; set; } = string.Empty;
-        public bool Success { get; set; } = false;
-    }
-
-    /// <summary>
-    /// Backend request for STT processing.
-    /// </summary>
-    private class STTBackendRequest
-    {
-        public string AudioData { get; set; } = string.Empty;
-        public string Language { get; set; } = string.Empty;
-        public STTOptions Options { get; set; } = new();
-    }
-
-    /// <summary>
-    /// Backend request for TTS processing.
-    /// </summary>
-    private class TTSBackendRequest
-    {
-        public string Text { get; set; } = string.Empty;
-        public string Voice { get; set; } = string.Empty;
-        public string Language { get; set; } = string.Empty;
-        public float Volume { get; set; } = 0.8f;
-        public TTSOptions Options { get; set; } = new();
-    }
-
-    #endregion
-
-    #region Existing Helper Methods (Updated)
 
     /// <summary>
     /// Forces immediate termination of the backend.
@@ -782,6 +648,165 @@ public class PythonBackendService : IDisposable
         return ProgressTracking.Installation.ToResponse();
     }
 
+    #endregion
+
+    #region Server-Side Recording Methods
+
+    /// <summary>Start server-side recording session.
+    /// Records audio directly on the server, bypassing browser limitations.</summary>
+    /// <param name="request">Recording request parameters</param>
+    /// <returns>Recording response with session information</returns>
+    public async Task<RecordingResponse> StartServerRecordingAsync(RecordingRequest request)
+    {
+        EnsureInitialized();
+        request.Validate();
+
+        string processingTrackerId = $"recording_{Guid.NewGuid():N}";
+        var processingTracker = ProgressTracking.GetApiTracker(processingTrackerId);
+        DateTime startTime = DateTime.UtcNow;
+
+        try
+        {
+            processingTracker.SetOperation("Server Recording Start");
+            processingTracker.UpdateProgress(10, "Starting", "Validating backend availability...");
+
+            // Ensure backend is available
+            await EnsureBackendHealthyAsync();
+
+            processingTracker.UpdateProgress(30, "Recording", "Starting server-side recording...");
+
+            // Call server recording service using HTTP client
+            RecordingResponse response = await BackendHttpClient.Instance.CallStartRecordingServiceAsync(request);
+
+            response.ProcessingTime = (DateTime.UtcNow - startTime).TotalSeconds;
+
+            if (!response.Success)
+            {
+                response.Message = response.Message ?? "Server recording failed to start";
+                throw new InvalidOperationException(response.Message);
+            }
+
+            processingTracker.SetComplete();
+            Logs.Info($"[VoiceAssistant] Server recording started: ID={response.RecordingId}, Duration={response.Duration}s");
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            processingTracker.SetError(ex.Message);
+            Logs.Error($"[VoiceAssistant] Server recording start failed: {ex.Message}");
+
+            return new RecordingResponse
+            {
+                Success = false,
+                Message = ErrorHandling.GetUserFriendlyMessage(ex),
+                ProcessingTime = (DateTime.UtcNow - startTime).TotalSeconds
+            };
+        }
+        finally
+        {
+            // Clean up tracker after a delay
+            Task.Delay(TimeSpan.FromMinutes(5)).ContinueWith(_ =>
+                ProgressTracking.RemoveTracker(processingTracker.Id));
+        }
+    }
+
+    /// <summary>Stop server-side recording session and get results.
+    /// Stops recording and processes the audio based on the original request mode.</summary>
+    /// <param name="sessionId">Session ID that started the recording</param>
+    /// <returns>Recording response with processed results</returns>
+    public async Task<RecordingResponse> StopServerRecordingAsync(string sessionId)
+    {
+        EnsureInitialized();
+
+        string processingTrackerId = $"recording_stop_{Guid.NewGuid():N}";
+        var processingTracker = ProgressTracking.GetApiTracker(processingTrackerId);
+        DateTime startTime = DateTime.UtcNow;
+
+        try
+        {
+            processingTracker.SetOperation("Server Recording Stop");
+            processingTracker.UpdateProgress(10, "Stopping", "Stopping server recording...");
+
+            // Ensure backend is available
+            await EnsureBackendHealthyAsync();
+
+            processingTracker.UpdateProgress(50, "Processing", "Processing recorded audio...");
+
+            // Call stop recording service using HTTP client
+            RecordingResponse response = await BackendHttpClient.Instance.CallStopRecordingServiceAsync(sessionId);
+
+            response.ProcessingTime = (DateTime.UtcNow - startTime).TotalSeconds;
+
+            if (!response.Success)
+            {
+                response.Message = response.Message ?? "Server recording failed to stop";
+                throw new InvalidOperationException(response.Message);
+            }
+
+            processingTracker.SetComplete();
+            Logs.Info($"[VoiceAssistant] Server recording completed: ID={response.RecordingId}");
+
+            // Log what we got back
+            if (!string.IsNullOrEmpty(response.Transcription))
+            {
+                Logs.Info($"[VoiceAssistant] Recording transcription: '{response.Transcription}'");
+            }
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            processingTracker.SetError(ex.Message);
+            Logs.Error($"[VoiceAssistant] Server recording stop failed: {ex.Message}");
+
+            return new RecordingResponse
+            {
+                Success = false,
+                Message = ErrorHandling.GetUserFriendlyMessage(ex),
+                ProcessingTime = (DateTime.UtcNow - startTime).TotalSeconds
+            };
+        }
+        finally
+        {
+            // Clean up tracker after a delay
+            Task.Delay(TimeSpan.FromMinutes(5)).ContinueWith(_ =>
+                ProgressTracking.RemoveTracker(processingTracker.Id));
+        }
+    }
+
+    /// <summary>Get status of current server-side recording session.</summary>
+    /// <param name="sessionId">Session ID that started the recording</param>
+    /// <returns>Recording status information</returns>
+    public async Task<RecordingStatusResponse> GetRecordingStatusAsync(string sessionId)
+    {
+        EnsureInitialized();
+
+        try
+        {
+            // Ensure backend is available
+            await EnsureBackendHealthyAsync();
+
+            // Call recording status service using HTTP client
+            return await BackendHttpClient.Instance.CallRecordingStatusServiceAsync(sessionId);
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] Recording status check failed: {ex.Message}");
+
+            return new RecordingStatusResponse
+            {
+                Success = false,
+                Message = ErrorHandling.GetUserFriendlyMessage(ex),
+                Status = "error"
+            };
+        }
+    }
+
+    #endregion
+
+    #region Helper Methods
+
     /// <summary>
     /// Ensures dependencies are installed before starting the backend.
     /// </summary>
@@ -789,6 +814,11 @@ public class PythonBackendService : IDisposable
     {
         try
         {
+            if (_pythonEnvironment == null)
+            {
+                throw new InvalidOperationException("Python environment not detected");
+            }
+            
             var dependenciesInstalled = await _dependencyInstaller.CheckDependenciesInstalledAsync(_pythonEnvironment);
 
             if (!dependenciesInstalled)
@@ -824,12 +854,20 @@ public class PythonBackendService : IDisposable
                 throw new InvalidOperationException("Backend process exited unexpectedly");
             }
 
-            var healthInfo = await BackendHttpClient.Instance.CheckHealthAsync();
-            if (healthInfo.IsHealthy)
+            try
             {
-                healthTracker.SetHealthy();
-                Logs.Info($"[VoiceAssistant] Backend healthy after {attempt} attempts");
-                return healthInfo;
+                var healthInfo = await BackendHttpClient.Instance.CheckHealthAsync();
+                if (healthInfo.IsHealthy)
+                {
+                    healthTracker.SetHealthy();
+                    Logs.Info($"[VoiceAssistant] Backend healthy after {attempt} attempts");
+                    return healthInfo;
+                }
+            }
+            catch (Exception ex) when (!(ex is OperationCanceledException))
+            {
+                // Log the error but continue trying
+                Logs.Debug($"[VoiceAssistant] Health check attempt {attempt} failed: {ex.Message}");
             }
 
             // Wait before retrying
@@ -851,10 +889,17 @@ public class PythonBackendService : IDisposable
             throw new InvalidOperationException("Backend is not running");
         }
 
-        var healthInfo = await BackendHttpClient.Instance.CheckHealthAsync();
-        if (!healthInfo.IsHealthy)
+        try
         {
-            throw new InvalidOperationException("Backend is not healthy");
+            var healthInfo = await BackendHttpClient.Instance.CheckHealthAsync();
+            if (!healthInfo.IsHealthy)
+            {
+                throw new InvalidOperationException($"Backend is not healthy: {healthInfo.ErrorMessage ?? "Unknown error"}");
+            }
+        }
+        catch (Exception ex) when (!(ex is InvalidOperationException))
+        {
+            throw new InvalidOperationException($"Failed to check backend health: {ex.Message}", ex);
         }
     }
 
@@ -885,6 +930,11 @@ public class PythonBackendService : IDisposable
             return "The installation process is taking longer than expected. Large packages like TorchAudio can take 10+ minutes to download and install.";
         }
 
+        if (message.Contains("endpoint") || message.Contains("compatibility"))
+        {
+            return "Backend started but may not support all generic endpoints. Please check the Python backend version.";
+        }
+
         return $"Failed to start voice service: {message}";
     }
 
@@ -910,7 +960,16 @@ public class PythonBackendService : IDisposable
 
     private void OnProcessExited(object sender, EventArgs e)
     {
-        Logs.Info("[VoiceAssistant] Backend process exited unexpectedly");
+        try
+        {
+            Logs.Info("[VoiceAssistant] Backend process exited unexpectedly");
+            // You might want to trigger cleanup or handle the exit in some way
+            // This would be a good place to notify any subscribers or log detailed info
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] Error handling process exit: {ex.Message}");
+        }
     }
 
     private void OnProcessOutput(object sender, string output)

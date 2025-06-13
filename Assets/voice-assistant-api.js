@@ -1,7 +1,7 @@
 /**
- * Voice Assistant API Module - Updated for New UI
- * Handles all communication with the SwarmUI backend API.
- * Provides a clean interface for voice processing operations with improved error handling.
+ * Voice Assistant API Module - Refactored with Generic Endpoints
+ * Modern, reusable API interface for STT, TTS, and pipeline processing.
+ * Clean separation of concerns with composable services.
  */
 
 class VoiceAssistantAPI {
@@ -11,7 +11,150 @@ class VoiceAssistantAPI {
         this.retryDelay = 1000; // 1 second
         this.progressPollingActive = false;
 
-        console.log('[VoiceAssistant] API module initialized');
+        console.log('[VoiceAssistant] API module initialized with generic endpoints');
+    }
+
+    /**
+     * Pure Speech-to-Text processing endpoint
+     * @param {string} audioData - Base64 encoded audio data
+     * @param {string} language - Language code (e.g., 'en-US')
+     * @param {Object} options - STT processing options
+     * @returns {Promise<Object>} STT response with transcription and metadata
+     */
+    async processSTT(audioData, language = 'en-US', options = {}) {
+        const payload = {
+            audio_data: audioData,
+            language: language,
+            options: {
+                return_confidence: options.returnConfidence ?? true,
+                return_alternatives: options.returnAlternatives ?? false,
+                model_preference: options.modelPreference ?? 'accuracy',
+                ...options.custom
+            }
+        };
+
+        return await this.makeAPICall('ProcessSTT', payload);
+    }
+
+    /**
+     * Pure Text-to-Speech processing endpoint
+     * @param {string} text - Text to convert to speech
+     * @param {string} voice - Voice identifier
+     * @param {string} language - Language code
+     * @param {number} volume - Volume level (0.0 to 1.0)
+     * @param {Object} options - TTS processing options
+     * @returns {Promise<Object>} TTS response with audio data and metadata
+     */
+    async processTTS(text, voice = 'default', language = 'en-US', volume = 0.8, options = {}) {
+        const payload = {
+            text: text,
+            voice: voice,
+            language: language,
+            volume: volume,
+            options: {
+                speed: options.speed ?? 1.0,
+                pitch: options.pitch ?? 1.0,
+                format: options.format ?? 'wav',
+                ...options.custom
+            }
+        };
+
+        return await this.makeAPICall('ProcessTTS', payload);
+    }
+
+    /**
+     * Universal configurable pipeline processing endpoint
+     * @param {string} inputType - Type of input ('audio' or 'text')
+     * @param {string} inputData - Input data (base64 audio or text string)
+     * @param {Array} pipelineSteps - Array of pipeline step configurations
+     * @param {string} sessionId - Optional session identifier
+     * @returns {Promise<Object>} Pipeline response with results from all steps
+     */
+    async processPipeline(inputType, inputData, pipelineSteps, sessionId = null) {
+        const payload = {
+            input_type: inputType,
+            input_data: inputData,
+            pipeline_steps: pipelineSteps,
+            session_id: sessionId || `pipeline-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        };
+
+        return await this.makeAPICall('ProcessPipeline', payload);
+    }
+
+    /**
+     * Convenience method for Speech-to-Speech processing
+     * @param {string} audioData - Base64 encoded audio data
+     * @param {string} language - Language code
+     * @param {string} voice - Voice for TTS output
+     * @param {number} volume - Volume level
+     * @param {Object} options - Combined STT and TTS options
+     * @returns {Promise<Object>} Pipeline response with STT and TTS results
+     */
+    async processSpeechToSpeech(audioData, language = 'en-US', voice = 'default', volume = 0.8, options = {}) {
+        const pipelineSteps = [
+            {
+                type: 'stt',
+                enabled: true,
+                config: {
+                    language: language,
+                    options: options.stt || {}
+                }
+            },
+            {
+                type: 'tts',
+                enabled: true,
+                config: {
+                    voice: voice,
+                    language: language,
+                    volume: volume,
+                    options: options.tts || {}
+                }
+            }
+        ];
+
+        return await this.processPipeline('audio', audioData, pipelineSteps);
+    }
+
+    /**
+     * Convenience method for Voice Commands processing (future)
+     * @param {string} audioData - Base64 encoded audio data
+     * @param {string} language - Language code
+     * @param {string} voice - Voice for TTS response
+     * @param {number} volume - Volume level
+     * @param {Object} commandOptions - Command processing options
+     * @returns {Promise<Object>} Pipeline response with STT, command, and TTS results
+     */
+    async processVoiceCommand(audioData, language = 'en-US', voice = 'default', volume = 0.8, commandOptions = {}) {
+        const pipelineSteps = [
+            {
+                type: 'stt',
+                enabled: true,
+                config: {
+                    language: language,
+                    options: {}
+                }
+            },
+            {
+                type: 'command_processing',
+                enabled: true,
+                config: {
+                    processor: commandOptions.processor || 'swarmui_commands',
+                    options: commandOptions
+                }
+            },
+            {
+                type: 'tts',
+                enabled: true,
+                config: {
+                    voice: voice,
+                    language: language,
+                    volume: volume,
+                    options: {}
+                }
+            }
+        ];
+
+        return await this.processPipeline('audio', audioData, pipelineSteps);
     }
 
     /**
@@ -36,20 +179,6 @@ class VoiceAssistantAPI {
     }
 
     /**
-     * Process voice input (used for both STT and STS modes)
-     */
-    async processVoiceInput(payload) {
-        return await this.makeAPICall('ProcessVoiceInput', payload);
-    }
-
-    /**
-     * Process text command (used for TTS mode)
-     */
-    async processTextCommand(payload) {
-        return await this.makeAPICall('ProcessTextCommand', payload);
-    }
-
-    /**
      * Check installation status
      */
     async checkInstallationStatus() {
@@ -64,53 +193,73 @@ class VoiceAssistantAPI {
     }
 
     /**
-     * TODO: Create dedicated STT testing endpoint
-     * This would be useful for pure STT testing without command processing
+     * Pipeline Step Builder Utilities
+     * Helper methods to create common pipeline step configurations
      */
-    async processSTTOnly(audioData, language = 'en-US') {
-        // TODO: Add new C# API endpoint for STT-only testing
-        // For now, use the existing voice input endpoint
-        return await this.processVoiceInput({
-            audio_data: audioData,
-            language: language,
-            session_id: `stt-test-${Date.now()}`
-        });
+    
+    /**
+     * Create STT pipeline step configuration
+     * @param {string} language - Language code
+     * @param {Object} options - STT options
+     * @returns {Object} STT step configuration
+     */
+    createSTTStep(language = 'en-US', options = {}) {
+        return {
+            type: 'stt',
+            enabled: true,
+            config: {
+                language: language,
+                options: {
+                    return_confidence: options.returnConfidence ?? true,
+                    return_alternatives: options.returnAlternatives ?? false,
+                    model_preference: options.modelPreference ?? 'accuracy',
+                    ...options.custom
+                }
+            }
+        };
     }
 
     /**
-     * TODO: Create dedicated TTS testing endpoint
-     * This would be useful for pure TTS testing without command processing
+     * Create TTS pipeline step configuration
+     * @param {string} voice - Voice identifier
+     * @param {string} language - Language code
+     * @param {number} volume - Volume level
+     * @param {Object} options - TTS options
+     * @returns {Object} TTS step configuration
      */
-    async processTTSOnly(text, voice = 'default', language = 'en-US', volume = 0.8) {
-        // TODO: Add new C# API endpoint for TTS-only testing
-        // For now, use the existing text command endpoint
-        return await this.processTextCommand({
-            text: text,
-            voice: voice,
-            language: language,
-            volume: volume,
-            session_id: `tts-test-${Date.now()}`
-        });
+    createTTSStep(voice = 'default', language = 'en-US', volume = 0.8, options = {}) {
+        return {
+            type: 'tts',
+            enabled: true,
+            config: {
+                voice: voice,
+                language: language,
+                volume: volume,
+                options: {
+                    speed: options.speed ?? 1.0,
+                    pitch: options.pitch ?? 1.0,
+                    format: options.format ?? 'wav',
+                    ...options.custom
+                }
+            }
+        };
     }
 
     /**
-     * TODO: Create dependencies update endpoint
-     * This would allow real-time dependency status updates
+     * Create command processing pipeline step configuration
+     * @param {string} processor - Command processor type
+     * @param {Object} options - Command processing options
+     * @returns {Object} Command processing step configuration
      */
-    async updateDependencyStatus(packageName, status) {
-        // TODO: Add new C# API endpoint for dependency status updates
-        console.log('[VoiceAssistant] TODO: Implement dependency status update endpoint');
-        return { success: false, error: 'Endpoint not implemented yet' };
-    }
-
-    /**
-     * TODO: Create health check with detailed service info
-     * This would provide more granular health information
-     */
-    async getDetailedHealthStatus() {
-        // TODO: Add new C# API endpoint for detailed health status
-        // For now, use the existing status endpoint
-        return await this.getVoiceStatus();
+    createCommandStep(processor = 'swarmui_commands', options = {}) {
+        return {
+            type: 'command_processing',
+            enabled: true,
+            config: {
+                processor: processor,
+                options: options
+            }
+        };
     }
 
     /**
@@ -190,9 +339,10 @@ class VoiceAssistantAPI {
      */
     getTimeoutForMethod(methodName) {
         const timeouts = {
-            'StartVoiceService': 120000, // 2 minutes for service start (includes potential installation)
-            'ProcessVoiceInput': 60000,  // 1 minute for voice processing
-            'ProcessTextCommand': 30000, // 30 seconds for text processing
+            'StartVoiceService': 120000, // 2 minutes for service start
+            'ProcessSTT': 60000,         // 1 minute for STT processing
+            'ProcessTTS': 30000,         // 30 seconds for TTS processing
+            'ProcessPipeline': 90000,    // 1.5 minutes for pipeline processing
             'GetInstallationProgress': 5000, // 5 seconds for progress checks
             'GetVoiceStatus': 10000,     // 10 seconds for status checks
             'CheckInstallationStatus': 15000, // 15 seconds for dependency checks
@@ -214,7 +364,6 @@ class VoiceAssistantAPI {
      * Validate API response structure
      */
     isValidResponse(data) {
-        // Check if response has required structure
         return data && typeof data === 'object' && data.hasOwnProperty('success');
     }
 
@@ -222,22 +371,16 @@ class VoiceAssistantAPI {
      * Determine if a response should trigger a retry
      */
     shouldRetryResponse(data, methodName) {
-        // Don't retry for most response failures
         if (data && data.success === false) {
             const error = data.error || data.message || '';
-
-            // Only retry for specific error types
             const retryableErrors = [
                 'timeout', 'network', 'connection', 'service not available',
                 'backend not responding', 'service starting'
             ];
-
             return retryableErrors.some(retryableError =>
                 error.toLowerCase().includes(retryableError)
             );
         }
-
-        // Retry for completely invalid response structures
         return !this.isValidResponse(data);
     }
 
@@ -269,7 +412,7 @@ class VoiceAssistantAPI {
             return true;
         }
 
-        // Don't retry progress polling errors (they're frequent and expected)
+        // Don't retry progress polling errors
         if (methodName === 'GetInstallationProgress' || methodName === 'GetVoiceStatus') {
             return false;
         }
@@ -278,7 +421,7 @@ class VoiceAssistantAPI {
     }
 
     /**
-     * Health check with minimal error handling for monitoring
+     * Health check with minimal error handling
      */
     async quickHealthCheck() {
         try {
@@ -291,67 +434,54 @@ class VoiceAssistantAPI {
     }
 
     /**
-     * Batch API calls with comprehensive error handling
+     * Test API connectivity with comprehensive diagnostics
      */
-    async batchAPICall(calls) {
-        const results = {};
-        const errors = {};
-        const promises = [];
+    async testConnectivity() {
+        console.log('[VoiceAssistant] Testing API connectivity...');
 
-        for (const [name, { method, payload }] of Object.entries(calls)) {
-            const promise = this.makeAPICall(method, payload)
-                .then(result => {
-                    results[name] = result;
-                })
-                .catch(error => {
-                    console.error(`[VoiceAssistant] Batch call ${name} failed:`, error);
-                    errors[name] = error.message;
-                });
+        const results = {
+            status: false,
+            latency: null,
+            error: null,
+            service_running: false,
+            service_healthy: false,
+            dependencies_installed: false
+        };
 
-            promises.push(promise);
-        }
-
-        // Wait for all calls to complete
-        await Promise.allSettled(promises);
-
-        return { results, errors };
-    }
-
-    /**
-     * Stream-like API call for long-running operations with progress tracking
-     */
-    async streamAPICall(methodName, payload, onProgress = null, onComplete = null) {
         try {
-            console.log(`[VoiceAssistant] Starting stream API call: ${methodName}`);
+            const startTime = Date.now();
+            const statusResponse = await this.getVoiceStatus();
+            const latency = Date.now() - startTime;
 
-            // Start the operation
-            const initialResult = await this.makeAPICall(methodName, payload);
+            results.latency = latency;
+            results.status = statusResponse.success;
 
-            if (!initialResult.success) {
-                throw new Error(initialResult.error || 'Operation failed to start');
+            if (statusResponse.success) {
+                results.service_running = statusResponse.backend_running || false;
+                results.service_healthy = statusResponse.backend_healthy || false;
+
+                try {
+                    const depResponse = await this.checkInstallationStatus();
+                    results.dependencies_installed = depResponse.dependencies_installed || false;
+                } catch (depError) {
+                    console.warn('[VoiceAssistant] Dependency check failed during connectivity test:', depError);
+                }
+
+                console.log(`[VoiceAssistant] API connectivity test passed (${latency}ms)`);
+            } else {
+                results.error = statusResponse.error || 'Unknown error';
+                console.warn(`[VoiceAssistant] API connectivity test failed: ${results.error}`);
             }
-
-            // If it completed immediately, call onComplete
-            if (onComplete && (initialResult.is_complete || initialResult.completed)) {
-                onComplete(initialResult);
-                return initialResult;
-            }
-
-            // Start progress polling if handler provided
-            if (onProgress && (methodName === 'StartVoiceService')) {
-                this.startProgressPolling(onProgress, onComplete);
-            }
-
-            return initialResult;
-
         } catch (error) {
-            console.error(`[VoiceAssistant] Stream API call ${methodName} failed:`, error);
-            throw error;
+            results.error = error.message;
+            console.error('[VoiceAssistant] API connectivity test error:', error);
         }
+
+        return results;
     }
 
     /**
-     * Start progress polling for installation/long operations
+     * Start progress polling for installation
      */
     startProgressPolling(onProgress, onComplete = null) {
         if (this.progressPollingActive) {
@@ -374,7 +504,6 @@ class VoiceAssistantAPI {
                 if (progressResult.success) {
                     onProgress(progressResult);
 
-                    // Stop polling if complete or error
                     if (progressResult.is_complete || progressResult.has_error) {
                         clearInterval(pollInterval);
                         this.progressPollingActive = false;
@@ -384,14 +513,12 @@ class VoiceAssistantAPI {
                         }
                     }
                 } else {
-                    // If progress polling fails, stop it
                     console.warn('[VoiceAssistant] Progress polling failed, stopping');
                     clearInterval(pollInterval);
                     this.progressPollingActive = false;
                 }
             } catch (error) {
                 console.warn('[VoiceAssistant] Progress polling error:', error);
-                // Continue polling despite errors unless it's a critical failure
                 if (error.message.includes('not found') || error.message.includes('404')) {
                     clearInterval(pollInterval);
                     this.progressPollingActive = false;
@@ -425,12 +552,10 @@ class VoiceAssistantAPI {
             throw new Error('Invalid audio data: must be a base64 string');
         }
 
-        // Check if it looks like base64
         if (!/^[A-Za-z0-9+/]*={0,2}$/.test(audioData)) {
             throw new Error('Invalid audio data: not valid base64');
         }
 
-        // Check size (approximate)
         const sizeBytes = (audioData.length * 3) / 4;
         const maxSize = 50 * 1024 * 1024; // 50MB
 
@@ -439,6 +564,162 @@ class VoiceAssistantAPI {
         }
 
         return true;
+    }
+
+    /**
+     * Server-Side Recording Methods
+     * These methods handle recording on the server, bypassing browser security restrictions
+     */
+
+    /**
+     * Start server-side recording
+     * @param {number} duration - Recording duration in seconds (1-30)
+     * @param {string} language - Language code (e.g., 'en-US')
+     * @param {string} mode - Recording mode ('stt', 'sts', or 'raw')
+     * @param {Object} options - Additional recording options
+     * @returns {Promise<Object>} Recording start response
+     */
+    async startServerRecording(duration = 10, language = 'en-US', mode = 'stt', options = {}) {
+        const payload = {
+            duration: Math.max(1, Math.min(30, duration)), // Clamp to 1-30 seconds
+            language: language,
+            mode: mode,
+            options: options
+        };
+
+        return await this.makeAPICall('StartServerRecording', payload);
+    }
+
+    /**
+     * Stop server-side recording and get results
+     * @returns {Promise<Object>} Recording stop response with processed audio
+     */
+    async stopServerRecording() {
+        return await this.makeAPICall('StopServerRecording', {});
+    }
+
+    /**
+     * Get server-side recording status
+     * @returns {Promise<Object>} Recording status response
+     */
+    async getRecordingStatus() {
+        return await this.makeAPICall('GetRecordingStatus', {});
+    }
+
+    /**
+     * Convenience method for server-side STT recording
+     * @param {number} duration - Recording duration in seconds
+     * @param {string} language - Language code
+     * @param {Object} options - STT options
+     * @returns {Promise<Object>} STT recording response
+     */
+    async recordSTTOnServer(duration = 10, language = 'en-US', options = {}) {
+        return await this.startServerRecording(duration, language, 'stt', options);
+    }
+
+    /**
+     * Convenience method for server-side STS recording
+     * @param {number} duration - Recording duration in seconds
+     * @param {string} language - Language code
+     * @param {string} voice - Voice for TTS response
+     * @param {number} volume - Volume level
+     * @returns {Promise<Object>} STS recording response
+     */
+    async recordSTSOnServer(duration = 10, language = 'en-US', voice = 'default', volume = 0.8) {
+        const options = {
+            tts_voice: voice,
+            tts_volume: volume
+        };
+        return await this.startServerRecording(duration, language, 'sts', options);
+    }
+
+    /**
+     * Poll recording status until completion
+     * @param {Function} onProgress - Progress callback function
+     * @param {number} pollInterval - Polling interval in milliseconds
+     * @returns {Promise<Object>} Final recording result
+     */
+    async pollRecordingUntilComplete(onProgress = null, pollInterval = 1000) {
+        return new Promise((resolve, reject) => {
+            const poll = async () => {
+                try {
+                    const status = await this.getRecordingStatus();
+                    
+                    if (status.success) {
+                        if (onProgress) {
+                            onProgress(status);
+                        }
+
+                        if (status.status === 'completed' || status.status === 'error') {
+                            // Recording finished, get final results
+                            const result = await this.stopServerRecording();
+                            resolve(result);
+                        } else if (status.is_recording || status.status === 'recording' || status.status === 'processing') {
+                            // Still recording or processing, continue polling
+                            setTimeout(poll, pollInterval);
+                        } else {
+                            // Unknown status, try to stop
+                            const result = await this.stopServerRecording();
+                            resolve(result);
+                        }
+                    } else {
+                        reject(new Error(status.error || 'Recording status check failed'));
+                    }
+                } catch (error) {
+                    reject(error);
+                }
+            };
+
+            poll();
+        });
+    }
+
+    /**
+     * Complete server-side recording workflow
+     * Starts recording, polls for completion, and returns final result
+     * @param {number} duration - Recording duration in seconds
+     * @param {string} language - Language code
+     * @param {string} mode - Recording mode
+     * @param {Object} options - Recording options
+     * @param {Function} onProgress - Progress callback
+     * @returns {Promise<Object>} Complete recording result
+     */
+    async completeServerRecording(duration = 10, language = 'en-US', mode = 'stt', options = {}, onProgress = null) {
+        try {
+            // Start recording
+            const startResult = await this.startServerRecording(duration, language, mode, options);
+            
+            if (!startResult.success) {
+                throw new Error(startResult.error || 'Failed to start server recording');
+            }
+
+            if (onProgress) {
+                onProgress({ type: 'started', data: startResult });
+            }
+
+            // Poll until completion
+            const finalResult = await this.pollRecordingUntilComplete((status) => {
+                if (onProgress) {
+                    onProgress({ type: 'progress', data: status });
+                }
+            });
+
+            if (onProgress) {
+                onProgress({ type: 'completed', data: finalResult });
+            }
+
+            return finalResult;
+
+        } catch (error) {
+            // Try to stop recording on error
+            try {
+                await this.stopServerRecording();
+            } catch (stopError) {
+                console.warn('[VoiceAssistant] Failed to stop recording after error:', stopError);
+            }
+            
+            throw error;
+        }
     }
 
     /**
@@ -462,43 +743,7 @@ class VoiceAssistantAPI {
     }
 
     /**
-     * Enhanced API call with validation
-     */
-    async processVoiceInputValidated(audioData, language = 'en-US', voice = 'default', volume = 0.8) {
-        // Validate inputs
-        this.validateAudioData(audioData);
-
-        const payload = {
-            session_id: `voice-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            audio_data: audioData,
-            language: language,
-            voice: voice,
-            volume: volume
-        };
-
-        return await this.processVoiceInput(payload);
-    }
-
-    /**
-     * Enhanced text command with validation
-     */
-    async processTextCommandValidated(text, voice = 'default', language = 'en-US', volume = 0.8) {
-        // Validate inputs
-        this.validateTextInput(text);
-
-        const payload = {
-            session_id: `text-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            text: text,
-            voice: voice,
-            language: language,
-            volume: volume
-        };
-
-        return await this.processTextCommand(payload);
-    }
-
-    /**
-     * Get API call statistics for monitoring
+     * Get API call statistics
      */
     getStatistics() {
         return {
@@ -514,15 +759,15 @@ class VoiceAssistantAPI {
      */
     configure(options = {}) {
         if (options.timeout) {
-            this.apiTimeout = Math.max(5000, Math.min(300000, options.timeout)); // 5s to 5min
+            this.apiTimeout = Math.max(5000, Math.min(300000, options.timeout));
         }
 
         if (options.retryAttempts !== undefined) {
-            this.retryAttempts = Math.max(1, Math.min(10, options.retryAttempts)); // 1 to 10
+            this.retryAttempts = Math.max(1, Math.min(10, options.retryAttempts));
         }
 
         if (options.retryDelay) {
-            this.retryDelay = Math.max(100, Math.min(10000, options.retryDelay)); // 100ms to 10s
+            this.retryDelay = Math.max(100, Math.min(10000, options.retryDelay));
         }
 
         console.log('[VoiceAssistant] API configuration updated:', {
@@ -533,67 +778,12 @@ class VoiceAssistantAPI {
     }
 
     /**
-     * Test API connectivity with comprehensive diagnostics
-     */
-    async testConnectivity() {
-        console.log('[VoiceAssistant] Testing API connectivity...');
-
-        const results = {
-            status: false,
-            latency: null,
-            error: null,
-            service_running: false,
-            service_healthy: false,
-            dependencies_installed: false
-        };
-
-        try {
-            // Test basic connectivity
-            const startTime = Date.now();
-            const statusResponse = await this.getVoiceStatus();
-            const latency = Date.now() - startTime;
-
-            results.latency = latency;
-            results.status = statusResponse.success;
-
-            if (statusResponse.success) {
-                results.service_running = statusResponse.backend_running || false;
-                results.service_healthy = statusResponse.backend_healthy || false;
-
-                // Test dependency status
-                try {
-                    const depResponse = await this.checkInstallationStatus();
-                    results.dependencies_installed = depResponse.dependencies_installed || false;
-                } catch (depError) {
-                    console.warn('[VoiceAssistant] Dependency check failed during connectivity test:', depError);
-                }
-
-                console.log(`[VoiceAssistant] API connectivity test passed (${latency}ms)`);
-            } else {
-                results.error = statusResponse.error || 'Unknown error';
-                console.warn(`[VoiceAssistant] API connectivity test failed: ${results.error}`);
-            }
-        } catch (error) {
-            results.error = error.message;
-            console.error('[VoiceAssistant] API connectivity test error:', error);
-        }
-
-        return results;
-    }
-
-    /**
      * Emergency stop for all ongoing operations
      */
     emergencyStop() {
         try {
             console.log('[VoiceAssistant] Emergency stop triggered');
-
-            // Stop progress polling
             this.stopProgressPolling();
-
-            // TODO: Add API call to stop any ongoing processing
-            // this.makeAPICall('EmergencyStop', {}).catch(() => {});
-
             console.log('[VoiceAssistant] Emergency stop completed');
         } catch (error) {
             console.error('[VoiceAssistant] Error during emergency stop:', error);
