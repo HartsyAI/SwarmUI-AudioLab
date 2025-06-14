@@ -1,7 +1,7 @@
 ﻿using Newtonsoft.Json.Linq;
 using System.IO;
 
-namespace Hartsy.Extensions.VoiceAssistant.Models;
+namespace Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
 
 #region Base Models
 /// <summary>Base request model with common validation.</summary>
@@ -61,8 +61,8 @@ public class STTRequest : BaseRequest
     public override void Validate()
     {
         base.Validate();
-        Common.ErrorHandling.Validation.RequireNonEmpty(AudioData, nameof(AudioData));
-        Common.ErrorHandling.Validation.RequireValidLanguage(Language);
+        ErrorHandling.Validation.RequireNonEmpty(AudioData, nameof(AudioData));
+        ErrorHandling.Validation.RequireValidLanguage(Language);
 
         // Validate audio data is base64
         if (!IsValidBase64(AudioData))
@@ -147,10 +147,10 @@ public class TTSRequest : BaseRequest
     public override void Validate()
     {
         base.Validate();
-        Common.ErrorHandling.Validation.RequireValidTextLength(Text);
-        Common.ErrorHandling.Validation.RequireValidLanguage(Language);
-        Common.ErrorHandling.Validation.RequireValidVoice(Voice);
-        Common.ErrorHandling.Validation.RequireValidVolume(Volume);
+        ErrorHandling.Validation.RequireValidTextLength(Text);
+        ErrorHandling.Validation.RequireValidLanguage(Language);
+        ErrorHandling.Validation.RequireValidVoice(Voice);
+        ErrorHandling.Validation.RequireValidVolume(Volume);
         // Validate options
         if (Options.Speed < 0.1f || Options.Speed > 3.0f)
         {
@@ -239,7 +239,7 @@ public class PipelineRequest : BaseRequest
         {
             throw new ArgumentException($"InputType must be one of: {string.Join(", ", validInputTypes)}");
         }
-        Common.ErrorHandling.Validation.RequireNonEmpty(InputData, nameof(InputData));
+        ErrorHandling.Validation.RequireNonEmpty(InputData, nameof(InputData));
         if (PipelineSteps.Count == 0)
         {
             throw new ArgumentException("At least one pipeline step must be specified");
@@ -462,15 +462,12 @@ public class RecordingRequest : BaseRequest
     public override void Validate()
     {
         base.Validate();
-        
         // Validate duration (1-30 seconds)
         if (Duration < 1 || Duration > 30)
         {
             throw new ArgumentException("Duration must be between 1 and 30 seconds");
         }
-        
-        Common.ErrorHandling.Validation.RequireValidLanguage(Language);
-        
+        ErrorHandling.Validation.RequireValidLanguage(Language);
         string[] validModes = new[] { "stt", "sts", "raw" };
         if (!validModes.Contains(Mode.ToLower()))
         {
@@ -498,14 +495,12 @@ public class RecordingResponse : BaseResponse
         result["recording_id"] = RecordingId;
         result["duration"] = Duration;
         result["mode"] = Mode;
-        
         if (!string.IsNullOrEmpty(AudioData))
             result["audio_data"] = AudioData;
         if (!string.IsNullOrEmpty(Transcription))
             result["transcription"] = Transcription;
         if (!string.IsNullOrEmpty(AIResponse))
             result["ai_response"] = AIResponse;
-            
         result["metadata"] = Metadata.ToJObject();
         return result;
     }

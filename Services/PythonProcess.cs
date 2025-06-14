@@ -1,7 +1,6 @@
 using SwarmUI.Utils;
 using System.Diagnostics;
-using Hartsy.Extensions.VoiceAssistant.Configuration;
-using Hartsy.Extensions.VoiceAssistant.Models;
+using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
 using System.IO;
 
 namespace Hartsy.Extensions.VoiceAssistant.Services;

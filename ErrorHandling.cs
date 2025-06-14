@@ -2,8 +2,9 @@
 using Newtonsoft.Json.Linq;
 using System.IO;
 using System.Net.Http;
+using Hartsy.Extensions.VoiceAssistant.Services;
 
-namespace Hartsy.Extensions.VoiceAssistant.Common;
+namespace Hartsy.Extensions.VoiceAssistant;
 
 /// <summary>
 /// Centralized error handling utilities for consistent error management across the extension.
@@ -150,14 +151,14 @@ public static class ErrorHandling
         public static void RequireValidLanguage(string language)
         {
             RequireNonEmpty(language, nameof(language));
-            if (!Configuration.ServiceConfiguration.SupportedLanguages.Contains(language))
+            if (!ServiceConfiguration.SupportedLanguages.Contains(language))
                 throw new ArgumentException($"Unsupported language: {language}");
         }
 
         public static void RequireValidVoice(string voice)
         {
             RequireNonEmpty(voice, nameof(voice));
-            if (!Configuration.ServiceConfiguration.AvailableVoices.Contains(voice))
+            if (!ServiceConfiguration.AvailableVoices.Contains(voice))
                 throw new ArgumentException($"Unsupported voice: {voice}");
         }
 
@@ -170,8 +171,8 @@ public static class ErrorHandling
         public static void RequireValidTextLength(string text)
         {
             RequireNonEmpty(text, nameof(text));
-            if (text.Length > Configuration.ServiceConfiguration.MaxTextLength)
-                throw new ArgumentException($"Text length exceeds maximum of {Configuration.ServiceConfiguration.MaxTextLength} characters");
+            if (text.Length > ServiceConfiguration.MaxTextLength)
+                throw new ArgumentException($"Text length exceeds maximum of {ServiceConfiguration.MaxTextLength} characters");
         }
     }
 }

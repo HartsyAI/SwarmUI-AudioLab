@@ -1,7 +1,5 @@
 using SwarmUI.Utils;
-using Hartsy.Extensions.VoiceAssistant.Configuration;
-using Hartsy.Extensions.VoiceAssistant.Models;
-using Hartsy.Extensions.VoiceAssistant.Common;
+using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
 using Hartsy.Extensions.VoiceAssistant.Progress;
 using Newtonsoft.Json.Linq;
 
@@ -83,23 +81,17 @@ public class PythonBackendService : IDisposable
     {
         EnsureInitialized();
         request.Validate();
-
-        ApiProgressTracker processingTracker = ProgressTracking.GetApiTracker($"stt_{Guid.NewGuid():N}");
+        ProgressTracker processingTracker = ProgressTracking.GetApiTracker($"stt_{Guid.NewGuid():N}");
         DateTime startTime = DateTime.UtcNow;
-
         try
         {
             processingTracker.SetOperation("STT Processing");
             processingTracker.UpdateProgress(10, "Starting", "Validating backend availability...");
-
             // Ensure backend is available
             await EnsureBackendHealthyAsync();
-
             processingTracker.UpdateProgress(30, "Processing", "Transcribing audio...");
-
             // Call STT service using the generic endpoint
-            JObject backendResponse = await BackendHttpClient.Instance.CallSTTServiceAsync(request);
-
+            JObject backendResponse = await PythonBackendClient.Instance.CallSTTServiceAsync(request);
             STTResponse response = new STTResponse
             {
                 Success = backendResponse?["success"]?.Value<bool>() ?? false,
@@ -107,13 +99,11 @@ public class PythonBackendService : IDisposable
                 Confidence = backendResponse?["confidence"]?.Value<float>() ?? 0.0f,
                 ProcessingTime = (DateTime.UtcNow - startTime).TotalSeconds
             };
-
             // Parse alternatives if requested and available
             if (request.Options.ReturnAlternatives && backendResponse?["alternatives"] is JArray alternatives)
             {
                 response.Alternatives = alternatives.Select(a => a.ToString()).ToArray();
             }
-
             // Parse metadata
             if (backendResponse?["metadata"] is JObject metadata)
             {
@@ -125,13 +115,11 @@ public class PythonBackendService : IDisposable
                     SampleRate = metadata["sample_rate"]?.Value<int>() ?? 0
                 };
             }
-
             if (!response.Success)
             {
                 response.Message = backendResponse?["error"]?.ToString() ?? "STT processing failed";
                 throw new InvalidOperationException(response.Message);
             }
-
             if (string.IsNullOrEmpty(response.Transcription))
             {
                 throw new InvalidOperationException("Speech recognition returned no transcription");
@@ -181,7 +169,7 @@ public class PythonBackendService : IDisposable
         EnsureInitialized();
         request.Validate();
 
-        ApiProgressTracker processingTracker = ProgressTracking.GetApiTracker($"tts_{Guid.NewGuid():N}");
+        ProgressTracker processingTracker = ProgressTracking.GetApiTracker($"tts_{Guid.NewGuid():N}");
         DateTime startTime = DateTime.UtcNow;
 
         try
@@ -195,7 +183,7 @@ public class PythonBackendService : IDisposable
             processingTracker.UpdateProgress(30, "Processing", "Generating speech...");
 
             // Call TTS service using the generic endpoint
-            JObject backendResponse = await BackendHttpClient.Instance.CallTTSServiceAsync(request);
+            JObject backendResponse = await PythonBackendClient.Instance.CallTTSServiceAsync(request);
 
             TTSResponse response = new TTSResponse
             {
@@ -271,23 +259,17 @@ public class PythonBackendService : IDisposable
     {
         EnsureInitialized();
         request.Validate();
-
-        ApiProgressTracker processingTracker = ProgressTracking.GetApiTracker($"pipeline_{Guid.NewGuid():N}");
+        ProgressTracker processingTracker = ProgressTracking.GetApiTracker($"pipeline_{Guid.NewGuid():N}");
         DateTime startTime = DateTime.UtcNow;
-
         try
         {
             processingTracker.SetOperation("Pipeline Processing");
             processingTracker.UpdateProgress(10, "Starting", "Initializing pipeline...");
-
             // Ensure backend is available
             await EnsureBackendHealthyAsync();
-
             processingTracker.UpdateProgress(30, "Processing", "Executing pipeline...");
-
             // Call pipeline service using the generic endpoint
-            JObject backendResponse = await BackendHttpClient.Instance.CallPipelineServiceAsync(request);
-
+            JObject backendResponse = await PythonBackendClient.Instance.CallPipelineServiceAsync(request);
             PipelineResponse response = new PipelineResponse
             {
                 Success = backendResponse?["success"]?.Value<bool>() ?? false,
@@ -296,7 +278,6 @@ public class PythonBackendService : IDisposable
                 TotalProcessingTime = (DateTime.UtcNow - startTime).TotalSeconds,
                 ProcessingTime = (DateTime.UtcNow - startTime).TotalSeconds
             };
-
             // Parse pipeline results
             if (backendResponse?["pipeline_results"] is JObject pipelineResults)
             {
@@ -308,7 +289,6 @@ public class PythonBackendService : IDisposable
                     }
                 }
             }
-
             // Parse executed steps
             if (backendResponse?["executed_steps"] is JArray executedSteps)
             {
@@ -320,23 +300,19 @@ public class PythonBackendService : IDisposable
             {
                 response.TotalProcessingTime = backendTime;
             }
-
             if (!response.Success)
             {
                 response.Message = backendResponse?["error"]?.ToString() ?? "Pipeline processing failed";
                 throw new InvalidOperationException(response.Message);
             }
-
             processingTracker.SetComplete();
             Logs.Info($"[VoiceAssistant] Pipeline processing completed with {response.ExecutedSteps.Count} steps");
-
             return response;
         }
         catch (Exception ex)
         {
             processingTracker.SetError(ex.Message);
             Logs.Error($"[VoiceAssistant] Pipeline processing failed: {ex.Message}");
-
             return new PipelineResponse
             {
                 Success = false,
@@ -453,7 +429,7 @@ public class PythonBackendService : IDisposable
             }
 
             // Validate backend compatibility with generic endpoints
-            var isCompatible = await BackendHttpClient.Instance.ValidateBackendCompatibilityAsync();
+            var isCompatible = await PythonBackendClient.Instance.ValidateBackendCompatibilityAsync();
             if (!isCompatible)
             {
                 Logs.Warning("[VoiceAssistant] Backend may not support all generic endpoints");
@@ -510,7 +486,7 @@ public class PythonBackendService : IDisposable
             // Try graceful shutdown via HTTP first
             try
             {
-                await BackendHttpClient.Instance.SendShutdownSignalAsync();
+                await PythonBackendClient.Instance.SendShutdownSignalAsync();
             }
             catch (Exception ex)
             {
@@ -565,7 +541,7 @@ public class PythonBackendService : IDisposable
     {
         try
         {
-            var healthInfo = await BackendHttpClient.Instance.CheckHealthAsync();
+            var healthInfo = await PythonBackendClient.Instance.CheckHealthAsync();
 
             // Add process information
             if (_pythonProcess != null)
@@ -676,7 +652,7 @@ public class PythonBackendService : IDisposable
             processingTracker.UpdateProgress(30, "Recording", "Starting server-side recording...");
 
             // Call server recording service using HTTP client
-            RecordingResponse response = await BackendHttpClient.Instance.CallStartRecordingServiceAsync(request);
+            RecordingResponse response = await PythonBackendClient.Instance.CallStartRecordingServiceAsync(request);
 
             response.ProcessingTime = (DateTime.UtcNow - startTime).TotalSeconds;
 
@@ -706,7 +682,7 @@ public class PythonBackendService : IDisposable
         finally
         {
             // Clean up tracker after a delay
-            Task.Delay(TimeSpan.FromMinutes(5)).ContinueWith(_ =>
+            await Task.Delay(TimeSpan.FromMinutes(5)).ContinueWith(_ =>
                 ProgressTracking.RemoveTracker(processingTracker.Id));
         }
     }
@@ -734,7 +710,7 @@ public class PythonBackendService : IDisposable
             processingTracker.UpdateProgress(50, "Processing", "Processing recorded audio...");
 
             // Call stop recording service using HTTP client
-            RecordingResponse response = await BackendHttpClient.Instance.CallStopRecordingServiceAsync(sessionId);
+            RecordingResponse response = await PythonBackendClient.Instance.CallStopRecordingServiceAsync(sessionId);
 
             response.ProcessingTime = (DateTime.UtcNow - startTime).TotalSeconds;
 
@@ -770,7 +746,7 @@ public class PythonBackendService : IDisposable
         finally
         {
             // Clean up tracker after a delay
-            Task.Delay(TimeSpan.FromMinutes(5)).ContinueWith(_ =>
+            await Task.Delay(TimeSpan.FromMinutes(5)).ContinueWith(_ =>
                 ProgressTracking.RemoveTracker(processingTracker.Id));
         }
     }
@@ -788,7 +764,7 @@ public class PythonBackendService : IDisposable
             await EnsureBackendHealthyAsync();
 
             // Call recording status service using HTTP client
-            return await BackendHttpClient.Instance.CallRecordingStatusServiceAsync(sessionId);
+            return await PythonBackendClient.Instance.CallRecordingStatusServiceAsync(sessionId);
         }
         catch (Exception ex)
         {
@@ -838,7 +814,7 @@ public class PythonBackendService : IDisposable
     /// </summary>
     private async Task<BackendHealthInfo> WaitForBackendHealthAsync()
     {
-        var healthTracker = new HealthCheckProgressTracker
+        var healthTracker = new ProgressTracker
         {
             MaxAttempts = ServiceConfiguration.MaxHealthCheckAttempts
         };
@@ -856,7 +832,7 @@ public class PythonBackendService : IDisposable
 
             try
             {
-                var healthInfo = await BackendHttpClient.Instance.CheckHealthAsync();
+                var healthInfo = await PythonBackendClient.Instance.CheckHealthAsync();
                 if (healthInfo.IsHealthy)
                 {
                     healthTracker.SetHealthy();
@@ -891,7 +867,7 @@ public class PythonBackendService : IDisposable
 
         try
         {
-            var healthInfo = await BackendHttpClient.Instance.CheckHealthAsync();
+            var healthInfo = await PythonBackendClient.Instance.CheckHealthAsync();
             if (!healthInfo.IsHealthy)
             {
                 throw new InvalidOperationException($"Backend is not healthy: {healthInfo.ErrorMessage ?? "Unknown error"}");

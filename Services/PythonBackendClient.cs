@@ -2,51 +2,34 @@
 using Newtonsoft.Json.Linq;
 using System.Net.Http;
 using System.Text;
-using Hartsy.Extensions.VoiceAssistant.Configuration;
-using Hartsy.Extensions.VoiceAssistant.Common;
-using Hartsy.Extensions.VoiceAssistant.Models;
+using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
+using SwarmUI.Backends;
 
 namespace Hartsy.Extensions.VoiceAssistant.Services;
 
-/// <summary>
-/// HTTP client service for communicating with the Python backend using generic endpoints.
-/// Handles all HTTP communication, timeouts, and response parsing for modern STT, TTS, and pipeline operations.
-/// Implements singleton pattern for resource management with clean separation of concerns.
-/// </summary>
-public class BackendHttpClient : IDisposable
+/// <summary>client service for communicating with the Python backend using generic endpoints.
+/// Handles communication and response parsing for modern STT, TTS, and pipeline operations.
+/// Implements singleton pattern for resource management with clean separation of concerns.</summary>
+public class PythonBackendClient
 {
-    private static readonly Lazy<BackendHttpClient> _instance = new(() => new BackendHttpClient());
-    public static BackendHttpClient Instance => _instance.Value;
+    private static readonly Lazy<PythonBackendClient> PythonInstance = new(() => new PythonBackendClient());
+    public static PythonBackendClient Instance => PythonInstance.Value;
 
-    private HttpClient _httpClient;
+    /// <summary>Shared HttpClient for all Voice Assistant API requests</summary>
+    protected static readonly HttpClient HttpClient = NetworkBackendUtils.MakeHttpClient();
     private bool _isInitialized = false;
     private bool _disposed = false;
 
-    private BackendHttpClient()
-    {
-        // Private constructor for singleton
-    }
-
-    /// <summary>
-    /// Initializes the HTTP client with appropriate configuration.
-    /// </summary>
+    /// <summary>Initializes the HTTP client with appropriate configuration.</summary>
     public void Initialize()
     {
         if (_isInitialized)
             return;
-
         try
         {
-            _httpClient = new HttpClient
-            {
-                Timeout = ServiceConfiguration.ApiCallTimeout
-            };
-
-            _httpClient.DefaultRequestHeaders.Add("User-Agent", ServiceConfiguration.UserAgent);
-            _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
-
+            HttpClient.DefaultRequestHeaders.Add("User-Agent", ServiceConfiguration.UserAgent);
+            HttpClient.DefaultRequestHeaders.Add("Accept", "application/json");
             _isInitialized = true;
-            Logs.Debug("[VoiceAssistant] HTTP client initialized for generic endpoints");
         }
         catch (Exception ex)
         {
@@ -55,9 +38,7 @@ public class BackendHttpClient : IDisposable
         }
     }
 
-    /// <summary>
-    /// Performs a health check on the Python backend.
-    /// </summary>
+    /// <summary>Performs a health check on the Python backend.</summary>
     /// <returns>Backend health information</returns>
     public async Task<BackendHealthInfo> CheckHealthAsync()
     {
@@ -76,7 +57,7 @@ public class BackendHttpClient : IDisposable
             Logs.Debug("[VoiceAssistant] Performing backend health check");
 
             using var cts = new CancellationTokenSource(ServiceConfiguration.HealthCheckTimeout);
-            var response = await _httpClient.GetAsync(ServiceConfiguration.GetBackendEndpoint("/health"), cts.Token);
+            var response = await HttpClient.GetAsync(ServiceConfiguration.GetBackendEndpoint("/health"), cts.Token);
 
             healthInfo.IsRunning = true;
             healthInfo.IsResponding = true;
@@ -85,7 +66,7 @@ public class BackendHttpClient : IDisposable
             if (response.IsSuccessStatusCode)
             {
                 var content = await response.Content.ReadAsStringAsync();
-                var healthData = JObject.Parse(content);
+                JObject healthData = JObject.Parse(content);
 
                 // Extract additional health information if available
                 if (healthData["services"] is JObject services)
@@ -143,7 +124,7 @@ public class BackendHttpClient : IDisposable
         {
             Logs.Debug("[VoiceAssistant] Calling STT service");
 
-            var requestData = new JObject
+            JObject requestData = new()
             {
                 ["audio_data"] = request.AudioData,
                 ["language"] = request.Language
@@ -152,7 +133,7 @@ public class BackendHttpClient : IDisposable
             // Add options if provided
             if (request.Options != null)
             {
-                var optionsObj = new JObject();
+                JObject optionsObj = [];
 
                 if (request.Options.ReturnConfidence)
                     optionsObj["return_confidence"] = request.Options.ReturnConfidence;
@@ -166,7 +147,7 @@ public class BackendHttpClient : IDisposable
                 // Add custom options if any
                 if (request.Options.CustomOptions?.Count > 0)
                 {
-                    var customObj = new JObject();
+                    JObject customObj = [];
                     foreach (var customOption in request.Options.CustomOptions)
                     {
                         customObj[customOption.Key] = JToken.FromObject(customOption.Value);
@@ -200,9 +181,9 @@ public class BackendHttpClient : IDisposable
 
         try
         {
-            Logs.Debug($"[VoiceAssistant] Calling TTS service for text: '{request.Text?.Substring(0, Math.Min(50, request.Text?.Length ?? 0))}...'");
+            Logs.Debug($"[VoiceAssistant] Calling TTS service for text: '{request.Text?[..Math.Min(50, request.Text?.Length ?? 0)]}...'");
 
-            var requestData = new JObject
+            JObject requestData = new()
             {
                 ["text"] = request.Text,
                 ["voice"] = request.Voice,
@@ -213,7 +194,7 @@ public class BackendHttpClient : IDisposable
             // Add options if provided
             if (request.Options != null)
             {
-                var optionsObj = new JObject();
+                JObject optionsObj = [];
 
                 if (request.Options.Speed != 1.0f)
                     optionsObj["speed"] = request.Options.Speed;
@@ -227,7 +208,7 @@ public class BackendHttpClient : IDisposable
                 // Add custom options if any
                 if (request.Options.CustomOptions?.Count > 0)
                 {
-                    var customObj = new JObject();
+                    JObject customObj = [];
                     foreach (var customOption in request.Options.CustomOptions)
                     {
                         customObj[customOption.Key] = JToken.FromObject(customOption.Value);
@@ -263,7 +244,7 @@ public class BackendHttpClient : IDisposable
         {
             Logs.Debug($"[VoiceAssistant] Calling pipeline service with {request.PipelineSteps.Count} steps");
 
-            var requestData = new JObject
+            JObject requestData = new()
             {
                 ["input_type"] = request.InputType,
                 ["input_data"] = request.InputData,
@@ -275,7 +256,7 @@ public class BackendHttpClient : IDisposable
             var stepsArray = (JArray)requestData["pipeline_steps"];
             foreach (var step in request.PipelineSteps)
             {
-                var stepObj = new JObject
+                JObject stepObj = new()
                 {
                     ["type"] = step.Type,
                     ["enabled"] = step.Enabled,
@@ -310,7 +291,7 @@ public class BackendHttpClient : IDisposable
             Logs.Debug("[VoiceAssistant] Sending shutdown signal to backend");
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            var response = await _httpClient.PostAsync(
+            var response = await HttpClient.PostAsync(
                 ServiceConfiguration.GetBackendEndpoint("/shutdown"),
                 null,
                 cts.Token);
@@ -339,7 +320,7 @@ public class BackendHttpClient : IDisposable
             Logs.Debug("[VoiceAssistant] Getting backend status");
 
             using var cts = new CancellationTokenSource(ServiceConfiguration.HealthCheckTimeout);
-            var response = await _httpClient.GetAsync(ServiceConfiguration.GetBackendEndpoint("/status"), cts.Token);
+            var response = await HttpClient.GetAsync(ServiceConfiguration.GetBackendEndpoint("/status"), cts.Token);
 
             if (response.IsSuccessStatusCode)
             {
@@ -386,13 +367,13 @@ public class BackendHttpClient : IDisposable
                     // For GET endpoints
                     if (endpoint == "/health" || endpoint == "/status")
                     {
-                        var response = await _httpClient.GetAsync(ServiceConfiguration.GetBackendEndpoint(endpoint), cts.Token);
+                        var response = await HttpClient.GetAsync(ServiceConfiguration.GetBackendEndpoint(endpoint), cts.Token);
                         results[endpoint] = response.IsSuccessStatusCode;
                     }
                     else
                     {
                         // For POST endpoints, just check if they respond (even with method not allowed)
-                        var response = await _httpClient.PostAsync(
+                        var response = await HttpClient.PostAsync(
                             ServiceConfiguration.GetBackendEndpoint(endpoint),
                             new StringContent("{}", Encoding.UTF8, "application/json"),
                             cts.Token);
@@ -432,7 +413,7 @@ public class BackendHttpClient : IDisposable
             Logs.Debug("[VoiceAssistant] Getting backend capabilities");
 
             using var cts = new CancellationTokenSource(ServiceConfiguration.HealthCheckTimeout);
-            var response = await _httpClient.GetAsync(ServiceConfiguration.GetBackendEndpoint("/capabilities"), cts.Token);
+            var response = await HttpClient.GetAsync(ServiceConfiguration.GetBackendEndpoint("/capabilities"), cts.Token);
 
             if (response.IsSuccessStatusCode)
             {
@@ -519,7 +500,7 @@ public class BackendHttpClient : IDisposable
         {
             Logs.Debug($"[VoiceAssistant] Calling server recording start service: Duration={request.Duration}s, Mode={request.Mode}");
 
-            JObject requestData = new JObject
+            JObject requestData = new()
             {
                 ["session_id"] = request.SessionId,
                 ["duration"] = request.Duration,
@@ -530,8 +511,8 @@ public class BackendHttpClient : IDisposable
             // Add options if provided
             if (request.Options?.Count > 0)
             {
-                JObject optionsObj = new JObject();
-                foreach (System.Collections.Generic.KeyValuePair<string, object> option in request.Options)
+                JObject optionsObj = [];
+                foreach (KeyValuePair<string, object> option in request.Options)
                 {
                     optionsObj[option.Key] = JToken.FromObject(option.Value);
                 }
@@ -540,7 +521,7 @@ public class BackendHttpClient : IDisposable
 
             JObject backendResponse = await PostToBackendAsync("/recording/start", requestData);
 
-            RecordingResponse response = new RecordingResponse
+            RecordingResponse response = new()
             {
                 Success = backendResponse?["success"]?.Value<bool>() ?? false,
                 IsRecording = backendResponse?["is_recording"]?.Value<bool>() ?? false,
@@ -588,14 +569,14 @@ public class BackendHttpClient : IDisposable
         {
             Logs.Debug($"[VoiceAssistant] Calling server recording stop service: SessionId={sessionId}");
 
-            JObject requestData = new JObject
+            JObject requestData = new()
             {
                 ["session_id"] = sessionId
             };
 
             JObject backendResponse = await PostToBackendAsync("/recording/stop", requestData);
 
-            RecordingResponse response = new RecordingResponse
+            RecordingResponse response = new()
             {
                 Success = backendResponse?["success"]?.Value<bool>() ?? false,
                 IsRecording = backendResponse?["is_recording"]?.Value<bool>() ?? false,
@@ -649,14 +630,14 @@ public class BackendHttpClient : IDisposable
         {
             Logs.Debug($"[VoiceAssistant] Calling server recording status service: SessionId={sessionId}");
 
-            JObject requestData = new JObject
+            JObject requestData = new()
             {
                 ["session_id"] = sessionId
             };
 
             JObject backendResponse = await PostToBackendAsync("/recording/status", requestData);
 
-            RecordingStatusResponse response = new RecordingStatusResponse
+            RecordingStatusResponse response = new()
             {
                 Success = backendResponse?["success"]?.Value<bool>() ?? false,
                 IsRecording = backendResponse?["is_recording"]?.Value<bool>() ?? false,
@@ -698,7 +679,7 @@ public class BackendHttpClient : IDisposable
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             using var cts = new CancellationTokenSource(ServiceConfiguration.ApiCallTimeout);
-            var response = await _httpClient.PostAsync(ServiceConfiguration.GetBackendEndpoint(endpoint), content, cts.Token);
+            var response = await HttpClient.PostAsync(ServiceConfiguration.GetBackendEndpoint(endpoint), content, cts.Token);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -735,32 +716,10 @@ public class BackendHttpClient : IDisposable
 
         if (_disposed)
         {
-            throw new ObjectDisposedException(nameof(BackendHttpClient));
+            throw new ObjectDisposedException(nameof(PythonBackendClient));
         }
     }
 
     #endregion
 
-    /// <summary>
-    /// Disposes of the HTTP client resources.
-    /// </summary>
-    public void Dispose()
-    {
-        if (!_disposed)
-        {
-            try
-            {
-                _httpClient?.Dispose();
-                Logs.Debug("[VoiceAssistant] HTTP client disposed");
-            }
-            catch (Exception ex)
-            {
-                Logs.Error($"[VoiceAssistant] Error disposing HTTP client: {ex.Message}");
-            }
-            finally
-            {
-                _disposed = true;
-            }
-        }
-    }
 }

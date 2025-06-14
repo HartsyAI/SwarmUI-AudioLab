@@ -1,30 +1,25 @@
-﻿/* Voice Assistant Styles for SwarmUI Integration - Complete UI Redesign */
+﻿/* Voice Assistant Minimal Styles - Leveraging SwarmUI CSS System */
 
-/* Main Container */
+/* ===== LAYOUT STRUCTURE ===== */
 .voice-assistant-main {
     padding: 1rem;
     max-width: 100%;
-    margin: 0 auto;
 }
 
 .voice-assistant-header {
     text-align: center;
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
 }
 
     .voice-assistant-header h3 {
         color: var(--emphasis);
         margin-bottom: 0.5rem;
-        font-size: 1.8rem;
-        font-weight: 600;
     }
 
         .voice-assistant-header h3 i {
-            margin-right: 0.75rem;
-            opacity: 0.9;
+            margin-right: 0.5rem;
         }
 
-/* Main Grid Layout */
 .voice-assistant-grid {
     display: grid;
     grid-template-columns: 400px 1fr;
@@ -32,20 +27,15 @@
     min-height: 70vh;
 }
 
-.voice-assistant-left-column {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-}
-
+.voice-assistant-left-column,
 .voice-assistant-right-column {
     display: flex;
     flex-direction: column;
     gap: 1rem;
 }
 
-/* Service Control Panel */
-.voice-service-control .service-status-display {
+/* ===== SERVICE STATUS ===== */
+.service-status-display {
     display: flex;
     flex-direction: column;
     gap: 1rem;
@@ -62,12 +52,7 @@
 
 .status-icon {
     margin-right: 0.75rem;
-    font-size: 1.1rem;
 }
-
-    .status-icon i.fa-circle {
-        filter: drop-shadow(0 0 3px currentColor);
-    }
 
 .service-control-buttons {
     display: flex;
@@ -78,27 +63,14 @@
     flex: 1;
     padding: 0.75rem 1rem;
     font-weight: 600;
-    transition: all 0.3s ease;
 }
-
-    #primaryServiceButton:not(:disabled):hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    }
 
     #primaryServiceButton i {
         margin-right: 0.5rem;
     }
 
-/* Dependencies Status */
-.dependencies-grid {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 1rem;
-}
-
+/* ===== DEPENDENCIES DISPLAY ===== */
 .dependency-category h6 {
-    color: var(--text);
     margin-bottom: 0.75rem;
     font-weight: 600;
     display: flex;
@@ -123,31 +95,12 @@
     background: var(--background-soft);
     border-radius: 0.375rem;
     border: 1px solid var(--shadow);
-    transition: all 0.2s ease;
 }
-
-    .dependency-item:hover {
-        border-color: var(--emphasis);
-        background: color-mix(in srgb, var(--background-soft) 80%, var(--emphasis) 20%);
-    }
 
 .dependency-status {
     margin-right: 0.75rem;
     font-size: 1rem;
 }
-
-    .dependency-status.installed {
-        color: var(--green);
-    }
-
-    .dependency-status.missing {
-        color: var(--red);
-    }
-
-    .dependency-status.installing {
-        color: var(--emphasis);
-        animation: pulse 1.5s infinite;
-    }
 
 .dependency-name {
     flex: 1;
@@ -167,7 +120,7 @@
     padding: 1rem;
 }
 
-/* Console Output */
+/* ===== CONSOLE OUTPUT ===== */
 .console-output {
     background: var(--background);
     border: 1px solid var(--shadow);
@@ -195,30 +148,21 @@
 
 .console-message {
     flex: 1;
-    color: var(--text);
-}
-
-.console-line.console-info .console-message {
-    color: var(--text);
 }
 
 .console-line.console-success .console-message {
     color: var(--green);
 }
 
-.console-line.console-warning .console-message {
-    color: var(--emphasis);
-}
-
 .console-line.console-error .console-message {
     color: var(--red);
 }
 
-.console-line.console-debug .console-message {
-    color: var(--text-soft);
+.console-line.console-warning .console-message {
+    color: var(--emphasis);
 }
 
-/* Mode Tabs */
+/* ===== MODE TABS ===== */
 .voice-mode-tabs {
     display: flex;
     background: var(--background-gray);
@@ -237,7 +181,7 @@
     color: var(--text-soft);
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -252,7 +196,6 @@
     .mode-tab.active {
         background: var(--emphasis);
         color: white;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
     }
 
     .mode-tab:disabled {
@@ -260,15 +203,7 @@
         cursor: not-allowed;
     }
 
-    .mode-tab i {
-        font-size: 1rem;
-    }
-
-/* Mode Content */
-.voice-mode-content {
-    flex: 1;
-}
-
+/* ===== MODE CONTENT ===== */
 .mode-panel {
     display: none;
 }
@@ -277,15 +212,7 @@
         display: block;
     }
 
-/* Recording Button */
-.recording-button-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-}
-
+/* ===== VOICE-SPECIFIC CONTROLS ===== */
 .recording-button {
     width: 120px;
     height: 120px;
@@ -300,19 +227,16 @@
     cursor: pointer;
     transition: all 0.3s ease;
     font-weight: 600;
-    position: relative;
-    overflow: hidden;
+    margin: 0 auto;
 }
 
     .recording-button:not(:disabled):hover {
         transform: scale(1.05);
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
     }
 
     .recording-button:disabled {
         opacity: 0.6;
         cursor: not-allowed;
-        transform: none;
     }
 
     .recording-button.large {
@@ -324,11 +248,6 @@
         background: var(--red);
         border-color: var(--red);
         animation: recording-pulse 1.5s infinite;
-    }
-
-    .recording-button.processing {
-        background: var(--emphasis);
-        border-color: var(--emphasis);
     }
 
     .recording-button i {
@@ -345,6 +264,7 @@
     text-align: center;
     font-weight: 500;
     min-height: 1.5rem;
+    margin-top: 1rem;
 }
 
     .recording-status.listening {
@@ -359,7 +279,7 @@
         color: var(--green);
     }
 
-/* STT Mode Specific */
+/* ===== STT SPECIFIC ===== */
 .stt-controls {
     display: grid;
     grid-template-columns: auto 1fr;
@@ -380,22 +300,10 @@
     gap: 0.5rem;
 }
 
-    .setting-group .auto-input-name {
-        font-size: 0.9rem;
-        font-weight: 600;
-        color: var(--text);
-    }
-
 .confidence-display {
     font-family: var(--font-monospace);
     font-weight: 600;
     color: var(--emphasis);
-}
-
-.transcription-area {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
 }
 
 .transcription-display {
@@ -406,7 +314,6 @@
     min-height: 100px;
     font-family: var(--font-monospace);
     line-height: 1.5;
-    color: var(--text);
 }
 
     .transcription-display.empty {
@@ -418,22 +325,12 @@
         text-align: center;
     }
 
-/* TTS Mode Specific */
-.tts-input-area {
-    margin-bottom: 1.5rem;
-}
-
+/* ===== TTS SPECIFIC ===== */
 .tts-text-input {
     width: 100%;
     min-height: 120px;
-    padding: 0.75rem;
-    border: 1px solid var(--shadow);
-    border-radius: 0.375rem;
-    background: var(--background-soft);
-    color: var(--text);
-    font-family: inherit;
-    resize: vertical;
     margin-top: 0.5rem;
+    resize: vertical;
 }
 
 .text-counter {
@@ -462,12 +359,7 @@
     gap: 0.5rem;
 }
 
-    .tts-action-buttons .basic-button {
-        padding: 0.75rem 1rem;
-        font-weight: 600;
-    }
-
-/* STS Mode Specific */
+/* ===== STS SPECIFIC ===== */
 .sts-controls {
     display: flex;
     flex-direction: column;
@@ -493,7 +385,6 @@
     border: 1px solid var(--shadow);
     border-radius: 1rem;
     padding: 1rem;
-    position: relative;
     min-height: 60px;
     display: flex;
     align-items: center;
@@ -517,71 +408,7 @@
         justify-content: center;
     }
 
-.play-response-button {
-    position: absolute;
-    top: 0.5rem;
-    right: 0.5rem;
-    background: var(--green);
-    border: none;
-    border-radius: 50%;
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-
-    .play-response-button:hover {
-        transform: scale(1.1);
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-    }
-
-/* Coming Soon */
-.coming-soon {
-    text-align: center;
-    padding: 3rem 2rem;
-    color: var(--text-soft);
-}
-
-    .coming-soon h4 {
-        color: var(--text);
-        margin-bottom: 1rem;
-    }
-
-.planned-features {
-    margin-top: 2rem;
-    text-align: left;
-    max-width: 300px;
-    margin-left: auto;
-    margin-right: auto;
-}
-
-    .planned-features h6 {
-        color: var(--text);
-        margin-bottom: 0.75rem;
-    }
-
-    .planned-features ul {
-        list-style: none;
-        padding: 0;
-    }
-
-    .planned-features li {
-        padding: 0.25rem 0;
-        position: relative;
-        padding-left: 1.5rem;
-    }
-
-        .planned-features li:before {
-            content: "🎯";
-            position: absolute;
-            left: 0;
-        }
-
-/* Session History */
+/* ===== HISTORY ===== */
 .session-history {
     max-height: 300px;
     overflow-y: auto;
@@ -605,17 +432,7 @@
     border-radius: 0.5rem;
     padding: 0.75rem;
     margin-bottom: 0.75rem;
-    transition: all 0.2s ease;
 }
-
-    .history-item:hover {
-        border-color: var(--emphasis);
-        transform: translateY(-1px);
-    }
-
-    .history-item:last-child {
-        margin-bottom: 0;
-    }
 
 .history-timestamp {
     font-size: 0.8rem;
@@ -650,31 +467,44 @@
     border-radius: 0.25rem;
 }
 
-/* Modals */
-.modal-content {
-    background: var(--background) !important;
-    border: 1px solid var(--shadow);
-    color: var(--text);
+/* ===== COMING SOON ===== */
+.coming-soon {
+    text-align: center;
+    padding: 3rem 2rem;
+    color: var(--text-soft);
 }
 
-.modal-header {
-    border-bottom: 1px solid var(--shadow);
-}
-
-.modal-footer {
-    border-top: 1px solid var(--shadow);
-}
-
-.modal-title {
-    color: var(--text);
-}
-
-    .modal-title i {
-        margin-right: 0.5rem;
-        color: var(--emphasis);
+    .coming-soon h4 {
+        color: var(--text);
+        margin-bottom: 1rem;
     }
 
-/* Installation Modal */
+.planned-features {
+    margin-top: 2rem;
+    text-align: left;
+    max-width: 300px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+    .planned-features ul {
+        list-style: none;
+        padding: 0;
+    }
+
+    .planned-features li {
+        padding: 0.25rem 0;
+        position: relative;
+        padding-left: 1.5rem;
+    }
+
+        .planned-features li:before {
+            content: "🎯";
+            position: absolute;
+            left: 0;
+        }
+
+/* ===== INSTALLATION MODAL SPECIFIC ===== */
 .installation-warning {
     display: flex;
     gap: 1rem;
@@ -730,22 +560,16 @@
         flex-shrink: 0;
     }
 
-/* Progress Modal */
+/* ===== PROGRESS MODAL ===== */
 .installation-progress-content {
     display: flex;
     flex-direction: column;
     gap: 1rem;
 }
 
-.progress-header {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
 .progress-info {
     display: flex;
-    justify-content: between;
+    justify-content: space-between;
     align-items: center;
 }
 
@@ -753,7 +577,6 @@
     font-family: var(--font-monospace);
     font-weight: 600;
     color: var(--emphasis);
-    margin-left: auto;
 }
 
 .package-progress {
@@ -790,53 +613,7 @@
     text-align: center;
 }
 
-/* Alert System */
-.voice-alerts {
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    z-index: 1050;
-    max-width: 400px;
-}
-
-    .voice-alerts .alert {
-        margin-bottom: 0.5rem;
-        border: none;
-        border-radius: 0.5rem;
-        font-weight: 500;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-        animation: slideInRight 0.3s ease;
-    }
-
-        .voice-alerts .alert i {
-            margin-right: 0.5rem;
-        }
-
-.alert-success {
-    background: color-mix(in srgb, var(--green) 15%, var(--background));
-    color: var(--green);
-    border-left: 4px solid var(--green);
-}
-
-.alert-danger {
-    background: color-mix(in srgb, var(--red) 15%, var(--background));
-    color: var(--red);
-    border-left: 4px solid var(--red);
-}
-
-.alert-warning {
-    background: color-mix(in srgb, var(--emphasis) 15%, var(--background));
-    color: var(--emphasis);
-    border-left: 4px solid var(--emphasis);
-}
-
-.alert-info {
-    background: color-mix(in srgb, var(--text) 15%, var(--background));
-    color: var(--text);
-    border-left: 4px solid var(--text);
-}
-
-/* Animations */
+/* ===== ANIMATIONS ===== */
 @keyframes recording-pulse {
     0% {
         box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7);
@@ -851,26 +628,8 @@
     }
 }
 
-@keyframes pulse {
-    0%, 100% {
-        opacity: 1;
-    }
-
-    50% {
-        opacity: 0.6;
-    }
-}
-
-@keyframes slideInRight {
-    from {
-        transform: translateX(100%);
-        opacity: 0;
-    }
-
-    to {
-        transform: translateX(0);
-        opacity: 1;
-    }
+.fade-in-up {
+    animation: fadeInUp 0.3s ease;
 }
 
 @keyframes fadeInUp {
@@ -885,11 +644,7 @@
     }
 }
 
-.fade-in-up {
-    animation: fadeInUp 0.3s ease;
-}
-
-/* Responsive Design */
+/* ===== RESPONSIVE DESIGN ===== */
 @media (max-width: 1200px) {
     .voice-assistant-grid {
         grid-template-columns: 350px 1fr;
@@ -909,10 +664,6 @@
     .voice-assistant-right-column {
         order: 1;
     }
-
-    .dependencies-grid {
-        grid-template-columns: 1fr 1fr;
-    }
 }
 
 @media (max-width: 768px) {
@@ -929,11 +680,7 @@
         min-width: 120px;
     }
 
-    .stt-controls {
-        grid-template-columns: 1fr;
-        gap: 1rem;
-    }
-
+    .stt-controls,
     .tts-controls {
         grid-template-columns: 1fr;
         gap: 1rem;
@@ -956,10 +703,6 @@
         .recording-button i {
             font-size: 1.5rem;
         }
-
-    .dependencies-grid {
-        grid-template-columns: 1fr;
-    }
 
     .console-output {
         height: 200px;
@@ -984,54 +727,22 @@
         margin-left: 0.5rem;
         margin-right: 0.5rem;
     }
-
-    .voice-alerts {
-        left: 10px;
-        right: 10px;
-        max-width: none;
-    }
 }
 
-/* High contrast mode support */
-@media (prefers-contrast: high) {
-    .recording-button {
-        border-width: 4px;
-    }
-
-    .dependency-item {
-        border-width: 2px;
-    }
-
-    .conversation-bubble {
-        border-width: 2px;
-    }
-}
-
-/* Reduced motion support */
+/* ===== ACCESSIBILITY ===== */
 @media (prefers-reduced-motion: reduce) {
     .recording-button,
-    .dependency-item,
     .history-item,
-    .mode-tab,
-    .basic-button {
+    .mode-tab {
         transition: none;
     }
 
     .recording-pulse,
-    .pulse,
-    .slideInRight,
     .fadeInUp {
         animation: none;
     }
 
     .recording-button:hover {
         transform: none;
-    }
-}
-
-/* Print styles */
-@media print {
-    .voice-assistant-main {
-        display: none;
     }
 }

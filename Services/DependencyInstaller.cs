@@ -1,55 +1,87 @@
 using SwarmUI.Utils;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
-using Hartsy.Extensions.VoiceAssistant.Configuration;
-using Hartsy.Extensions.VoiceAssistant.Models;
+using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
 using Hartsy.Extensions.VoiceAssistant.Progress;
 using Newtonsoft.Json.Linq;
 using System.IO;
 
 namespace Hartsy.Extensions.VoiceAssistant.Services;
 
-/// <summary>
-/// Service for installing and managing Python dependencies for the Voice Assistant.
-/// Handles dependency detection, installation with progress tracking, and validation.
-/// </summary>
+/// <summary>Service for installing and managing Python dependencies for the Voice Assistant.</summary>
 public class DependencyInstaller
 {
     private readonly object _installLock = new();
     private volatile bool _isInstalling = false;
-
     public bool IsInstalling => _isInstalling;
 
-    /// <summary>
-    /// Detects the SwarmUI Python environment.
-    /// STRICT REQUIREMENT: Only works with SwarmUI's Python environment.
-    /// </summary>
+    /// <summary>Package definition for unified dependency management.</summary>
+    public class PackageDefinition
+    {
+        public string Name { get; set; }
+        public string InstallName { get; set; }
+        public string ImportName { get; set; }
+        public string Category { get; set; }
+        public bool IsGitPackage { get; set; }
+        public string[] AlternativeNames { get; set; } = [];
+        public int EstimatedInstallTimeMinutes { get; set; } = 2;
+        public string CustomInstallArgs { get; set; } = "";
+    }
+
+    /// <summary>Package installation status result.</summary>
+    public class PackageStatus
+    {
+        public string Name { get; set; }
+        public bool IsInstalled { get; set; }
+        public string DetectedVersion { get; set; }
+        public string Category { get; set; }
+        public string Error { get; set; }
+    }
+
+    /// <summary>Complete dependency definitions for the Voice Assistant.</summary>
+    private static readonly PackageDefinition[] PackageDefinitions =
+    [
+        // Core packages
+        new() { Name = "websockets==15.0.1", InstallName = "websockets==15.0.1", ImportName = "websockets", Category = "core" },
+        new() { Name = "scipy==1.15.2", InstallName = "scipy==1.15.2", ImportName = "scipy", Category = "core" },
+        new() { Name = "soundfile==0.13.1", InstallName = "soundfile==0.13.1", ImportName = "soundfile", Category = "core" },
+        new() { Name = "librosa==0.11.0", InstallName = "librosa==0.11.0", ImportName = "librosa", Category = "core" },
+        new() { Name = "halo==0.0.31", InstallName = "halo==0.0.31", ImportName = "halo", Category = "core", EstimatedInstallTimeMinutes = 8 },
+        new() { Name = "transformers==4.46.3", InstallName = "transformers==4.46.3", ImportName = "transformers", Category = "core" },
+        new() { Name = "diffusers==0.29.0", InstallName = "diffusers==0.29.0", ImportName = "diffusers", Category = "core" },
+        new() { Name = "conformer==0.3.2", InstallName = "conformer==0.3.2", ImportName = "conformer", Category = "core" },
+        new() { Name = "safetensors==0.5.3", InstallName = "safetensors==0.5.3", ImportName = "safetensors", Category = "core" },
+        // PyTorch packages
+        new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
+        new() { Name = "torchvision==0.21.0+cu126", InstallName = "torchvision==0.21.0+cu126", ImportName = "torchvision", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
+        new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
+        // STT engine
+        new() { Name = "RealtimeSTT", InstallName = "RealtimeSTT", ImportName = "RealtimeSTT", Category = "stt" },
+        // TTS engine
+        new() { Name = "chatterbox-tts", InstallName = "git+https://github.com/JarodMica/chatterbox.git", ImportName = "chatterbox", Category = "tts", IsGitPackage = true, EstimatedInstallTimeMinutes = 15, AlternativeNames = ["chatterbox", "resemble", "resemblevoice"] }
+    ];
+
+    /// <summary>Gets the SwarmUI Python environment using SwarmUI's established detection logic.</summary>
     /// <returns>Python environment information or null if not found</returns>
     public PythonEnvironmentInfo DetectPythonEnvironment()
     {
         try
         {
-            Logs.Debug("[VoiceAssistant] Detecting SwarmUI Python environment");
-
-            // Try to detect SwarmUI's Python environment
-            List<string> pythonPaths = GetPotentialPythonPaths();
-
-            foreach (string pythonPath in pythonPaths)
+            string pythonPath = GetSwarmUIPythonPath();
+            if (pythonPath == null)
             {
-                if (File.Exists(pythonPath))
-                {
-                    PythonEnvironmentInfo info = ValidatePythonEnvironment(pythonPath);
-                    if (info != null)
-                    {
-                        Logs.Info($"[VoiceAssistant] Found SwarmUI Python: {pythonPath}");
-                        return info;
-                    }
-                }
+                Logs.Error("[VoiceAssistant] SwarmUI Python environment not found!");
+                Logs.Error("[VoiceAssistant] Voice Assistant requires SwarmUI with ComfyUI backend properly installed.");
+                return null;
             }
-
-            Logs.Error("[VoiceAssistant] SwarmUI Python environment not found!");
-            Logs.Error("[VoiceAssistant] Voice Assistant requires SwarmUI with ComfyUI backend properly installed.");
-            return null;
+            return new PythonEnvironmentInfo
+            {
+                PythonPath = pythonPath,
+                OperatingSystem = Environment.OSVersion.ToString(),
+                IsEmbedded = pythonPath.Contains("python_embeded"),
+                Version = "detected", // We know it works if SwarmUI is running
+                IsValid = true
+            };
         }
         catch (Exception ex)
         {
@@ -58,46 +90,75 @@ public class DependencyInstaller
         }
     }
 
-    /// <summary>
-    /// Checks if all required dependencies are installed.
-    /// </summary>
+    /// <summary>Gets comprehensive status of all packages with a single efficient check.</summary>
+    /// <param name="pythonInfo">Python environment information</param>
+    /// <returns>Dictionary of package statuses by name</returns>
+    public async Task<Dictionary<string, PackageStatus>> GetAllPackageStatusAsync(PythonEnvironmentInfo pythonInfo)
+    {
+        Dictionary<string, PackageStatus> results = new();
+        if (pythonInfo?.IsValid != true)
+        {
+            return results;
+        }
+        try
+        {
+            // Get all installed packages in one call for efficiency
+            Dictionary<string, string> installedPackages = await GetInstalledPackagesAsync(pythonInfo);
+            // Check each package definition
+            foreach (PackageDefinition package in PackageDefinitions)
+            {
+                PackageStatus status = new()
+                {
+                    Name = package.Name,
+                    Category = package.Category,
+                    IsInstalled = false
+                };
+                // Check primary import name
+                if (IsPackageInstalled(package.ImportName, installedPackages))
+                {
+                    status.IsInstalled = true;
+                    status.DetectedVersion = installedPackages.GetValueOrDefault(package.ImportName.ToLower(), "unknown");
+                }
+                else
+                {
+                    // Check alternative names
+                    foreach (string altName in package.AlternativeNames)
+                    {
+                        if (IsPackageInstalled(altName, installedPackages))
+                        {
+                            status.IsInstalled = true;
+                            status.DetectedVersion = installedPackages.GetValueOrDefault(altName.ToLower(), "unknown");
+                            break;
+                        }
+                    }
+                }
+                // Special handling for git packages that might not show up in pip list
+                if (!status.IsInstalled && package.IsGitPackage)
+                {
+                    status.IsInstalled = await CheckGitPackageAsync(pythonInfo, package);
+                }
+                results[package.Name] = status;
+            }
+            return results;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] Error getting package status: {ex.Message}");
+            return results;
+        }
+    }
+
+    /// <summary>Checks if all required dependencies are installed efficiently.</summary>
     /// <param name="pythonInfo">Python environment information</param>
     /// <returns>True if all dependencies are installed</returns>
     public async Task<bool> CheckDependenciesInstalledAsync(PythonEnvironmentInfo pythonInfo)
     {
         if (pythonInfo?.IsValid != true)
             return false;
-
         try
         {
-            Logs.Debug("[VoiceAssistant] Checking if dependencies are installed");
-
-            // Check core packages
-            bool coreInstalled = await CheckPackagesInstalledAsync(pythonInfo, ServiceConfiguration.CorePackages);
-            if (!coreInstalled)
-            {
-                Logs.Debug("[VoiceAssistant] Core packages not fully installed");
-                return false;
-            }
-
-            // Check STT engine
-            bool sttInstalled = await CheckSinglePackageAsync(pythonInfo, ServiceConfiguration.PrimarySTTEngine);
-            if (!sttInstalled)
-            {
-                Logs.Debug("[VoiceAssistant] STT engine not installed");
-                return false;
-            }
-
-            // Check TTS engine (this is more complex as it's from git)
-            bool ttsInstalled = await CheckChatterboxTTSAsync(pythonInfo);
-            if (!ttsInstalled)
-            {
-                Logs.Debug("[VoiceAssistant] TTS engine not installed");
-                return false;
-            }
-
-            Logs.Info("[VoiceAssistant] All dependencies are installed");
-            return true;
+            Dictionary<string, PackageStatus> statuses = await GetAllPackageStatusAsync(pythonInfo);
+            return statuses.Values.All(status => status.IsInstalled);
         }
         catch (Exception ex)
         {
@@ -106,9 +167,7 @@ public class DependencyInstaller
         }
     }
 
-    /// <summary>
-    /// Installs all required dependencies with progress tracking.
-    /// </summary>
+    /// <summary>Installs all required dependencies using modern batched approach with efficient progress tracking.</summary>
     /// <param name="pythonInfo">Python environment information</param>
     /// <returns>True if installation succeeded</returns>
     public async Task<bool> InstallDependenciesAsync(PythonEnvironmentInfo pythonInfo)
@@ -117,7 +176,6 @@ public class DependencyInstaller
         {
             throw new InvalidOperationException("Invalid Python environment");
         }
-
         lock (_installLock)
         {
             if (_isInstalling)
@@ -126,29 +184,40 @@ public class DependencyInstaller
             }
             _isInstalling = true;
         }
-
         try
         {
-            Logs.Info("[VoiceAssistant] Starting dependency installation (no fallbacks)");
-            InstallationProgressTracker tracker = ProgressTracking.Installation;
+            Logs.Info("[VoiceAssistant] Starting dependency installation using modern batched approach");
+            ProgressTracker tracker = ProgressTracking.Installation;
             tracker.Reset();
-
-            tracker.UpdateProgress(5, "Starting installation", "Preparing Python environment...");
-
-            // Install core packages
-            tracker.UpdateProgress(10, "Installing core packages", "Installing base dependencies...");
-            await InstallCorePackagesAsync(pythonInfo, tracker);
-
-            // Install STT engine
-            tracker.UpdateProgress(60, "Installing STT engine", ServiceConfiguration.PrimarySTTEngine, 0, "Installing RealtimeSTT (required)...");
-            await InstallSTTEngineAsync(pythonInfo, tracker);
-
-            // Install TTS engine
-            tracker.UpdateProgress(80, "Installing TTS engine", ServiceConfiguration.PrimaryTTSEngine, 0, "Installing Chatterbox TTS (required)...");
-            await InstallTTSEngineAsync(pythonInfo, tracker);
-
-            tracker.SetComplete();
-            Logs.Info("[VoiceAssistant] All dependencies installed successfully!");
+            tracker.UpdateProgress(5, "Analyzing dependencies", "Checking current installation status...");
+            // Get current status
+            Dictionary<string, PackageStatus> statuses = await GetAllPackageStatusAsync(pythonInfo);
+            List<PackageDefinition> packagesToInstall = PackageDefinitions
+                .Where(pkg => !statuses[pkg.Name].IsInstalled)
+                .ToList();
+            if (packagesToInstall.Count == 0)
+            {
+                tracker.SetComplete("All dependencies already installed!");
+                Logs.Info("[VoiceAssistant] All dependencies already installed!");
+                return true;
+            }
+            Logs.Info($"[VoiceAssistant] Need to install {packagesToInstall.Count} packages");
+            // Group packages by category for efficient batched installation
+            Dictionary<string, List<PackageDefinition>> packagesByCategory = packagesToInstall
+                .GroupBy(p => p.Category)
+                .ToDictionary(g => g.Key, g => g.ToList());
+            int currentProgress = 10;
+            int progressPerCategory = 80 / packagesByCategory.Count;
+            foreach (KeyValuePair<string, List<PackageDefinition>> categoryGroup in packagesByCategory)
+            {
+                string category = categoryGroup.Key;
+                List<PackageDefinition> packages = categoryGroup.Value;
+                tracker.UpdateProgress(currentProgress, $"Installing {category} packages", $"Installing {packages.Count} {category} packages...");
+                await InstallPackageCategoryAsync(pythonInfo, packages, tracker, currentProgress, progressPerCategory);
+                currentProgress += progressPerCategory;
+            }
+            tracker.SetComplete("All dependencies installed successfully!");
+            Logs.Info("[VoiceAssistant] All dependencies installed successfully using modern approach!");
             return true;
         }
         catch (Exception ex)
@@ -163,44 +232,42 @@ public class DependencyInstaller
         }
     }
 
-    /// <summary>
-    /// Gets detailed installation status for all dependencies.
-    /// </summary>
+    /// <summary>Gets detailed installation status for all dependencies efficiently.</summary>
     /// <param name="pythonInfo">Python environment information</param>
     /// <returns>Detailed installation status</returns>
     public async Task<JObject> GetDetailedInstallationStatusAsync(PythonEnvironmentInfo pythonInfo)
     {
-        var result = new JObject();
-
+        JObject result = new();
         try
         {
             if (pythonInfo?.IsValid != true)
             {
                 return result;
             }
-
-            // Check core packages
-            var corePackages = new JObject();
-            foreach (var package in ServiceConfiguration.CorePackages)
+            Dictionary<string, PackageStatus> statuses = await GetAllPackageStatusAsync(pythonInfo);
+            // Group by category for organized output
+            Dictionary<string, JObject> categoryObjects = new();
+            foreach (PackageStatus status in statuses.Values)
             {
-                var packageName = package.Split(">=")[0]; // Remove version specifier
-                var installed = await CheckSinglePackageAsync(pythonInfo, packageName);
-                corePackages[packageName] = installed;
+                if (!categoryObjects.ContainsKey(status.Category))
+                {
+                    categoryObjects[status.Category] = new JObject();
+                }
+                JObject packageInfo = new()
+                {
+                    ["installed"] = status.IsInstalled,
+                    ["version"] = status.DetectedVersion ?? "unknown"
+                };
+                if (!string.IsNullOrEmpty(status.Error))
+                {
+                    packageInfo["error"] = status.Error;
+                }
+                categoryObjects[status.Category][status.Name] = packageInfo;
             }
-            result["core_packages"] = corePackages;
-
-            // Check STT packages
-            var sttPackages = new JObject();
-            var sttInstalled = await CheckSinglePackageAsync(pythonInfo, ServiceConfiguration.PrimarySTTEngine);
-            sttPackages[ServiceConfiguration.PrimarySTTEngine] = sttInstalled;
-            result["stt_packages"] = sttPackages;
-
-            // Check TTS packages
-            var ttsPackages = new JObject();
-            var ttsInstalled = await CheckChatterboxTTSAsync(pythonInfo);
-            ttsPackages["chatterbox"] = ttsInstalled;
-            result["tts_packages"] = ttsPackages;
-
+            foreach (KeyValuePair<string, JObject> category in categoryObjects)
+            {
+                result[$"{category.Key}_packages"] = category.Value;
+            }
             return result;
         }
         catch (Exception ex)
@@ -212,591 +279,290 @@ public class DependencyInstaller
 
     #region Private Methods
 
-    /// <summary>
-    /// Gets potential Python executable paths for SwarmUI.
-    /// </summary>
-    private List<string> GetPotentialPythonPaths()
-    {
-        List<string> paths = new List<string>();
-
-        try
-        {
-            // Windows paths
-            if (Environment.OSVersion.Platform == PlatformID.Win32NT)
-            {
-                paths.AddRange(new[]
-                {
-                    Path.Combine("dlbackend", "comfy", "python_embeded", "python.exe"),
-                    Path.Combine("dlbackend", "ComfyUI", "venv", "Scripts", "python.exe"),
-                    Path.Combine("src", "dlbackend", "comfy", "python_embeded", "python.exe"),
-                    Path.Combine("src", "dlbackend", "ComfyUI", "venv", "Scripts", "python.exe")
-                });
-            }
-            else
-            {
-                // Linux/Mac paths
-                paths.AddRange(new[]
-                {
-                    Path.Combine("dlbackend", "ComfyUI", "venv", "bin", "python"),
-                    Path.Combine("dlbackend", "ComfyUI", "venv", "bin", "python3"),
-                    Path.Combine("src", "dlbackend", "ComfyUI", "venv", "bin", "python"),
-                    Path.Combine("src", "dlbackend", "ComfyUI", "venv", "bin", "python3")
-                });
-            }
-
-            return paths;
-        }
-        catch (Exception ex)
-        {
-            Logs.Error($"[VoiceAssistant] Error getting Python paths: {ex.Message}");
-            return new List<string>();
-        }
-    }
-
-    /// <summary>
-    /// Validates a Python environment and returns information about it.
-    /// </summary>
-    private PythonEnvironmentInfo ValidatePythonEnvironment(string pythonPath)
+    /// <summary>Gets all installed packages efficiently in a single call.</summary>
+    private async Task<Dictionary<string, string>> GetInstalledPackagesAsync(PythonEnvironmentInfo pythonInfo)
     {
         try
         {
-            PythonEnvironmentInfo info = new PythonEnvironmentInfo
-            {
-                PythonPath = pythonPath,
-                OperatingSystem = Environment.OSVersion.ToString(),
-                IsEmbedded = pythonPath.Contains("python_embeded")
-            };
-
-            // Test if Python works
-            string testScript = "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')";
-            string version = RunPythonScriptSync(pythonPath, testScript);
-
-            if (!string.IsNullOrEmpty(version))
-            {
-                info.Version = version.Trim();
-                return info;
-            }
-
-            return null;
-        }
-        catch (Exception ex)
-        {
-            Logs.Debug($"[VoiceAssistant] Python validation failed for {pythonPath}: {ex.Message}");
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Installs core packages with progress tracking.
-    /// </summary>
-    private async Task InstallCorePackagesAsync(PythonEnvironmentInfo pythonInfo, InstallationProgressTracker tracker)
-    {
-        int baseProgress = 10;
-        int progressPerPackage = 50 / ServiceConfiguration.CorePackages.Length;
-
-        for (int i = 0; i < ServiceConfiguration.CorePackages.Length; i++)
-        {
-            string package = ServiceConfiguration.CorePackages[i];
-            int currentProgress = baseProgress + (i * progressPerPackage);
-
-            tracker.UpdateProgress(currentProgress, "Installing core packages", package, 0, $"Installing {package}...");
-
-            await InstallSinglePackageWithProgressAsync(pythonInfo, package, tracker);
-            tracker.AddCompletedPackage(package);
-        }
-
-        tracker.UpdateProgress(60, "Core packages installed", "All core packages installed successfully");
-    }
-
-    /// <summary>
-    /// Installs the STT engine.
-    /// </summary>
-    private async Task InstallSTTEngineAsync(PythonEnvironmentInfo pythonInfo, InstallationProgressTracker tracker)
-    {
-        await InstallSinglePackageWithProgressAsync(pythonInfo, ServiceConfiguration.PrimarySTTEngine, tracker);
-        tracker.AddCompletedPackage(ServiceConfiguration.PrimarySTTEngine);
-        tracker.UpdateProgress(80, "STT engine installed", "RealtimeSTT installed successfully");
-    }
-
-    /// <summary>
-    /// Installs the TTS engine.
-    /// </summary>
-    private async Task InstallTTSEngineAsync(PythonEnvironmentInfo pythonInfo, InstallationProgressTracker tracker)
-    {
-        await InstallSinglePackageWithProgressAsync(pythonInfo, ServiceConfiguration.PrimaryTTSEngine, tracker);
-        tracker.AddCompletedPackage("chatterbox-tts");
-        tracker.UpdateProgress(100, "TTS engine installed", "Chatterbox TTS installed successfully");
-    }
-
-    /// <summary>
-    /// Installs a single package with detailed progress tracking.
-    /// Includes automatic retry for transient failures.
-    /// </summary>
-    private async Task InstallSinglePackageWithProgressAsync(PythonEnvironmentInfo pythonInfo, string package, InstallationProgressTracker tracker, int retryCount = 0, int maxRetries = 3)
-    {
-        try
-        {
-            Logs.Debug($"[VoiceAssistant] Installing package: {package}");
-
-            // Set up environment variables to make git more verbose
-            Dictionary<string, string> extraEnv = new Dictionary<string, string>
-            {
-                // Make git more verbose
-                { "GIT_CURL_VERBOSE", "1" },
-                { "GIT_TRACE", "1" },
-                { "GIT_TRACE_PACKET", "1" },
-                // Make pip and git clone show progress
-                { "PIP_VERBOSE", "3" } // More verbose pip output
-            };
-
-            // Configure with binary packages preferred and max verbosity
-            string arguments = $"-m pip install \"{package}\" --no-warn-script-location --progress-bar=on -vvv --prefer-binary";
-            
-            // For PyTorch packages, add the extra index URL for CUDA-enabled versions
-            if (package.Contains("torch") && !package.StartsWith("git+"))
-            {
-                // Use the PyTorch index for CUDA packages
-                arguments += " --extra-index-url https://download.pytorch.org/whl/cu126";
-                Logs.Info($"[VoiceAssistant] Using PyTorch CUDA index for package: {package} with CUDA 12.6");
-            }
-            
-            ProcessStartInfo startInfo = new ProcessStartInfo
-            {
-                FileName = pythonInfo.PythonPath,
-                Arguments = arguments,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                WorkingDirectory = Environment.CurrentDirectory
-            };
-
-            // Add our extra environment variables
-            foreach (KeyValuePair<string, string> kvp in extraEnv)
-            {
-                startInfo.EnvironmentVariables[kvp.Key] = kvp.Value;
-            }
-            
-            // Track if this is a git-based install
-            bool isGitInstall = package.StartsWith("git+", StringComparison.OrdinalIgnoreCase);
-            if (isGitInstall)
-            {
-                Logs.Info($"[VoiceAssistant] Installing from Git: {package} (this may take longer and show limited progress)");
-            }
-            
-            // Log command for debugging
-            Logs.Info($"[VoiceAssistant] Running pip command: {startInfo.FileName} {startInfo.Arguments}");
-
-            // Clean environment for SwarmUI's Python
-            PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[VoiceAssistant] ");
-
-            using var process = new Process { StartInfo = startInfo };
-            DateTime lastUpdate = DateTime.Now;
-
-            process.OutputDataReceived += (sender, e) =>
-            {
-                if (!string.IsNullOrEmpty(e?.Data))
-                {
-                    string line = e.Data;
-
-                    // Parse pip output for meaningful updates
-                    if (line.Contains("Downloading") || line.Contains("Installing") ||
-                        line.Contains("Collecting") || line.Contains("Building wheel") ||
-                        line.Contains("Successfully installed"))
-                    {
-                        Match percentMatch = Regex.Match(line, @"(\d+)%");
-                        int downloadPercent = percentMatch.Success ? int.Parse(percentMatch.Groups[1].Value) : 50;
-
-                        string stage = line.Contains("Downloading") ? "Downloading" :
-                                     line.Contains("Building") ? "Building" :
-                                     line.Contains("Installing") ? "Installing" :
-                                     line.Contains("Successfully") ? "Completed" : "Processing";
-
-                        tracker.UpdateProgress(tracker.Progress, $"Installing {package.Split(">=")[0]}",
-                                             package, downloadPercent, $"{stage}: {line.Trim()}");
-                        lastUpdate = DateTime.Now;
-                    }
-
-                    Logs.Debug($"[VoiceAssistant] Pip: {line}");
-                }
-            };
-            
-            // Also handle standard error output to catch errors
-            StringBuilder errorOutput = new StringBuilder();
-            process.ErrorDataReceived += (sender, e) =>
-            {
-                if (!string.IsNullOrEmpty(e?.Data))
-                {
-                    errorOutput.AppendLine(e.Data);
-                    Logs.Debug($"[VoiceAssistant] Pip Error: {e.Data}");
-                    
-                    // Log critical errors at warning level so they're more visible
-                    if (e.Data.Contains("ERROR:") || e.Data.Contains("fatal:") || 
-                        e.Data.Contains("Failed") || e.Data.Contains("Error:"))
-                    {
-                        Logs.Warning($"[VoiceAssistant] Pip installation issue detected: {e.Data}");
-                    }
-                    
-                    // Update last activity time
-                    lastUpdate = DateTime.Now;
-                }
-            };
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine(); // Make sure we read stderr as well
-
-            // Start a heartbeat task to provide periodic updates during long-running operations
-            CancellationTokenSource tokenSource = new CancellationTokenSource();
-            Task heartbeatTask = StartHeartbeatUpdatesAsync(package, tracker, lastUpdate, tokenSource.Token);
-
-            try
-            {
-                // Wait with timeout
-                bool finished = await Task.Run(() => process.WaitForExit((int)ServiceConfiguration.PackageInstallTimeout.TotalMilliseconds));
-
-                if (!finished)
-                {
-                    try { process.Kill(); } catch { }
-                    
-                    if (retryCount < maxRetries)
-                    {
-                        Logs.Warning($"[VoiceAssistant] Package installation timed out: {package}. Retrying ({retryCount+1}/{maxRetries})...");
-                        // Exponential backoff between retries
-                        await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, retryCount)));
-                        await InstallSinglePackageWithProgressAsync(pythonInfo, package, tracker, retryCount + 1, maxRetries);
-                        return;
-                    }
-                    
-                    throw new TimeoutException($"Package installation timed out after {retryCount + 1} attempts: {package}");
-                }
-
-                if (process.ExitCode != 0)
-                {
-                    string stderr = errorOutput.ToString();
-                    Logs.Error($"[VoiceAssistant] Package installation error: {package} - Exit code: {process.ExitCode}");
-                    
-                    if (retryCount < maxRetries)
-                    {
-                        Logs.Warning($"[VoiceAssistant] Failed to install {package}. Retrying ({retryCount+1}/{maxRetries})...");
-                        // Exponential backoff between retries
-                        await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, retryCount)));
-                        await InstallSinglePackageWithProgressAsync(pythonInfo, package, tracker, retryCount + 1, maxRetries);
-                        return;
-                    }
-                    
-                    throw new InvalidOperationException($"Failed to install {package} after {retryCount + 1} attempts: {stderr}");
-                }
-            }
-            finally
-            {
-                // Stop the heartbeat task
-                tokenSource.Cancel();
-                try { await Task.WhenAny(heartbeatTask, Task.Delay(1000)); } catch { }
-                tokenSource.Dispose();
-            }
-
-            Logs.Debug($"[VoiceAssistant] Successfully installed: {package}");
-        }
-        catch (Exception ex)
-        {
-            Logs.Error($"[VoiceAssistant] Failed to install {package}: {ex.Message}");
-            throw;
-        }
-    }
-
-    /// <summary>
-    /// Checks if multiple packages are installed.
-    /// </summary>
-    private async Task<bool> CheckPackagesInstalledAsync(PythonEnvironmentInfo pythonInfo, string[] packages)
-    {
-        try
-        {
-            foreach (string package in packages)
-            {
-                var packageName = package.Split(">=")[0]; // Remove version specifier
-                if (!await CheckSinglePackageAsync(pythonInfo, packageName))
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Logs.Debug($"[VoiceAssistant] Error checking packages: {ex.Message}");
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Checks if a single package is installed using pip list to detect packages more accurately.
-    /// </summary>
-    private async Task<bool> CheckSinglePackageAsync(PythonEnvironmentInfo pythonInfo, string packageName)
-    {
-        try
-        {
-            // Remove version specifiers to get base package name
-            string basePackageName = packageName.Split(new[] { '=', '>', '<', '~' }, 2)[0].Trim();
-            
-            // Handle special cases where pip package names differ from import names or version specifics
-            Dictionary<string, string> packageNameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                // Core mappings for package name differences
-                { "faster-whisper", "faster_whisper" },
-                { "pvporcupine", "pvporcupine" },
-                { "resemble-perth", "resemblevoice" },
-                { "PyAudio", "pyaudio" },
-                { "webrtcvad-wheels", "webrtcvad" },
-                { "uvicorn[standard]", "uvicorn" },
-                { "openwakeword", "openwakeword" },
-                { "websocket-client", "websocket_client" },
-                { "log_symbols", "log_symbols" },
-                { "s3tokenizer", "s3tokenizer" },
-                
-                // Version-specific mappings to handle any version
-                { "torch==2.6.0+cu126", "torch" },
-                { "torchvision==0.21.0+cu126", "torchvision" },
-                { "torchaudio==2.6.0+cu126", "torchaudio" },
-                { "websockets==15.0.1", "websockets" },
-                { "scipy==1.15.2", "scipy" },
-                { "soundfile==0.13.1", "soundfile" },
-                { "librosa==0.11.0", "librosa" },
-                { "halo==0.0.31", "halo" },
-                { "transformers==4.46.3", "transformers" },
-                { "diffusers==0.29.0", "diffusers" },
-                { "resemble-perth==1.0.1", "resemblevoice" },
-                { "conformer==0.3.2", "conformer" },
-                { "safetensors==0.5.3", "safetensors" },
-                
-                // General version cases
-                { "websockets", "websockets" },
-                { "scipy", "scipy" },
-                { "soundfile", "soundfile" },
-                { "librosa", "librosa" },
-                { "halo", "halo" },
-                { "transformers", "transformers" },
-                { "diffusers", "diffusers" },
-                { "conformer", "conformer" },
-                { "safetensors", "safetensors" },
-            };
-            
-            // Use the mapped name if it exists, otherwise use the base name
-            string packageNameToCheck = packageName;
-            if (packageNameMap.ContainsKey(basePackageName))
-            {
-                packageNameToCheck = packageNameMap[basePackageName];
-                Logs.Debug($"[VoiceAssistant] Mapping package name {basePackageName} to {packageNameToCheck} for detection");
-            }
-            else if (packageNameMap.ContainsKey(packageName))
-            {
-                packageNameToCheck = packageNameMap[packageName];
-                Logs.Debug($"[VoiceAssistant] Mapping package name {packageName} to {packageNameToCheck} for detection");
-            }
-            
-            // Special handling for resemble-perth which requires additional checks
-            if (packageName.Contains("resemble-perth") || basePackageName == "resemble-perth")
-            {
-                // Use a more comprehensive detection approach for resemble-perth
-                string specialScript = $@"import sys
+            string script = @"
+import subprocess, json, sys
 try:
-    # Try both possible module names
-    modules_to_try = ['resemblevoice', 'resemble', 'perth']
-    for module in modules_to_try:
-        try:
-            __import__(module)
-            print('installed')
-            sys.exit(0)
-        except ImportError:
-            pass
-            
-    # Backup check with pip
-    import subprocess, json
     pip_cmd = [sys.executable, '-m', 'pip', 'list', '--format=json']
     pip_output = subprocess.check_output(pip_cmd, stderr=subprocess.STDOUT, universal_newlines=True)
     packages = json.loads(pip_output)
-    
-    # Check for any package name containing 'resemble' or 'perth'
     for pkg in packages:
-        name = pkg['name'].lower()
-        if 'resemble' in name or 'perth' in name:
-            print('installed')
-            sys.exit(0)
-            
-    print('not_found')
+        print(f'{pkg[""name""].lower()}={pkg[""version""]}')
 except Exception as e:
-    print(f'error: {{e}}')
-    sys.exit(1)
+    print(f'ERROR: {e}')
 ";
-                
-                string specialResult = await RunPythonScriptAsync(pythonInfo.PythonPath, specialScript);
-                return specialResult.Trim().Contains("installed");
-            }
-            
-            // Use pip list to find installed packages (more reliable than importlib)
-            string script = $@"import subprocess, json, sys
-try:
-    # Run pip list in json format
-    pip_cmd = [sys.executable, '-m', 'pip', 'list', '--format=json']
-    pip_output = subprocess.check_output(pip_cmd, stderr=subprocess.STDOUT, universal_newlines=True)
-    
-    # Parse the JSON output
-    packages = json.loads(pip_output)
-    package_names = [p['name'].lower() for p in packages]
-    
-    # Check if the target package is in the list (case-insensitive)
-    target = '{packageNameToCheck}'.lower()
-    for name in package_names:
-        if name == target or name.replace('-', '_') == target.replace('-', '_') or name.replace('_', '-') == target.replace('_', '-'):
-            print('installed')
-            sys.exit(0)
-    
-    print('not_found')
-except Exception as e:
-    print(f'error: {{e}}')
-    print('not_found')
-";
-
             string result = await RunPythonScriptAsync(pythonInfo.PythonPath, script);
-            bool isInstalled = result?.Trim().Contains("installed") == true;
-            
-            if (!isInstalled)
+            Dictionary<string, string> installedPackages = new();
+            if (!string.IsNullOrEmpty(result))
             {
-                Logs.Debug($"[VoiceAssistant] Package {packageName} not found using pip list");
-                
-                // Fallback to importlib for packages that might be installed but not detected by pip
-                string fallbackScript = $"import importlib.util; print('installed' if importlib.util.find_spec('{packageNameToCheck}') is not None else 'not_found')";
-                string fallbackResult = await RunPythonScriptAsync(pythonInfo.PythonPath, fallbackScript);
-                isInstalled = fallbackResult?.Trim() == "installed";
-                
-                if (isInstalled)
+                string[] lines = result.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                foreach (string line in lines)
                 {
-                    Logs.Info($"[VoiceAssistant] Package {packageName} found with importlib but not pip list");
-                }
-            }
-            
-            return isInstalled;
-        }
-        catch (Exception ex)
-        {
-            Logs.Debug($"[VoiceAssistant] Error checking package {packageName}: {ex.Message}");
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Provides periodic heartbeat updates during long-running package installations.
-    /// Ensures users know the process is still running even when there's no visible pip output.
-    /// </summary>
-    private async Task StartHeartbeatUpdatesAsync(string package, InstallationProgressTracker tracker, DateTime lastUpdateTime, CancellationToken cancellationToken)
-    {
-        // Dictionary of known slow packages and operations with time estimates
-        Dictionary<string, string> slowOperations = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            { "halo", "Building wheel for halo can take 5-10+ minutes" },
-            { "torch", "PyTorch installation can take 10-15+ minutes depending on your network" },
-            { "torchaudio", "TorchAudio installation can take 10+ minutes" },
-            { "numpy", "NumPy compilation can take several minutes" },
-            { "chatterbox", "Chatterbox TTS installation downloads models and can take 15+ minutes" }
-        };
-
-        // Get custom message if this is known to be a slow package
-        string customTimeMessage = string.Empty;
-        foreach (KeyValuePair<string, string> slowOp in slowOperations)
-        {
-            if (package.Contains(slowOp.Key, StringComparison.OrdinalIgnoreCase))
-            {
-                customTimeMessage = slowOp.Value;
-                break;
-            }
-        }
-
-        // Show initial message for slow operations
-        if (!string.IsNullOrEmpty(customTimeMessage))
-        {
-            Logs.Info($"[VoiceAssistant] Note: {customTimeMessage}");
-            tracker.UpdateProgress(tracker.Progress, tracker.CurrentStep, package, tracker.DownloadProgress, 
-                $"{tracker.StatusMessage} - {customTimeMessage}");
-        }
-
-        int heartbeatCount = 0;
-        DateTime startTime = DateTime.Now;
-
-        try
-        {
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                await Task.Delay(15000, cancellationToken); // Check every 15 seconds
-                
-                // If more than 15 seconds passed since last update, show a heartbeat
-                TimeSpan timeSinceUpdate = DateTime.Now - lastUpdateTime;
-                if (timeSinceUpdate.TotalSeconds > 15)
-                {
-                    heartbeatCount++;
-                    double elapsedMinutes = (DateTime.Now - startTime).TotalMinutes;
-                    
-                    // Every 4th heartbeat (1 minute) show a more detailed update
-                    if (heartbeatCount % 4 == 0)
+                    if (line.StartsWith("ERROR:")) continue;
+                    string[] parts = line.Split('=', 2);
+                    if (parts.Length == 2)
                     {
-                        string message = $"Still working - {elapsedMinutes:F1} minutes elapsed";
-                        if (!string.IsNullOrEmpty(customTimeMessage))
-                        {
-                            message += $" - {customTimeMessage}";
-                        }
-                        
-                        Logs.Info($"[VoiceAssistant] Installation heartbeat: {message}");
-                        tracker.UpdateProgress(tracker.Progress, tracker.CurrentStep, package, tracker.DownloadProgress, 
-                            $"{tracker.StatusMessage} - {message}");
-                    }
-                    // Simple heartbeat for other intervals
-                    else
-                    {
-                        Logs.Debug($"[VoiceAssistant] Installation still in progress ({elapsedMinutes:F1} min elapsed) - {package}");
+                        installedPackages[parts[0].Trim().ToLower()] = parts[1].Trim();
                     }
                 }
             }
-        }
-        catch (OperationCanceledException)
-        {
-            // Expected when cancellation is requested
+            return installedPackages;
         }
         catch (Exception ex)
         {
-            // Just log any errors, don't let heartbeat issues affect the main installation
-            Logs.Debug($"[VoiceAssistant] Heartbeat error: {ex.Message}");
+            Logs.Debug($"[VoiceAssistant] Error getting installed packages: {ex.Message}");
+            return new Dictionary<string, string>();
         }
     }
 
-    /// <summary>
-    /// Checks if Chatterbox TTS is installed (special case for git packages).
-    /// </summary>
-    private async Task<bool> CheckChatterboxTTSAsync(PythonEnvironmentInfo pythonInfo)
+    /// <summary>Checks if a package is installed using normalized name matching.</summary>
+    private static bool IsPackageInstalled(string packageName, Dictionary<string, string> installedPackages)
+    {
+        string normalizedName = packageName.ToLower().Replace("-", "_").Replace("_", "-");
+        string altNormalizedName = packageName.ToLower().Replace("-", "_");
+        return installedPackages.ContainsKey(packageName.ToLower()) ||
+               installedPackages.ContainsKey(normalizedName) ||
+               installedPackages.ContainsKey(altNormalizedName) ||
+               installedPackages.Keys.Any(key => key.Replace("-", "_") == altNormalizedName || key.Replace("_", "-") == normalizedName);
+    }
+
+    /// <summary>Checks git packages using import validation.</summary>
+    private async Task<bool> CheckGitPackageAsync(PythonEnvironmentInfo pythonInfo, PackageDefinition package)
     {
         try
         {
-            string script = "import importlib.util; print('installed' if importlib.util.find_spec('chatterbox') is not None else 'not_found')";
-            var result = await RunPythonScriptAsync(pythonInfo.PythonPath, script);
+            string script = $"import importlib.util; print('installed' if importlib.util.find_spec('{package.ImportName}') is not None else 'not_found')";
+            string result = await RunPythonScriptAsync(pythonInfo.PythonPath, script);
             return result?.Trim() == "installed";
         }
         catch (Exception ex)
         {
-            Logs.Debug($"[VoiceAssistant] Error checking Chatterbox TTS: {ex.Message}");
+            Logs.Debug($"[VoiceAssistant] Error checking git package {package.Name}: {ex.Message}");
             return false;
         }
     }
 
-    /// <summary>
-    /// Runs a Python script synchronously.
-    /// </summary>
+    /// <summary>Installs packages by category using efficient batching where possible.</summary>
+    private async Task InstallPackageCategoryAsync(PythonEnvironmentInfo pythonInfo, List<PackageDefinition> packages, ProgressTracker tracker, int baseProgress, int progressRange)
+    {
+        // Separate packages that can be batched vs those that need individual installation
+        List<PackageDefinition> batchablePackages = packages.Where(p => !p.IsGitPackage && string.IsNullOrEmpty(p.CustomInstallArgs)).ToList();
+        List<PackageDefinition> individualPackages = packages.Except(batchablePackages).ToList();
+        int currentProgress = baseProgress;
+        int progressPerOperation = progressRange / (1 + individualPackages.Count + (batchablePackages.Count > 0 ? 1 : 0));
+        // Install batchable packages together for efficiency
+        if (batchablePackages.Count > 0)
+        {
+            tracker.UpdateProgress(currentProgress, $"Installing {batchablePackages.Count} standard packages", "Batch installing standard packages...");
+            await InstallPackagesBatchAsync(pythonInfo, batchablePackages, tracker);
+            currentProgress += progressPerOperation;
+        }
+        // Install individual packages that require special handling
+        foreach (PackageDefinition package in individualPackages)
+        {
+            tracker.UpdateProgress(currentProgress, $"Installing {package.Name}", $"Installing {package.Name} (estimated {package.EstimatedInstallTimeMinutes} min)...", package.Name);
+            await InstallSinglePackageAsync(pythonInfo, package, tracker);
+            currentProgress += progressPerOperation;
+        }
+    }
+
+    /// <summary>Installs multiple packages in a single pip command for efficiency.</summary>
+    private async Task InstallPackagesBatchAsync(PythonEnvironmentInfo pythonInfo, List<PackageDefinition> packages, ProgressTracker tracker)
+    {
+        try
+        {
+            string packageList = string.Join(" ", packages.Select(p => $"\"{p.InstallName}\""));
+            string arguments = $"-m pip install {packageList} --no-warn-script-location --progress-bar=on -v --prefer-binary";
+            await RunPipInstallAsync(pythonInfo, arguments, packages.Select(p => p.Name).ToArray(), tracker);
+            foreach (PackageDefinition package in packages)
+            {
+                tracker.AddCompletedPackage(package.Name);
+            }
+            Logs.Info($"[VoiceAssistant] Successfully batch installed {packages.Count} packages");
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] Batch installation failed: {ex.Message}");
+            throw;
+        }
+    }
+
+    /// <summary>Installs a single package with custom handling for special cases.</summary>
+    private async Task InstallSinglePackageAsync(PythonEnvironmentInfo pythonInfo, PackageDefinition package, ProgressTracker tracker, int retryCount = 0, int maxRetries = 3)
+    {
+        try
+        {
+            string arguments = $"-m pip install \"{package.InstallName}\" --no-warn-script-location --progress-bar=on -vvv --prefer-binary";
+            if (!string.IsNullOrEmpty(package.CustomInstallArgs))
+            {
+                arguments += $" {package.CustomInstallArgs}";
+            }
+            await RunPipInstallAsync(pythonInfo, arguments, [package.Name], tracker, package.EstimatedInstallTimeMinutes);
+            tracker.AddCompletedPackage(package.Name);
+            Logs.Info($"[VoiceAssistant] Successfully installed: {package.Name}");
+        }
+        catch (Exception ex)
+        {
+            if (retryCount < maxRetries)
+            {
+                Logs.Warning($"[VoiceAssistant] Failed to install {package.Name}. Retrying ({retryCount + 1}/{maxRetries})...");
+                await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, retryCount)));
+                await InstallSinglePackageAsync(pythonInfo, package, tracker, retryCount + 1, maxRetries);
+                return;
+            }
+            Logs.Error($"[VoiceAssistant] Failed to install {package.Name} after {retryCount + 1} attempts: {ex.Message}");
+            throw;
+        }
+    }
+
+    /// <summary>Runs pip install command with comprehensive progress tracking and error handling.</summary>
+    private async Task RunPipInstallAsync(PythonEnvironmentInfo pythonInfo, string arguments, string[] packageNames, ProgressTracker tracker, int estimatedTimeMinutes = 5)
+    {
+        ProcessStartInfo startInfo = new()
+        {
+            FileName = pythonInfo.PythonPath,
+            Arguments = arguments,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            WorkingDirectory = Environment.CurrentDirectory
+        };
+        // Use SwarmUI's established environment setup
+        if (pythonInfo.IsEmbedded)
+        {
+            startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(Path.GetFullPath("./dlbackend/comfy/python_embeded"));
+            startInfo.WorkingDirectory = Path.GetFullPath("./dlbackend/comfy/");
+        }
+        else
+        {
+            startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(Path.GetFullPath("./dlbackend/ComfyUI/venv/bin"));
+        }
+        PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[VoiceAssistant] ");
+        // Add pip-specific environment variables
+        startInfo.EnvironmentVariables["GIT_CURL_VERBOSE"] = "1";
+        startInfo.EnvironmentVariables["PIP_VERBOSE"] = "3";
+        Logs.Info($"[VoiceAssistant] Installing packages: {string.Join(", ", packageNames)}");
+        using Process process = new() { StartInfo = startInfo };
+        DateTime lastUpdate = DateTime.Now;
+        StringBuilder errorOutput = new();
+        process.OutputDataReceived += (sender, e) =>
+        {
+            if (!string.IsNullOrEmpty(e?.Data))
+            {
+                string line = e.Data;
+                if (line.Contains("Downloading") || line.Contains("Installing") || line.Contains("Collecting") || line.Contains("Building wheel") || line.Contains("Successfully installed"))
+                {
+                    Match percentMatch = Regex.Match(line, @"(\d+)%");
+                    int downloadPercent = percentMatch.Success ? int.Parse(percentMatch.Groups[1].Value) : 50;
+                    string stage = line.Contains("Downloading") ? "Downloading" : line.Contains("Building") ? "Building" : line.Contains("Installing") ? "Installing" : line.Contains("Successfully") ? "Completed" : "Processing";
+                    tracker.UpdateProgress(tracker.Progress, $"Installing {string.Join(", ", packageNames)}", $"{stage}: {line.Trim()}", string.Join(", ", packageNames), downloadPercent);
+                    lastUpdate = DateTime.Now;
+                }
+                Logs.Debug($"[VoiceAssistant] Pip: {line}");
+            }
+        };
+        process.ErrorDataReceived += (sender, e) =>
+        {
+            if (!string.IsNullOrEmpty(e?.Data))
+            {
+                errorOutput.AppendLine(e.Data);
+                Logs.Debug($"[VoiceAssistant] Pip Error: {e.Data}");
+                if (e.Data.Contains("ERROR:") || e.Data.Contains("fatal:") || e.Data.Contains("Failed") || e.Data.Contains("Error:"))
+                {
+                    Logs.Warning($"[VoiceAssistant] Pip installation issue detected: {e.Data}");
+                }
+                lastUpdate = DateTime.Now;
+            }
+        };
+        process.Start();
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+        CancellationTokenSource tokenSource = new();
+        Task heartbeatTask = StartHeartbeatAsync(packageNames, tracker, lastUpdate, tokenSource.Token, estimatedTimeMinutes);
+        try
+        {
+            bool finished = await Task.Run(() => process.WaitForExit((int)ServiceConfiguration.PackageInstallTimeout.TotalMilliseconds));
+            if (!finished)
+            {
+                try { process.Kill(); } catch { }
+                throw new TimeoutException($"Package installation timed out: {string.Join(", ", packageNames)}");
+            }
+            if (process.ExitCode != 0)
+            {
+                string stderr = errorOutput.ToString();
+                throw new InvalidOperationException($"Failed to install {string.Join(", ", packageNames)}: {stderr}");
+            }
+        }
+        finally
+        {
+            tokenSource.Cancel();
+            try { await Task.WhenAny(heartbeatTask, Task.Delay(1000)); } catch { }
+            tokenSource.Dispose();
+        }
+    }
+
+    /// <summary>Provides efficient heartbeat updates during long installations.</summary>
+    private async Task StartHeartbeatAsync(string[] packageNames, ProgressTracker tracker, DateTime lastUpdateTime, CancellationToken cancellationToken, int estimatedTimeMinutes)
+    {
+        int heartbeatCount = 0;
+        DateTime startTime = DateTime.Now;
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(30000, cancellationToken); // Check every 30 seconds for efficiency
+                TimeSpan timeSinceUpdate = DateTime.Now - lastUpdateTime;
+                if (timeSinceUpdate.TotalSeconds > 30)
+                {
+                    heartbeatCount++;
+                    double elapsedMinutes = (DateTime.Now - startTime).TotalMinutes;
+                    if (heartbeatCount % 2 == 0) // Every minute
+                    {
+                        string message = $"Still installing - {elapsedMinutes:F1}/{estimatedTimeMinutes} min elapsed";
+                        Logs.Info($"[VoiceAssistant] Installation progress: {message} - {string.Join(", ", packageNames)}");
+                        tracker.UpdateProgress(tracker.Progress, tracker.CurrentStep, message, string.Join(", ", packageNames), tracker.DownloadProgress);
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            Logs.Debug($"[VoiceAssistant] Heartbeat error: {ex.Message}");
+        }
+    }
+
+    /// <summary>Gets the SwarmUI Python path using the same logic as SwarmUI's PythonLaunchHelper.</summary>
+    private static string GetSwarmUIPythonPath()
+    {
+        // Use the exact same logic as SwarmUI's PythonLaunchHelper.LaunchGeneric
+        if (File.Exists("./dlbackend/comfy/python_embeded/python.exe"))
+        {
+            return Path.GetFullPath("./dlbackend/comfy/python_embeded/python.exe");
+        }
+        else if (File.Exists("./dlbackend/ComfyUI/venv/bin/python"))
+        {
+            return Path.GetFullPath("./dlbackend/ComfyUI/venv/bin/python");
+        }
+        // Don't fall back to system python for dependency installation - we need SwarmUI's environment
+        return null;
+    }
+
+    /// <summary>Runs a Python script synchronously using SwarmUI's environment setup.</summary>
     private string RunPythonScriptSync(string pythonPath, string script)
     {
         try
         {
             string tempScript = Path.GetTempFileName() + ".py";
             File.WriteAllText(tempScript, script);
-
             try
             {
-                ProcessStartInfo startInfo = new ProcessStartInfo
+                ProcessStartInfo startInfo = new()
                 {
                     FileName = pythonPath,
                     Arguments = $"-s \"{tempScript}\"",
@@ -805,17 +571,24 @@ except Exception as e:
                     RedirectStandardOutput = true,
                     RedirectStandardError = true
                 };
-
+                // Use SwarmUI's environment setup
+                bool isEmbedded = pythonPath.Contains("python_embeded");
+                if (isEmbedded)
+                {
+                    startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(Path.GetFullPath("./dlbackend/comfy/python_embeded"));
+                    startInfo.WorkingDirectory = Path.GetFullPath("./dlbackend/comfy/");
+                }
+                else
+                {
+                    startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(Path.GetFullPath("./dlbackend/ComfyUI/venv/bin"));
+                }
                 PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[VoiceAssistant] ");
-
-                using var process = new Process { StartInfo = startInfo };
+                using Process process = new() { StartInfo = startInfo };
                 process.Start();
-
-                if (process.WaitForExit(10000)) // 10 second timeout
+                if (process.WaitForExit(10000))
                 {
                     return process.StandardOutput.ReadToEnd();
                 }
-
                 return null;
             }
             finally
@@ -830,9 +603,7 @@ except Exception as e:
         }
     }
 
-    /// <summary>
-    /// Runs a Python script asynchronously.
-    /// </summary>
+    /// <summary>Runs a Python script asynchronously.</summary>
     private async Task<string> RunPythonScriptAsync(string pythonPath, string script)
     {
         return await Task.Run(() => RunPythonScriptSync(pythonPath, script));

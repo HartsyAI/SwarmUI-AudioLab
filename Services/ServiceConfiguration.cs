@@ -1,7 +1,7 @@
 using SwarmUI.Utils;
 using System.IO;
 
-namespace Hartsy.Extensions.VoiceAssistant.Configuration;
+namespace Hartsy.Extensions.VoiceAssistant.Services;
 
 /// <summary>
 /// Configuration settings for the Voice Assistant extension.
@@ -69,7 +69,7 @@ public static class ServiceConfiguration
         "pvporcupine==1.9.5",
         "webrtcvad-wheels==2.0.14",
         "openwakeword>=0.4.0",
-        "halo==0.0.31",       // Known problematic dependency
+        "halo==0.0.31",
         "log_symbols>=0.0.14", // Dependency of halo
         "spinners>=0.0.24",    // Dependency of halo
         "termcolor>=1.1.0",    // Dependency of halo

@@ -1,4 +1,4 @@
-<!-- Voice Assistant Tab for SwarmUI Text2Image - Complete UI Redesign -->
+<!-- Voice Assistant Tab for SwarmUI - Refactored for SwarmUI Standards -->
 <div class="voice-assistant-main">
     <!-- Header Section -->
     <div class="voice-assistant-header">
@@ -27,7 +27,7 @@
                             <span id="serviceStatusIcon" class="status-icon">
                                 <i class="fas fa-circle" style="color: var(--text-soft);"></i>
                             </span>
-                            <span id="serviceStatusText">Checking service...</span>
+                            <span id="serviceStatusText" class="text-muted">Checking service...</span>
                         </div>
                         <div class="service-control-buttons">
                             <button id="primaryServiceButton" class="basic-button btn-primary" disabled>
@@ -126,7 +126,7 @@
                                         <i class="fas fa-microphone"></i>
                                         <span class="button-text">Start Listening</span>
                                     </button>
-                                    <div id="sttRecordingStatus" class="recording-status">Ready to listen</div>
+                                    <div id="sttRecordingStatus" class="recording-status ready">Ready to listen</div>
                                 </div>
                                 <div class="stt-settings">
                                     <div class="setting-group">
@@ -153,7 +153,7 @@
                             </div>
                             <div class="transcription-area">
                                 <label class="auto-input-name">Transcribed Text</label>
-                                <div id="sttTranscription" class="transcription-display">
+                                <div id="sttTranscription" class="transcription-display empty">
                                     Click "Start Listening" to begin speech recognition
                                 </div>
                             </div>
@@ -228,22 +228,19 @@
                                     <i class="fas fa-comments"></i>
                                     <span class="button-text">Start Conversation</span>
                                 </button>
-                                <div id="stsStatus" class="recording-status">Ready for conversation</div>
+                                <div id="stsStatus" class="recording-status ready">Ready for conversation</div>
                             </div>
                             <div class="sts-conversation">
                                 <div class="conversation-section">
                                     <label class="auto-input-name">You said:</label>
-                                    <div id="stsUserSpeech" class="conversation-bubble user">
+                                    <div id="stsUserSpeech" class="conversation-bubble user empty">
                                         Start conversation to see your speech here
                                     </div>
                                 </div>
                                 <div class="conversation-section">
                                     <label class="auto-input-name">AI Response:</label>
-                                    <div id="stsAiResponse" class="conversation-bubble ai">
+                                    <div id="stsAiResponse" class="conversation-bubble ai empty">
                                         AI responses will appear here
-                                        <button id="stsPlayResponse" class="play-response-button" style="display: none;">
-                                            <i class="fas fa-play"></i>
-                                        </button>
                                     </div>
                                 </div>
                             </div>
@@ -312,7 +309,7 @@
                     <h5 class="modal-title" id="installationModalLabel">
                         <i class="fas fa-download"></i> Install Voice Assistant Dependencies
                     </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    <button type="button" class="btn-close" onclick="VoiceUI.hideModal('installationModal')" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
                     <div class="installation-warning">
@@ -340,7 +337,7 @@
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="basic-button" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="basic-button" onclick="VoiceUI.hideModal('installationModal')">Cancel</button>
                     <button type="button" id="confirmInstallation" class="basic-button btn-primary">
                         <i class="fas fa-download"></i> Install Dependencies
                     </button>
@@ -392,37 +389,6 @@
                     </div>
                 </div>
             </div>
-        </div>
-    </div>
-
-    <!-- Alert System -->
-    <div id="voiceAssistantAlerts" class="voice-alerts">
-        <!-- Success Alert -->
-        <div id="successAlert" class="alert alert-success alert-dismissible" style="display: none;">
-            <i class="fas fa-check-circle"></i>
-            <span id="successMessage"></span>
-            <button type="button" class="btn-close" onclick="window.hideVoiceAlert('success')"></button>
-        </div>
-
-        <!-- Error Alert -->
-        <div id="errorAlert" class="alert alert-danger alert-dismissible" style="display: none;">
-            <i class="fas fa-exclamation-triangle"></i>
-            <span id="errorMessage"></span>
-            <button type="button" class="btn-close" onclick="window.hideVoiceAlert('error')"></button>
-        </div>
-
-        <!-- Warning Alert -->
-        <div id="warningAlert" class="alert alert-warning alert-dismissible" style="display: none;">
-            <i class="fas fa-exclamation-circle"></i>
-            <span id="warningMessage"></span>
-            <button type="button" class="btn-close" onclick="window.hideVoiceAlert('warning')"></button>
-        </div>
-
-        <!-- Info Alert -->
-        <div id="infoAlert" class="alert alert-info alert-dismissible" style="display: none;">
-            <i class="fas fa-info-circle"></i>
-            <span id="infoMessage"></span>
-            <button type="button" class="btn-close" onclick="window.hideVoiceAlert('info')"></button>
         </div>
     </div>
 </div>

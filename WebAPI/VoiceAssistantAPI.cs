@@ -1,11 +1,11 @@
-using SwarmUI.Core;
-using SwarmUI.WebAPI;
-using SwarmUI.Utils;
-using SwarmUI.Accounts;
-using Newtonsoft.Json.Linq;
-using Hartsy.Extensions.VoiceAssistant.Models;
-using Hartsy.Extensions.VoiceAssistant.Common;
+using Hartsy.Extensions.VoiceAssistant.SwarmBackends;
 using Hartsy.Extensions.VoiceAssistant.Services;
+using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
+using Newtonsoft.Json.Linq;
+using SwarmUI.Accounts;
+using SwarmUI.Core;
+using SwarmUI.Utils;
+using SwarmUI.WebAPI;
 
 namespace Hartsy.Extensions.VoiceAssistant.WebAPI;
 
@@ -49,7 +49,9 @@ public static class VoiceAssistantAPI
             API.RegisterAPICall(CheckInstallationStatus, false, VoiceAssistantPermissions.PermCheckStatus);
             API.RegisterAPICall(GetInstallationProgress, false, VoiceAssistantPermissions.PermCheckStatus);
 
-            Logs.Info("[VoiceAssistant] Generic API endpoints registered successfully with server-side recording");
+            // Register STT and TTS backends
+            Program.Backends.RegisterBackendType<VoiceAssistantBackends>("voice-assistant-backend", "TTS and STT Backends",
+                "", true);
         }
         catch (Exception ex)
         {
@@ -302,7 +304,7 @@ public static class VoiceAssistantAPI
                     BackendRunning = true,
                     BackendHealthy = true,
                     Message = "Backend already running",
-                    BackendUrl = Configuration.ServiceConfiguration.BackendUrl
+                    BackendUrl = ServiceConfiguration.BackendUrl
                 }.ToJObject();
             }
             
@@ -315,7 +317,7 @@ public static class VoiceAssistantAPI
                     BackendRunning = false,
                     BackendHealthy = false,
                     Message = "Installation already in progress",
-                    BackendUrl = Configuration.ServiceConfiguration.BackendUrl
+                    BackendUrl = ServiceConfiguration.BackendUrl
                 }.ToJObject();
             }
             
@@ -333,7 +335,7 @@ public static class VoiceAssistantAPI
                     BackendRunning = true,
                     BackendHealthy = true,
                     Message = "Voice service started successfully",
-                    BackendUrl = Configuration.ServiceConfiguration.BackendUrl
+                    BackendUrl = ServiceConfiguration.BackendUrl
                 }.ToJObject();
             }
             else
@@ -346,7 +348,7 @@ public static class VoiceAssistantAPI
                     BackendRunning = false,
                     BackendHealthy = false,
                     Message = "Installation in progress",
-                    BackendUrl = Configuration.ServiceConfiguration.BackendUrl
+                    BackendUrl = ServiceConfiguration.BackendUrl
                 }.ToJObject();
             }
         }
@@ -377,7 +379,7 @@ public static class VoiceAssistantAPI
                 BackendRunning = !stopResult,
                 BackendHealthy = false,
                 Message = stopResult ? "Voice service stopped successfully" : "Failed to stop voice service",
-                BackendUrl = Configuration.ServiceConfiguration.BackendUrl
+                BackendUrl = ServiceConfiguration.BackendUrl
             }.ToJObject();
         }
         catch (Exception ex)
@@ -410,7 +412,7 @@ public static class VoiceAssistantAPI
                     Success = true,
                     BackendRunning = false,
                     BackendHealthy = false,
-                    BackendUrl = Configuration.ServiceConfiguration.BackendUrl,
+                    BackendUrl = ServiceConfiguration.BackendUrl,
                     ProcessId = 0,
                     HasExited = false,
                     Message = "Installation in progress, status check deferred"
@@ -427,7 +429,7 @@ public static class VoiceAssistantAPI
                 Success = true,
                 BackendRunning = healthInfo.IsRunning,
                 BackendHealthy = healthInfo.IsHealthy,
-                BackendUrl = Configuration.ServiceConfiguration.BackendUrl,
+                BackendUrl = ServiceConfiguration.BackendUrl,
                 ProcessId = healthInfo.ProcessId,
                 HasExited = healthInfo.HasExited,
                 Message = healthInfo.IsHealthy ? "Service is healthy" : healthInfo.ErrorMessage,
@@ -502,7 +504,7 @@ public static class VoiceAssistantAPI
             {
                 SessionId = sessionId,
                 AudioData = input["audio_data"]?.ToString() ?? string.Empty,
-                Language = input["language"]?.ToString() ?? Configuration.ServiceConfiguration.DefaultLanguage,
+                Language = input["language"]?.ToString() ?? ServiceConfiguration.DefaultLanguage,
                 Options = new STTOptions()
             };
 
@@ -545,9 +547,9 @@ public static class VoiceAssistantAPI
             {
                 SessionId = sessionId,
                 Text = input["text"]?.ToString() ?? string.Empty,
-                Voice = input["voice"]?.ToString() ?? Configuration.ServiceConfiguration.DefaultVoice,
-                Language = input["language"]?.ToString() ?? Configuration.ServiceConfiguration.DefaultLanguage,
-                Volume = input["volume"]?.Value<float>() ?? Configuration.ServiceConfiguration.DefaultVolume,
+                Voice = input["voice"]?.ToString() ?? ServiceConfiguration.DefaultVoice,
+                Language = input["language"]?.ToString() ?? ServiceConfiguration.DefaultLanguage,
+                Volume = input["volume"]?.Value<float>() ?? ServiceConfiguration.DefaultVolume,
                 Options = new TTSOptions()
             };
 
@@ -665,8 +667,8 @@ public static class VoiceAssistantAPI
                 ["microphone_access"] = "server_side"
             },
             ["pipeline_step_types"] = new JArray { "stt", "tts", "command_processing" },
-            ["supported_languages"] = new JArray(Configuration.ServiceConfiguration.SupportedLanguages),
-            ["supported_voices"] = new JArray(Configuration.ServiceConfiguration.AvailableVoices)
+            ["supported_languages"] = new JArray(ServiceConfiguration.SupportedLanguages),
+            ["supported_voices"] = new JArray(ServiceConfiguration.AvailableVoices)
         };
     }
 
