@@ -1,33 +1,72 @@
-﻿using Hartsy.Extensions.VoiceAssistant.Services;
+﻿using FreneticUtilities.FreneticDataSyntax;
+using Hartsy.Extensions.VoiceAssistant.Services;
 using Hartsy.Extensions.VoiceAssistant.WebAPI;
+using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Backends;
 using SwarmUI.Core;
 using SwarmUI.Text2Image;
 using SwarmUI.Utils;
 using System.IO;
-using System.Net.Http;
 using System.Text;
 
 namespace Hartsy.Extensions.VoiceAssistant.SwarmBackends;
 
-/// <summary>Text-to-Speech backend for SwarmUI integration.
-/// Processes text input through TTS service and returns audio results.</summary>
+/// <summary>Text-to-Speech backend for SwarmUI integration using direct Python function calls. Processes text input through TTS service and returns audio results. Also serves as the TTS service for API endpoints.</summary>
 public class TTSBackend : VoiceAssistantBackends
 {
+    /// <summary>Configuration settings for Voice Assistant Backends</summary>
+    public class TTSBackendSettings : AutoConfiguration
+    {
+        /// <summary>Debug mode setting</summary>
+        [AutoConfiguration.ConfigComment("Enable debug logging for voice processing")]
+        public bool DebugMode = false;
+
+        /// <summary>Preferred TTS engine</summary>
+        [AutoConfiguration.ConfigComment("Preferred TTS engine (chatterbox, bark, etc.)")]
+        public string PreferredEngine = "chatterbox";
+    }
+
+    public static readonly Lazy<TTSBackend> InstanceLazy = new(() => new TTSBackend());
+    public static TTSBackend Instance => InstanceLazy.Value;
+
+    private readonly object _serviceLock = new();
+    private readonly DependencyInstaller _dependencyInstaller;
+    private bool _isStarted = false;
+    private bool _isInitialized = false;
+
     /// <summary>Backend type identifier</summary>
-    public override string BackendType => "TTS";
+    protected override ServiceConfiguration.BackendType BackendType => ServiceConfiguration.BackendType.TTS;
 
     /// <summary>Supported features for TTS processing</summary>
-    public override IEnumerable<string> SupportedFeatures => new[]
-    {
+    public override IEnumerable<string> SupportedFeatures =>
+    [
         "text_to_speech",
         "voice_cloning",
         "multi_language",
         "emotional_synthesis",
         "volume_control",
         "speed_control"
-    };
+    ];
+
+    /// <summary>Gets whether the TTS backend is currently running</summary>
+    public bool IsBackendRunning
+    {
+        get
+        {
+            lock (_serviceLock)
+            {
+                return _isStarted && _isInitialized;
+            }
+        }
+    }
+
+    /// <summary>Private constructor for singleton pattern</summary>
+    public TTSBackend()
+    {
+        _dependencyInstaller = new DependencyInstaller();
+        Logs.Debug("[TTSBackend] TTS backend instance created");
+    }
 
     /// <summary>Initialize the TTS backend</summary>
     public override async Task Init()
@@ -36,8 +75,15 @@ public class TTSBackend : VoiceAssistantBackends
         {
             Logs.Info("[TTSBackend] Initializing Text-to-Speech backend");
 
-            // Ensure Python backend service is running
-            await EnsureBackendServiceAsync();
+            // Start the TTS backend service (handles dependencies, installation, and process startup)
+            BackendStatusResponse startResult = await StartAsync();
+
+            if (!startResult.Success)
+            {
+                Logs.Warning($"[TTSBackend] TTS backend service failed to start: {startResult.Message}");
+                Status = BackendStatus.ERRORED;
+                return;
+            }
 
             Status = BackendStatus.RUNNING;
             Logs.Info("[TTSBackend] TTS backend initialized successfully");
@@ -50,25 +96,199 @@ public class TTSBackend : VoiceAssistantBackends
         }
     }
 
+    /// <summary>Starts the TTS backend with dependency checking and Python initialization.</summary>
+    /// <param name="forceRestart">Whether to restart if already running</param>
+    /// <returns>Backend status response</returns>
+    public async Task<BackendStatusResponse> StartAsync(bool forceRestart = false)
+    {
+        lock (_serviceLock)
+        {
+            if (_isStarted && !forceRestart)
+            {
+                return new BackendStatusResponse
+                {
+                    Success = true,
+                    Message = "TTS backend already running",
+                    Status = "running",
+                    BackendType = "TTS",
+                    IsRunning = true
+                };
+            }
+        }
+
+        try
+        {
+            Logs.Info("[TTSBackend] Starting TTS backend service");
+
+            // Step 1: Check dependencies
+            bool dependenciesReady = await EnsureDependenciesAsync();
+            if (!dependenciesReady)
+            {
+                return new BackendStatusResponse
+                {
+                    Success = false,
+                    Message = "TTS dependencies not available",
+                    Status = "error",
+                    BackendType = "TTS"
+                };
+            }
+
+            // Step 2: Initialize Python voice processor
+            bool processorReady = await InitializePythonProcessorAsync();
+            if (!processorReady)
+            {
+                return new BackendStatusResponse
+                {
+                    Success = false,
+                    Message = "Failed to initialize Python voice processor",
+                    Status = "error",
+                    BackendType = "TTS"
+                };
+            }
+
+            lock (_serviceLock)
+            {
+                _isStarted = true;
+                _isInitialized = true;
+            }
+
+            Logs.Info("[TTSBackend] TTS backend started successfully");
+
+            return new BackendStatusResponse
+            {
+                Success = true,
+                Message = "TTS backend started successfully",
+                Status = "running",
+                BackendType = "TTS",
+                IsRunning = true
+            };
+        }
+        catch (Exception ex)
+        {
+            lock (_serviceLock)
+            {
+                _isStarted = false;
+                _isInitialized = false;
+            }
+
+            Logs.Error($"[TTSBackend] Failed to start TTS backend: {ex.Message}");
+
+            return new BackendStatusResponse
+            {
+                Success = false,
+                Message = $"TTS backend startup failed: {ex.Message}",
+                Status = "error",
+                BackendType = "TTS",
+                ErrorDetails = ex.ToString()
+            };
+        }
+    }
+
+    /// <summary>Stops the TTS backend gracefully.</summary>
+    /// <returns>Backend status response</returns>
+    public async Task<BackendStatusResponse> StopAsync()
+    {
+        try
+        {
+            Logs.Info("[TTSBackend] Stopping TTS backend service");
+
+            // Cleanup Python resources
+            await PythonVoiceProcessor.Instance.CleanupAsync();
+
+            lock (_serviceLock)
+            {
+                _isStarted = false;
+                _isInitialized = false;
+            }
+
+            return new BackendStatusResponse
+            {
+                Success = true,
+                Message = "TTS backend stopped successfully",
+                Status = "stopped",
+                BackendType = "TTS",
+                IsRunning = false
+            };
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[TTSBackend] Failed to stop TTS backend: {ex.Message}");
+
+            return new BackendStatusResponse
+            {
+                Success = false,
+                Message = $"Failed to stop TTS backend: {ex.Message}",
+                Status = "error",
+                BackendType = "TTS",
+                ErrorDetails = ex.ToString()
+            };
+        }
+    }
+
+    /// <summary>Gets the current status of the TTS backend.</summary>
+    /// <returns>Backend status response</returns>
+    public async Task<BackendStatusResponse> GetStatusAsync()
+    {
+        try
+        {
+            bool isRunning = IsBackendRunning;
+            string status = isRunning ? "running" : "stopped";
+
+            BackendStatusResponse response = new()
+            {
+                Success = true,
+                Status = status,
+                BackendType = "TTS",
+                IsRunning = isRunning
+            };
+            // Add health information if running
+            if (isRunning)
+            {
+                try
+                {
+                    bool isHealthy = await PythonVoiceProcessor.Instance.IsTTSAvailableAsync();
+                    response.IsHealthy = isHealthy;
+                    response.Message = isHealthy ? "TTS backend running and healthy" : "TTS backend running but unhealthy";
+                }
+                catch (Exception ex)
+                {
+                    response.IsHealthy = false;
+                    response.Message = $"TTS backend status check failed: {ex.Message}";
+                }
+            }
+            else
+            {
+                response.Message = "TTS backend not running";
+            }
+            return response;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[TTSBackend] Failed to get TTS backend status: {ex.Message}");
+
+            return new BackendStatusResponse
+            {
+                Success = false,
+                Message = $"Failed to get TTS backend status: {ex.Message}",
+                Status = "error",
+                BackendType = "TTS",
+                ErrorDetails = ex.ToString()
+            };
+        }
+    }
+
     /// <summary>Load TTS model/voice configuration</summary>
     public override async Task<bool> LoadModel(T2IModel model, T2IParamInput input)
     {
         try
         {
             Logs.Info($"[TTSBackend] Loading TTS model: {model.Name}");
-
-            // Map model name to voice configuration
-            string voice = GetVoiceFromModel(model.Name);
-            string language = GetLanguageFromModel(model.Name);
-
-            // Validate model availability with Python backend
-            var isAvailable = await ValidateVoiceAsync(voice, language);
-            if (!isAvailable)
+            // Validate model compatibility
+            if (!IsModelCompatible(model))
             {
-                Logs.Error($"[TTSBackend] Voice not available: {model.Name}");
+                Logs.Error($"[TTSBackend] Model not compatible: {model.Name}");
                 return false;
             }
-
             CurrentModelName = model.Name;
             Logs.Info($"[TTSBackend] Successfully loaded TTS voice: {model.Name}");
             return true;
@@ -86,26 +306,21 @@ public class TTSBackend : VoiceAssistantBackends
         try
         {
             Logs.Info("[TTSBackend] Processing TTS generation request");
-
             // Extract text from input (use prompt as text input)
             string text = ExtractTextFromInput(input);
             if (string.IsNullOrWhiteSpace(text))
             {
                 throw new ArgumentException("No text provided for TTS processing");
             }
-
             // Get TTS parameters
             string voice = GetTTSVoice(input);
             string language = GetTTSLanguage(input);
             float volume = GetTTSVolume(input);
-            var options = GetTTSOptions(input);
-
+            TTSOptions options = GetTTSOptions(input);
             // Process through TTS service
-            var ttsResult = await ProcessTTSAsync(text, voice, language, volume, options);
-
+            TTSResponse ttsResult = await ProcessTTSAsync(text, voice, language, volume, options);
             // Convert TTS result to SwarmUI output format
-            var result = await CreateTTSResultAsync(ttsResult, input, text);
-
+            Image[] result = await CreateTTSResultAsync(ttsResult, input, text);
             Logs.Info($"[TTSBackend] TTS processing completed: {text.Length} chars -> {ttsResult.AudioData?.Length ?? 0} bytes");
             return result;
         }
@@ -116,58 +331,44 @@ public class TTSBackend : VoiceAssistantBackends
         }
     }
 
-    /// <summary>Process text through TTS service</summary>
-    private async Task<TTSResult> ProcessTTSAsync(string text, string voice, string language, float volume, TTSOptions options)
+    /// <summary>Process text through TTS service using direct Python calls</summary>
+    public async Task<TTSResponse> ProcessTTSAsync(string text, string voice, string language, float volume, TTSOptions options)
     {
         try
         {
-            // Prepare request payload
-            var requestPayload = new
+            // Prepare TTS request
+            TTSRequest request = new()
             {
-                text = text,
-                voice = voice,
-                language = language,
-                volume = volume,
-                options = new
-                {
-                    speed = options.Speed,
-                    pitch = options.Pitch,
-                    format = options.Format,
-                    custom = options.CustomOptions
-                }
+                Text = text,
+                Voice = voice,
+                Language = language,
+                Volume = volume,
+                Options = options // Direct assignment if types match
             };
-
-            // Call Python TTS service
-            string requestJson = Newtonsoft.Json.JsonConvert.SerializeObject(requestPayload);
-            var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
-
-            var response = await HttpClient.PostAsync($"{ServiceConfiguration.BackendUrl}/tts/synthesize", content);
-            response.EnsureSuccessStatusCode();
-
-            string responseJson = await response.Content.ReadAsStringAsync();
-            var responseData = JObject.Parse(responseJson);
-
+            // Call TTS service directly
+            JObject response = await PythonVoiceProcessor.Instance.ProcessTTSAsync(request);
+            if (response["success"]?.Value<bool>() != true)
+            {
+                string error = response["error"]?.ToString() ?? "Unknown TTS error";
+                throw new Exception($"TTS processing failed: {error}");
+            }
             // Parse TTS response
-            var result = new TTSResult
+            TTSResponse result = new()
             {
-                Success = responseData["success"]?.Value<bool>() ?? false,
-                AudioData = !string.IsNullOrEmpty(responseData["audio_data"]?.ToString())
-                    ? Convert.FromBase64String(responseData["audio_data"].ToString())
-                    : null,
-                Text = responseData["text"]?.ToString() ?? text,
-                Voice = responseData["voice"]?.ToString() ?? voice,
-                Language = responseData["language"]?.ToString() ?? language,
-                Volume = responseData["volume"]?.Value<float>() ?? volume,
-                Duration = responseData["duration"]?.Value<double>() ?? 0.0,
-                ProcessingTime = responseData["processing_time"]?.Value<double>() ?? 0.0,
-                Metadata = responseData["metadata"]?.ToObject<Dictionary<string, object>>() ?? new Dictionary<string, object>()
+                Success = true,
+                AudioData = response["audio_data"]?.ToString() ?? string.Empty,
+                Text = response["text"]?.ToString() ?? text,
+                Voice = response["voice"]?.ToString() ?? voice,
+                Language = response["language"]?.ToString() ?? language,
+                Volume = response["volume"]?.Value<float>() ?? volume,
+                Duration = response["duration"]?.Value<double>() ?? 0.0,
+                ProcessingTime = response["processing_time"]?.Value<double>() ?? 0.0,
+                Metadata = response["metadata"]?.ToObject<Dictionary<string, object>>() ?? []
             };
-
-            if (!result.Success || result.AudioData == null)
+            if (string.IsNullOrEmpty(result.AudioData))
             {
                 throw new InvalidOperationException("TTS service did not return valid audio data");
             }
-
             return result;
         }
         catch (Exception ex)
@@ -187,19 +388,16 @@ public class TTSBackend : VoiceAssistantBackends
             {
                 return ttsText.Trim();
             }
-
             // Secondary: Use main prompt as text input
             if (input.TryGet(T2IParamTypes.Prompt, out string prompt) && !string.IsNullOrWhiteSpace(prompt))
             {
                 return prompt.Trim();
             }
-
             // Tertiary: Check negative prompt as fallback
             if (input.TryGet(T2IParamTypes.NegativePrompt, out string negPrompt) && !string.IsNullOrWhiteSpace(negPrompt))
             {
                 return negPrompt.Trim();
             }
-
             return string.Empty;
         }
         catch (Exception ex)
@@ -222,7 +420,7 @@ public class TTSBackend : VoiceAssistantBackends
     }
 
     /// <summary>Get TTS language from input parameters</summary>
-    private string GetTTSLanguage(T2IParamInput input)
+    public string GetTTSLanguage(T2IParamInput input)
     {
         return input.TryGet(VoiceParameters.TTSLanguage, out string language)
             ? language
@@ -230,7 +428,7 @@ public class TTSBackend : VoiceAssistantBackends
     }
 
     /// <summary>Get TTS volume from input parameters</summary>
-    private float GetTTSVolume(T2IParamInput input)
+    public float GetTTSVolume(T2IParamInput input)
     {
         return input.TryGet(VoiceParameters.TTSVolume, out float volume)
             ? Math.Clamp(volume, 0.0f, 1.0f)
@@ -238,7 +436,7 @@ public class TTSBackend : VoiceAssistantBackends
     }
 
     /// <summary>Get TTS processing options from input parameters</summary>
-    private TTSOptions GetTTSOptions(T2IParamInput input)
+    public TTSOptions GetTTSOptions(T2IParamInput input)
     {
         return new TTSOptions
         {
@@ -249,18 +447,18 @@ public class TTSBackend : VoiceAssistantBackends
     }
 
     /// <summary>Create SwarmUI-compatible result from TTS audio</summary>
-    private async Task<Image[]> CreateTTSResultAsync(TTSResult ttsResult, T2IParamInput input, string originalText)
+    public async Task<Image[]> CreateTTSResultAsync(TTSResponse ttsResult, T2IParamInput input, string originalText)
     {
         try
         {
             // Save audio file to disk
-            var audioFilePath = await SaveAudioFileAsync(ttsResult, originalText);
+            string audioFilePath = await SaveAudioFileAsync(ttsResult, originalText);
 
             // Create audio metadata image for SwarmUI display
-            var metadataImage = await CreateAudioMetadataImageAsync(ttsResult, audioFilePath, originalText);
+            Image metadataImage = await CreateAudioMetadataImageAsync(ttsResult, audioFilePath, originalText);
 
             // Create a proper audio file reference that SwarmUI can handle
-            var audioImage = await CreateAudioImageAsync(ttsResult, audioFilePath);
+            Image audioImage = await CreateAudioImageAsync(ttsResult, audioFilePath);
 
             return [audioImage, metadataImage];
         }
@@ -272,23 +470,25 @@ public class TTSBackend : VoiceAssistantBackends
     }
 
     /// <summary>Save TTS audio data to file system</summary>
-    private async Task<string> SaveAudioFileAsync(TTSResult ttsResult, string originalText) // TODO: This should call an imternal method
+    public async Task<string> SaveAudioFileAsync(TTSResponse ttsResult, string originalText)
     {
         try
         {
-            var timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
-            var safeText = string.Join("", originalText.Take(50).Where(c => char.IsLetterOrDigit(c) || char.IsWhiteSpace(c))).Trim().Replace(" ", "_");
-            var filename = $"tts_{timestamp}_{safeText}.wav";
-            var outputDir = Path.Combine(ServiceConfiguration.ExtensionDirectory, "outputs", "audio");
-            var outputPath = Path.Combine(outputDir, filename);
+            string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+            string safeText = string.Join("", originalText.Take(50).Where(c => char.IsLetterOrDigit(c) || char.IsWhiteSpace(c))).Trim().Replace(" ", "_");
+            string filename = $"tts_{timestamp}_{safeText}.wav";
+            string outputDir = Path.Combine(ServiceConfiguration.ExtensionDirectory, "outputs", "audio");
+            string outputPath = Path.Combine(outputDir, filename);
 
             Directory.CreateDirectory(outputDir);
 
-            await File.WriteAllBytesAsync(outputPath, ttsResult.AudioData);
+            // Convert base64 audio back to bytes and save
+            byte[] audioBytes = Convert.FromBase64String(ttsResult.AudioData);
+            await File.WriteAllBytesAsync(outputPath, audioBytes);
 
             // Also save metadata
-            var metadataPath = Path.ChangeExtension(outputPath, ".json");
-            var metadata = new
+            string metadataPath = Path.ChangeExtension(outputPath, ".json");
+            object metadata = new
             {
                 timestamp = DateTime.UtcNow,
                 original_text = originalText,
@@ -315,11 +515,11 @@ public class TTSBackend : VoiceAssistantBackends
     }
 
     /// <summary>Create an image containing audio metadata for display</summary>
-    private static async Task<Image> CreateAudioMetadataImageAsync(TTSResult ttsResult, string audioFilePath, string originalText)
+    private static async Task<Image> CreateAudioMetadataImageAsync(TTSResponse ttsResult, string audioFilePath, string originalText)
     {
         try
         {
-            var metadataContent = $"🎵 Text-to-Speech Generated Audio\n\n" +
+            string metadataContent = $"🎵 Text-to-Speech Generated Audio\n\n" +
                                 $"Text: {originalText}\n" +
                                 $"Voice: {ttsResult.Voice}\n" +
                                 $"Language: {ttsResult.Language}\n" +
@@ -328,8 +528,8 @@ public class TTSBackend : VoiceAssistantBackends
                                 $"Processing Time: {ttsResult.ProcessingTime:F3}s\n" +
                                 $"Audio File: {Path.GetFileName(audioFilePath)}";
 
-            var metadataBytes = Encoding.UTF8.GetBytes(metadataContent);
-            var metadata = new Dictionary<string, object>
+            byte[] metadataBytes = Encoding.UTF8.GetBytes(metadataContent);
+            Dictionary<string, object> metadata = new()
             {
                 ["type"] = "tts_metadata",
                 ["original_text"] = originalText,
@@ -341,8 +541,7 @@ public class TTSBackend : VoiceAssistantBackends
                 ["audio_file"] = audioFilePath,
                 ["backend"] = "TTS"
             };
-
-            return new Image(metadataBytes, "tts_metadata.txt", "text/plain", metadata);
+            return new Image("", Image.ImageType.VIDEO, ""); // TODO: Replace once we figure out how to create T2I Image with audio
         }
         catch (Exception ex)
         {
@@ -352,16 +551,15 @@ public class TTSBackend : VoiceAssistantBackends
     }
 
     /// <summary>Create an image that represents the audio file for SwarmUI</summary>
-    private static async Task<Image> CreateAudioImageAsync(TTSResult ttsResult, string audioFilePath)
+    private static async Task<Image> CreateAudioImageAsync(TTSResponse ttsResult, string audioFilePath)
     {
         try
         {
             // Create a simple waveform visualization or audio icon
             // For now, embed the audio data directly in the image metadata
-            var metadata = new Dictionary<string, object>
+            Dictionary<string, object> metadata = new()
             {
                 ["type"] = "audio_file",
-                ["audio_data"] = Convert.ToBase64String(ttsResult.AudioData),
                 ["audio_path"] = audioFilePath,
                 ["mime_type"] = "audio/wav",
                 ["duration"] = ttsResult.Duration,
@@ -370,9 +568,7 @@ public class TTSBackend : VoiceAssistantBackends
                 ["original_text"] = ttsResult.Text,
                 ["backend"] = "TTS"
             };
-
-            // Use the actual audio bytes, SwarmUI will handle it through the metadata
-            return new Image(ttsResult.AudioData, Path.GetFileName(audioFilePath), "audio/wav", metadata);
+            return new Image("", Image.ImageType.VIDEO, ""); // TODO: Replace once we figure out how to create T2I Image with audio
         }
         catch (Exception ex)
         {
@@ -381,61 +577,12 @@ public class TTSBackend : VoiceAssistantBackends
         }
     }
 
-    /// <summary>Ensure the Python backend service is running and healthy</summary>
-    private static async Task EnsureBackendServiceAsync()
-    {
-        try
-        {
-            if (!PythonBackendService.Instance.IsBackendRunning)
-            {
-                Logs.Info("[TTSBackend] Starting Python backend service");
-                var startResult = await PythonBackendService.Instance.StartAsync();
-                if (!startResult.Success)
-                {
-                    throw new InvalidOperationException($"Failed to start Python backend: {startResult.Message}");
-                }
-            }
-
-            // Verify TTS service is available
-            var healthInfo = await PythonBackendService.Instance.GetHealthAsync();
-            if (!healthInfo.IsHealthy || !healthInfo.Services.GetValueOrDefault("tts", false))
-            {
-                throw new InvalidOperationException("TTS service is not available in Python backend");
-            }
-        }
-        catch (Exception ex)
-        {
-            Logs.Error($"[TTSBackend] Backend service check failed: {ex.Message}");
-            throw;
-        }
-    }
-
-    /// <summary>Validate that the specified voice is available</summary>
-    private static async Task<bool> ValidateVoiceAsync(string voice, string language)
-    {
-        try
-        {
-            var response = await HttpClient.GetAsync($"{ServiceConfiguration.BackendUrl}/status");
-            if (!response.IsSuccessStatusCode)
-                return false;
-
-            var statusJson = await response.Content.ReadAsStringAsync();
-            var status = JObject.Parse(statusJson);
-
-            return status["services"]?["tts"]?["available"]?.Value<bool>() ?? false;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
     /// <summary>Map model name to voice identifier</summary>
-    private string GetVoiceFromModel(string modelName)
+    public string GetVoiceFromModel(string modelName)
     {
         if (string.IsNullOrEmpty(modelName)) return ServiceConfiguration.DefaultVoice;
 
-        var modelLower = modelName.ToLowerInvariant();
+        string modelLower = modelName.ToLowerInvariant();
 
         // Map common voice model names
         if (modelLower.Contains("default")) return "default";
@@ -450,35 +597,14 @@ public class TTSBackend : VoiceAssistantBackends
         return modelName;
     }
 
-    /// <summary>Map model name to language code</summary>
-    private static string GetLanguageFromModel(string modelName)
-    {
-        if (string.IsNullOrEmpty(modelName)) return ServiceConfiguration.DefaultLanguage;
-
-        string modelLower = modelName.ToLowerInvariant();
-
-        if (modelLower.Contains("-en")) return "en-US";
-        if (modelLower.Contains("-es")) return "es-ES";
-        if (modelLower.Contains("-fr")) return "fr-FR";
-        if (modelLower.Contains("-de")) return "de-DE";
-        if (modelLower.Contains("-it")) return "it-IT";
-        if (modelLower.Contains("-pt")) return "pt-BR";
-        if (modelLower.Contains("-ru")) return "ru-RU";
-        if (modelLower.Contains("-ja")) return "ja-JP";
-        if (modelLower.Contains("-ko")) return "ko-KR";
-        if (modelLower.Contains("-zh")) return "zh-CN";
-
-        return ServiceConfiguration.DefaultLanguage;
-    }
-
     /// <summary>Free memory and resources</summary>
     public override async Task<bool> FreeMemory(bool systemRam)
     {
         try
         {
-            // Signal Python backend to free TTS model memory if needed
-            await HttpClient.PostAsync($"{ServiceConfiguration.BackendUrl}/tts/free_memory", null);
-            return true;
+            // Cleanup Python resources
+            JObject result = await PythonVoiceProcessor.Instance.CleanupAsync();
+            return result["success"]?.Value<bool>() ?? false;
         }
         catch (Exception ex)
         {
@@ -493,6 +619,10 @@ public class TTSBackend : VoiceAssistantBackends
         try
         {
             Logs.Info("[TTSBackend] Shutting down TTS backend");
+
+            // Stop the TTS backend service
+            await StopAsync();
+
             Status = BackendStatus.DISABLED;
         }
         catch (Exception ex)
@@ -500,27 +630,81 @@ public class TTSBackend : VoiceAssistantBackends
             Logs.Error($"[TTSBackend] Error during shutdown: {ex.Message}");
         }
     }
-}
 
-/// <summary>TTS processing result</summary>
-public class TTSResult
-{
-    public bool Success { get; set; }
-    public byte[] AudioData { get; set; }
-    public string Text { get; set; } = string.Empty;
-    public string Voice { get; set; } = string.Empty;
-    public string Language { get; set; } = string.Empty;
-    public float Volume { get; set; }
-    public double Duration { get; set; }
-    public double ProcessingTime { get; set; }
-    public Dictionary<string, object> Metadata { get; set; } = new();
-}
+    #region Service Management Methods
 
-/// <summary>TTS processing options</summary>
-public class TTSOptions
-{
-    public float Speed { get; set; } = 1.0f;
-    public float Pitch { get; set; } = 1.0f;
-    public string Format { get; set; } = "wav";
-    public Dictionary<string, object> CustomOptions { get; set; } = new();
+    /// <summary>Ensures TTS dependencies are available.</summary>
+    /// <returns>True if dependencies are ready</returns>
+    public async Task<bool> EnsureDependenciesAsync()
+    {
+        try
+        {
+            // Detect Python environment
+            PythonEnvironmentInfo pythonInfo = _dependencyInstaller.DetectPythonEnvironment();
+            if (pythonInfo?.IsValid != true)
+            {
+                Logs.Error("[TTSBackend] Python environment not detected");
+                return false;
+            }
+            // Check if dependencies are already installed
+            bool dependenciesInstalled = await _dependencyInstaller.CheckDependenciesInstalledAsync(pythonInfo, ServiceConfiguration.BackendType.TTS);
+            if (!dependenciesInstalled)
+            {
+                Logs.Warning("[TTSBackend] TTS dependencies not installed - voice synthesis will not be available");
+                Logs.Info("[TTSBackend] Install TTS dependencies using the SwarmUI extension manager or manually install Chatterbox TTS");
+                return false;
+            }
+            Logs.Info("[TTSBackend] TTS dependencies verified");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[TTSBackend] Error checking TTS dependencies: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>Initialize the Python voice processor for TTS.</summary>
+    /// <returns>True if initialization succeeded</returns>
+    public async Task<bool> InitializePythonProcessorAsync()
+    {
+        try
+        {
+            // Initialize the processor
+            bool initialized = await PythonVoiceProcessor.Instance.InitializeAsync();
+            if (!initialized)
+            {
+                Logs.Error("[TTSBackend] Failed to initialize Python voice processor");
+                return false;
+            }
+            // Initialize voice services with TTS-specific config
+            JObject config = new()
+            {
+                ["tts_engine"] = "chatterbox"
+            };
+            JObject result = await PythonVoiceProcessor.Instance.InitializeVoiceServicesAsync(config);
+            if (result["success"]?.Value<bool>() != true)
+            {
+                string error = result["error"]?.ToString() ?? "Unknown initialization error";
+                Logs.Error($"[TTSBackend] Voice services initialization failed: {error}");
+                return false;
+            }
+            // Check if TTS is available
+            bool ttsAvailable = await PythonVoiceProcessor.Instance.IsTTSAvailableAsync();
+            if (!ttsAvailable)
+            {
+                Logs.Warning("[TTSBackend] TTS service not available in Python processor");
+                return false;
+            }
+            Logs.Info("[TTSBackend] Python voice processor initialized successfully");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[TTSBackend] Error initializing Python processor: {ex.Message}");
+            return false;
+        }
+    }
+
+    #endregion
 }

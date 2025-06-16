@@ -8,57 +8,57 @@ using System.IO;
 
 namespace Hartsy.Extensions.VoiceAssistant.Services;
 
-/// <summary>Service for installing and managing Python dependencies for the Voice Assistant.</summary>
+/// <summary>Service for installing and managing Python dependencies for STT and TTS backends separately.</summary>
 public class DependencyInstaller
 {
     private readonly object _installLock = new();
     private volatile bool _isInstalling = false;
     public bool IsInstalling => _isInstalling;
 
-    /// <summary>Package definition for unified dependency management.</summary>
-    public class PackageDefinition
-    {
-        public string Name { get; set; }
-        public string InstallName { get; set; }
-        public string ImportName { get; set; }
-        public string Category { get; set; }
-        public bool IsGitPackage { get; set; }
-        public string[] AlternativeNames { get; set; } = [];
-        public int EstimatedInstallTimeMinutes { get; set; } = 2;
-        public string CustomInstallArgs { get; set; } = "";
-    }
-
-    /// <summary>Package installation status result.</summary>
-    public class PackageStatus
-    {
-        public string Name { get; set; }
-        public bool IsInstalled { get; set; }
-        public string DetectedVersion { get; set; }
-        public string Category { get; set; }
-        public string Error { get; set; }
-    }
-
-    /// <summary>Complete dependency definitions for the Voice Assistant.</summary>
-    private static readonly PackageDefinition[] PackageDefinitions =
+    /// <summary>Complete dependency definitions for STT and TTS backends.</summary>
+    private static readonly PackageDefinition[] STTPackageDefinitions =
     [
-        // Core packages
+        // Core packages for STT
+        new() { Name = "fastapi>=0.104.0", InstallName = "fastapi>=0.104.0", ImportName = "fastapi", Category = "core" },
+        new() { Name = "uvicorn[standard]>=0.24.0", InstallName = "uvicorn[standard]>=0.24.0", ImportName = "uvicorn", Category = "core" },
         new() { Name = "websockets==15.0.1", InstallName = "websockets==15.0.1", ImportName = "websockets", Category = "core" },
         new() { Name = "scipy==1.15.2", InstallName = "scipy==1.15.2", ImportName = "scipy", Category = "core" },
         new() { Name = "soundfile==0.13.1", InstallName = "soundfile==0.13.1", ImportName = "soundfile", Category = "core" },
         new() { Name = "librosa==0.11.0", InstallName = "librosa==0.11.0", ImportName = "librosa", Category = "core" },
-        new() { Name = "halo==0.0.31", InstallName = "halo==0.0.31", ImportName = "halo", Category = "core", EstimatedInstallTimeMinutes = 8 },
-        new() { Name = "transformers==4.46.3", InstallName = "transformers==4.46.3", ImportName = "transformers", Category = "core" },
-        new() { Name = "diffusers==0.29.0", InstallName = "diffusers==0.29.0", ImportName = "diffusers", Category = "core" },
-        new() { Name = "conformer==0.3.2", InstallName = "conformer==0.3.2", ImportName = "conformer", Category = "core" },
-        new() { Name = "safetensors==0.5.3", InstallName = "safetensors==0.5.3", ImportName = "safetensors", Category = "core" },
-        // PyTorch packages
+        // PyTorch packages for STT
         new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        new() { Name = "torchvision==0.21.0+cu126", InstallName = "torchvision==0.21.0+cu126", ImportName = "torchvision", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         // STT engine
         new() { Name = "RealtimeSTT", InstallName = "RealtimeSTT", ImportName = "RealtimeSTT", Category = "stt" },
+        new() { Name = "PyAudio==0.2.14", InstallName = "PyAudio==0.2.14", ImportName = "pyaudio", Category = "stt" },
+        new() { Name = "faster-whisper==1.1.1", InstallName = "faster-whisper==1.1.1", ImportName = "faster_whisper", Category = "stt" },
+        new() { Name = "pvporcupine==1.9.5", InstallName = "pvporcupine==1.9.5", ImportName = "pvporcupine", Category = "stt" },
+        new() { Name = "webrtcvad-wheels==2.0.14", InstallName = "webrtcvad-wheels==2.0.14", ImportName = "webrtcvad", Category = "stt" },
+        new() { Name = "openwakeword>=0.4.0", InstallName = "openwakeword>=0.4.0", ImportName = "openwakeword", Category = "stt" },
+        new() { Name = "halo==0.0.31", InstallName = "halo==0.0.31", ImportName = "halo", Category = "stt", EstimatedInstallTimeMinutes = 8 }
+    ];
+
+    private static readonly PackageDefinition[] TTSPackageDefinitions =
+    [
+        // Core packages for TTS
+        new() { Name = "fastapi>=0.104.0", InstallName = "fastapi>=0.104.0", ImportName = "fastapi", Category = "core" },
+        new() { Name = "uvicorn[standard]>=0.24.0", InstallName = "uvicorn[standard]>=0.24.0", ImportName = "uvicorn", Category = "core" },
+        new() { Name = "websockets==15.0.1", InstallName = "websockets==15.0.1", ImportName = "websockets", Category = "core" },
+        new() { Name = "scipy==1.15.2", InstallName = "scipy==1.15.2", ImportName = "scipy", Category = "core" },
+        new() { Name = "soundfile==0.13.1", InstallName = "soundfile==0.13.1", ImportName = "soundfile", Category = "core" },
+        new() { Name = "librosa==0.11.0", InstallName = "librosa==0.11.0", ImportName = "librosa", Category = "core" },
+        // PyTorch packages for TTS
+        new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
+        new() { Name = "torchvision==0.21.0+cu126", InstallName = "torchvision==0.21.0+cu126", ImportName = "torchvision", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
+        new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         // TTS engine
-        new() { Name = "chatterbox-tts", InstallName = "git+https://github.com/JarodMica/chatterbox.git", ImportName = "chatterbox", Category = "tts", IsGitPackage = true, EstimatedInstallTimeMinutes = 15, AlternativeNames = ["chatterbox", "resemble", "resemblevoice"] }
+        new() { Name = "chatterbox-tts", InstallName = "git+https://github.com/JarodMica/chatterbox.git", ImportName = "chatterbox", Category = "tts", IsGitPackage = true, EstimatedInstallTimeMinutes = 15, AlternativeNames = ["chatterbox", "resemble", "resemblevoice"] },
+        new() { Name = "s3tokenizer", InstallName = "s3tokenizer", ImportName = "s3tokenizer", Category = "tts" },
+        new() { Name = "transformers==4.46.3", InstallName = "transformers==4.46.3", ImportName = "transformers", Category = "tts" },
+        new() { Name = "diffusers==0.29.0", InstallName = "diffusers==0.29.0", ImportName = "diffusers", Category = "tts" },
+        new() { Name = "resemble-perth==1.0.1", InstallName = "resemble-perth==1.0.1", ImportName = "resemble_perth", Category = "tts" },
+        new() { Name = "conformer==0.3.2", InstallName = "conformer==0.3.2", ImportName = "conformer", Category = "tts" },
+        new() { Name = "safetensors==0.5.3", InstallName = "safetensors==0.5.3", ImportName = "safetensors", Category = "tts" }
     ];
 
     /// <summary>Gets the SwarmUI Python environment using SwarmUI's established detection logic.</summary>
@@ -80,7 +80,6 @@ public class DependencyInstaller
                 OperatingSystem = Environment.OSVersion.ToString(),
                 IsEmbedded = pythonPath.Contains("python_embeded"),
                 Version = "detected", // We know it works if SwarmUI is running
-                IsValid = true
             };
         }
         catch (Exception ex)
@@ -90,22 +89,24 @@ public class DependencyInstaller
         }
     }
 
-    /// <summary>Gets comprehensive status of all packages with a single efficient check.</summary>
+    /// <summary>Gets comprehensive status of all packages for a specific backend type with a single efficient check.</summary>
     /// <param name="pythonInfo">Python environment information</param>
+    /// <param name="backendType">The backend type to check dependencies for</param>
     /// <returns>Dictionary of package statuses by name</returns>
-    public async Task<Dictionary<string, PackageStatus>> GetAllPackageStatusAsync(PythonEnvironmentInfo pythonInfo)
+    public async Task<Dictionary<string, PackageStatus>> GetAllPackageStatusAsync(PythonEnvironmentInfo pythonInfo, ServiceConfiguration.BackendType backendType)
     {
-        Dictionary<string, PackageStatus> results = new();
+        Dictionary<string, PackageStatus> results = [];
         if (pythonInfo?.IsValid != true)
         {
             return results;
         }
         try
         {
+            PackageDefinition[] packageDefinitions = GetPackageDefinitionsForBackend(backendType);
             // Get all installed packages in one call for efficiency
             Dictionary<string, string> installedPackages = await GetInstalledPackagesAsync(pythonInfo);
             // Check each package definition
-            foreach (PackageDefinition package in PackageDefinitions)
+            foreach (PackageDefinition package in packageDefinitions)
             {
                 PackageStatus status = new()
                 {
@@ -143,34 +144,36 @@ public class DependencyInstaller
         }
         catch (Exception ex)
         {
-            Logs.Error($"[VoiceAssistant] Error getting package status: {ex.Message}");
+            Logs.Error($"[VoiceAssistant] Error getting {backendType} package status: {ex.Message}");
             return results;
         }
     }
 
-    /// <summary>Checks if all required dependencies are installed efficiently.</summary>
+    /// <summary>Checks if all required dependencies are installed efficiently for a specific backend type.</summary>
     /// <param name="pythonInfo">Python environment information</param>
+    /// <param name="backendType">The backend type to check dependencies for</param>
     /// <returns>True if all dependencies are installed</returns>
-    public async Task<bool> CheckDependenciesInstalledAsync(PythonEnvironmentInfo pythonInfo)
+    public async Task<bool> CheckDependenciesInstalledAsync(PythonEnvironmentInfo pythonInfo, ServiceConfiguration.BackendType backendType)
     {
         if (pythonInfo?.IsValid != true)
             return false;
         try
         {
-            Dictionary<string, PackageStatus> statuses = await GetAllPackageStatusAsync(pythonInfo);
+            Dictionary<string, PackageStatus> statuses = await GetAllPackageStatusAsync(pythonInfo, backendType);
             return statuses.Values.All(status => status.IsInstalled);
         }
         catch (Exception ex)
         {
-            Logs.Error($"[VoiceAssistant] Error checking dependencies: {ex.Message}");
+            Logs.Error($"[VoiceAssistant] Error checking {backendType} dependencies: {ex.Message}");
             return false;
         }
     }
 
-    /// <summary>Installs all required dependencies using modern batched approach with efficient progress tracking.</summary>
+    /// <summary>Installs all required dependencies for a specific backend type using modern batched approach with efficient progress tracking.</summary>
     /// <param name="pythonInfo">Python environment information</param>
+    /// <param name="backendType">The backend type to install dependencies for</param>
     /// <returns>True if installation succeeded</returns>
-    public async Task<bool> InstallDependenciesAsync(PythonEnvironmentInfo pythonInfo)
+    public async Task<bool> InstallDependenciesAsync(PythonEnvironmentInfo pythonInfo, ServiceConfiguration.BackendType backendType)
     {
         if (pythonInfo?.IsValid != true)
         {
@@ -186,22 +189,21 @@ public class DependencyInstaller
         }
         try
         {
-            Logs.Info("[VoiceAssistant] Starting dependency installation using modern batched approach");
+            Logs.Info($"[VoiceAssistant] Starting {backendType} dependency installation using modern batched approach");
             ProgressTracker tracker = ProgressTracking.Installation;
             tracker.Reset();
-            tracker.UpdateProgress(5, "Analyzing dependencies", "Checking current installation status...");
+            tracker.UpdateProgress(5, $"Analyzing {backendType} dependencies", "Checking current installation status...");
             // Get current status
-            Dictionary<string, PackageStatus> statuses = await GetAllPackageStatusAsync(pythonInfo);
-            List<PackageDefinition> packagesToInstall = PackageDefinitions
-                .Where(pkg => !statuses[pkg.Name].IsInstalled)
-                .ToList();
+            Dictionary<string, PackageStatus> statuses = await GetAllPackageStatusAsync(pythonInfo, backendType);
+            PackageDefinition[] allPackages = GetPackageDefinitionsForBackend(backendType);
+            List<PackageDefinition> packagesToInstall = [.. allPackages.Where(pkg => !statuses[pkg.Name].IsInstalled)];
             if (packagesToInstall.Count == 0)
             {
-                tracker.SetComplete("All dependencies already installed!");
-                Logs.Info("[VoiceAssistant] All dependencies already installed!");
+                tracker.SetComplete($"All {backendType} dependencies already installed!");
+                Logs.Info($"[VoiceAssistant] All {backendType} dependencies already installed!");
                 return true;
             }
-            Logs.Info($"[VoiceAssistant] Need to install {packagesToInstall.Count} packages");
+            Logs.Info($"[VoiceAssistant] Need to install {packagesToInstall.Count} {backendType} packages");
             // Group packages by category for efficient batched installation
             Dictionary<string, List<PackageDefinition>> packagesByCategory = packagesToInstall
                 .GroupBy(p => p.Category)
@@ -212,18 +214,19 @@ public class DependencyInstaller
             {
                 string category = categoryGroup.Key;
                 List<PackageDefinition> packages = categoryGroup.Value;
-                tracker.UpdateProgress(currentProgress, $"Installing {category} packages", $"Installing {packages.Count} {category} packages...");
+
+                tracker.UpdateProgress(currentProgress, $"Installing {backendType} {category} packages", $"Installing {packages.Count} {category} packages...");
                 await InstallPackageCategoryAsync(pythonInfo, packages, tracker, currentProgress, progressPerCategory);
                 currentProgress += progressPerCategory;
             }
-            tracker.SetComplete("All dependencies installed successfully!");
-            Logs.Info("[VoiceAssistant] All dependencies installed successfully using modern approach!");
+            tracker.SetComplete($"All {backendType} dependencies installed successfully!");
+            Logs.Info($"[VoiceAssistant] All {backendType} dependencies installed successfully using modern approach!");
             return true;
         }
         catch (Exception ex)
         {
-            ProgressTracking.Installation.SetError($"Installation failed: {ex.Message}");
-            Logs.Error($"[VoiceAssistant] Dependency installation failed: {ex.Message}");
+            ProgressTracking.Installation.SetError($"{backendType} installation failed: {ex.Message}");
+            Logs.Error($"[VoiceAssistant] {backendType} dependency installation failed: {ex.Message}");
             throw;
         }
         finally
@@ -232,26 +235,80 @@ public class DependencyInstaller
         }
     }
 
-    /// <summary>Gets detailed installation status for all dependencies efficiently.</summary>
+    /// <summary>Installs dependencies for both STT and TTS backends sequentially.</summary>
     /// <param name="pythonInfo">Python environment information</param>
-    /// <returns>Detailed installation status</returns>
-    public async Task<JObject> GetDetailedInstallationStatusAsync(PythonEnvironmentInfo pythonInfo)
+    /// <returns>True if both installations succeeded</returns>
+    public async Task<bool> InstallAllBackendDependenciesAsync(PythonEnvironmentInfo pythonInfo)
     {
-        JObject result = new();
+        if (pythonInfo?.IsValid != true)
+        {
+            throw new InvalidOperationException("Invalid Python environment");
+        }
+        lock (_installLock)
+        {
+            if (_isInstalling)
+            {
+                throw new InvalidOperationException("Installation already in progress");
+            }
+            _isInstalling = true;
+        }
+        try
+        {
+            Logs.Info("[VoiceAssistant] Starting complete dependency installation for all backends");
+            ProgressTracker tracker = ProgressTracking.Installation;
+            tracker.Reset();
+            // Install STT dependencies first
+            tracker.UpdateProgress(5, "Installing STT dependencies", "Preparing STT backend installation...");
+            bool sttSuccess = await InstallBackendDependenciesInternal(pythonInfo, ServiceConfiguration.BackendType.STT, tracker, 5, 45);
+            if (!sttSuccess)
+            {
+                throw new InvalidOperationException("STT dependency installation failed");
+            }
+            // Install TTS dependencies second
+            tracker.UpdateProgress(50, "Installing TTS dependencies", "Preparing TTS backend installation...");
+            bool ttsSuccess = await InstallBackendDependenciesInternal(pythonInfo, ServiceConfiguration.BackendType.TTS, tracker, 50, 45);
+            if (!ttsSuccess)
+            {
+                throw new InvalidOperationException("TTS dependency installation failed");
+            }
+            tracker.SetComplete("All backend dependencies installed successfully!");
+            Logs.Info("[VoiceAssistant] All backend dependencies installed successfully!");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ProgressTracking.Installation.SetError($"Complete installation failed: {ex.Message}");
+            Logs.Error($"[VoiceAssistant] Complete dependency installation failed: {ex.Message}");
+            throw;
+        }
+        finally
+        {
+            _isInstalling = false;
+        }
+    }
+
+    /// <summary>Gets detailed installation status for dependencies of a specific backend type efficiently.</summary>
+    /// <param name="pythonInfo">Python environment information</param>
+    /// <param name="backendType">The backend type to check</param>
+    /// <returns>Detailed installation status</returns>
+    public async Task<JObject> GetDetailedInstallationStatusAsync(PythonEnvironmentInfo pythonInfo, ServiceConfiguration.BackendType backendType)
+    {
+        JObject result = [];
         try
         {
             if (pythonInfo?.IsValid != true)
             {
                 return result;
             }
-            Dictionary<string, PackageStatus> statuses = await GetAllPackageStatusAsync(pythonInfo);
+            Dictionary<string, PackageStatus> statuses = await GetAllPackageStatusAsync(pythonInfo, backendType);
             // Group by category for organized output
-            Dictionary<string, JObject> categoryObjects = new();
+            Dictionary<string, JObject> categoryObjects = [];
             foreach (PackageStatus status in statuses.Values)
             {
-                if (!categoryObjects.ContainsKey(status.Category))
+                if (!categoryObjects.TryGetValue(status.Category, out JObject value))
                 {
-                    categoryObjects[status.Category] = new JObject();
+                    value = [];
+                    categoryObjects[status.Category] = value;
                 }
                 JObject packageInfo = new()
                 {
@@ -262,22 +319,108 @@ public class DependencyInstaller
                 {
                     packageInfo["error"] = status.Error;
                 }
-                categoryObjects[status.Category][status.Name] = packageInfo;
+
+                value[status.Name] = packageInfo;
             }
             foreach (KeyValuePair<string, JObject> category in categoryObjects)
             {
-                result[$"{category.Key}_packages"] = category.Value;
+                result[$"{backendType.ToString().ToLowerInvariant()}_{category.Key}_packages"] = category.Value;
             }
             return result;
         }
         catch (Exception ex)
         {
-            Logs.Error($"[VoiceAssistant] Error getting detailed installation status: {ex.Message}");
+            Logs.Error($"[VoiceAssistant] Error getting detailed {backendType} installation status: {ex.Message}");
+            return result;
+        }
+    }
+
+    /// <summary>Gets detailed installation status for all backend types.</summary>
+    /// <param name="pythonInfo">Python environment information</param>
+    /// <returns>Combined detailed installation status</returns>
+    public async Task<JObject> GetDetailedInstallationStatusForAllBackendsAsync(PythonEnvironmentInfo pythonInfo)
+    {
+        JObject result = [];
+        try
+        {
+            JObject sttStatus = await GetDetailedInstallationStatusAsync(pythonInfo, ServiceConfiguration.BackendType.STT);
+            JObject ttsStatus = await GetDetailedInstallationStatusAsync(pythonInfo, ServiceConfiguration.BackendType.TTS);
+            // Merge the results
+            foreach (KeyValuePair<string, JToken> kvp in sttStatus)
+            {
+                result[kvp.Key] = kvp.Value;
+            }
+            foreach (KeyValuePair<string, JToken> kvp in ttsStatus)
+            {
+                result[kvp.Key] = kvp.Value;
+            }
+            return result;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] Error getting detailed installation status for all backends: {ex.Message}");
             return result;
         }
     }
 
     #region Private Methods
+
+    /// <summary>Gets package definitions for a specific backend type.</summary>
+    /// <param name="backendType">The backend type</param>
+    /// <returns>Array of package definitions</returns>
+    private static PackageDefinition[] GetPackageDefinitionsForBackend(ServiceConfiguration.BackendType backendType)
+    {
+        return backendType switch
+        {
+            ServiceConfiguration.BackendType.STT => STTPackageDefinitions,
+            ServiceConfiguration.BackendType.TTS => TTSPackageDefinitions,
+            _ => throw new ArgumentException($"Unknown backend type: {backendType}")
+        };
+    }
+
+    /// <summary>Internal method for installing backend dependencies with progress tracking.</summary>
+    /// <param name="pythonInfo">Python environment information</param>
+    /// <param name="backendType">Backend type to install for</param>
+    /// <param name="tracker">Progress tracker</param>
+    /// <param name="startProgress">Starting progress percentage</param>
+    /// <param name="progressRange">Progress range to use</param>
+    /// <returns>True if installation succeeded</returns>
+    private async Task<bool> InstallBackendDependenciesInternal(PythonEnvironmentInfo pythonInfo, ServiceConfiguration.BackendType backendType, ProgressTracker tracker, int startProgress, int progressRange)
+    {
+        try
+        {
+            tracker.UpdateProgress(startProgress, $"Analyzing {backendType} dependencies", "Checking current installation status...");
+            // Get current status
+            Dictionary<string, PackageStatus> statuses = await GetAllPackageStatusAsync(pythonInfo, backendType);
+            PackageDefinition[] allPackages = GetPackageDefinitionsForBackend(backendType);
+            List<PackageDefinition> packagesToInstall = [.. allPackages.Where(pkg => !statuses[pkg.Name].IsInstalled)];
+            if (packagesToInstall.Count == 0)
+            {
+                tracker.UpdateProgress(startProgress + progressRange, $"{backendType} dependencies already installed", "");
+                return true;
+            }
+            // Group packages by category for efficient batched installation
+            Dictionary<string, List<PackageDefinition>> packagesByCategory = packagesToInstall
+                .GroupBy(p => p.Category)
+                .ToDictionary(g => g.Key, g => g.ToList());
+            int currentProgress = startProgress + 5;
+            int progressPerCategory = (progressRange - 5) / packagesByCategory.Count;
+            foreach (KeyValuePair<string, List<PackageDefinition>> categoryGroup in packagesByCategory)
+            {
+                string category = categoryGroup.Key;
+                List<PackageDefinition> packages = categoryGroup.Value;
+                tracker.UpdateProgress(currentProgress, $"Installing {backendType} {category} packages", $"Installing {packages.Count} {category} packages...");
+                await InstallPackageCategoryAsync(pythonInfo, packages, tracker, currentProgress, progressPerCategory);
+                currentProgress += progressPerCategory;
+            }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[VoiceAssistant] {backendType} dependency installation failed: {ex.Message}");
+            throw;
+        }
+    }
 
     /// <summary>Gets all installed packages efficiently in a single call.</summary>
     private async Task<Dictionary<string, string>> GetInstalledPackagesAsync(PythonEnvironmentInfo pythonInfo)
@@ -285,18 +428,18 @@ public class DependencyInstaller
         try
         {
             string script = @"
-import subprocess, json, sys
-try:
-    pip_cmd = [sys.executable, '-m', 'pip', 'list', '--format=json']
-    pip_output = subprocess.check_output(pip_cmd, stderr=subprocess.STDOUT, universal_newlines=True)
-    packages = json.loads(pip_output)
-    for pkg in packages:
-        print(f'{pkg[""name""].lower()}={pkg[""version""]}')
-except Exception as e:
-    print(f'ERROR: {e}')
-";
+                import subprocess, json, sys
+                try:
+                    pip_cmd = [sys.executable, '-m', 'pip', 'list', '--format=json']
+                    pip_output = subprocess.check_output(pip_cmd, stderr=subprocess.STDOUT, universal_newlines=True)
+                    packages = json.loads(pip_output)
+                    for pkg in packages:
+                        print(f'{pkg[""name""].lower()}={pkg[""version""]}')
+                except Exception as e:
+                    print(f'ERROR: {e}')
+                ";
             string result = await RunPythonScriptAsync(pythonInfo.PythonPath, script);
-            Dictionary<string, string> installedPackages = new();
+            Dictionary<string, string> installedPackages = [];
             if (!string.IsNullOrEmpty(result))
             {
                 string[] lines = result.Split('\n', StringSplitOptions.RemoveEmptyEntries);
@@ -315,7 +458,7 @@ except Exception as e:
         catch (Exception ex)
         {
             Logs.Debug($"[VoiceAssistant] Error getting installed packages: {ex.Message}");
-            return new Dictionary<string, string>();
+            return [];
         }
     }
 
@@ -347,11 +490,11 @@ except Exception as e:
     }
 
     /// <summary>Installs packages by category using efficient batching where possible.</summary>
-    private async Task InstallPackageCategoryAsync(PythonEnvironmentInfo pythonInfo, List<PackageDefinition> packages, ProgressTracker tracker, int baseProgress, int progressRange)
+    public static async Task InstallPackageCategoryAsync(PythonEnvironmentInfo pythonInfo, List<PackageDefinition> packages, ProgressTracker tracker, int baseProgress, int progressRange)
     {
         // Separate packages that can be batched vs those that need individual installation
-        List<PackageDefinition> batchablePackages = packages.Where(p => !p.IsGitPackage && string.IsNullOrEmpty(p.CustomInstallArgs)).ToList();
-        List<PackageDefinition> individualPackages = packages.Except(batchablePackages).ToList();
+        List<PackageDefinition> batchablePackages = [.. packages.Where(p => !p.IsGitPackage && string.IsNullOrEmpty(p.CustomInstallArgs))];
+        List<PackageDefinition> individualPackages = [.. packages.Except(batchablePackages)];
         int currentProgress = baseProgress;
         int progressPerOperation = progressRange / (1 + individualPackages.Count + (batchablePackages.Count > 0 ? 1 : 0));
         // Install batchable packages together for efficiency
@@ -371,13 +514,13 @@ except Exception as e:
     }
 
     /// <summary>Installs multiple packages in a single pip command for efficiency.</summary>
-    private async Task InstallPackagesBatchAsync(PythonEnvironmentInfo pythonInfo, List<PackageDefinition> packages, ProgressTracker tracker)
+    public static async Task InstallPackagesBatchAsync(PythonEnvironmentInfo pythonInfo, List<PackageDefinition> packages, ProgressTracker tracker)
     {
         try
         {
             string packageList = string.Join(" ", packages.Select(p => $"\"{p.InstallName}\""));
             string arguments = $"-m pip install {packageList} --no-warn-script-location --progress-bar=on -v --prefer-binary";
-            await RunPipInstallAsync(pythonInfo, arguments, packages.Select(p => p.Name).ToArray(), tracker);
+            await RunPipInstallAsync(pythonInfo, arguments, [.. packages.Select(p => p.Name)], tracker);
             foreach (PackageDefinition package in packages)
             {
                 tracker.AddCompletedPackage(package.Name);
@@ -392,7 +535,7 @@ except Exception as e:
     }
 
     /// <summary>Installs a single package with custom handling for special cases.</summary>
-    private async Task InstallSinglePackageAsync(PythonEnvironmentInfo pythonInfo, PackageDefinition package, ProgressTracker tracker, int retryCount = 0, int maxRetries = 3)
+    public static async Task InstallSinglePackageAsync(PythonEnvironmentInfo pythonInfo, PackageDefinition package, ProgressTracker tracker, int retryCount = 0, int maxRetries = 3)
     {
         try
         {
@@ -420,7 +563,7 @@ except Exception as e:
     }
 
     /// <summary>Runs pip install command with comprehensive progress tracking and error handling.</summary>
-    private async Task RunPipInstallAsync(PythonEnvironmentInfo pythonInfo, string arguments, string[] packageNames, ProgressTracker tracker, int estimatedTimeMinutes = 5)
+    public static async Task RunPipInstallAsync(PythonEnvironmentInfo pythonInfo, string arguments, string[] packageNames, ProgressTracker tracker, int estimatedTimeMinutes = 5)
     {
         ProcessStartInfo startInfo = new()
         {
@@ -507,7 +650,7 @@ except Exception as e:
     }
 
     /// <summary>Provides efficient heartbeat updates during long installations.</summary>
-    private async Task StartHeartbeatAsync(string[] packageNames, ProgressTracker tracker, DateTime lastUpdateTime, CancellationToken cancellationToken, int estimatedTimeMinutes)
+    public static async Task StartHeartbeatAsync(string[] packageNames, ProgressTracker tracker, DateTime lastUpdateTime, CancellationToken cancellationToken, int estimatedTimeMinutes)
     {
         int heartbeatCount = 0;
         DateTime startTime = DateTime.Now;
@@ -554,7 +697,7 @@ except Exception as e:
     }
 
     /// <summary>Runs a Python script synchronously using SwarmUI's environment setup.</summary>
-    private string RunPythonScriptSync(string pythonPath, string script)
+    private static string RunPythonScriptSync(string pythonPath, string script)
     {
         try
         {
@@ -604,7 +747,7 @@ except Exception as e:
     }
 
     /// <summary>Runs a Python script asynchronously.</summary>
-    private async Task<string> RunPythonScriptAsync(string pythonPath, string script)
+    public async Task<string> RunPythonScriptAsync(string pythonPath, string script)
     {
         return await Task.Run(() => RunPythonScriptSync(pythonPath, script));
     }

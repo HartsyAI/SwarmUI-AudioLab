@@ -48,14 +48,14 @@ public static class VoiceParameters
 
     /// <summary>Return confidence scores</summary>
     public static readonly T2IRegisteredParam<bool> STTReturnConfidence = T2IParamTypes.Register<bool>(new(
-        "Return Confidence", true, "Include confidence scores in STT results",
+        "Return Confidence", "", "Include confidence scores in STT results",
         Group: STTGroup, OrderPriority: 4,
         VisibleNormally: false, FeatureFlag: "voice_stt_advanced"
     ));
 
     /// <summary>Return alternative transcriptions</summary>
     public static readonly T2IRegisteredParam<bool> STTReturnAlternatives = T2IParamTypes.Register<bool>(new(
-        "Return Alternatives", false, "Include alternative transcriptions in STT results",
+        "Return Alternatives", "", "Include alternative transcriptions in STT results",
         Group: STTGroup, OrderPriority: 5,
         VisibleNormally: false, FeatureFlag: "voice_stt_advanced"
     ));
@@ -103,7 +103,7 @@ public static class VoiceParameters
 
     /// <summary>Speech pitch control</summary>
     public static readonly T2IRegisteredParam<float> TTSPitch = T2IParamTypes.Register<float>(new(
-        "TTS Pitch", 1.0f, "Speech pitch multiplier (0.5 = lower, 2.0 = higher)",
+        "TTS Pitch", "1", "Speech pitch multiplier (0.5 = lower, 2.0 = higher)",
         Group: TTSGroup, OrderPriority: 6, Min: 0.25, Max: 3.0, Step: 0.1,
         VisibleNormally: false, FeatureFlag: "voice_tts_advanced"
     ));
@@ -121,7 +121,7 @@ public static class VoiceParameters
 
     /// <summary>Enable real-time processing</summary>
     public static readonly T2IRegisteredParam<bool> VoiceRealTime = T2IParamTypes.Register<bool>(new(
-        "Real-time Processing", false, "Enable real-time voice processing with streaming",
+        "Real-time Processing", "", "Enable real-time voice processing with streaming",
         Group: VoiceAdvancedGroup, OrderPriority: 1,
         VisibleNormally: false, FeatureFlag: "voice_realtime"
     ));
@@ -136,14 +136,14 @@ public static class VoiceParameters
 
     /// <summary>Noise reduction level</summary>
     public static readonly T2IRegisteredParam<float> VoiceNoiseReduction = T2IParamTypes.Register<float>(new(
-        "Noise Reduction", 0.5f, "Audio noise reduction level (0.0 = none, 1.0 = maximum)",
+        "Noise Reduction", "0.5", "Audio noise reduction level (0.0 = none, 1.0 = maximum)",
         Group: VoiceAdvancedGroup, OrderPriority: 3, Min: 0.0, Max: 1.0, Step: 0.1,
         VisibleNormally: false, FeatureFlag: "voice_advanced"
     ));
 
     /// <summary>Audio sample rate</summary>
     public static readonly T2IRegisteredParam<int> VoiceSampleRate = T2IParamTypes.Register<int>(new(
-        "Sample Rate", 22050, "Audio sample rate in Hz",
+        "Sample Rate", "22050", "Audio sample rate in Hz",
         Group: VoiceAdvancedGroup, OrderPriority: 4, Min: 8000, Max: 48000, Step: 1000,
         VisibleNormally: false, FeatureFlag: "voice_advanced",
         Examples: ["8000", "16000", "22050", "44100", "48000"]
@@ -151,21 +151,21 @@ public static class VoiceParameters
 
     /// <summary>Enable GPU acceleration</summary>
     public static readonly T2IRegisteredParam<bool> VoiceGPUAcceleration = T2IParamTypes.Register<bool>(new(
-        "GPU Acceleration", true, "Use GPU acceleration for voice processing when available",
+        "GPU Acceleration", "", "Use GPU acceleration for voice processing when available",
         Group: VoiceAdvancedGroup, OrderPriority: 5,
         VisibleNormally: false, FeatureFlag: "voice_advanced"
     ));
 
     /// <summary>Processing timeout</summary>
     public static readonly T2IRegisteredParam<int> VoiceTimeout = T2IParamTypes.Register<int>(new(
-        "Processing Timeout", 30, "Maximum processing time in seconds",
+        "Processing Timeout", "30", "Maximum processing time in seconds",
         Group: VoiceAdvancedGroup, OrderPriority: 6, Min: 5, Max: 300, Step: 5,
         VisibleNormally: false, FeatureFlag: "voice_advanced"
     ));
 
     /// <summary>Debug mode</summary>
     public static readonly T2IRegisteredParam<bool> VoiceDebugMode = T2IParamTypes.Register<bool>(new(
-        "Debug Mode", false, "Enable detailed logging for voice processing debugging",
+        "Debug Mode", "", "Enable detailed logging for voice processing debugging",
         Group: VoiceAdvancedGroup, OrderPriority: 7,
         VisibleNormally: false, FeatureFlag: "voice_debug"
     ));
@@ -178,13 +178,13 @@ public static class VoiceParameters
     public static void InitializeFeatureFlags()
     {
         // Register feature flags that control parameter visibility
-        T2IParamTypes.FakeTypeProviders.Add(new T2IParamType("voice_stt", "Speech to Text features", typeof(bool), false));
-        T2IParamTypes.FakeTypeProviders.Add(new T2IParamType("voice_tts", "Text to Speech features", typeof(bool), false));
-        T2IParamTypes.FakeTypeProviders.Add(new T2IParamType("voice_stt_advanced", "Advanced STT options", typeof(bool), false));
-        T2IParamTypes.FakeTypeProviders.Add(new T2IParamType("voice_tts_advanced", "Advanced TTS options", typeof(bool), false));
-        T2IParamTypes.FakeTypeProviders.Add(new T2IParamType("voice_realtime", "Real-time processing", typeof(bool), false));
-        T2IParamTypes.FakeTypeProviders.Add(new T2IParamType("voice_advanced", "Advanced voice options", typeof(bool), false));
-        T2IParamTypes.FakeTypeProviders.Add(new T2IParamType("voice_debug", "Voice debugging features", typeof(bool), false));
+        //T2IParamTypes.FakeTypeProviders.Add(new T2IParamType("voice_stt", "Speech to Text features", ""));
+        //T2IParamTypes.FakeTypeProviders.Add(new T2IParamType("voice_tts", "Text to Speech features", typeof(bool), false));
+        //T2IParamTypes.FakeTypeProviders.Add(new T2IParamType("voice_stt_advanced", "Advanced STT options", typeof(bool), false));
+        //T2IParamTypes.FakeTypeProviders.Add(new T2IParamType("voice_tts_advanced", "Advanced TTS options", typeof(bool), false));
+        //T2IParamTypes.FakeTypeProviders.Add(new T2IParamType("voice_realtime", "Real-time processing", typeof(bool), false));
+        //T2IParamTypes.FakeTypeProviders.Add(new T2IParamType("voice_advanced", "Advanced voice options", typeof(bool), false));
+        //T2IParamTypes.FakeTypeProviders.Add(new T2IParamType("voice_debug", "Voice debugging features", typeof(bool), false));
     }
 
     #endregion

@@ -1,6 +1,7 @@
 ﻿using SwarmUI.Utils;
 using System.Collections.Concurrent;
 using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
+using Newtonsoft.Json.Linq;
 
 namespace Hartsy.Extensions.VoiceAssistant.Progress;
 
@@ -19,14 +20,22 @@ public static class ProgressTracking
     /// <summary>Gets or creates a progress tracker for installation operations.</summary>
     public static ProgressTracker Installation => GetOrCreateTracker("installation", ProgressTracker.TrackerType.Installation);
 
-    /// <summary>Gets or creates a progress tracker for API operations.</summary>
-    public static ProgressTracker GetApiTracker(string operationId) => GetOrCreateTracker($"api_{operationId}", ProgressTracker.TrackerType.Api);
+    /// <summary>Gets or creates a progress tracker for Job operations.</summary>
+    public static ProgressTracker GetJobTracker(string operationId) => GetOrCreateTracker($"job_{operationId}", ProgressTracker.TrackerType.Job);
 
     /// <summary>Gets or creates a progress tracker for health check operations.</summary>
     public static ProgressTracker HealthCheck => GetOrCreateTracker("health_check", ProgressTracker.TrackerType.HealthCheck);
 
-    /// <summary>Creates a new health check tracker with custom id.</summary>
-    public static ProgressTracker CreateHealthCheckTracker(string id) => GetOrCreateTracker(id, ProgressTracker.TrackerType.HealthCheck);
+    /// <summary>Creates a new health check tracker with custom id and max attempts.</summary>
+    public static ProgressTracker CreateHealthCheckTracker(string id, int maxAttempts)
+    {
+        ProgressTracker tracker = GetOrCreateTracker(id, ProgressTracker.TrackerType.HealthCheck);
+        if (tracker.HealthCheck != null)
+        {
+            tracker.HealthCheck.MaxAttempts = maxAttempts;
+        }
+        return tracker;
+    }
 
     /// <summary>Gets or creates a tracker with the specified type.</summary>
     private static ProgressTracker GetOrCreateTracker(string id, ProgressTracker.TrackerType type)
@@ -66,21 +75,24 @@ public static class ProgressTracking
 }
 
 /// <summary>Modern unified progress tracker with specialized data based on type.</summary>
-public class ProgressTracker
+public class ProgressTracker(string id, ProgressTracker.TrackerType type)
 {
-    public enum TrackerType { Installation, Api, HealthCheck }
+    public enum TrackerType { Installation, Job, HealthCheck }
 
     private readonly object _lock = new();
     private volatile int _progress = 0;
     private volatile bool _isComplete = false;
     private volatile bool _hasError = false;
 
-    public string Id { get; }
-    public TrackerType Type { get; }
+    public string Id { get; } = id;
+    public TrackerType Type { get; } = type;
     public int Progress => _progress;
+    public int DownloadProgress => Installation?.DownloadProgress ?? 0;
     public string CurrentStep { get; private set; } = "";
+    public string CurrentPackage => Installation?.CurrentPackage ?? "";
     public string StatusMessage { get; private set; } = "";
     public bool IsComplete => _isComplete;
+    public List<string> CompletedPackages => [.. Installation.CompletedPackages];
     public bool HasError => _hasError;
     public string ErrorMessage { get; private set; } = "";
     public DateTime StartTime { get; } = DateTime.UtcNow;
@@ -88,22 +100,9 @@ public class ProgressTracker
     public TimeSpan Duration => (EndTime ?? DateTime.UtcNow) - StartTime;
 
     // Specialized data - only populated for relevant tracker types
-    public InstallationData Installation { get; }
-    public ApiData Api { get; }
-    public HealthCheckData HealthCheck { get; }
-
-    // Convenience properties for backward compatibility
-    public int DownloadProgress => Installation?.DownloadProgress ?? 0;
-    public int MaxAttempts => HealthCheck?.MaxAttempts ?? 30;
-
-    public ProgressTracker(string id, TrackerType type)
-    {
-        Id = id;
-        Type = type;
-        Installation = type == TrackerType.Installation ? new InstallationData() : null;
-        Api = type == TrackerType.Api ? new ApiData() : null;
-        HealthCheck = type == TrackerType.HealthCheck ? new HealthCheckData() : null;
-    }
+    public InstallationProgressResponse Installation { get; } = type == TrackerType.Installation ? new InstallationProgressResponse() : null;
+    public JobData Job { get; } = type == TrackerType.Job ? new JobData() : null;
+    public BackendHealthInfo HealthCheck { get; } = type == TrackerType.HealthCheck ? new BackendHealthInfo() : null;
 
     /// <summary>Updates progress with flexible parameters for all tracker types.</summary>
     public void UpdateProgress(int progress, string step, string message = "", string package = "", int downloadProgress = 0)
@@ -118,7 +117,7 @@ public class ProgressTracker
             if (Installation != null && !string.IsNullOrEmpty(package))
             {
                 Installation.CurrentPackage = package;
-                Installation.DownloadProgress = Math.Clamp(downloadProgress, 0, 100);
+                Installation.Progress = Math.Clamp(downloadProgress, 0, 100);
             }
 
             LogProgress();
@@ -137,7 +136,7 @@ public class ProgressTracker
             // Handle type-specific error logic
             if (Installation != null && !string.IsNullOrEmpty(Installation.CurrentPackage))
             {
-                Installation.FailedPackages.Add(Installation.CurrentPackage);
+                Installation.FailedPackages += Installation.CurrentPackage;
             }
 
             Logs.Error($"[VoiceAssistant] {Type} error [{Id}]: {errorMessage}");
@@ -181,7 +180,7 @@ public class ProgressTracker
 
             // Reset type-specific data
             Installation?.Reset();
-            Api?.Reset();
+            Job?.Reset();
             HealthCheck?.Reset();
         }
     }
@@ -194,22 +193,10 @@ public class ProgressTracker
         {
             if (!Installation.CompletedPackages.Contains(package))
             {
-                Installation.CompletedPackages.Add(package);
-                if (!string.IsNullOrEmpty(version))
-                {
-                    Installation.PackageVersions[package] = version;
-                }
+                List<string> completedPackagesList = [.. Installation.CompletedPackages];
+                completedPackagesList.Add(package);
+                Installation.CompletedPackages = [.. completedPackagesList];
             }
-        }
-    }
-
-    /// <summary>Sets operation name (API trackers only).</summary>
-    public void SetOperation(string operation)
-    {
-        if (Api == null) return;
-        lock (_lock)
-        {
-            Api.Operation = operation ?? "";
         }
     }
 
@@ -223,17 +210,6 @@ public class ProgressTracker
             HealthCheck.MaxAttempts = maxAttempts;
             _progress = (int)((double)HealthCheck.AttemptCount / maxAttempts * 100);
             StatusMessage = $"Health check attempt {HealthCheck.AttemptCount}/{maxAttempts}";
-        }
-    }
-
-    /// <summary>Marks health check as healthy and complete.</summary>
-    public void SetHealthy()
-    {
-        if (HealthCheck == null) return;
-        lock (_lock)
-        {
-            HealthCheck.IsHealthy = true;
-            SetComplete("Backend is healthy");
         }
     }
 
@@ -258,21 +234,15 @@ public class ProgressTracker
         }
     }
 
-    /// <summary>Backward compatibility alias for ToInstallationResponse.</summary>
-    public InstallationProgressResponse ToResponse() => ToInstallationResponse();
-
-    /// <summary>Backward compatibility alias for IncrementHealthAttempt.</summary>
-    public void IncrementAttempt(int maxAttempts = 30) => IncrementHealthAttempt(maxAttempts);
-
     private void LogProgress()
     {
-        string logLevel = Type == TrackerType.Api ? "Debug" : "Info";
+        string logLevel = Type == TrackerType.Job ? "Debug" : "Info";
         string message = Type switch
         {
             TrackerType.Installation when Installation != null =>
                 $"Installation Progress: {Progress}% - {CurrentStep} - {Installation.CurrentPackage} ({Installation.DownloadProgress}%) - {StatusMessage}",
-            TrackerType.Api =>
-                $"API Progress [{Id}]: {Progress}% - {CurrentStep} - {StatusMessage}",
+            TrackerType.Job =>
+                $"Job Progress [{Id}]: {Progress}% - {CurrentStep} - {StatusMessage}",
             TrackerType.HealthCheck =>
                 $"Health Check Progress: {Progress}% - {CurrentStep} - {StatusMessage}",
             _ =>
@@ -287,50 +257,5 @@ public class ProgressTracker
         {
             Logs.Info($"[VoiceAssistant] {message}");
         }
-    }
-}
-
-/// <summary>Installation-specific tracking data.</summary>
-public class InstallationData
-{
-    public string CurrentPackage { get; set; } = "";
-    public int DownloadProgress { get; set; } = 0;
-    public List<string> CompletedPackages { get; } = [];
-    public List<string> FailedPackages { get; } = [];
-    public Dictionary<string, string> PackageVersions { get; } = new();
-
-    public void Reset()
-    {
-        CurrentPackage = "";
-        DownloadProgress = 0;
-        CompletedPackages.Clear();
-        FailedPackages.Clear();
-        PackageVersions.Clear();
-    }
-}
-
-/// <summary>API-specific tracking data.</summary>
-public class ApiData
-{
-    public string Operation { get; set; } = "";
-
-    public void Reset()
-    {
-        Operation = "";
-    }
-}
-
-/// <summary>Health check-specific tracking data.</summary>
-public class HealthCheckData
-{
-    public int AttemptCount { get; set; } = 0;
-    public int MaxAttempts { get; set; } = 30;
-    public bool IsHealthy { get; set; } = false;
-
-    public void Reset()
-    {
-        AttemptCount = 0;
-        MaxAttempts = 30;
-        IsHealthy = false;
     }
 }

@@ -1,7 +1,8 @@
+using Hartsy.Extensions.VoiceAssistant.Services;
+using Hartsy.Extensions.VoiceAssistant.WebAPI;
+using Newtonsoft.Json.Linq;
 using SwarmUI.Core;
 using SwarmUI.Utils;
-using Hartsy.Extensions.VoiceAssistant.WebAPI;
-using Hartsy.Extensions.VoiceAssistant.Services;
 using System.IO;
 
 namespace Hartsy.Extensions.VoiceAssistant;
@@ -39,63 +40,56 @@ public class VoiceAssistant : Extension
     /// This runs after SwarmUI core is ready, allowing us to register API calls and validate setup.</summary>
     public override async void OnInit()
     {
-        try
-        {
-            if (!ServiceConfiguration.ValidateConfiguration())
-            {
-                Logs.Error("[VoiceAssistant] Configuration validation failed. Extension may not function properly.");
-            }
-            VoiceAssistantAPI.Register(); // Register API endpoints to use in Swarm
-            PythonBackendClient.Instance.Initialize(); // Initialize the HTTP client for the python backend
-            // Prepare the Python backend service (doesn't start the service)
-            await PythonBackendService.Instance.InitializeAsync();
-        }
-        catch (Exception ex)
-        {
-            Logs.Error($"[VoiceAssistant] Failed to initialize extension: {ex.Message}");
-        }
+        VoiceAssistantAPI.Register(); // Register API endpoints to use in Swarm
     }
 
-    /// <summary>Extension shutdown - cleans up resources and stops services.
-    /// Ensures graceful termination of background processes and proper resource disposal.</summary>
-    public override void OnShutdown()
+    /// <summary>Creates a standardized error response for API endpoints.</summary>
+    public static JObject CreateErrorResponse(string message, string errorCode = null, Exception exception = null)
     {
-        try
+        JObject response = new()
         {
-            // Stop all services with timeout to prevent hanging
-            var shutdownTask = Task.Run(async () =>
+            ["success"] = false,
+            ["error"] = message,
+            ["timestamp"] = DateTime.UtcNow.ToString("O")
+        };
+        if (!string.IsNullOrEmpty(errorCode))
+        {
+            response["error_code"] = errorCode;
+        }
+        if (exception != null)
+        {
+            Logs.Error($"[VoiceAssistant] Exception details: {exception}");
+            response["error_type"] = exception.GetType().Name;
+        }
+        return response;
+    }
+
+    /// <summary>Creates a standardized success response for API endpoints.</summary>
+    public static JObject CreateSuccessResponse(object data = null, string message = null)
+    {
+        JObject response = new()
+        {
+            ["success"] = true,
+            ["timestamp"] = DateTime.UtcNow.ToString("O")
+        };
+        if (!string.IsNullOrEmpty(message))
+        {
+            response["message"] = message;
+        }
+        if (data != null)
+        {
+            if (data is JObject jObject)
             {
-                try
+                foreach (JProperty property in jObject.Properties())
                 {
-                    await PythonBackendService.Instance.StopAsync();
-                    Logs.Debug("[VoiceAssistant] Python backend stopped successfully");
+                    response[property.Name] = property.Value;
                 }
-                catch (Exception ex)
-                {
-                    Logs.Error($"[VoiceAssistant] Error stopping backend during shutdown: {ex.Message}");
-                }
-                try
-                {
-                    PythonBackendClient.Instance.Dispose();
-                    Logs.Debug("[VoiceAssistant] HTTP client disposed");
-                }
-                catch (Exception ex)
-                {
-                    Logs.Error($"[VoiceAssistant] Error disposing HTTP client: {ex.Message}");
-                }
-            });
-            // Wait for shutdown with timeout
-            if (!shutdownTask.Wait(TimeSpan.FromSeconds(15)))
-            {
-                Logs.Warning("[VoiceAssistant] Shutdown timed out, forcing termination");
-                // Force kill any remaining processes
-                PythonBackendService.Instance.ForceStop();
             }
-            Logs.Info("[VoiceAssistant] Extension shutdown completed");
+            else
+            {
+                response["data"] = JToken.FromObject(data);
+            }
         }
-        catch (Exception ex)
-        {
-            Logs.Error($"[VoiceAssistant] Critical error during shutdown: {ex.Message}");
-        }
+        return response;
     }
 }

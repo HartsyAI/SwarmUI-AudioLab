@@ -1,22 +1,43 @@
+using FreneticUtilities.FreneticDataSyntax;
 using Hartsy.Extensions.VoiceAssistant.Services;
 using Hartsy.Extensions.VoiceAssistant.WebAPI;
+using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
+using Microsoft.Extensions.Hosting;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Backends;
 using SwarmUI.Core;
 using SwarmUI.Text2Image;
 using SwarmUI.Utils;
 using System.IO;
-using System.Net.Http;
 using System.Text;
 
 namespace Hartsy.Extensions.VoiceAssistant.SwarmBackends;
 
-/// <summary>Speech-to-Text backend for SwarmUI integration.
-/// Processes audio input through STT service and returns transcription results.</summary>
+/// <summary>Speech-to-Text backend for SwarmUI integration using direct Python function calls. Processes audio input through STT service and returns transcription results. Also serves as the STT service for API endpoints.</summary>
 public class STTBackend : VoiceAssistantBackends
 {
+    /// <summary>Configuration settings for the STT Swarm Backend</summary>
+    public class STTBackendSettings : AutoConfiguration
+    {
+        /// <summary>Debug mode setting</summary>
+        [AutoConfiguration.ConfigComment("Enable debug logging for voice processing")]
+        public bool DebugMode = false;
+
+        /// <summary>Preferred STT engine</summary>
+        [AutoConfiguration.ConfigComment("Preferred STT engine (realtimestt, whisper, etc.)")]
+        public string PreferredEngine = "realtimestt";
+    }
+
+    public static readonly Lazy<STTBackend> InstanceLazy = new(() => new STTBackend());
+    public static STTBackend Instance => InstanceLazy.Value;
+
+    private readonly object _serviceLock = new();
+    private readonly DependencyInstaller _dependencyInstaller;
+    private bool _isStarted = false;
+    private bool _isInitialized = false;
+
     /// <summary>Backend type identifier</summary>
-    public override string BackendType => "STT";
+    protected override ServiceConfiguration.BackendType BackendType => ServiceConfiguration.BackendType.STT;
 
     /// <summary>Supported features for STT processing</summary>
     public override IEnumerable<string> SupportedFeatures =>
@@ -27,6 +48,25 @@ public class STTBackend : VoiceAssistantBackends
         "real_time_processing"
     ];
 
+    /// <summary>Gets whether the STT backend is currently available</summary>
+    public bool IsBackendRunning
+    {
+        get
+        {
+            lock (_serviceLock)
+            {
+                return _isStarted && _isInitialized;
+            }
+        }
+    }
+
+    /// <summary>Private constructor for singleton pattern</summary>
+    public STTBackend()
+    {
+        _dependencyInstaller = new DependencyInstaller();
+        Logs.Debug("[STTBackend] STT backend instance created");
+    }
+
     /// <summary>Initialize the STT backend</summary>
     public override async Task Init()
     {
@@ -34,8 +74,15 @@ public class STTBackend : VoiceAssistantBackends
         {
             Logs.Info("[STTBackend] Initializing Speech-to-Text backend");
 
-            // Ensure Python backend service is running
-            await EnsureBackendServiceAsync();
+            // Start the STT backend service (handles dependencies and initialization)
+            BackendStatusResponse startResult = await StartAsync();
+
+            if (!startResult.Success)
+            {
+                Logs.Warning($"[STTBackend] STT backend service failed to start: {startResult.Message}");
+                Status = BackendStatus.ERRORED;
+                return;
+            }
 
             Status = BackendStatus.RUNNING;
             Logs.Info("[STTBackend] STT backend initialized successfully");
@@ -48,27 +95,205 @@ public class STTBackend : VoiceAssistantBackends
         }
     }
 
+    /// <summary>Starts the STT backend with dependency checking and Python initialization.</summary>
+    /// <param name="forceRestart">Whether to restart if already running</param>
+    /// <returns>Backend status response</returns>
+    public async Task<BackendStatusResponse> StartAsync(bool forceRestart = false)
+    {
+        lock (_serviceLock)
+        {
+            if (_isStarted && !forceRestart)
+            {
+                return new BackendStatusResponse
+                {
+                    Success = true,
+                    Message = "STT backend already running",
+                    Status = "running",
+                    BackendType = "STT",
+                    IsRunning = true
+                };
+            }
+        }
+
+        try
+        {
+            Logs.Info("[STTBackend] Starting STT backend service");
+
+            // Step 1: Check dependencies
+            bool dependenciesReady = await EnsureDependenciesAsync();
+            if (!dependenciesReady)
+            {
+                return new BackendStatusResponse
+                {
+                    Success = false,
+                    Message = "STT dependencies not available",
+                    Status = "error",
+                    BackendType = "STT"
+                };
+            }
+
+            // Step 2: Initialize Python voice processor
+            bool processorReady = await InitializePythonProcessorAsync();
+            if (!processorReady)
+            {
+                return new BackendStatusResponse
+                {
+                    Success = false,
+                    Message = "Failed to initialize Python voice processor",
+                    Status = "error",
+                    BackendType = "STT"
+                };
+            }
+
+            lock (_serviceLock)
+            {
+                _isStarted = true;
+                _isInitialized = true;
+            }
+
+            Logs.Info("[STTBackend] STT backend started successfully");
+
+            return new BackendStatusResponse
+            {
+                Success = true,
+                Message = "STT backend started successfully",
+                Status = "running",
+                BackendType = "STT",
+                IsRunning = true
+            };
+        }
+        catch (Exception ex)
+        {
+            lock (_serviceLock)
+            {
+                _isStarted = false;
+                _isInitialized = false;
+            }
+
+            Logs.Error($"[STTBackend] Failed to start STT backend: {ex.Message}");
+
+            return new BackendStatusResponse
+            {
+                Success = false,
+                Message = $"STT backend startup failed: {ex.Message}",
+                Status = "error",
+                BackendType = "STT",
+                ErrorDetails = ex.ToString()
+            };
+        }
+    }
+
+    /// <summary>Stops the STT backend gracefully.</summary>
+    /// <returns>Backend status response</returns>
+    public async Task<BackendStatusResponse> StopAsync()
+    {
+        try
+        {
+            Logs.Info("[STTBackend] Stopping STT backend service");
+
+            // Cleanup Python resources
+            await PythonVoiceProcessor.Instance.CleanupAsync();
+
+            lock (_serviceLock)
+            {
+                _isStarted = false;
+                _isInitialized = false;
+            }
+
+            return new BackendStatusResponse
+            {
+                Success = true,
+                Message = "STT backend stopped successfully",
+                Status = "stopped",
+                BackendType = "STT",
+                IsRunning = false
+            };
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[STTBackend] Failed to stop STT backend: {ex.Message}");
+
+            return new BackendStatusResponse
+            {
+                Success = false,
+                Message = $"Failed to stop STT backend: {ex.Message}",
+                Status = "error",
+                BackendType = "STT",
+                ErrorDetails = ex.ToString()
+            };
+        }
+    }
+
+    /// <summary>Gets the current status of the STT backend.</summary>
+    /// <returns>Backend status response</returns>
+    public async Task<BackendStatusResponse> GetStatusAsync()
+    {
+        try
+        {
+            bool isRunning = IsBackendRunning;
+            string status = isRunning ? "running" : "stopped";
+
+            BackendStatusResponse response = new()
+            {
+                Success = true,
+                Status = status,
+                BackendType = "STT",
+                IsRunning = isRunning
+            };
+
+            // Add health information if running
+            if (isRunning)
+            {
+                try
+                {
+                    bool isHealthy = await PythonVoiceProcessor.Instance.IsSTTAvailableAsync();
+                    response.IsHealthy = isHealthy;
+                    response.Message = isHealthy ? "STT backend running and healthy" : "STT backend running but unhealthy";
+                }
+                catch (Exception ex)
+                {
+                    response.IsHealthy = false;
+                    response.Message = $"STT backend status check failed: {ex.Message}";
+                }
+            }
+            else
+            {
+                response.Message = "STT backend not running";
+            }
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[STTBackend] Failed to get STT backend status: {ex.Message}");
+
+            return new BackendStatusResponse
+            {
+                Success = false,
+                Message = $"Failed to get STT backend status: {ex.Message}",
+                Status = "error",
+                BackendType = "STT",
+                ErrorDetails = ex.ToString()
+            };
+        }
+    }
+
     /// <summary>Load STT model - maps to language/engine configuration</summary>
     public override async Task<bool> LoadModel(T2IModel model, T2IParamInput input)
     {
         try
         {
-            Logs.Info($"[STTBackend] Loading STT model: {model.Name}");
+            Logs.Verbose($"[STTBackend] Loading STT model: {model.Name}");
 
-            // Map model name to STT configuration
-            string language = GetLanguageFromModel(model.Name);
-            string engine = GetEngineFromModel(model.Name);
-
-            // Validate model availability with Python backend
-            var isAvailable = await ValidateModelAsync(engine, language);
-            if (!isAvailable)
+            // Validate model compatibility
+            if (!IsModelCompatible(model))
             {
-                Logs.Error($"[STTBackend] Model not available: {model.Name}");
+                Logs.Warning($"[STTBackend] Model not compatible: {model.Name}");
                 return false;
             }
 
             CurrentModelName = model.Name;
-            Logs.Info($"[STTBackend] Successfully loaded STT model: {model.Name}");
+            Logs.Verbose($"[STTBackend] Successfully loaded STT model: {model.Name}");
             return true;
         }
         catch (Exception ex)
@@ -78,82 +303,74 @@ public class STTBackend : VoiceAssistantBackends
         }
     }
 
-    /// <summary>Process audio input and generate transcription</summary>
+    /// <summary>Process STT input when the generate button is pressed</summary>
     public override async Task<Image[]> Generate(T2IParamInput input)
     {
         try
         {
-            Logs.Info("[STTBackend] Processing STT generation request");
-
-            // Extract audio data from input - this is where audio would be provided
-            var audioData = ExtractAudioFromInput(input);
+            // Extract audio data from input parameters
+            byte[] audioData = ExtractAudioFromInput(input);
             if (audioData == null || audioData.Length == 0)
             {
-                throw new ArgumentException("No audio data provided for STT processing");
+                Logs.Warning("[STTBackend] No audio data found in input parameters");
+                return [];
             }
 
-            // Get STT parameters
-            string language = GetSTTLanguage(input);
-            var options = GetSTTOptions(input);
+            // Process transcription with options
+            STTOptions options = GetSTTOptions(input);
+            STTResponse result = await ProcessSTTAsync(audioData, GetSTTLanguage(input), options);
 
-            // Process through STT service
-            var transcriptionResult = await ProcessSTTAsync(audioData, language, options);
-
-            // Convert transcription result to SwarmUI output format
-            var result = await CreateSTTResultAsync(transcriptionResult, input);
-
-            Logs.Info($"[STTBackend] STT processing completed: '{transcriptionResult.Transcription}'");
-            return result;
+            // Create SwarmUI-compatible result
+            return await CreateSTTResultAsync(result, input);
         }
         catch (Exception ex)
         {
-            Logs.Error($"[STTBackend] STT generation failed: {ex.Message}");
+            Logs.Error($"[STTBackend] Error during STT processing: {ex.Message}");
             throw;
         }
     }
 
-    /// <summary>Process audio through STT service</summary>
-    private async Task<STTResult> ProcessSTTAsync(byte[] audioData, string language, STTOptions options)
+    /// <summary>Process audio through STT service using direct Python calls</summary>
+    public static async Task<STTResponse> ProcessSTTAsync(byte[] audioData, string language, STTOptions options)
     {
         try
         {
-            // Convert audio to base64 for Python backend
+            // Convert audio to base64 for Python processing
             string audioBase64 = Convert.ToBase64String(audioData);
 
-            // Prepare request payload
-            var requestPayload = new
+            // Prepare STT request
+            STTRequest request = new()
             {
-                audio_data = audioBase64,
-                language = language,
-                options = new
+                AudioData = audioBase64,
+                Language = language,
+                Options = new STTOptions
                 {
-                    return_confidence = options.ReturnConfidence,
-                    return_alternatives = options.ReturnAlternatives,
-                    model_preference = options.ModelPreference,
-                    custom = options.CustomOptions
+                    ReturnConfidence = options.ReturnConfidence,
+                    ReturnAlternatives = options.ReturnAlternatives,
+                    ModelPreference = options.ModelPreference,
+                    CustomOptions = options.CustomOptions
                 }
             };
 
-            // Call Python STT service
-            string requestJson = Newtonsoft.Json.JsonConvert.SerializeObject(requestPayload);
-            var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
+            // Call STT service directly
+            JObject response = await PythonVoiceProcessor.Instance.ProcessSTTAsync(request);
 
-            var response = await HttpClient.PostAsync($"{ServiceConfiguration.BackendUrl}/stt/transcribe", content);
-            response.EnsureSuccessStatusCode();
-
-            string responseJson = await response.Content.ReadAsStringAsync();
-            var responseData = JObject.Parse(responseJson);
+            if (response["success"]?.Value<bool>() != true)
+            {
+                string error = response["error"]?.ToString() ?? "Unknown STT error";
+                throw new Exception($"STT processing failed: {error}");
+            }
 
             // Parse STT response
-            return new STTResult
+            return new STTResponse
             {
-                Success = responseData["success"]?.Value<bool>() ?? false,
-                Transcription = responseData["transcription"]?.ToString() ?? string.Empty,
-                Confidence = responseData["confidence"]?.Value<float>() ?? 0.0f,
-                Language = responseData["language"]?.ToString() ?? language,
-                ProcessingTime = responseData["processing_time"]?.Value<double>() ?? 0.0,
-                Alternatives = responseData["alternatives"]?.ToObject<string[]>() ?? Array.Empty<string>(),
-                Metadata = responseData["metadata"]?.ToObject<Dictionary<string, object>>() ?? new Dictionary<string, object>()
+                Success = true,
+                Transcription = response["transcription"]?.ToString() ?? string.Empty,
+                Confidence = response["confidence"]?.Value<float>() ?? 0.0f,
+                Language = response["language"]?.ToString() ?? language,
+                ProcessingTime = response["processing_time"]?.Value<double>() ?? 0.0,
+                Alternatives = response["alternatives"]?.ToObject<string[]>() ?? [],
+                Metadata = response["metadata"]?.ToObject<Dictionary<string, object>>() ?? []
             };
         }
         catch (Exception ex)
@@ -164,7 +381,7 @@ public class STTBackend : VoiceAssistantBackends
     }
 
     /// <summary>Extract audio data from SwarmUI input parameters</summary>
-    private byte[] ExtractAudioFromInput(T2IParamInput input)
+    public byte[] ExtractAudioFromInput(T2IParamInput input)
     {
         try
         {
@@ -185,7 +402,7 @@ public class STTBackend : VoiceAssistantBackends
             }
 
             // Check for audio file in user data directory
-            var audioFile = GetLatestUserAudioFile();
+            string audioFile = GetLatestUserAudioFile();
             if (audioFile != null && File.Exists(audioFile))
             {
                 return File.ReadAllBytes(audioFile);
@@ -201,7 +418,7 @@ public class STTBackend : VoiceAssistantBackends
     }
 
     /// <summary>Get STT language from input parameters</summary>
-    private string GetSTTLanguage(T2IParamInput input)
+    public string GetSTTLanguage(T2IParamInput input)
     {
         return input.TryGet(VoiceParameters.STTLanguage, out string language)
             ? language
@@ -209,7 +426,7 @@ public class STTBackend : VoiceAssistantBackends
     }
 
     /// <summary>Get STT processing options from input parameters</summary>
-    private STTOptions GetSTTOptions(T2IParamInput input)
+    public STTOptions GetSTTOptions(T2IParamInput input)
     {
         return new STTOptions
         {
@@ -220,17 +437,17 @@ public class STTBackend : VoiceAssistantBackends
     }
 
     /// <summary>Create SwarmUI-compatible result from STT transcription</summary>
-    private async Task<Image[]> CreateSTTResultAsync(STTResult sttResult, T2IParamInput input)
+    public async Task<Image[]> CreateSTTResultAsync(STTResponse sttResult, T2IParamInput input)
     {
         try
         {
             // Create a text image with the transcription result
-            var resultImage = await CreateTranscriptionImageAsync(sttResult);
+            Image resultImage = await CreateTranscriptionImageAsync(sttResult);
 
             // Also save transcription as text file
             await SaveTranscriptionAsync(sttResult, input);
 
-            return new[] { resultImage };
+            return [resultImage];
         }
         catch (Exception ex)
         {
@@ -240,10 +457,10 @@ public class STTBackend : VoiceAssistantBackends
     }
 
     /// <summary>Create an image containing the transcription text for display</summary>
-    private async Task<Image> CreateTranscriptionImageAsync(STTResult sttResult)
+    public async Task<Image> CreateTranscriptionImageAsync(STTResponse sttResult)
     {
         // Create a simple text image showing the transcription
-        var textContent = $"Transcription ({sttResult.Confidence:P1} confidence):\n\n{sttResult.Transcription}";
+        string textContent = $"Transcription ({sttResult.Confidence:P1} confidence):\n\n{sttResult.Transcription}";
 
         if (sttResult.Alternatives?.Length > 0)
         {
@@ -251,8 +468,8 @@ public class STTBackend : VoiceAssistantBackends
         }
 
         // Create a simple text-based image (you could enhance this with proper text rendering)
-        var textBytes = Encoding.UTF8.GetBytes(textContent);
-        var metadata = new Dictionary<string, object>
+        byte[] textBytes = Encoding.UTF8.GetBytes(textContent);
+        Dictionary<string, object> metadata = new()
         {
             ["transcription"] = sttResult.Transcription,
             ["confidence"] = sttResult.Confidence,
@@ -260,22 +477,21 @@ public class STTBackend : VoiceAssistantBackends
             ["processing_time"] = sttResult.ProcessingTime,
             ["backend"] = "STT"
         };
-
-        return new Image(textBytes, "transcription.txt", "text/plain", metadata);
+        return new Image("", Image.ImageType.VIDEO, ""); // TODO: Replace once we figure out how to create T2I Image with audio
     }
 
     /// <summary>Save transcription result to file system</summary>
-    private async Task SaveTranscriptionAsync(STTResult sttResult, T2IParamInput input)
+    public static async Task SaveTranscriptionAsync(STTResponse sttResult, T2IParamInput input)
     {
         try
         {
-            var timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
-            var filename = $"transcription_{timestamp}.json";
-            var outputPath = Path.Combine(ServiceConfiguration.ExtensionDirectory, "outputs", filename);
+            string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+            string filename = $"transcription_{timestamp}.json";
+            string outputPath = Path.Combine(ServiceConfiguration.ExtensionDirectory, "outputs", filename);
 
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
 
-            var outputData = new
+            object outputData = new
             {
                 timestamp = DateTime.UtcNow,
                 transcription = sttResult.Transcription,
@@ -297,100 +513,12 @@ public class STTBackend : VoiceAssistantBackends
         }
     }
 
-    /// <summary>Ensure the Python backend service is running and healthy</summary>
-    private async Task EnsureBackendServiceAsync()
-    {
-        try
-        {
-            if (!PythonBackendService.Instance.IsBackendRunning)
-            {
-                Logs.Info("[STTBackend] Starting Python backend service");
-                var startResult = await PythonBackendService.Instance.StartAsync();
-                if (!startResult.Success)
-                {
-                    throw new InvalidOperationException($"Failed to start Python backend: {startResult.Message}");
-                }
-            }
-
-            // Verify STT service is available
-            var healthInfo = await PythonBackendService.Instance.GetHealthAsync();
-            if (!healthInfo.IsHealthy || !healthInfo.Services.GetValueOrDefault("stt", false))
-            {
-                throw new InvalidOperationException("STT service is not available in Python backend");
-            }
-        }
-        catch (Exception ex)
-        {
-            Logs.Error($"[STTBackend] Backend service check failed: {ex.Message}");
-            throw;
-        }
-    }
-
-    /// <summary>Validate that the specified model is available</summary>
-    private async Task<bool> ValidateModelAsync(string engine, string language)
-    {
-        try
-        {
-            var response = await HttpClient.GetAsync($"{ServiceConfiguration.BackendUrl}/status");
-            if (!response.IsSuccessStatusCode)
-                return false;
-
-            var statusJson = await response.Content.ReadAsStringAsync();
-            var status = JObject.Parse(statusJson);
-
-            return status["services"]?["stt"]?["available"]?.Value<bool>() ?? false;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    /// <summary>Map model name to language code</summary>
-    private string GetLanguageFromModel(string modelName)
-    {
-        // Extract language from model name (e.g., "whisper-large-en" -> "en-US")
-        var modelLower = modelName.ToLowerInvariant();
-
-        if (modelLower.Contains("-en")) return "en-US";
-        if (modelLower.Contains("-es")) return "es-ES";
-        if (modelLower.Contains("-fr")) return "fr-FR";
-        if (modelLower.Contains("-de")) return "de-DE";
-        if (modelLower.Contains("-it")) return "it-IT";
-        if (modelLower.Contains("-pt")) return "pt-BR";
-        if (modelLower.Contains("-ru")) return "ru-RU";
-        if (modelLower.Contains("-ja")) return "ja-JP";
-        if (modelLower.Contains("-ko")) return "ko-KR";
-        if (modelLower.Contains("-zh")) return "zh-CN";
-
-        return ServiceConfiguration.DefaultLanguage;
-    }
-
-    /// <summary>Map model name to STT engine</summary>
-    private string GetEngineFromModel(string modelName)
-    {
-        var modelLower = modelName.ToLowerInvariant();
-
-        if (modelLower.Contains("whisper")) return "whisper";
-        if (modelLower.Contains("wav2vec")) return "wav2vec2";
-        if (modelLower.Contains("deepspeech")) return "deepspeech";
-
-        return "whisper"; // Default to whisper
-    }
-
     /// <summary>Extract audio data from image metadata (if stored there)</summary>
-    private byte[] ExtractAudioFromImage(Image image)
+    public byte[] ExtractAudioFromImage(Image image)
     {
         try
         {
-            if (image.Metadata?.TryGetValue("audio_data", out object audioData) == true)
-            {
-                if (audioData is string base64Audio)
-                    return Convert.FromBase64String(base64Audio);
-                if (audioData is byte[] audioBytes)
-                    return audioBytes;
-            }
-
+            // TODO: Implement proper audio extraction logic based on how audio is stored in image metadata
             return null;
         }
         catch (Exception ex)
@@ -401,11 +529,11 @@ public class STTBackend : VoiceAssistantBackends
     }
 
     /// <summary>Get the latest audio file from user data directory</summary>
-    private string GetLatestUserAudioFile()
+    public static string GetLatestUserAudioFile()
     {
         try
         {
-            var audioDir = Path.Combine(ServiceConfiguration.ExtensionDirectory, "audio_input");
+            string audioDir = Path.Combine(ServiceConfiguration.ExtensionDirectory, "audio_input");
             if (!Directory.Exists(audioDir))
                 return null;
 
@@ -426,9 +554,9 @@ public class STTBackend : VoiceAssistantBackends
     {
         try
         {
-            // Signal Python backend to free STT model memory if needed
-            await HttpClient.PostAsync($"{ServiceConfiguration.BackendUrl}/stt/free_memory", null);
-            return true;
+            // Cleanup Python resources
+            JObject result = await PythonVoiceProcessor.Instance.CleanupAsync();
+            return result["success"]?.Value<bool>() ?? false;
         }
         catch (Exception ex)
         {
@@ -443,6 +571,10 @@ public class STTBackend : VoiceAssistantBackends
         try
         {
             Logs.Info("[STTBackend] Shutting down STT backend");
+
+            // Stop the STT backend service
+            await StopAsync();
+
             Status = BackendStatus.DISABLED;
         }
         catch (Exception ex)
@@ -450,25 +582,89 @@ public class STTBackend : VoiceAssistantBackends
             Logs.Error($"[STTBackend] Error during shutdown: {ex.Message}");
         }
     }
-}
 
-/// <summary>STT processing result</summary>
-public class STTResult
-{
-    public bool Success { get; set; }
-    public string Transcription { get; set; } = string.Empty;
-    public float Confidence { get; set; }
-    public string Language { get; set; } = string.Empty;
-    public double ProcessingTime { get; set; }
-    public string[] Alternatives { get; set; } = Array.Empty<string>();
-    public Dictionary<string, object> Metadata { get; set; } = new();
-}
+    #region Service Management Methods
 
-/// <summary>STT processing options</summary>
-public class STTOptions
-{
-    public bool ReturnConfidence { get; set; } = true;
-    public bool ReturnAlternatives { get; set; } = false;
-    public string ModelPreference { get; set; } = "accuracy";
-    public Dictionary<string, object> CustomOptions { get; set; } = new();
+    /// <summary>Ensures STT dependencies are available.</summary>
+    /// <returns>True if dependencies are ready</returns>
+    private async Task<bool> EnsureDependenciesAsync()
+    {
+        try
+        {
+            // Detect Python environment
+            PythonEnvironmentInfo pythonInfo = _dependencyInstaller.DetectPythonEnvironment();
+            if (pythonInfo?.IsValid != true)
+            {
+                Logs.Error("[STTBackend] Python environment not detected");
+                return false;
+            }
+
+            // Check if dependencies are already installed
+            bool dependenciesInstalled = await _dependencyInstaller.CheckDependenciesInstalledAsync(pythonInfo, ServiceConfiguration.BackendType.STT);
+
+            if (!dependenciesInstalled)
+            {
+                Logs.Warning("[STTBackend] STT dependencies not installed - voice transcription will not be available");
+                Logs.Info("[STTBackend] Install STT dependencies using the SwarmUI extension manager or manually install RealtimeSTT");
+                return false;
+            }
+
+            Logs.Info("[STTBackend] STT dependencies verified");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[STTBackend] Error checking STT dependencies: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>Initialize the Python voice processor.</summary>
+    /// <returns>True if initialization succeeded</returns>
+    public async Task<bool> InitializePythonProcessorAsync()
+    {
+        try
+        {
+            // Initialize the processor
+            bool initialized = await PythonVoiceProcessor.Instance.InitializeAsync();
+            if (!initialized)
+            {
+                Logs.Error("[STTBackend] Failed to initialize Python voice processor");
+                return false;
+            }
+
+            // Initialize voice services with STT-specific config
+            JObject config = new()
+            {
+                ["stt_engine"] = "realtimestt"
+            };
+
+            JObject result = await PythonVoiceProcessor.Instance.InitializeVoiceServicesAsync(config);
+
+            if (result["success"]?.Value<bool>() != true)
+            {
+                string error = result["error"]?.ToString() ?? "Unknown initialization error";
+                Logs.Error($"[STTBackend] Voice services initialization failed: {error}");
+                return false;
+            }
+
+            // Check if STT is available
+            bool sttAvailable = await PythonVoiceProcessor.Instance.IsSTTAvailableAsync();
+            if (!sttAvailable)
+            {
+                Logs.Warning("[STTBackend] STT service not available in Python processor");
+                return false;
+            }
+
+            Logs.Info("[STTBackend] Python voice processor initialized successfully");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[STTBackend] Error initializing Python processor: {ex.Message}");
+            return false;
+        }
+    }
+
+    #endregion
 }
