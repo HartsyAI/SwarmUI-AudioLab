@@ -6,9 +6,13 @@ Just the essentials - no overengineering.
 
 import json
 import sys
+import os
 import traceback
 import time
 from typing import Dict, Any, Optional
+
+# Add current directory to sys.path to ensure local modules can be imported
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Import our simple engine modules
 from stt_engines import get_stt_engine, get_available_stt_engines

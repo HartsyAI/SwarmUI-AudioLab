@@ -1,5 +1,6 @@
 using SwarmUI.Utils;
 using System.IO;
+using System.Linq;
 
 namespace Hartsy.Extensions.VoiceAssistant.Services;
 
@@ -46,72 +47,11 @@ public static class ServiceConfiguration
         TTS
     }
 
-    // STT Dependencies
-    public static readonly string[] STTPackages =
-    [
-        // Core API Server Requirements
-        "fastapi>=0.104.0",
-        "uvicorn[standard]>=0.24.0",
-        "python-multipart>=0.0.6",
-        "pydantic>=2.5.0",
-        "httpx>=0.25.0",
-        "websockets==15.0.1",
-        
-        // Core Audio/ML Dependencies
-        "numpy>=1.26.0",
-        "scipy==1.15.2",
-        "soundfile==0.13.1",
-        "librosa==0.11.0",
-        
-        // PyTorch dependencies (required by RealtimeSTT)
-        "torch==2.6.0+cu126",
-        "torchaudio==2.6.0+cu126",
-        
-        // STT Engine Dependencies
-        "RealtimeSTT",
-        "PyAudio==0.2.14",
-        "faster-whisper==1.1.1",
-        "pvporcupine==1.9.5",
-        "webrtcvad-wheels==2.0.14",
-        "openwakeword>=0.4.0",
-        "halo==0.0.31",
-        "log_symbols>=0.0.14",
-        "spinners>=0.0.24",
-        "termcolor>=1.1.0",
-        "colorama>=0.3.9"
-    ];
+    // STT Dependencies - Reference to DependencyInstaller's single source of truth
+    public static string[] STTPackages { get => DependencyInstaller.GetSTTPackagesAsStrings(); }
 
-    // TTS Dependencies
-    public static readonly string[] TTSPackages =
-    [
-        // Core API Server Requirements
-        "fastapi>=0.104.0",
-        "uvicorn[standard]>=0.24.0",
-        "python-multipart>=0.0.6",
-        "pydantic>=2.5.0",
-        "httpx>=0.25.0",
-        "websockets==15.0.1",
-        
-        // Core Audio/ML Dependencies
-        "numpy>=1.26.0",
-        "scipy==1.15.2",
-        "soundfile==0.13.1",
-        "librosa==0.11.0",
-        
-        // PyTorch dependencies (required by Chatterbox TTS)
-        "torch==2.6.0+cu126",
-        "torchvision==0.21.0+cu126",
-        "torchaudio==2.6.0+cu126",
-        
-        // TTS Engine Dependencies
-        "git+https://github.com/JarodMica/chatterbox.git",
-        "s3tokenizer",
-        "transformers==4.46.3",
-        "diffusers==0.29.0",
-        "resemble-perth==1.0.1",
-        "conformer==0.3.2",
-        "safetensors==0.5.3"
-    ];
+    // TTS Dependencies - Reference to DependencyInstaller's single source of truth
+    public static string[] TTSPackages { get => DependencyInstaller.GetTTSPackagesAsStrings(); }
 
     // Supported Languages
     public static readonly string[] SupportedLanguages =

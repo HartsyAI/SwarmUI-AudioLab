@@ -22,7 +22,10 @@ public class VoiceAssistant : Extension
     {
         try
         {
-            ServiceConfiguration.ExtensionDirectory = Path.Combine("src", "Extensions", "SwarmUI-VoiceAssistant");
+            // Use absolute path to ensure Python process can find the files regardless of working directory
+            string projectRoot = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", ".."));
+            ServiceConfiguration.ExtensionDirectory = Path.GetFullPath(Path.Combine(projectRoot, "Extensions", "SwarmUI-VoiceAssistant"));
+            Logs.Info($"[VoiceAssistant] Setting extension directory to absolute path: {ServiceConfiguration.ExtensionDirectory}");
             Logs.Debug($"[VoiceAssistant] Extension directory: {ServiceConfiguration.ExtensionDirectory}");
             ScriptFiles.Add("Assets/voice-api.js");
             ScriptFiles.Add("Assets/voice-ui.js");

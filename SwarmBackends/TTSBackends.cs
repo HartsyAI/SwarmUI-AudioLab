@@ -1,4 +1,4 @@
-﻿using FreneticUtilities.FreneticDataSyntax;
+using FreneticUtilities.FreneticDataSyntax;
 using Hartsy.Extensions.VoiceAssistant.Services;
 using Hartsy.Extensions.VoiceAssistant.WebAPI;
 using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
@@ -650,9 +650,34 @@ public class TTSBackend : VoiceAssistantBackends
             bool dependenciesInstalled = await _dependencyInstaller.CheckDependenciesInstalledAsync(pythonInfo, ServiceConfiguration.BackendType.TTS);
             if (!dependenciesInstalled)
             {
-                Logs.Warning("[TTSBackend] TTS dependencies not installed - voice synthesis will not be available");
-                Logs.Info("[TTSBackend] Install TTS dependencies using the SwarmUI extension manager or manually install Chatterbox TTS");
-                return false;
+                Logs.Info("[TTSBackend] TTS dependencies not installed. Attempting to install them now...");
+                try
+                {
+                    // Attempt to install the missing dependencies
+                    bool installSuccess = await _dependencyInstaller.InstallDependenciesAsync(pythonInfo, ServiceConfiguration.BackendType.TTS);
+                    if (!installSuccess)
+                    {
+                        Logs.Warning("[TTSBackend] TTS dependencies installation failed - voice synthesis will not be available");
+                        Logs.Info("[TTSBackend] Install TTS dependencies using the SwarmUI extension manager or manually install Chatterbox TTS");
+                        return false;
+                    }
+                    
+                    // Verify that installation was successful - force a refresh of the cached package list
+                    dependenciesInstalled = await _dependencyInstaller.CheckDependenciesInstalledAsync(pythonInfo, ServiceConfiguration.BackendType.TTS, forceRefresh: true);
+                    if (!dependenciesInstalled)
+                    {
+                        Logs.Warning("[TTSBackend] TTS dependencies verification failed after installation - voice synthesis may not work correctly");
+                        return false;
+                    }
+                    
+                    Logs.Info("[TTSBackend] Successfully installed TTS dependencies");
+                }
+                catch (Exception ex)
+                {
+                    Logs.Error($"[TTSBackend] Error installing TTS dependencies: {ex.Message}");
+                    Logs.Info("[TTSBackend] Install TTS dependencies using the SwarmUI extension manager or manually install Chatterbox TTS");
+                    return false;
+                }
             }
             Logs.Info("[TTSBackend] TTS dependencies verified");
             return true;

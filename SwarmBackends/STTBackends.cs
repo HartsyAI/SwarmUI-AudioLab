@@ -604,9 +604,34 @@ public class STTBackend : VoiceAssistantBackends
 
             if (!dependenciesInstalled)
             {
-                Logs.Warning("[STTBackend] STT dependencies not installed - voice transcription will not be available");
-                Logs.Info("[STTBackend] Install STT dependencies using the SwarmUI extension manager or manually install RealtimeSTT");
-                return false;
+                Logs.Info("[STTBackend] STT dependencies not installed. Attempting to install them now...");
+                try
+                {
+                    // Attempt to install the missing dependencies
+                    bool installSuccess = await _dependencyInstaller.InstallDependenciesAsync(pythonInfo, ServiceConfiguration.BackendType.STT);
+                    if (!installSuccess)
+                    {
+                        Logs.Warning("[STTBackend] STT dependencies installation failed - voice transcription will not be available");
+                        Logs.Info("[STTBackend] Install STT dependencies using the SwarmUI extension manager or manually install RealtimeSTT");
+                        return false;
+                    }
+                    
+                    // Verify that installation was successful - force a refresh of the cached package list
+                    dependenciesInstalled = await _dependencyInstaller.CheckDependenciesInstalledAsync(pythonInfo, ServiceConfiguration.BackendType.STT, forceRefresh: true);
+                    if (!dependenciesInstalled)
+                    {
+                        Logs.Warning("[STTBackend] STT dependencies verification failed after installation - voice transcription may not work correctly");
+                        return false;
+                    }
+                    
+                    Logs.Info("[STTBackend] Successfully installed STT dependencies");
+                }
+                catch (Exception ex)
+                {
+                    Logs.Error($"[STTBackend] Error installing STT dependencies: {ex.Message}");
+                    Logs.Info("[STTBackend] Install STT dependencies using the SwarmUI extension manager or manually install RealtimeSTT");
+                    return false;
+                }
             }
 
             Logs.Info("[STTBackend] STT dependencies verified");

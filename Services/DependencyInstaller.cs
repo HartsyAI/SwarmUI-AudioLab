@@ -11,48 +11,61 @@ namespace Hartsy.Extensions.VoiceAssistant.Services;
 /// <summary>Service for installing and managing Python dependencies for STT and TTS backends separately.</summary>
 public class DependencyInstaller
 {
-    private readonly object _installLock = new();
-    private volatile bool _isInstalling = false;
+    private static readonly object _installLock = new();
+    private bool _isInstalling = false;
+    private Dictionary<string, string>? _cachedInstalledPackages = null;
+
+    /// <summary>Gets all TTS packages as string array for backward compatibility</summary>
+    /// <returns>Array of TTS package strings in pip install format</returns>
+    public static string[] GetTTSPackagesAsStrings()
+    {
+        return TTSPackageDefinitions.Select(p => p.IsGitPackage ? p.InstallName : $"{p.Name}{(string.IsNullOrEmpty(p.CustomInstallArgs) ? "" : " ")}")
+            .ToArray();
+    }
+
+    /// <summary>Gets all STT packages as string array for backward compatibility</summary>
+    /// <returns>Array of STT package strings in pip install format</returns>
+    public static string[] GetSTTPackagesAsStrings()
+    {
+        return STTPackageDefinitions.Select(p => p.IsGitPackage ? p.InstallName : $"{p.Name}{(string.IsNullOrEmpty(p.CustomInstallArgs) ? "" : " ")}")
+            .ToArray();
+    }
+
     public bool IsInstalling => _isInstalling;
 
     /// <summary>Complete dependency definitions for STT and TTS backends.</summary>
-    private static readonly PackageDefinition[] STTPackageDefinitions =
+    /// <summary>The STT package definitions</summary>
+    public static readonly PackageDefinition[] STTPackageDefinitions =
     [
         // Core packages for STT
-        new() { Name = "fastapi>=0.104.0", InstallName = "fastapi>=0.104.0", ImportName = "fastapi", Category = "core" },
-        new() { Name = "uvicorn[standard]>=0.24.0", InstallName = "uvicorn[standard]>=0.24.0", ImportName = "uvicorn", Category = "core" },
-        new() { Name = "websockets==15.0.1", InstallName = "websockets==15.0.1", ImportName = "websockets", Category = "core" },
-        new() { Name = "scipy==1.15.2", InstallName = "scipy==1.15.2", ImportName = "scipy", Category = "core" },
+        new() { Name = "scipy==1.14.1", InstallName = "scipy==1.14.1", ImportName = "scipy", Category = "core" },
         new() { Name = "soundfile==0.13.1", InstallName = "soundfile==0.13.1", ImportName = "soundfile", Category = "core" },
-        new() { Name = "librosa==0.11.0", InstallName = "librosa==0.11.0", ImportName = "librosa", Category = "core" },
-        // PyTorch packages for STT
+        new() { Name = "numpy<2.0.0", InstallName = "numpy<2.0.0", ImportName = "numpy", Category = "core" },
+        // PyTorch packages for STT with CUDA support
         new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        // STT engine
+        // STT engine dependencies from official requirements-gpu.txt
         new() { Name = "RealtimeSTT", InstallName = "RealtimeSTT", ImportName = "RealtimeSTT", Category = "stt" },
         new() { Name = "PyAudio==0.2.14", InstallName = "PyAudio==0.2.14", ImportName = "pyaudio", Category = "stt" },
-        new() { Name = "faster-whisper==1.1.1", InstallName = "faster-whisper==1.1.1", ImportName = "faster_whisper", Category = "stt" },
+        new() { Name = "faster-whisper==1.1.0", InstallName = "faster-whisper==1.1.0", ImportName = "faster_whisper", Category = "stt" },
         new() { Name = "pvporcupine==1.9.5", InstallName = "pvporcupine==1.9.5", ImportName = "pvporcupine", Category = "stt" },
         new() { Name = "webrtcvad-wheels==2.0.14", InstallName = "webrtcvad-wheels==2.0.14", ImportName = "webrtcvad", Category = "stt" },
         new() { Name = "openwakeword>=0.4.0", InstallName = "openwakeword>=0.4.0", ImportName = "openwakeword", Category = "stt" },
         new() { Name = "halo==0.0.31", InstallName = "halo==0.0.31", ImportName = "halo", Category = "stt", EstimatedInstallTimeMinutes = 8 }
     ];
 
-    private static readonly PackageDefinition[] TTSPackageDefinitions =
+    /// <summary>The TTS package definitions</summary>
+    public static readonly PackageDefinition[] TTSPackageDefinitions =
     [
-        // Core packages for TTS
-        new() { Name = "fastapi>=0.104.0", InstallName = "fastapi>=0.104.0", ImportName = "fastapi", Category = "core" },
-        new() { Name = "uvicorn[standard]>=0.24.0", InstallName = "uvicorn[standard]>=0.24.0", ImportName = "uvicorn", Category = "core" },
-        new() { Name = "websockets==15.0.1", InstallName = "websockets==15.0.1", ImportName = "websockets", Category = "core" },
-        new() { Name = "scipy==1.15.2", InstallName = "scipy==1.15.2", ImportName = "scipy", Category = "core" },
-        new() { Name = "soundfile==0.13.1", InstallName = "soundfile==0.13.1", ImportName = "soundfile", Category = "core" },
+        // Core packages for TTS based on official pyproject.toml
+        new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
         new() { Name = "librosa==0.11.0", InstallName = "librosa==0.11.0", ImportName = "librosa", Category = "core" },
-        // PyTorch packages for TTS
+        // PyTorch packages for TTS with CUDA support
         new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchvision==0.21.0+cu126", InstallName = "torchvision==0.21.0+cu126", ImportName = "torchvision", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        // TTS engine
-        new() { Name = "chatterbox-tts", InstallName = "git+https://github.com/JarodMica/chatterbox.git", ImportName = "chatterbox", Category = "tts", IsGitPackage = true, EstimatedInstallTimeMinutes = 15, AlternativeNames = ["chatterbox", "resemble", "resemblevoice"] },
+        // TTS engine - using list of possible import names that could be registered by the package
+        new() { Name = "chatterbox-tts", InstallName = "git+https://github.com/JarodMica/chatterbox.git", ImportName = "chatterbox", Category = "tts", IsGitPackage = true, EstimatedInstallTimeMinutes = 15, AlternativeNames = ["chatterbox_tts", "resemble", "resemblevoice", "chatterbox", "chatterbox.preprocessing", "chatterbox.models"] },
         new() { Name = "s3tokenizer", InstallName = "s3tokenizer", ImportName = "s3tokenizer", Category = "tts" },
         new() { Name = "transformers==4.46.3", InstallName = "transformers==4.46.3", ImportName = "transformers", Category = "tts" },
         new() { Name = "diffusers==0.29.0", InstallName = "diffusers==0.29.0", ImportName = "diffusers", Category = "tts" },
@@ -92,8 +105,9 @@ public class DependencyInstaller
     /// <summary>Gets comprehensive status of all packages for a specific backend type with a single efficient check.</summary>
     /// <param name="pythonInfo">Python environment information</param>
     /// <param name="backendType">The backend type to check dependencies for</param>
+    /// <param name="forceRefresh">If true, forces a refresh of the package cache</param>
     /// <returns>Dictionary of package statuses by name</returns>
-    public async Task<Dictionary<string, PackageStatus>> GetAllPackageStatusAsync(PythonEnvironmentInfo pythonInfo, ServiceConfiguration.BackendType backendType)
+    public async Task<Dictionary<string, PackageStatus>> GetAllPackageStatusAsync(PythonEnvironmentInfo pythonInfo, ServiceConfiguration.BackendType backendType, bool forceRefresh = false)
     {
         Dictionary<string, PackageStatus> results = [];
         if (pythonInfo?.IsValid != true)
@@ -103,8 +117,8 @@ public class DependencyInstaller
         try
         {
             PackageDefinition[] packageDefinitions = GetPackageDefinitionsForBackend(backendType);
-            // Get all installed packages in one call for efficiency
-            Dictionary<string, string> installedPackages = await GetInstalledPackagesAsync(pythonInfo);
+            // Get all installed packages in one call for efficiency with optional cache refresh
+            Dictionary<string, string> installedPackages = await GetInstalledPackagesAsync(pythonInfo, forceRefresh);
             // Check each package definition
             foreach (PackageDefinition package in packageDefinitions)
             {
@@ -119,6 +133,7 @@ public class DependencyInstaller
                 {
                     status.IsInstalled = true;
                     status.DetectedVersion = installedPackages.GetValueOrDefault(package.ImportName.ToLower(), "unknown");
+                    Logs.Debug($"[VoiceAssistant] Package {package.Name} found via pip with primary import name: {package.ImportName}");
                 }
                 else
                 {
@@ -129,15 +144,23 @@ public class DependencyInstaller
                         {
                             status.IsInstalled = true;
                             status.DetectedVersion = installedPackages.GetValueOrDefault(altName.ToLower(), "unknown");
+                            Logs.Debug($"[VoiceAssistant] Package {package.Name} found via pip with alternative import name: {altName}");
                             break;
                         }
                     }
                 }
+                
                 // Special handling for git packages that might not show up in pip list
                 if (!status.IsInstalled && package.IsGitPackage)
                 {
                     status.IsInstalled = await CheckGitPackageAsync(pythonInfo, package);
                 }
+                
+                if (!status.IsInstalled)
+                {
+                    Logs.Warning($"[VoiceAssistant] {backendType} package {package.Name} (import: {package.ImportName}) NOT FOUND");
+                }
+                
                 results[package.Name] = status;
             }
             return results;
@@ -152,14 +175,15 @@ public class DependencyInstaller
     /// <summary>Checks if all required dependencies are installed efficiently for a specific backend type.</summary>
     /// <param name="pythonInfo">Python environment information</param>
     /// <param name="backendType">The backend type to check dependencies for</param>
+    /// <param name="forceRefresh">If true, forces a refresh of the package cache</param>
     /// <returns>True if all dependencies are installed</returns>
-    public async Task<bool> CheckDependenciesInstalledAsync(PythonEnvironmentInfo pythonInfo, ServiceConfiguration.BackendType backendType)
+    public async Task<bool> CheckDependenciesInstalledAsync(PythonEnvironmentInfo pythonInfo, ServiceConfiguration.BackendType backendType, bool forceRefresh = false)
     {
         if (pythonInfo?.IsValid != true)
             return false;
         try
         {
-            Dictionary<string, PackageStatus> statuses = await GetAllPackageStatusAsync(pythonInfo, backendType);
+            Dictionary<string, PackageStatus> statuses = await GetAllPackageStatusAsync(pythonInfo, backendType, forceRefresh);
             return statuses.Values.All(status => status.IsInstalled);
         }
         catch (Exception ex)
@@ -413,55 +437,191 @@ public class DependencyInstaller
                 await InstallPackageCategoryAsync(pythonInfo, packages, tracker, currentProgress, progressPerCategory);
                 currentProgress += progressPerCategory;
             }
+            
+            // Invalidate package cache after successful installation
+            InvalidatePackageCache();
             return true;
         }
         catch (Exception ex)
         {
-            Logs.Error($"[VoiceAssistant] {backendType} dependency installation failed: {ex.Message}");
-            throw;
+            Logs.Error($"[VoiceAssistant] {backendType} dependency installation error: {ex.Message}");
+            return false;
         }
     }
 
-    /// <summary>Gets all installed packages efficiently in a single call.</summary>
-    private async Task<Dictionary<string, string>> GetInstalledPackagesAsync(PythonEnvironmentInfo pythonInfo)
+    /// <summary>Gets all installed packages efficiently in a single call with caching support.</summary>
+    /// <param name="pythonInfo">Python environment information</param>
+    /// <param name="forceRefresh">If true, forces a refresh of the cache</param>
+    /// <returns>Dictionary of installed packages by name</returns>
+    private async Task<Dictionary<string, string>> GetInstalledPackagesAsync(PythonEnvironmentInfo pythonInfo, bool forceRefresh = false)
     {
+        // Return cached results if available and not forcing a refresh
+        if (_cachedInstalledPackages != null && !forceRefresh)
+        {
+            Logs.Debug($"[VoiceAssistant] Using cached package list with {_cachedInstalledPackages.Count} entries");
+            return _cachedInstalledPackages;
+        }
+        
+        Logs.Info($"[VoiceAssistant] {(forceRefresh ? "Forcing refresh of" : "Getting")} Python package list");
+        
         try
         {
-            string script = @"
-                import subprocess, json, sys
-                try:
-                    pip_cmd = [sys.executable, '-m', 'pip', 'list', '--format=json']
-                    pip_output = subprocess.check_output(pip_cmd, stderr=subprocess.STDOUT, universal_newlines=True)
-                    packages = json.loads(pip_output)
-                    for pkg in packages:
-                        print(f'{pkg[""name""].lower()}={pkg[""version""]}')
-                except Exception as e:
-                    print(f'ERROR: {e}')
-                ";
+            // Use a more robust script that directly accesses pip's internal API to get installed packages
+            // This avoids potential issues with subprocess and parsing
+            string script = @"import sys, json
+try:
+    # Use importlib to avoid potential import errors
+    import importlib.metadata
+    
+    # Get all installed distributions
+    distributions = list(importlib.metadata.distributions())
+    
+    # Print as JSON for easier parsing
+    package_data = {}
+    for dist in distributions:
+        try:
+            package_data[dist.metadata['Name'].lower()] = dist.version
+        except Exception as e:
+            print(f'ERROR processing {dist}: {e}')
+    
+    print('PACKAGE_LIST_START')
+    print(json.dumps(package_data))
+    print('PACKAGE_LIST_END')
+    
+except Exception as e:
+    print(f'CRITICAL_ERROR: {e}')
+    # Fallback to pip list
+    try:
+        import subprocess
+        pip_cmd = [sys.executable, '-m', 'pip', 'list', '--format=json']
+        pip_output = subprocess.check_output(pip_cmd, stderr=subprocess.STDOUT, universal_newlines=True)
+        print('PIP_LIST_FALLBACK_START')
+        print(pip_output)
+        print('PIP_LIST_FALLBACK_END')
+    except Exception as e2:
+        print(f'FATAL_ERROR: Could not get package list: {e2}')
+";
+                
             string result = await RunPythonScriptAsync(pythonInfo.PythonPath, script);
+            Logs.Debug($"[VoiceAssistant] Raw Python output length: {result?.Length ?? 0}");
+            
             Dictionary<string, string> installedPackages = [];
+            
             if (!string.IsNullOrEmpty(result))
             {
-                string[] lines = result.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-                foreach (string line in lines)
+                // Process the result with proper error handling
+                try 
                 {
-                    if (line.StartsWith("ERROR:")) continue;
-                    string[] parts = line.Split('=', 2);
-                    if (parts.Length == 2)
+                    // Check for the JSON output markers
+                    if (result.Contains("PACKAGE_LIST_START") && result.Contains("PACKAGE_LIST_END"))
                     {
-                        installedPackages[parts[0].Trim().ToLower()] = parts[1].Trim();
+                        int startIndex = result.IndexOf("PACKAGE_LIST_START") + "PACKAGE_LIST_START".Length;
+                        int endIndex = result.IndexOf("PACKAGE_LIST_END");
+                        string jsonContent = result.Substring(startIndex, endIndex - startIndex).Trim();
+                        
+                        Logs.Debug($"[VoiceAssistant] Found package JSON data: {jsonContent.Length} characters");
+                        
+                        var packageData = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, string>>(jsonContent);
+                        if (packageData != null)
+                        {
+                            installedPackages = packageData;
+                            Logs.Info($"[VoiceAssistant] Successfully parsed {installedPackages.Count} packages from metadata");
+                        }
+                    }
+                    // Check for fallback output
+                    else if (result.Contains("PIP_LIST_FALLBACK_START") && result.Contains("PIP_LIST_FALLBACK_END"))
+                    {
+                        int startIndex = result.IndexOf("PIP_LIST_FALLBACK_START") + "PIP_LIST_FALLBACK_START".Length;
+                        int endIndex = result.IndexOf("PIP_LIST_FALLBACK_END");
+                        string jsonContent = result.Substring(startIndex, endIndex - startIndex).Trim();
+                        
+                        Logs.Debug($"[VoiceAssistant] Found pip list fallback data: {jsonContent.Length} characters");
+                        
+                        var packageArray = Newtonsoft.Json.JsonConvert.DeserializeObject<List<Dictionary<string, string>>>(jsonContent);
+                        if (packageArray != null)
+                        {
+                            foreach (var pkg in packageArray)
+                            {
+                                if (pkg.TryGetValue("name", out string name) && pkg.TryGetValue("version", out string version))
+                                {
+                                    installedPackages[name.ToLower()] = version;
+                                }
+                            }
+                            Logs.Info($"[VoiceAssistant] Successfully parsed {installedPackages.Count} packages from pip list");
+                        }
+                    }
+                    // No markers found, try the old line-by-line approach as last resort
+                    else
+                    {
+                        Logs.Warning("[VoiceAssistant] No package data markers found, falling back to line parsing");
+                        string[] lines = result.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                        
+                        foreach (string line in lines)
+                        {
+                            if (line.StartsWith("ERROR:") || line.StartsWith("CRITICAL_ERROR:") || line.StartsWith("FATAL_ERROR:"))
+                            {
+                                Logs.Warning($"[VoiceAssistant] Error in package listing script: {line}");
+                                continue;
+                            }
+                            
+                            string[] parts = line.Split('=', 2);
+                            if (parts.Length == 2)
+                            {
+                                installedPackages[parts[0].Trim().ToLower()] = parts[1].Trim();
+                            }
+                        }
+                        
+                        Logs.Debug($"[VoiceAssistant] Parsed {installedPackages.Count} packages from line-by-line parsing");
+                    }
+                }
+                catch (Exception parseEx)
+                {
+                    Logs.Error($"[VoiceAssistant] Error parsing package data: {parseEx.Message}");
+                    // Include the raw output for debugging
+                    Logs.Debug($"[VoiceAssistant] Raw output was: {result}");
+                }
+            }
+            else
+            {
+                Logs.Warning("[VoiceAssistant] Empty result from Python package listing script");
+            }
+            
+            // Log some package names for verification
+            if (installedPackages.Count > 0)
+            {
+                var samplePackages = installedPackages.Take(Math.Min(5, installedPackages.Count));
+                Logs.Debug($"[VoiceAssistant] Sample packages: {string.Join(", ", samplePackages.Select(p => $"{p.Key}={p.Value}"))}");
+                
+                // Check for common TTS packages explicitly
+                var importantPackages = new[] { "torch", "numpy", "transformers", "librosa", "chatterbox" };
+                foreach (var pkg in importantPackages)
+                {
+                    if (installedPackages.ContainsKey(pkg))
+                    {
+                        Logs.Debug($"[VoiceAssistant] Found important package: {pkg}={installedPackages[pkg]}");
                     }
                 }
             }
+            
+            // Cache the results
+            _cachedInstalledPackages = installedPackages;
+            Logs.Info($"[VoiceAssistant] Updated package cache with {installedPackages.Count} entries");
             return installedPackages;
         }
         catch (Exception ex)
         {
-            Logs.Debug($"[VoiceAssistant] Error getting installed packages: {ex.Message}");
+            Logs.Error($"[VoiceAssistant] Error getting installed packages: {ex.Message}");
             return [];
         }
     }
 
+    /// <summary>Invalidates the package cache to ensure fresh package information after installations</summary>
+    private void InvalidatePackageCache()
+    {
+        _cachedInstalledPackages = null;
+        Logs.Debug("[VoiceAssistant] Package cache invalidated");
+    }
+    
     /// <summary>Checks if a package is installed using normalized name matching.</summary>
     private static bool IsPackageInstalled(string packageName, Dictionary<string, string> installedPackages)
     {
@@ -478,9 +638,41 @@ public class DependencyInstaller
     {
         try
         {
+            // First try the primary import name
             string script = $"import importlib.util; print('installed' if importlib.util.find_spec('{package.ImportName}') is not None else 'not_found')";
             string result = await RunPythonScriptAsync(pythonInfo.PythonPath, script);
-            return result?.Trim() == "installed";
+            if (result?.Trim() == "installed")
+            {
+                Logs.Debug($"[VoiceAssistant] Git package {package.Name} found with primary import name: {package.ImportName}");
+                return true;
+            }
+            
+            // Try all alternative names
+            foreach (string altName in package.AlternativeNames)
+            {
+                script = $"import importlib.util; print('installed' if importlib.util.find_spec('{altName}') is not None else 'not_found')";
+                result = await RunPythonScriptAsync(pythonInfo.PythonPath, script);
+                if (result?.Trim() == "installed")
+                {
+                    Logs.Debug($"[VoiceAssistant] Git package {package.Name} found with alternative import name: {altName}");
+                    return true;
+                }
+            }
+            
+            // Try a direct import for chatterbox special case
+            if (package.Name == "chatterbox-tts")
+            {
+                script = "try:\n    import chatterbox\n    print('installed')\nexcept ImportError:\n    print('not_found')";
+                result = await RunPythonScriptAsync(pythonInfo.PythonPath, script);
+                if (result?.Trim() == "installed")
+                {
+                    Logs.Debug($"[VoiceAssistant] Chatterbox package found via direct import");
+                    return true;
+                }
+            }
+            
+            Logs.Warning($"[VoiceAssistant] Git package {package.Name} not found with any import names");
+            return false;
         }
         catch (Exception ex)
         {
@@ -727,12 +919,43 @@ public class DependencyInstaller
                 }
                 PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[VoiceAssistant] ");
                 using Process process = new() { StartInfo = startInfo };
+                StringBuilder output = new StringBuilder();
+                StringBuilder error = new StringBuilder();
+                
+                // Asynchronously read both stdout and stderr
+                process.OutputDataReceived += (sender, e) => {
+                    if (e.Data != null) {
+                        output.AppendLine(e.Data);
+                    }
+                };
+                process.ErrorDataReceived += (sender, e) => {
+                    if (e.Data != null) {
+                        error.AppendLine(e.Data);
+                    }
+                };
+                
                 process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                
                 if (process.WaitForExit(10000))
                 {
-                    return process.StandardOutput.ReadToEnd();
+                    string errorText = error.ToString().Trim();
+                    string outputText = output.ToString().Trim();
+                    
+                    // Log any errors
+                    if (!string.IsNullOrEmpty(errorText))
+                    {
+                        Logs.Warning($"[VoiceAssistant] Python script stderr: {errorText}");
+                    }
+                    
+                    return outputText;
                 }
-                return null;
+                else
+                {
+                    Logs.Warning("[VoiceAssistant] Python script execution timed out");
+                    return null;
+                }
             }
             finally
             {

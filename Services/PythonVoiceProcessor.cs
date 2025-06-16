@@ -71,6 +71,24 @@ public class PythonVoiceProcessor
             string configJson = config?.ToString() ?? "{}";
             string[] args = ["init", configJson];
             string result = await RunPythonScriptAsync(args);
+            
+            // Log the raw result for debugging (using Info level to ensure visibility)
+            Logs.Info($"[VoiceAssistant] Raw Python script output: '{result}'");
+            
+            // Check if result is a valid JSON
+            if (string.IsNullOrWhiteSpace(result))
+            {
+                Logs.Error("[VoiceAssistant] Python script returned empty result");
+                return CreateErrorResponse("Python script returned empty result");
+            }
+            
+            // Additional validation and debugging
+            if (!result.StartsWith("{"))
+            {
+                Logs.Error($"[VoiceAssistant] Python script returned non-JSON output: '{result}'");
+                return CreateErrorResponse($"Python script returned non-JSON output: '{result}'");
+            }
+            
             JObject response = JObject.Parse(result);
             if (response["success"]?.Value<bool>() == true)
             {
@@ -431,12 +449,20 @@ public class PythonVoiceProcessor
     {
         try
         {
-            // Use SwarmUI's Python environment setup
+            // Store script directory for later use after cleanup
+            string scriptDirectory = Path.GetDirectoryName(_scriptPath);
+            
+            // Store the script's directory as working directory
+            string scriptDir = Path.GetDirectoryName(_scriptPath);
+            startInfo.WorkingDirectory = scriptDir;
+            Logs.Info($"[VoiceAssistant] Using script directory as working directory: {scriptDir}");
+            
+            // Use SwarmUI's Python environment setup for PATH only, don't override working directory
             if (_pythonPath.Contains("python_embeded"))
             {
                 string embedPath = Path.GetFullPath("./dlbackend/comfy/python_embeded");
                 startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(embedPath);
-                startInfo.WorkingDirectory = Path.GetFullPath("./dlbackend/comfy/");
+                // Don't override WorkingDirectory here
             }
             else if (_pythonPath.Contains("venv"))
             {
@@ -444,7 +470,12 @@ public class PythonVoiceProcessor
                 startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(venvPath);
             }
 
+            // This will remove PYTHONPATH and other variables
             PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[VoiceAssistant] ");
+            
+            // Set PYTHONPATH *after* the cleanup to prevent it from being removed
+            Logs.Info($"[VoiceAssistant] Setting script directory for PYTHONPATH after cleanup: {scriptDirectory}");
+            startInfo.Environment["PYTHONPATH"] = scriptDirectory;
         }
         catch (Exception ex)
         {
