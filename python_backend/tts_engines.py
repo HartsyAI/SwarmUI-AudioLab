@@ -8,7 +8,12 @@ import base64
 import logging
 import io
 import struct
+import sys
 import numpy as np
+
+# Debug log function that writes to stderr to avoid polluting stdout JSON
+def log_debug(message):
+    print(f"[DEBUG] {message}", file=sys.stderr, flush=True)
 
 logger = logging.getLogger("TTS")
 
@@ -274,20 +279,25 @@ def get_available_tts_engines():
     engines = []
     
     # Test Chatterbox
+    log_debug("Trying to import chatterbox...")
     try:
         import chatterbox
+        log_debug("Chatterbox import succeeded")
         engines.append("chatterbox")
-    except ImportError:
-        pass
+    except ImportError as e:
+        log_debug(f"Chatterbox import failed: {e}")
     
     # Test Bark
+    log_debug("Trying to import bark...")
     try:
         import bark
+        log_debug("Bark import succeeded")
         engines.append("bark")
-    except ImportError:
-        pass
+    except ImportError as e:
+        log_debug(f"Bark import failed: {e}")
     
     # Fallback always available
+    log_debug("Adding fallback TTS engine")
     engines.append("fallback")
     
     return engines

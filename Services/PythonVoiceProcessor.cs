@@ -68,28 +68,36 @@ public class PythonVoiceProcessor
             {
                 return CreateErrorResponse("PythonVoiceProcessor not initialized");
             }
+            
+            // Convert JSON to Base64 to avoid escaping issues during command line transmission
             string configJson = config?.ToString() ?? "{}";
-            string[] args = ["init", configJson];
-            string result = await RunPythonScriptAsync(args);
+            string base64Config = Convert.ToBase64String(Encoding.UTF8.GetBytes(configJson));
+            Logs.Debug($"[VoiceAssistant] Sending Base64 encoded config, length: {base64Config.Length}");
+            
+            // Pass base64-encoded config with the -b flag to indicate base64 encoding
+            string[] args = ["init", "-b", base64Config];
+            Logs.Info("[VoiceAssistant] Starting Python script with increased timeout for model download");
+            // Increased timeout to 5 minutes (300000ms) to allow for model download
+            string output = await RunPythonScriptAsync(["init", "-b", base64Config], 300000);
             
             // Log the raw result for debugging (using Info level to ensure visibility)
-            Logs.Info($"[VoiceAssistant] Raw Python script output: '{result}'");
+            Logs.Info($"[VoiceAssistant] Raw Python script output: '{output}'");
             
             // Check if result is a valid JSON
-            if (string.IsNullOrWhiteSpace(result))
+            if (string.IsNullOrWhiteSpace(output))
             {
                 Logs.Error("[VoiceAssistant] Python script returned empty result");
                 return CreateErrorResponse("Python script returned empty result");
             }
             
             // Additional validation and debugging
-            if (!result.StartsWith("{"))
+            if (!output.StartsWith("{"))
             {
-                Logs.Error($"[VoiceAssistant] Python script returned non-JSON output: '{result}'");
-                return CreateErrorResponse($"Python script returned non-JSON output: '{result}'");
+                Logs.Error($"[VoiceAssistant] Python script returned non-JSON output: '{output}'");
+                return CreateErrorResponse($"Python script returned non-JSON output: '{output}'");
             }
             
-            JObject response = JObject.Parse(result);
+            JObject response = JObject.Parse(output);
             if (response["success"]?.Value<bool>() == true)
             {
                 JArray sttEngines = response["stt_engines"] as JArray;
@@ -417,6 +425,11 @@ public class PythonVoiceProcessor
 
                 if (!process.WaitForExit(timeoutMs))
                 {
+                    string stdoutOutput = output.ToString();
+                    string stderrOutput = error.ToString();
+                    Logs.Error($"[VoiceAssistant] Python script timed out after {timeoutMs}ms.");
+                    Logs.Error($"[VoiceAssistant] Standard output:\n{stdoutOutput}");
+                    Logs.Error($"[VoiceAssistant] Error output:\n{stderrOutput}");
                     process.Kill();
                     throw new TimeoutException($"Python script timed out after {timeoutMs}ms");
                 }

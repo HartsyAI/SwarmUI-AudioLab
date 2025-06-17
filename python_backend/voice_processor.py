@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+
+# Force unbuffered output for all print statements
+import os
+import sys
+os.environ['PYTHONUNBUFFERED'] = '1'
+
+# Define logging function to write to stderr
+def log_debug(message):
+    print(f"[DEBUG] {message}", file=sys.stderr, flush=True)
+
+log_debug("Python voice processor starting up...")
+sys.stderr.flush()
+
 """
 SwarmUI Voice Assistant - Simple Direct Function Interface
 Just the essentials - no overengineering.
@@ -9,6 +22,9 @@ import sys
 import os
 import traceback
 import time
+import contextlib
+import tempfile
+from io import StringIO
 from typing import Dict, Any, Optional
 
 # Add current directory to sys.path to ensure local modules can be imported
@@ -18,33 +34,113 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from stt_engines import get_stt_engine, get_available_stt_engines
 from tts_engines import get_tts_engine, get_available_tts_engines
 
+# Context manager to capture stdout temporarily and redirect to stderr
+@contextlib.contextmanager
+def redirect_stdout_to_stderr():
+    """Redirect stdout to stderr temporarily."""
+    # Keep a reference to the actual streams
+    old_stdout = sys.stdout
+    
+    try:
+        # Redirect stdout to stderr
+        sys.stdout = sys.stderr
+        yield
+    finally:
+        # Restore original stdout
+        sys.stdout = old_stdout
+
 # Global state (simple and effective)
 _stt_engine = None
 _tts_engine = None
 _initialized = False
+_voice_options = None
 
-def initialize_voice_services(config_json: str = None) -> Dict[str, Any]:
+# File to persist state between command calls
+_state_file = os.path.join(tempfile.gettempdir(), "swarmui_voice_state.json")
+
+def _save_state():
+    """Save the current state to a file."""
+    state = {
+        "initialized": _initialized,
+        "stt_engine_name": _stt_engine.name if _stt_engine else None,
+        "tts_engine_name": _tts_engine.name if _tts_engine else None,
+        "has_stt": _stt_engine is not None,
+        "has_tts": _tts_engine is not None
+    }
+    try:
+        with open(_state_file, 'w') as f:
+            json.dump(state, f)
+    except Exception as e:
+        log_debug(f"Failed to save state: {e}")
+
+def _load_state():
+    """Load state from file if it exists."""
+    global _initialized
+    try:
+        if os.path.exists(_state_file):
+            with open(_state_file, 'r') as f:
+                state = json.load(f)
+                _initialized = state.get("initialized", False)
+                return state
+    except Exception as e:
+        log_debug(f"Failed to load state: {e}")
+    return {}
+
+def initialize_voice_services(config_json: str = None, is_base64: bool = False) -> Dict[str, Any]:
     """Initialize voice services with available engines."""
     global _stt_engine, _tts_engine, _initialized
     
     try:
+        log_debug("Starting initialize_voice_services")
+        start_time = time.time()
+        
+        # Decode Base64 string if specified
+        if is_base64 and config_json:
+            log_debug("Decoding Base64 string")
+            import base64
+            config_json = base64.b64decode(config_json).decode('utf-8')
+            log_debug(f"Base64 decoded, length: {len(config_json)}")
+        
+        log_debug("Parsing JSON config")
         config = json.loads(config_json) if config_json else {}
+        log_debug(f"JSON parsed successfully: {config}")
         
         # Get available engines
+        log_debug("Getting available STT engines")
         stt_engines = get_available_stt_engines()
+        log_debug(f"Found STT engines: {stt_engines} in {time.time() - start_time:.2f}s")
+        
+        log_debug("Getting available TTS engines")
         tts_engines = get_available_tts_engines()
+        log_debug(f"Found TTS engines: {tts_engines} in {time.time() - start_time:.2f}s")
         
-        # Initialize STT
-        stt_engine_name = config.get("stt_engine") or (stt_engines[0] if stt_engines else None)
-        if stt_engine_name:
-            _stt_engine = get_stt_engine(stt_engine_name)
-        
-        # Initialize TTS  
-        tts_engine_name = config.get("tts_engine") or (tts_engines[0] if tts_engines else None)
-        if tts_engine_name:
-            _tts_engine = get_tts_engine(tts_engine_name)
+        # Use our context manager to redirect ALL stdout to stderr during initialization
+        # This captures output from third-party libraries that we can't modify
+        with redirect_stdout_to_stderr():
+            # Initialize STT
+            log_debug("Initializing STT engine")
+            stt_engine_name = config.get("stt_engine") or (stt_engines[0] if stt_engines else None)
+            if stt_engine_name:
+                log_debug(f"Using STT engine: {stt_engine_name}")
+                _stt_engine = get_stt_engine(stt_engine_name)
+                log_debug(f"STT engine initialized in {time.time() - start_time:.2f}s")
+            else:
+                log_debug("No STT engine selected")
+            
+            # Initialize TTS  
+            log_debug("Initializing TTS engine")
+            tts_engine_name = config.get("tts_engine") or (tts_engines[0] if tts_engines else None)
+            if tts_engine_name:
+                log_debug(f"Using TTS engine: {tts_engine_name}")
+                _tts_engine = get_tts_engine(tts_engine_name)
+                log_debug(f"TTS engine initialized in {time.time() - start_time:.2f}s")
+            else:
+                log_debug("No TTS engine selected")
         
         _initialized = True
+        
+        # Save state to file
+        _save_state()
         
         return {
             "success": True,
@@ -127,15 +223,44 @@ def process_tts(text: str, voice: str = "default", language: str = "en-US",
 
 def get_voice_status() -> Dict[str, Any]:
     """Get status of voice services."""
+    # First try to get state from globals
+    if _initialized and (_stt_engine is not None or _tts_engine is not None):
+        log_debug("Getting voice status from active session")
+        return {
+            "success": True,
+            "initialized": _initialized,
+            "stt_available": _stt_engine is not None,
+            "tts_available": _tts_engine is not None,
+            "stt_engine": _stt_engine.name if _stt_engine else None,
+            "tts_engine": _tts_engine.name if _tts_engine else None,
+            "stt_engines": get_available_stt_engines(),
+            "tts_engines": get_available_tts_engines()
+        }
+    
+    # If not initialized in this process, try to get from saved state
+    log_debug("Getting voice status from saved state")
+    state = _load_state()
+    if state:
+        stt_engines = get_available_stt_engines()
+        tts_engines = get_available_tts_engines()
+        return {
+            "success": True,
+            "initialized": state.get("initialized", False),
+            "stt_available": state.get("has_stt", False),
+            "tts_available": state.get("has_tts", False),
+            "stt_engine": state.get("stt_engine_name"),
+            "tts_engine": state.get("tts_engine_name"),
+            "stt_engines": stt_engines,
+            "tts_engines": tts_engines
+        }
+    
+    # No state found
     return {
-        "success": True,
-        "initialized": _initialized,
-        "stt_available": _stt_engine is not None,
-        "tts_available": _tts_engine is not None,
-        "stt_engine": _stt_engine.name if _stt_engine else None,
-        "tts_engine": _tts_engine.name if _tts_engine else None,
-        "stt_engines": get_available_stt_engines(),
-        "tts_engines": get_available_tts_engines()
+        "success": False,
+        "initialized": False,
+        "error": "Voice services not initialized",
+        "stt_available": False,
+        "tts_available": False
     }
 
 def cleanup_voice_services() -> Dict[str, Any]:
@@ -159,16 +284,34 @@ def cleanup_voice_services() -> Dict[str, Any]:
 # Command line interface
 def main():
     """Simple command line interface."""
+    log_debug(f"main() started with args: {sys.argv}")
+    
     if len(sys.argv) < 2:
-        print(json.dumps({"success": False, "error": "No command provided"}))
+        print(json.dumps({"success": False, "error": "No command provided"}), flush=True)
         sys.exit(1)
     
     command = sys.argv[1]
+    log_debug(f"Command: {command}")
     
     try:
         if command == "init":
-            config = sys.argv[2] if len(sys.argv) > 2 else None
-            result = initialize_voice_services(config)
+            # Check for the -b flag indicating Base64 encoded config
+            is_base64 = False
+            config = None
+            
+            # Parse arguments
+            log_debug(f"Parsing init arguments, arg count: {len(sys.argv)}")
+            if len(sys.argv) > 2:
+                if sys.argv[2] == "-b" and len(sys.argv) > 3:
+                    is_base64 = True
+                    config = sys.argv[3]
+                    log_debug(f"Found base64 flag, config length: {len(config) if config else 0}")
+                else:
+                    config = sys.argv[2]
+                    log_debug(f"Plain config, length: {len(config) if config else 0}")
+            
+            log_debug("About to call initialize_voice_services")
+            result = initialize_voice_services(config, is_base64)
             
         elif command == "stt":
             if len(sys.argv) < 3:
@@ -199,14 +342,18 @@ def main():
         else:
             result = {"success": False, "error": f"Unknown command: {command}"}
         
-        print(json.dumps(result, indent=2))
+        # Only send the clean JSON output to stdout for C# parsing
+        print(json.dumps(result, indent=2), flush=True)
         
     except Exception as e:
-        print(json.dumps({
+        # Send error as JSON to stdout for C# parsing
+        error_result = {
             "success": False,
             "error": str(e),
             "traceback": traceback.format_exc()
-        }, indent=2))
+        }
+        log_debug(f"Error occurred: {str(e)}\n{traceback.format_exc()}")
+        print(json.dumps(error_result, indent=2), flush=True)
         sys.exit(1)
 
 if __name__ == "__main__":

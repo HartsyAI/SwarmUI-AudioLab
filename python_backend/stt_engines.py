@@ -7,6 +7,11 @@ No abstract base classes, no factories - just working engines.
 import base64
 import logging
 import time
+import sys
+
+# Debug log function that writes to stderr to avoid polluting stdout JSON
+def log_debug(message):
+    print(f"[DEBUG] {message}", file=sys.stderr, flush=True)
 
 logger = logging.getLogger("STT")
 
@@ -130,20 +135,25 @@ def get_available_stt_engines():
     engines = []
     
     # Test RealtimeSTT
+    log_debug("Trying to import RealtimeSTT...")
     try:
         import RealtimeSTT
+        log_debug("RealtimeSTT import succeeded")
         engines.append("realtimestt")
-    except ImportError:
-        pass
+    except ImportError as e:
+        log_debug(f"RealtimeSTT import failed: {e}")
     
     # Test Whisper
+    log_debug("Trying to import whisper...")
     try:
         import whisper
+        log_debug("Whisper import succeeded")
         engines.append("whisper")
-    except ImportError:
-        pass
+    except ImportError as e:
+        log_debug(f"Whisper import failed: {e}")
     
     # Fallback always available
+    log_debug("Adding fallback STT engine")
     engines.append("fallback")
     
     return engines
