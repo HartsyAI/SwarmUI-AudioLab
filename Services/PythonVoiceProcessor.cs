@@ -167,7 +167,8 @@ public class PythonVoiceProcessor
                 request.Volume.ToString("F2"),
                 optionsJson
             ];
-            string result = await RunPythonScriptAsync(args);
+            // Use a longer timeout (3 minutes) for TTS operations because chatterbox model loading is very slow
+            string result = await RunPythonScriptAsync(args, timeoutMs: 180000);
             return JObject.Parse(result);
         }
         catch (Exception ex)

@@ -73,18 +73,80 @@ def _save_state():
     except Exception as e:
         log_debug(f"Failed to save state: {e}")
 
-def _load_state():
-    """Load state from file if it exists."""
+def _load_state_metadata():
+    """Load state metadata from file without reinitializing engines.
+    This is a lightweight operation suitable for status checks."""
     global _initialized
     try:
         if os.path.exists(_state_file):
+            log_debug(f"Loading state metadata from {_state_file}")
             with open(_state_file, 'r') as f:
                 state = json.load(f)
                 _initialized = state.get("initialized", False)
+                log_debug(f"State metadata loaded. Initialized: {_initialized}, " 
+                          f"STT: {state.get('stt_engine_name')}, TTS: {state.get('tts_engine_name')}")
                 return state
     except Exception as e:
-        log_debug(f"Failed to load state: {e}")
+        log_debug(f"Failed to load state metadata: {e}")
     return {}
+
+def _load_engine(engine_type, engine_name):
+    """Load a specific engine by type and name."""
+    if engine_type == "stt":
+        try:
+            from stt_engines import get_stt_engine
+            engine = get_stt_engine(engine_name)
+            log_debug(f"STT engine {engine_name} initialized successfully")
+            return engine
+        except Exception as err:
+            log_debug(f"Failed to initialize STT engine {engine_name}: {err}")
+    elif engine_type == "tts":
+        try:
+            from tts_engines import get_tts_engine
+            engine = get_tts_engine(engine_name)
+            log_debug(f"TTS engine {engine_name} initialized successfully")
+            return engine
+        except Exception as err:
+            log_debug(f"Failed to initialize TTS engine {engine_name}: {err}")
+    return None
+    
+def _load_state(load_engines=True):
+    """Load state from file and optionally reinitialize engines.
+    
+    Args:
+        load_engines: If True, will attempt to load the actual engine objects.
+                     If False, will only load metadata (faster, for status checks).
+    """
+    global _initialized, _stt_engine, _tts_engine
+    
+    try:
+        state = _load_state_metadata()
+        if not state:
+            return {}
+            
+        # If we don't need to load engines, just return metadata
+        if not load_engines:
+            return state
+            
+        # Reinitialize engines if needed
+        stt_engine_name = state.get("stt_engine_name")
+        tts_engine_name = state.get("tts_engine_name")
+        
+        # Reinitialize STT engine if needed
+        if stt_engine_name and not _stt_engine:
+            log_debug(f"Reinitializing STT engine: {stt_engine_name}")
+            _stt_engine = _load_engine("stt", stt_engine_name)
+        
+        # Reinitialize TTS engine if needed
+        if tts_engine_name and not _tts_engine:
+            log_debug(f"Reinitializing TTS engine: {tts_engine_name}")
+            _tts_engine = _load_engine("tts", tts_engine_name)
+            
+        return state
+                
+    except Exception as e:
+        log_debug(f"Failed to load state: {e}")
+        return {}
 
 def initialize_voice_services(config_json: str = None, is_base64: bool = False) -> Dict[str, Any]:
     """Initialize voice services with available engines."""
@@ -161,8 +223,16 @@ def initialize_voice_services(config_json: str = None, is_base64: bool = False) 
 def process_stt(audio_data: str, language: str = "en-US", options: str = None) -> Dict[str, Any]:
     """Process speech-to-text."""
     start_time = time.time()
+    global _stt_engine, _initialized
     
     try:
+        # Try to load state from file if not initialized - use full engine loading
+        if not _stt_engine or not _initialized:
+            log_debug("STT engine not initialized in memory, trying to load from state file with engines")
+            _load_state(load_engines=True)
+            log_debug(f"State loaded with engines. STT engine available: {_stt_engine is not None}")
+            
+        # Still no STT engine after loading state?
         if not _stt_engine:
             return {"success": False, "error": "STT engine not initialized"}
         
@@ -192,8 +262,16 @@ def process_tts(text: str, voice: str = "default", language: str = "en-US",
                 volume: float = 0.8, options: str = None) -> Dict[str, Any]:
     """Process text-to-speech."""
     start_time = time.time()
+    global _tts_engine, _initialized
     
     try:
+        # Try to load state from file if not initialized - use full engine loading
+        if not _tts_engine or not _initialized:
+            log_debug("TTS engine not initialized in memory, trying to load from state file with engines")
+            _load_state(load_engines=True)
+            log_debug(f"State loaded with engines. TTS engine available: {_tts_engine is not None}")
+            
+        # Still no TTS engine after loading state?
         if not _tts_engine:
             return {"success": False, "error": "TTS engine not initialized"}
         
@@ -238,8 +316,9 @@ def get_voice_status() -> Dict[str, Any]:
         }
     
     # If not initialized in this process, try to get from saved state
-    log_debug("Getting voice status from saved state")
-    state = _load_state()
+    # Use lightweight state loading (load_engines=False) to avoid timeout during status checks
+    log_debug("Getting voice status from saved state (lightweight mode)")
+    state = _load_state(load_engines=False)
     if state:
         stt_engines = get_available_stt_engines()
         tts_engines = get_available_tts_engines()
@@ -331,7 +410,11 @@ def main():
                 language = sys.argv[4] if len(sys.argv) > 4 else "en-US"
                 volume = float(sys.argv[5]) if len(sys.argv) > 5 else 0.8
                 options = sys.argv[6] if len(sys.argv) > 6 else None
-                result = process_tts(text, voice, language, volume, options)
+                # Use redirect_stdout_to_stderr to capture any unexpected output during TTS synthesis
+                # This ensures libraries like chatterbox don't pollute stdout with their prints
+                log_debug("Redirecting stdout during TTS processing to prevent JSON pollution")
+                with redirect_stdout_to_stderr():
+                    result = process_tts(text, voice, language, volume, options)
                 
         elif command == "status":
             result = get_voice_status()

@@ -2,6 +2,7 @@ using FreneticUtilities.FreneticDataSyntax;
 using Hartsy.Extensions.VoiceAssistant.Services;
 using Hartsy.Extensions.VoiceAssistant.WebAPI;
 using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
+using Hartsy.Extensions.VoiceAssistant.Progress;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Backends;
 using SwarmUI.Core;
@@ -153,6 +154,9 @@ public class TTSBackend : VoiceAssistantBackends
             }
 
             Logs.Info("[TTSBackend] TTS backend started successfully");
+
+            // Run a test TTS generation after successful initialization
+            _ = PerformPostInitTTSTestAsync();
 
             return new BackendStatusResponse
             {
@@ -689,6 +693,131 @@ public class TTSBackend : VoiceAssistantBackends
         }
     }
 
+    /// <summary>Perform a test TTS generation after initialization to verify the service is working.</summary>
+    /// <returns>Result of the TTS test</returns>
+    public async Task<bool> PerformPostInitTTSTestAsync()
+    {
+        try
+        {
+            string testPhrase = "This is a test of the TTS service. If you are hearing this everything is working!";
+            Logs.Info($"[TTSBackend] Running post-initialization TTS test with phrase: '{testPhrase}'");
+            
+            // Create a progress tracker for this operation
+            var tracker = ProgressTracking.GetJobTracker("post_init_test");
+            tracker.UpdateProgress(0, $"Starting TTS test generation");
+            
+            // Create TTS request
+            TTSRequest request = new()
+            {
+                Text = testPhrase,
+                Voice = "default", // Use default voice
+                Language = "en",
+                Volume = 1.0f,
+                Options = new TTSOptions
+                {
+                    Speed = 1.0f,
+                    Pitch = 1.0f
+                }
+            };
+            
+            tracker.UpdateProgress(20, $"TTS request created, sending to voice processor");
+            Logs.Debug($"[TTSBackend] Sending test TTS request to voice processor: {testPhrase}");
+            
+            // Call TTS service
+            JObject response = await PythonVoiceProcessor.Instance.ProcessTTSAsync(request);
+            tracker.UpdateProgress(60, $"TTS processing complete, checking response");
+            
+            if (response["success"]?.Value<bool>() != true)
+            {
+                string error = response["error"]?.ToString() ?? "Unknown error";
+                Logs.Error($"[TTSBackend] Post-initialization TTS test failed: {error}");
+                tracker.SetError($"TTS test failed: {error}");
+                return false;
+            }
+            
+            // Extract audio data from response
+            string audioBase64 = response["audio_data"]?.Value<string>();
+            int audioLength = 0;
+            if (!string.IsNullOrEmpty(audioBase64))
+            {
+                byte[] audioData = Convert.FromBase64String(audioBase64);
+                audioLength = audioData.Length;
+                tracker.UpdateProgress(80, $"TTS audio generated: {audioLength} bytes");
+                
+                // Save audio to temp file for playback
+                string tempDirectory = Path.Combine(Path.GetTempPath(), "SwarmUI-TTS-Tests");
+                Directory.CreateDirectory(tempDirectory);
+                string tempAudioFile = Path.Combine(tempDirectory, "tts_test.wav");
+                
+                try
+                {
+                    // Write audio data to file
+                    await File.WriteAllBytesAsync(tempAudioFile, audioData);
+                    Logs.Info($"[TTSBackend] Test audio saved to: {tempAudioFile}");
+                    tracker.UpdateProgress(90, $"Audio saved to file, attempting playback");
+                    
+                    // Play the audio file
+                    await PlayAudioFileAsync(tempAudioFile, tracker);
+                }
+                catch (Exception ex)
+                {
+                    // Don't fail the test if just the audio playback fails
+                    Logs.Warning($"[TTSBackend] Unable to play test audio file: {ex.Message}");
+                    Logs.Debug($"[TTSBackend] Audio playback exception: {ex}");
+                }
+            }
+            
+            Logs.Info($"[TTSBackend] Post-initialization TTS test successful! Generated {audioLength} bytes of audio data");
+            Logs.Info($"[TTSBackend] TTS service is ready for use");
+            tracker.SetComplete($"TTS test successful: {audioLength} bytes generated");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[TTSBackend] Post-initialization TTS test failed with exception: {ex.Message}");
+            Logs.Debug($"[TTSBackend] Exception details: {ex}");
+            ProgressTracking.GetJobTracker("post_init_test")
+                .SetError($"TTS test failed with exception: {ex.Message}");
+            return false;
+        }
+    }
+    
+    /// <summary>Play an audio file using the system's default audio player</summary>
+    /// <param name="audioFilePath">Path to the audio file to play</param>
+    /// <param name="tracker">Optional progress tracker to update</param>
+    /// <returns>Result of the playback attempt</returns>
+    private async Task<bool> PlayAudioFileAsync(string audioFilePath, ProgressTracker tracker = null)
+    {
+        try
+        {
+            Logs.Info($"[TTSBackend] Playing audio file: {audioFilePath}");
+            tracker?.UpdateProgress(95, "Playing audio file");
+            
+            // No direct SoundPlayer available, use Windows command to play the wav file
+            var processStartInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "powershell",
+                Arguments = $"-c (New-Object Media.SoundPlayer '{audioFilePath}').PlaySync()",
+                CreateNoWindow = true,
+                UseShellExecute = false
+            };
+            
+            // Start the process to play the audio
+            using (var process = System.Diagnostics.Process.Start(processStartInfo))
+            {
+                // Don't wait for completion - non-blocking
+                // Log the playback
+                Logs.Info($"[TTSBackend] Audio playback started for: {audioFilePath}");
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[TTSBackend] Error playing audio file: {ex.Message}");
+            return false;
+        }
+    }
+    
     /// <summary>Initialize the Python voice processor for TTS.</summary>
     /// <returns>True if initialization succeeded</returns>
     public async Task<bool> InitializePythonProcessorAsync()
