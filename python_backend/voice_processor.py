@@ -3,6 +3,9 @@
 # Force unbuffered output for all print statements
 import os
 import sys
+import signal
+import threading
+import atexit
 os.environ['PYTHONUNBUFFERED'] = '1'
 
 # Define logging function to write to stderr
@@ -11,6 +14,14 @@ def log_debug(message):
 
 log_debug("Python voice processor starting up...")
 sys.stderr.flush()
+
+# Register process exit handler to forcefully kill all threads on exit
+def force_exit_handler():
+    log_debug("Forcing exit with os._exit(0) to terminate all threads")
+    os._exit(0)
+
+# Register the exit handler
+atexit.register(force_exit_handler)
 
 """
 SwarmUI Voice Assistant - Simple Direct Function Interface
@@ -427,6 +438,9 @@ def main():
         
         # Only send the clean JSON output to stdout for C# parsing
         print(json.dumps(result, indent=2), flush=True)
+        
+        # Explicitly exit with success code
+        sys.exit(0)
         
     except Exception as e:
         # Send error as JSON to stdout for C# parsing

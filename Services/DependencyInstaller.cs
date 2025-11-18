@@ -13,22 +13,20 @@ public class DependencyInstaller
 {
     private static readonly object _installLock = new();
     private bool _isInstalling = false;
-    private Dictionary<string, string>? _cachedInstalledPackages = null;
+    private Dictionary<string, string> _cachedInstalledPackages = null;
 
     /// <summary>Gets all TTS packages as string array for backward compatibility</summary>
     /// <returns>Array of TTS package strings in pip install format</returns>
     public static string[] GetTTSPackagesAsStrings()
     {
-        return TTSPackageDefinitions.Select(p => p.IsGitPackage ? p.InstallName : $"{p.Name}{(string.IsNullOrEmpty(p.CustomInstallArgs) ? "" : " ")}")
-            .ToArray();
+        return [.. TTSPackageDefinitions.Select(p => p.IsGitPackage ? p.InstallName : $"{p.Name}{(string.IsNullOrEmpty(p.CustomInstallArgs) ? "" : " ")}")];
     }
 
     /// <summary>Gets all STT packages as string array for backward compatibility</summary>
     /// <returns>Array of STT package strings in pip install format</returns>
     public static string[] GetSTTPackagesAsStrings()
     {
-        return STTPackageDefinitions.Select(p => p.IsGitPackage ? p.InstallName : $"{p.Name}{(string.IsNullOrEmpty(p.CustomInstallArgs) ? "" : " ")}")
-            .ToArray();
+        return [.. STTPackageDefinitions.Select(p => p.IsGitPackage ? p.InstallName : $"{p.Name}{(string.IsNullOrEmpty(p.CustomInstallArgs) ? "" : " ")}")];
     }
 
     public bool IsInstalling => _isInstalling;
@@ -517,7 +515,7 @@ except Exception as e:
                     {
                         int startIndex = result.IndexOf("PACKAGE_LIST_START") + "PACKAGE_LIST_START".Length;
                         int endIndex = result.IndexOf("PACKAGE_LIST_END");
-                        string jsonContent = result.Substring(startIndex, endIndex - startIndex).Trim();
+                        string jsonContent = result[startIndex..endIndex].Trim();
                         
                         Logs.Debug($"[VoiceAssistant] Found package JSON data: {jsonContent.Length} characters");
                         
@@ -533,7 +531,7 @@ except Exception as e:
                     {
                         int startIndex = result.IndexOf("PIP_LIST_FALLBACK_START") + "PIP_LIST_FALLBACK_START".Length;
                         int endIndex = result.IndexOf("PIP_LIST_FALLBACK_END");
-                        string jsonContent = result.Substring(startIndex, endIndex - startIndex).Trim();
+                        string jsonContent = result[startIndex..endIndex].Trim();
                         
                         Logs.Debug($"[VoiceAssistant] Found pip list fallback data: {jsonContent.Length} characters");
                         
@@ -919,8 +917,8 @@ except Exception as e:
                 }
                 PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[VoiceAssistant] ");
                 using Process process = new() { StartInfo = startInfo };
-                StringBuilder output = new StringBuilder();
-                StringBuilder error = new StringBuilder();
+                StringBuilder output = new();
+                StringBuilder error = new();
                 
                 // Asynchronously read both stdout and stderr
                 process.OutputDataReceived += (sender, e) => {

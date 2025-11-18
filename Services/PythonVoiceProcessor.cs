@@ -424,14 +424,37 @@ public class PythonVoiceProcessor
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
 
-                if (!process.WaitForExit(timeoutMs))
+                // Wait for process exit with timeout
+                bool exited = process.WaitForExit(timeoutMs);
+                
+                // Capture output even if process didn't exit cleanly
+                string stdoutOutput = output.ToString().Trim();
+                string stderrOutput = error.ToString();
+                
+                // Check if we have valid JSON output even if the process didn't exit cleanly
+                bool hasValidJsonOutput = !string.IsNullOrEmpty(stdoutOutput) && 
+                                          stdoutOutput.StartsWith("{") && 
+                                          stdoutOutput.EndsWith("}") &&
+                                          stdoutOutput.Contains("\"success\"");
+                
+                if (!exited)
                 {
-                    string stdoutOutput = output.ToString();
-                    string stderrOutput = error.ToString();
+                    // Log the timeout
                     Logs.Error($"[VoiceAssistant] Python script timed out after {timeoutMs}ms.");
                     Logs.Error($"[VoiceAssistant] Standard output:\n{stdoutOutput}");
                     Logs.Error($"[VoiceAssistant] Error output:\n{stderrOutput}");
-                    process.Kill();
+                    
+                    // Kill the hanging process
+                    try { process.Kill(); } catch { /* Ignore kill errors */ }
+                    
+                    // If we have valid JSON output, consider it a success despite process hanging
+                    if (hasValidJsonOutput)
+                    {
+                        Logs.Warning($"[VoiceAssistant] Python process didn't exit cleanly but returned valid JSON. Treating as successful.");
+                        return stdoutOutput; // Return the valid JSON output
+                    }
+                    
+                    // Otherwise, throw timeout exception
                     throw new TimeoutException($"Python script timed out after {timeoutMs}ms");
                 }
 

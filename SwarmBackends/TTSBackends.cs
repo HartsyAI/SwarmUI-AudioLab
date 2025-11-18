@@ -1,13 +1,14 @@
 using FreneticUtilities.FreneticDataSyntax;
+using Hartsy.Extensions.VoiceAssistant.Progress;
 using Hartsy.Extensions.VoiceAssistant.Services;
 using Hartsy.Extensions.VoiceAssistant.WebAPI;
 using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
-using Hartsy.Extensions.VoiceAssistant.Progress;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Backends;
 using SwarmUI.Core;
 using SwarmUI.Text2Image;
 using SwarmUI.Utils;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 
@@ -792,24 +793,22 @@ public class TTSBackend : VoiceAssistantBackends
         {
             Logs.Info($"[TTSBackend] Playing audio file: {audioFilePath}");
             tracker?.UpdateProgress(95, "Playing audio file");
-            
+
             // No direct SoundPlayer available, use Windows command to play the wav file
-            var processStartInfo = new System.Diagnostics.ProcessStartInfo
+            ProcessStartInfo processStartInfo = new()
             {
                 FileName = "powershell",
                 Arguments = $"-c (New-Object Media.SoundPlayer '{audioFilePath}').PlaySync()",
                 CreateNoWindow = true,
                 UseShellExecute = false
             };
-            
+
             // Start the process to play the audio
-            using (var process = System.Diagnostics.Process.Start(processStartInfo))
-            {
-                // Don't wait for completion - non-blocking
-                // Log the playback
-                Logs.Info($"[TTSBackend] Audio playback started for: {audioFilePath}");
-                return true;
-            }
+            using Process process = Process.Start(processStartInfo);
+            // Don't wait for completion - non-blocking
+            // Log the playback
+            Logs.Info($"[TTSBackend] Audio playback started for: {audioFilePath}");
+            return true;
         }
         catch (Exception ex)
         {
