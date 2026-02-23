@@ -1,5 +1,7 @@
-using Hartsy.Extensions.VoiceAssistant.Services;
-using Hartsy.Extensions.VoiceAssistant.WebAPI;
+using Hartsy.Extensions.VoiceAssistant.AudioAPI;
+using Hartsy.Extensions.VoiceAssistant.AudioBackends;
+using Hartsy.Extensions.VoiceAssistant.AudioProviders;
+using Hartsy.Extensions.VoiceAssistant.AudioServices;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Core;
 using SwarmUI.Utils;
@@ -7,30 +9,31 @@ using System.IO;
 
 namespace Hartsy.Extensions.VoiceAssistant;
 
-/// <summary>SwarmUI Voice Assistant Extension - Main Entry Point
-/// Provides speech-to-text, text-to-speech, and voice command processing integrated into SwarmUI.
-/// This extension manages a Python backend for STT/TTS processing and registers API endpoints
-/// for voice interaction with the SwarmUI interface.</summary>
+/// <summary>SwarmUI Voice Assistant Extension - Main Entry Point.
+/// Provides modular audio processing (TTS, STT, music gen, voice cloning, etc.)
+/// through a provider-based architecture integrated into SwarmUI.</summary>
 public class VoiceAssistant : Extension
 {
-    /// <summary> Extension version for compatibility tracking.</summary>
-    public static new readonly string Version = "0.0.1";
+    public static new readonly string Version = "3.0.0";
 
-    /// <summary>Pre-initialization phase - registers web assets before SwarmUI core initialization.
-    /// This runs before the main UI is ready, so we only register static assets here.</summary>
+    /// <summary>Pre-initialization — registers providers and web assets before SwarmUI core is ready.</summary>
     public override void OnPreInit()
     {
         try
         {
-            // Use absolute path to ensure Python process can find the files regardless of working directory
+            // Set extension directory for Python path resolution
             string projectRoot = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", ".."));
-            ServiceConfiguration.ExtensionDirectory = Path.GetFullPath(Path.Combine(projectRoot, "Extensions", "SwarmUI-VoiceAssistant"));
-            Logs.Info($"[VoiceAssistant] Setting extension directory to absolute path: {ServiceConfiguration.ExtensionDirectory}");
-            Logs.Debug($"[VoiceAssistant] Extension directory: {ServiceConfiguration.ExtensionDirectory}");
+            AudioConfiguration.ExtensionDirectory = Path.GetFullPath(Path.Combine(projectRoot, "Extensions", "SwarmUI-VoiceAssistant"));
+            Logs.Info($"[VoiceAssistant] Extension directory: {AudioConfiguration.ExtensionDirectory}");
+
+            // Register all built-in audio providers
+            AudioProviderDefinitions.RegisterAll();
+            Logs.Info($"[VoiceAssistant] Registered {AudioProviderDefinitions.All.Count} audio providers");
+
+            // Register web assets
             ScriptFiles.Add("Assets/voice-api.js");
             ScriptFiles.Add("Assets/voice-ui.js");
             ScriptFiles.Add("Assets/voice-core.js");
-            // Register CSS file
             StyleSheetFiles.Add("Assets/voice-assistant.css");
         }
         catch (Exception ex)
@@ -39,11 +42,16 @@ public class VoiceAssistant : Extension
         }
     }
 
-    /// <summary>Main initialization phase - registers API endpoints and validates configuration.
-    /// This runs after SwarmUI core is ready, allowing us to register API calls and validate setup.</summary>
+    /// <summary>Main initialization — registers the unified audio backend and API endpoints.</summary>
     public override async void OnInit()
     {
-        VoiceAssistantAPI.Register(); // Register API endpoints to use in Swarm
+        // Register ONE unified backend (replaces separate STT + TTS backend registrations)
+        Program.Backends.RegisterBackendType<DynamicAudioBackend>(
+            "audio-backend", "Audio Backend",
+            "Dynamic audio backend supporting TTS, STT, music generation, and more.", true);
+
+        // Register API endpoints
+        VoiceAssistantAPI.Register();
     }
 
     /// <summary>Creates a standardized error response for API endpoints.</summary>

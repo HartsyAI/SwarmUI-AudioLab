@@ -24,8 +24,12 @@ def force_exit_handler():
 atexit.register(force_exit_handler)
 
 """
-SwarmUI Voice Assistant - Simple Direct Function Interface
-Just the essentials - no overengineering.
+SwarmUI Voice Assistant - Audio Processing Interface
+
+Supports two modes:
+  1. Legacy commands (init, stt, tts, status, cleanup) — backward compatible
+  2. Generic "process" command — routes through engine_registry for any provider
+     Usage: voice_processor.py process <module> <class> <args_b64>
 """
 
 import json
@@ -33,6 +37,7 @@ import sys
 import os
 import traceback
 import time
+import base64
 import contextlib
 import tempfile
 from io import StringIO
@@ -41,33 +46,86 @@ from typing import Dict, Any, Optional
 # Add current directory to sys.path to ensure local modules can be imported
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Import our simple engine modules
-from stt_engines import get_stt_engine, get_available_stt_engines
-from tts_engines import get_tts_engine, get_available_tts_engines
-
 # Context manager to capture stdout temporarily and redirect to stderr
 @contextlib.contextmanager
 def redirect_stdout_to_stderr():
     """Redirect stdout to stderr temporarily."""
-    # Keep a reference to the actual streams
     old_stdout = sys.stdout
-    
     try:
-        # Redirect stdout to stderr
         sys.stdout = sys.stderr
         yield
     finally:
-        # Restore original stdout
         sys.stdout = old_stdout
 
-# Global state (simple and effective)
+# ---------------------------------------------------------------------------
+# Generic provider-based processing (new system)
+# ---------------------------------------------------------------------------
+
+def process_generic(module_name: str, class_name: str, args_b64: str) -> Dict[str, Any]:
+    """Route a request through engine_registry to any provider engine.
+
+    Args:
+        module_name: Python module in engines/ (e.g. "tts_chatterbox")
+        class_name: Engine class within the module (e.g. "ChatterboxEngine")
+        args_b64: Base64-encoded JSON dict of kwargs for engine.process()
+
+    Returns a dict with at least "success" key.
+    """
+    start_time = time.time()
+    try:
+        import engine_registry
+
+        args_json = base64.b64decode(args_b64).decode("utf-8")
+        kwargs = json.loads(args_json)
+
+        log_debug(f"process_generic: module={module_name}, class={class_name}, args keys={list(kwargs.keys())}")
+
+        with redirect_stdout_to_stderr():
+            engine = engine_registry.get_engine(module_name, class_name)
+            result = engine.process(**kwargs)
+
+        result["processing_time"] = time.time() - start_time
+        result["engine_module"] = module_name
+        result["engine_class"] = class_name
+        return result
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "processing_time": time.time() - start_time,
+            "traceback": traceback.format_exc(),
+        }
+
+# ---------------------------------------------------------------------------
+# Legacy engine management (backward compatible)
+# ---------------------------------------------------------------------------
+
+# Lazy imports for legacy mode — only loaded when legacy commands are used
+_legacy_loaded = False
 _stt_engine = None
 _tts_engine = None
 _initialized = False
 _voice_options = None
-
-# File to persist state between command calls
 _state_file = os.path.join(tempfile.gettempdir(), "swarmui_voice_state.json")
+
+def _ensure_legacy_imports():
+    """Import legacy engine modules on demand."""
+    global _legacy_loaded
+    if _legacy_loaded:
+        return
+    # These will be removed in a future version when all callers migrate to "process"
+    global get_stt_engine, get_available_stt_engines, get_tts_engine, get_available_tts_engines
+    try:
+        from stt_engines import get_stt_engine, get_available_stt_engines
+        from tts_engines import get_tts_engine, get_available_tts_engines
+    except ImportError:
+        # Legacy engine files may have been deleted after migration
+        def get_stt_engine(name): raise RuntimeError("Legacy stt_engines module removed. Use 'process' command.")
+        def get_available_stt_engines(): return []
+        def get_tts_engine(name): raise RuntimeError("Legacy tts_engines module removed. Use 'process' command.")
+        def get_available_tts_engines(): return []
+    _legacy_loaded = True
 
 def _save_state():
     """Save the current state to a file."""
@@ -85,8 +143,7 @@ def _save_state():
         log_debug(f"Failed to save state: {e}")
 
 def _load_state_metadata():
-    """Load state metadata from file without reinitializing engines.
-    This is a lightweight operation suitable for status checks."""
+    """Load state metadata from file without reinitializing engines."""
     global _initialized
     try:
         if os.path.exists(_state_file):
@@ -94,7 +151,7 @@ def _load_state_metadata():
             with open(_state_file, 'r') as f:
                 state = json.load(f)
                 _initialized = state.get("initialized", False)
-                log_debug(f"State metadata loaded. Initialized: {_initialized}, " 
+                log_debug(f"State metadata loaded. Initialized: {_initialized}, "
                           f"STT: {state.get('stt_engine_name')}, TTS: {state.get('tts_engine_name')}")
                 return state
     except Exception as e:
@@ -102,10 +159,10 @@ def _load_state_metadata():
     return {}
 
 def _load_engine(engine_type, engine_name):
-    """Load a specific engine by type and name."""
+    """Load a specific legacy engine by type and name."""
+    _ensure_legacy_imports()
     if engine_type == "stt":
         try:
-            from stt_engines import get_stt_engine
             engine = get_stt_engine(engine_name)
             log_debug(f"STT engine {engine_name} initialized successfully")
             return engine
@@ -113,108 +170,70 @@ def _load_engine(engine_type, engine_name):
             log_debug(f"Failed to initialize STT engine {engine_name}: {err}")
     elif engine_type == "tts":
         try:
-            from tts_engines import get_tts_engine
             engine = get_tts_engine(engine_name)
             log_debug(f"TTS engine {engine_name} initialized successfully")
             return engine
         except Exception as err:
             log_debug(f"Failed to initialize TTS engine {engine_name}: {err}")
     return None
-    
+
 def _load_state(load_engines=True):
-    """Load state from file and optionally reinitialize engines.
-    
-    Args:
-        load_engines: If True, will attempt to load the actual engine objects.
-                     If False, will only load metadata (faster, for status checks).
-    """
+    """Load state from file and optionally reinitialize engines."""
     global _initialized, _stt_engine, _tts_engine
-    
+
     try:
         state = _load_state_metadata()
         if not state:
             return {}
-            
-        # If we don't need to load engines, just return metadata
         if not load_engines:
             return state
-            
-        # Reinitialize engines if needed
+
         stt_engine_name = state.get("stt_engine_name")
         tts_engine_name = state.get("tts_engine_name")
-        
-        # Reinitialize STT engine if needed
+
         if stt_engine_name and not _stt_engine:
             log_debug(f"Reinitializing STT engine: {stt_engine_name}")
             _stt_engine = _load_engine("stt", stt_engine_name)
-        
-        # Reinitialize TTS engine if needed
+
         if tts_engine_name and not _tts_engine:
             log_debug(f"Reinitializing TTS engine: {tts_engine_name}")
             _tts_engine = _load_engine("tts", tts_engine_name)
-            
+
         return state
-                
+
     except Exception as e:
         log_debug(f"Failed to load state: {e}")
         return {}
 
 def initialize_voice_services(config_json: str = None, is_base64: bool = False) -> Dict[str, Any]:
-    """Initialize voice services with available engines."""
+    """Initialize voice services with available engines (legacy)."""
     global _stt_engine, _tts_engine, _initialized
-    
+    _ensure_legacy_imports()
+
     try:
         log_debug("Starting initialize_voice_services")
         start_time = time.time()
-        
-        # Decode Base64 string if specified
+
         if is_base64 and config_json:
-            log_debug("Decoding Base64 string")
-            import base64
             config_json = base64.b64decode(config_json).decode('utf-8')
-            log_debug(f"Base64 decoded, length: {len(config_json)}")
-        
-        log_debug("Parsing JSON config")
+
         config = json.loads(config_json) if config_json else {}
-        log_debug(f"JSON parsed successfully: {config}")
-        
-        # Get available engines
-        log_debug("Getting available STT engines")
+
         stt_engines = get_available_stt_engines()
-        log_debug(f"Found STT engines: {stt_engines} in {time.time() - start_time:.2f}s")
-        
-        log_debug("Getting available TTS engines")
         tts_engines = get_available_tts_engines()
-        log_debug(f"Found TTS engines: {tts_engines} in {time.time() - start_time:.2f}s")
-        
-        # Use our context manager to redirect ALL stdout to stderr during initialization
-        # This captures output from third-party libraries that we can't modify
+
         with redirect_stdout_to_stderr():
-            # Initialize STT
-            log_debug("Initializing STT engine")
             stt_engine_name = config.get("stt_engine") or (stt_engines[0] if stt_engines else None)
             if stt_engine_name:
-                log_debug(f"Using STT engine: {stt_engine_name}")
                 _stt_engine = get_stt_engine(stt_engine_name)
-                log_debug(f"STT engine initialized in {time.time() - start_time:.2f}s")
-            else:
-                log_debug("No STT engine selected")
-            
-            # Initialize TTS  
-            log_debug("Initializing TTS engine")
+
             tts_engine_name = config.get("tts_engine") or (tts_engines[0] if tts_engines else None)
             if tts_engine_name:
-                log_debug(f"Using TTS engine: {tts_engine_name}")
                 _tts_engine = get_tts_engine(tts_engine_name)
-                log_debug(f"TTS engine initialized in {time.time() - start_time:.2f}s")
-            else:
-                log_debug("No TTS engine selected")
-        
+
         _initialized = True
-        
-        # Save state to file
         _save_state()
-        
+
         return {
             "success": True,
             "stt_engines": stt_engines,
@@ -223,33 +242,24 @@ def initialize_voice_services(config_json: str = None, is_base64: bool = False) 
             "tts_current": tts_engine_name,
             "message": "Voice services initialized"
         }
-        
+
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }
+        return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
 
 def process_stt(audio_data: str, language: str = "en-US", options: str = None) -> Dict[str, Any]:
-    """Process speech-to-text."""
+    """Process speech-to-text (legacy)."""
     start_time = time.time()
     global _stt_engine, _initialized
-    
+
     try:
-        # Try to load state from file if not initialized - use full engine loading
         if not _stt_engine or not _initialized:
-            log_debug("STT engine not initialized in memory, trying to load from state file with engines")
             _load_state(load_engines=True)
-            log_debug(f"State loaded with engines. STT engine available: {_stt_engine is not None}")
-            
-        # Still no STT engine after loading state?
         if not _stt_engine:
             return {"success": False, "error": "STT engine not initialized"}
-        
+
         opts = json.loads(options) if options else {}
         result = _stt_engine.transcribe(audio_data, language, **opts)
-        
+
         return {
             "success": True,
             "transcription": result["text"],
@@ -260,64 +270,42 @@ def process_stt(audio_data: str, language: str = "en-US", options: str = None) -
             "alternatives": result.get("alternatives", []),
             "metadata": result.get("metadata", {})
         }
-        
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "processing_time": time.time() - start_time,
-            "traceback": traceback.format_exc()
-        }
+        return {"success": False, "error": str(e), "processing_time": time.time() - start_time, "traceback": traceback.format_exc()}
 
-def process_tts(text: str, voice: str = "default", language: str = "en-US", 
+def process_tts(text: str, voice: str = "default", language: str = "en-US",
                 volume: float = 0.8, options: str = None) -> Dict[str, Any]:
-    """Process text-to-speech."""
+    """Process text-to-speech (legacy)."""
     start_time = time.time()
     global _tts_engine, _initialized
-    
+
     try:
-        # Try to load state from file if not initialized - use full engine loading
         if not _tts_engine or not _initialized:
-            log_debug("TTS engine not initialized in memory, trying to load from state file with engines")
             _load_state(load_engines=True)
-            log_debug(f"State loaded with engines. TTS engine available: {_tts_engine is not None}")
-            
-        # Still no TTS engine after loading state?
         if not _tts_engine:
             return {"success": False, "error": "TTS engine not initialized"}
-        
+
         opts = json.loads(options) if options else {}
         result = _tts_engine.synthesize(text, voice, language, volume, **opts)
-        
+
         return {
             "success": True,
             "audio_data": result["audio_data"],
-            "text": text,
-            "voice": voice,
-            "language": language,
-            "volume": volume,
+            "text": text, "voice": voice, "language": language, "volume": volume,
             "duration": result.get("duration", 0.0),
             "processing_time": time.time() - start_time,
             "engine": _tts_engine.name,
             "metadata": result.get("metadata", {})
         }
-        
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "processing_time": time.time() - start_time,
-            "traceback": traceback.format_exc()
-        }
+        return {"success": False, "error": str(e), "processing_time": time.time() - start_time, "traceback": traceback.format_exc()}
 
 def get_voice_status() -> Dict[str, Any]:
-    """Get status of voice services."""
-    # First try to get state from globals
+    """Get status of voice services (legacy)."""
+    _ensure_legacy_imports()
     if _initialized and (_stt_engine is not None or _tts_engine is not None):
-        log_debug("Getting voice status from active session")
         return {
-            "success": True,
-            "initialized": _initialized,
+            "success": True, "initialized": _initialized,
             "stt_available": _stt_engine is not None,
             "tts_available": _tts_engine is not None,
             "stt_engine": _stt_engine.name if _stt_engine else None,
@@ -325,14 +313,9 @@ def get_voice_status() -> Dict[str, Any]:
             "stt_engines": get_available_stt_engines(),
             "tts_engines": get_available_tts_engines()
         }
-    
-    # If not initialized in this process, try to get from saved state
-    # Use lightweight state loading (load_engines=False) to avoid timeout during status checks
-    log_debug("Getting voice status from saved state (lightweight mode)")
+
     state = _load_state(load_engines=False)
     if state:
-        stt_engines = get_available_stt_engines()
-        tts_engines = get_available_tts_engines()
         return {
             "success": True,
             "initialized": state.get("initialized", False),
@@ -340,69 +323,74 @@ def get_voice_status() -> Dict[str, Any]:
             "tts_available": state.get("has_tts", False),
             "stt_engine": state.get("stt_engine_name"),
             "tts_engine": state.get("tts_engine_name"),
-            "stt_engines": stt_engines,
-            "tts_engines": tts_engines
+            "stt_engines": get_available_stt_engines(),
+            "tts_engines": get_available_tts_engines()
         }
-    
-    # No state found
-    return {
-        "success": False,
-        "initialized": False,
-        "error": "Voice services not initialized",
-        "stt_available": False,
-        "tts_available": False
-    }
+
+    return {"success": False, "initialized": False, "error": "Voice services not initialized", "stt_available": False, "tts_available": False}
 
 def cleanup_voice_services() -> Dict[str, Any]:
-    """Cleanup resources."""
+    """Cleanup resources (legacy + registry)."""
     global _stt_engine, _tts_engine, _initialized
-    
+
     try:
         if _stt_engine and hasattr(_stt_engine, 'cleanup'):
             _stt_engine.cleanup()
         if _tts_engine and hasattr(_tts_engine, 'cleanup'):
             _tts_engine.cleanup()
-            
         _stt_engine = None
         _tts_engine = None
         _initialized = False
-        
+
+        # Also clean up registry engines
+        try:
+            import engine_registry
+            engine_registry.cleanup_all()
+        except ImportError:
+            pass
+
         return {"success": True, "message": "Cleanup completed"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-# Command line interface
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
 def main():
-    """Simple command line interface."""
+    """Command line interface."""
     log_debug(f"main() started with args: {sys.argv}")
-    
+
     if len(sys.argv) < 2:
         print(json.dumps({"success": False, "error": "No command provided"}), flush=True)
         sys.exit(1)
-    
+
     command = sys.argv[1]
     log_debug(f"Command: {command}")
-    
+
     try:
-        if command == "init":
-            # Check for the -b flag indicating Base64 encoded config
+        # ---- Generic provider command (new system) ----
+        if command == "process":
+            if len(sys.argv) < 5:
+                result = {"success": False, "error": "Usage: process <module> <class> <args_b64>"}
+            else:
+                module_name = sys.argv[2]
+                class_name = sys.argv[3]
+                args_b64 = sys.argv[4]
+                result = process_generic(module_name, class_name, args_b64)
+
+        # ---- Legacy commands (backward compatible) ----
+        elif command == "init":
             is_base64 = False
             config = None
-            
-            # Parse arguments
-            log_debug(f"Parsing init arguments, arg count: {len(sys.argv)}")
             if len(sys.argv) > 2:
                 if sys.argv[2] == "-b" and len(sys.argv) > 3:
                     is_base64 = True
                     config = sys.argv[3]
-                    log_debug(f"Found base64 flag, config length: {len(config) if config else 0}")
                 else:
                     config = sys.argv[2]
-                    log_debug(f"Plain config, length: {len(config) if config else 0}")
-            
-            log_debug("About to call initialize_voice_services")
             result = initialize_voice_services(config, is_base64)
-            
+
         elif command == "stt":
             if len(sys.argv) < 3:
                 result = {"success": False, "error": "Audio data required"}
@@ -411,7 +399,7 @@ def main():
                 language = sys.argv[3] if len(sys.argv) > 3 else "en-US"
                 options = sys.argv[4] if len(sys.argv) > 4 else None
                 result = process_stt(audio_data, language, options)
-                
+
         elif command == "tts":
             if len(sys.argv) < 3:
                 result = {"success": False, "error": "Text required"}
@@ -421,34 +409,23 @@ def main():
                 language = sys.argv[4] if len(sys.argv) > 4 else "en-US"
                 volume = float(sys.argv[5]) if len(sys.argv) > 5 else 0.8
                 options = sys.argv[6] if len(sys.argv) > 6 else None
-                # Use redirect_stdout_to_stderr to capture any unexpected output during TTS synthesis
-                # This ensures libraries like chatterbox don't pollute stdout with their prints
-                log_debug("Redirecting stdout during TTS processing to prevent JSON pollution")
                 with redirect_stdout_to_stderr():
                     result = process_tts(text, voice, language, volume, options)
-                
+
         elif command == "status":
             result = get_voice_status()
-            
+
         elif command == "cleanup":
             result = cleanup_voice_services()
-            
+
         else:
             result = {"success": False, "error": f"Unknown command: {command}"}
-        
-        # Only send the clean JSON output to stdout for C# parsing
+
         print(json.dumps(result, indent=2), flush=True)
-        
-        # Explicitly exit with success code
         sys.exit(0)
-        
+
     except Exception as e:
-        # Send error as JSON to stdout for C# parsing
-        error_result = {
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }
+        error_result = {"success": False, "error": str(e), "traceback": traceback.format_exc()}
         log_debug(f"Error occurred: {str(e)}\n{traceback.format_exc()}")
         print(json.dumps(error_result, indent=2), flush=True)
         sys.exit(1)

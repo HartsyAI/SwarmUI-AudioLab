@@ -1,4 +1,4 @@
-﻿using SwarmUI.Utils;
+using SwarmUI.Utils;
 using System.Collections.Concurrent;
 using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
 using Newtonsoft.Json.Linq;

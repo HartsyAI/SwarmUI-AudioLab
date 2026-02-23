@@ -1,4 +1,4 @@
-﻿using Newtonsoft.Json.Linq;
+using Newtonsoft.Json.Linq;
 using System.IO;
 
 namespace Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
