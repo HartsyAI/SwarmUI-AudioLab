@@ -3,7 +3,6 @@ using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Backends;
 using SwarmUI.Core;
-using FreneticUtilities.FreneticDataSyntax;
 using SwarmUI.Text2Image;
 using SwarmUI.Utils;
 

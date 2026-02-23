@@ -2,14 +2,12 @@ using FreneticUtilities.FreneticDataSyntax;
 using Hartsy.Extensions.VoiceAssistant.Services;
 using Hartsy.Extensions.VoiceAssistant.WebAPI;
 using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
-using Microsoft.Extensions.Hosting;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Backends;
 using SwarmUI.Core;
 using SwarmUI.Text2Image;
 using SwarmUI.Utils;
 using System.IO;
-using System.Text;
 
 namespace Hartsy.Extensions.VoiceAssistant.SwarmBackends;
 
@@ -441,13 +439,12 @@ public class STTBackend : VoiceAssistantBackends
     {
         try
         {
-            // Create a text image with the transcription result
-            Image resultImage = await CreateTranscriptionImageAsync(sttResult);
-
-            // Also save transcription as text file
+            // Save transcription as text file
             await SaveTranscriptionAsync(sttResult, input);
 
-            return [resultImage];
+            // STT produces text, not images/media. Results are saved to disk and returned via API.
+            // TODO: Return proper media output once SwarmUI supports non-image results from Generate()
+            return [];
         }
         catch (Exception ex)
         {
@@ -456,28 +453,14 @@ public class STTBackend : VoiceAssistantBackends
         }
     }
 
-    /// <summary>Create an image containing the transcription text for display</summary>
-    public async Task<Image> CreateTranscriptionImageAsync(STTResponse sttResult)
+    /// <summary>Create a text result for STT transcription display.
+    /// Returns null because STT results are text, not images. Results are saved to disk via SaveTranscriptionAsync.</summary>
+    public Task<Image> CreateTranscriptionImageAsync(STTResponse sttResult)
     {
-        // Create a simple text image showing the transcription
-        string textContent = $"Transcription ({sttResult.Confidence:P1} confidence):\n\n{sttResult.Transcription}";
-
-        if (sttResult.Alternatives?.Length > 0)
-        {
-            textContent += "\n\nAlternatives:\n" + string.Join("\n", sttResult.Alternatives);
-        }
-
-        // Create a simple text-based image (you could enhance this with proper text rendering)
-        byte[] textBytes = Encoding.UTF8.GetBytes(textContent);
-        Dictionary<string, object> metadata = new()
-        {
-            ["transcription"] = sttResult.Transcription,
-            ["confidence"] = sttResult.Confidence,
-            ["language"] = sttResult.Language,
-            ["processing_time"] = sttResult.ProcessingTime,
-            ["backend"] = "STT"
-        };
-        return new Image("", Image.ImageType.VIDEO, ""); // TODO: Replace once we figure out how to create T2I Image with audio
+        // STT produces text output, not media. The transcription is saved to disk separately.
+        // TODO: Return proper media output once SwarmUI supports non-image results from Generate()
+        Logs.Info($"[STTBackend] Transcription result: {sttResult.Transcription} (confidence: {sttResult.Confidence:P1})");
+        return Task.FromResult<Image>(null);
     }
 
     /// <summary>Save transcription result to file system</summary>

@@ -10,7 +10,6 @@ using SwarmUI.Text2Image;
 using SwarmUI.Utils;
 using System.Diagnostics;
 using System.IO;
-using System.Text;
 
 namespace Hartsy.Extensions.VoiceAssistant.SwarmBackends;
 
@@ -459,13 +458,12 @@ public class TTSBackend : VoiceAssistantBackends
             // Save audio file to disk
             string audioFilePath = await SaveAudioFileAsync(ttsResult, originalText);
 
-            // Create audio metadata image for SwarmUI display
-            Image metadataImage = await CreateAudioMetadataImageAsync(ttsResult, audioFilePath, originalText);
+            // Log metadata for the generated audio
+            LogAudioMetadata(ttsResult, audioFilePath, originalText);
 
-            // Create a proper audio file reference that SwarmUI can handle
-            Image audioImage = await CreateAudioImageAsync(ttsResult, audioFilePath);
-
-            return [audioImage, metadataImage];
+            // TTS produces audio, not images. Audio is saved to disk and returned via API.
+            // TODO: Return proper media output once SwarmUI supports non-image results from Generate()
+            return [];
         }
         catch (Exception ex)
         {
@@ -519,67 +517,12 @@ public class TTSBackend : VoiceAssistantBackends
         }
     }
 
-    /// <summary>Create an image containing audio metadata for display</summary>
-    private static async Task<Image> CreateAudioMetadataImageAsync(TTSResponse ttsResult, string audioFilePath, string originalText)
+    /// <summary>Log audio metadata for the TTS result. Audio is saved to disk separately.</summary>
+    private static void LogAudioMetadata(TTSResponse ttsResult, string audioFilePath, string originalText)
     {
-        try
-        {
-            string metadataContent = $"🎵 Text-to-Speech Generated Audio\n\n" +
-                                $"Text: {originalText}\n" +
-                                $"Voice: {ttsResult.Voice}\n" +
-                                $"Language: {ttsResult.Language}\n" +
-                                $"Duration: {ttsResult.Duration:F2} seconds\n" +
-                                $"Volume: {ttsResult.Volume:P0}\n" +
-                                $"Processing Time: {ttsResult.ProcessingTime:F3}s\n" +
-                                $"Audio File: {Path.GetFileName(audioFilePath)}";
-
-            byte[] metadataBytes = Encoding.UTF8.GetBytes(metadataContent);
-            Dictionary<string, object> metadata = new()
-            {
-                ["type"] = "tts_metadata",
-                ["original_text"] = originalText,
-                ["voice"] = ttsResult.Voice,
-                ["language"] = ttsResult.Language,
-                ["duration"] = ttsResult.Duration,
-                ["volume"] = ttsResult.Volume,
-                ["processing_time"] = ttsResult.ProcessingTime,
-                ["audio_file"] = audioFilePath,
-                ["backend"] = "TTS"
-            };
-            return new Image("", Image.ImageType.VIDEO, ""); // TODO: Replace once we figure out how to create T2I Image with audio
-        }
-        catch (Exception ex)
-        {
-            Logs.Error($"[TTSBackend] Error creating metadata image: {ex.Message}");
-            throw;
-        }
-    }
-
-    /// <summary>Create an image that represents the audio file for SwarmUI</summary>
-    private static async Task<Image> CreateAudioImageAsync(TTSResponse ttsResult, string audioFilePath)
-    {
-        try
-        {
-            // Create a simple waveform visualization or audio icon
-            // For now, embed the audio data directly in the image metadata
-            Dictionary<string, object> metadata = new()
-            {
-                ["type"] = "audio_file",
-                ["audio_path"] = audioFilePath,
-                ["mime_type"] = "audio/wav",
-                ["duration"] = ttsResult.Duration,
-                ["voice"] = ttsResult.Voice,
-                ["language"] = ttsResult.Language,
-                ["original_text"] = ttsResult.Text,
-                ["backend"] = "TTS"
-            };
-            return new Image("", Image.ImageType.VIDEO, ""); // TODO: Replace once we figure out how to create T2I Image with audio
-        }
-        catch (Exception ex)
-        {
-            Logs.Error($"[TTSBackend] Error creating audio image: {ex.Message}");
-            throw;
-        }
+        Logs.Info($"[TTSBackend] TTS Generated Audio - Text: {originalText}, Voice: {ttsResult.Voice}, " +
+                  $"Language: {ttsResult.Language}, Duration: {ttsResult.Duration:F2}s, " +
+                  $"Volume: {ttsResult.Volume:P0}, File: {Path.GetFileName(audioFilePath)}");
     }
 
     /// <summary>Map model name to voice identifier</summary>
