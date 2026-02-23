@@ -1,6 +1,6 @@
-using Hartsy.Extensions.VoiceAssistant.AudioProviderTypes;
+using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 
-namespace Hartsy.Extensions.VoiceAssistant.AudioProviders;
+namespace Hartsy.Extensions.AudioLab.AudioProviders;
 
 /// <summary>Static aggregator of all built-in audio providers.</summary>
 public static class AudioProviderDefinitions

@@ -1,7 +1,8 @@
 using SwarmUI.Core;
+using SwarmUI.Media;
 using SwarmUI.Text2Image;
 
-namespace Hartsy.Extensions.VoiceAssistant.AudioAPI;
+namespace Hartsy.Extensions.AudioLab.AudioAPI;
 
 /// <summary>Parameter definitions for audio processing backends.
 /// These parameters appear in SwarmUI's Generate tab.</summary>
@@ -21,7 +22,7 @@ public static class AudioParameters
 
     #region STT Parameters
 
-    public static readonly T2IRegisteredParam<object> AudioInput = T2IParamTypes.Register<object>(new(
+    public static readonly T2IRegisteredParam<AudioFile> AudioInput = T2IParamTypes.Register<AudioFile>(new(
         "Audio Input", null, "Audio data or file path for speech recognition",
         Group: STTGroup, OrderPriority: 1,
         VisibleNormally: true, FeatureFlag: "voice_stt",

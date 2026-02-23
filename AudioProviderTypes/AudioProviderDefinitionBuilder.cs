@@ -1,6 +1,6 @@
-using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
+using Hartsy.Extensions.AudioLab.WebAPI.Models;
 
-namespace Hartsy.Extensions.VoiceAssistant.AudioProviderTypes;
+namespace Hartsy.Extensions.AudioLab.AudioProviderTypes;
 
 /// <summary>Fluent builder for creating <see cref="AudioProviderDefinition"/> instances.</summary>
 public sealed class AudioProviderDefinitionBuilder

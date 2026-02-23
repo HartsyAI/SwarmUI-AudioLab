@@ -1,6 +1,6 @@
-using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
+using Hartsy.Extensions.AudioLab.WebAPI.Models;
 
-namespace Hartsy.Extensions.VoiceAssistant.AudioProviderTypes;
+namespace Hartsy.Extensions.AudioLab.AudioProviderTypes;
 
 /// <summary>Type-safe definition for an audio provider. Built via <see cref="AudioProviderDefinitionBuilder"/>.</summary>
 public sealed class AudioProviderDefinition

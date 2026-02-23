@@ -1,9 +1,9 @@
 using SwarmUI.Utils;
 using System.Collections.Concurrent;
-using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
+using Hartsy.Extensions.AudioLab.WebAPI.Models;
 using Newtonsoft.Json.Linq;
 
-namespace Hartsy.Extensions.VoiceAssistant.Progress;
+namespace Hartsy.Extensions.AudioLab.Progress;
 
 /// <summary>Central progress tracking system with modern DRY implementation.</summary>
 public static class ProgressTracking
@@ -69,7 +69,7 @@ public static class ProgressTracking
         }
         if (toRemove.Count > 0)
         {
-            Logs.Debug($"[VoiceAssistant] Cleaned up {toRemove.Count} completed progress trackers");
+            Logs.Debug($"[AudioLab] Cleaned up {toRemove.Count} completed progress trackers");
         }
     }
 }
@@ -139,7 +139,7 @@ public class ProgressTracker(string id, ProgressTracker.TrackerType type)
                 Installation.FailedPackages += Installation.CurrentPackage;
             }
 
-            Logs.Error($"[VoiceAssistant] {Type} error [{Id}]: {errorMessage}");
+            Logs.Error($"[AudioLab] {Type} error [{Id}]: {errorMessage}");
         }
     }
 
@@ -161,7 +161,7 @@ public class ProgressTracker(string id, ProgressTracker.TrackerType type)
                 StatusMessage = $"{Type} completed successfully";
             }
 
-            Logs.Info($"[VoiceAssistant] {Type} [{Id}] completed in {Duration.TotalSeconds:F1} seconds");
+            Logs.Info($"[AudioLab] {Type} [{Id}] completed in {Duration.TotalSeconds:F1} seconds");
         }
     }
 
@@ -251,11 +251,11 @@ public class ProgressTracker(string id, ProgressTracker.TrackerType type)
 
         if (logLevel == "Debug")
         {
-            Logs.Debug($"[VoiceAssistant] {message}");
+            Logs.Debug($"[AudioLab] {message}");
         }
         else
         {
-            Logs.Info($"[VoiceAssistant] {message}");
+            Logs.Info($"[AudioLab] {message}");
         }
     }
 }

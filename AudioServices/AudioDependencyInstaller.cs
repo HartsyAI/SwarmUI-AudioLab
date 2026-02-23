@@ -1,14 +1,14 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
-using Hartsy.Extensions.VoiceAssistant.AudioProviderTypes;
-using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
-using Hartsy.Extensions.VoiceAssistant.Progress;
+using Hartsy.Extensions.AudioLab.AudioProviderTypes;
+using Hartsy.Extensions.AudioLab.WebAPI.Models;
+using Hartsy.Extensions.AudioLab.Progress;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Utils;
 using System.IO;
 
-namespace Hartsy.Extensions.VoiceAssistant.AudioServices;
+namespace Hartsy.Extensions.AudioLab.AudioServices;
 
 /// <summary>Provider-aware dependency installer. Replaces the old DependencyInstaller
 /// that had hardcoded STT/TTS package arrays with provider-driven dependency resolution.</summary>
@@ -28,7 +28,7 @@ public class AudioDependencyInstaller
             string pythonPath = GetSwarmUIPythonPath();
             if (pythonPath == null)
             {
-                Logs.Error("[VoiceAssistant] SwarmUI Python environment not found!");
+                Logs.Error("[AudioLab] SwarmUI Python environment not found!");
                 return null;
             }
             return new PythonEnvironmentInfo
@@ -41,7 +41,7 @@ public class AudioDependencyInstaller
         }
         catch (Exception ex)
         {
-            Logs.Error($"[VoiceAssistant] Error detecting Python environment: {ex.Message}");
+            Logs.Error($"[AudioLab] Error detecting Python environment: {ex.Message}");
             return null;
         }
     }
@@ -57,7 +57,7 @@ public class AudioDependencyInstaller
         }
         catch (Exception ex)
         {
-            Logs.Error($"[VoiceAssistant] Error checking {provider.Name} dependencies: {ex.Message}");
+            Logs.Error($"[AudioLab] Error checking {provider.Name} dependencies: {ex.Message}");
             return false;
         }
     }
@@ -77,7 +77,7 @@ public class AudioDependencyInstaller
 
         try
         {
-            Logs.Info($"[VoiceAssistant] Installing dependencies for {provider.Name}");
+            Logs.Info($"[AudioLab] Installing dependencies for {provider.Name}");
             ProgressTracker tracker = ProgressTracking.Installation;
             tracker.Reset();
             tracker.UpdateProgress(5, $"Analyzing {provider.Name} dependencies", "Checking current installation status...");
@@ -91,7 +91,7 @@ public class AudioDependencyInstaller
                 return true;
             }
 
-            Logs.Info($"[VoiceAssistant] Need to install {toInstall.Count} packages for {provider.Name}");
+            Logs.Info($"[AudioLab] Need to install {toInstall.Count} packages for {provider.Name}");
 
             // Group by category for batched install
             Dictionary<string, List<PackageDefinition>> byCategory = toInstall
@@ -116,7 +116,7 @@ public class AudioDependencyInstaller
         catch (Exception ex)
         {
             ProgressTracking.Installation.SetError($"{provider.Name} installation failed: {ex.Message}");
-            Logs.Error($"[VoiceAssistant] {provider.Name} dependency installation failed: {ex.Message}");
+            Logs.Error($"[AudioLab] {provider.Name} dependency installation failed: {ex.Message}");
             throw;
         }
         finally
@@ -243,7 +243,7 @@ public class AudioDependencyInstaller
         }
         catch (Exception ex)
         {
-            Logs.Error($"[VoiceAssistant] Error getting {provider.Name} package status: {ex.Message}");
+            Logs.Error($"[AudioLab] Error getting {provider.Name} package status: {ex.Message}");
         }
         return results;
     }
@@ -294,7 +294,7 @@ except Exception as e:
         }
         catch (Exception ex)
         {
-            Logs.Error($"[VoiceAssistant] Error getting installed packages: {ex.Message}");
+            Logs.Error($"[AudioLab] Error getting installed packages: {ex.Message}");
             return [];
         }
     }
@@ -327,7 +327,7 @@ except Exception as e:
         }
         catch (Exception ex)
         {
-            Logs.Debug($"[VoiceAssistant] Error checking git package {package.Name}: {ex.Message}");
+            Logs.Debug($"[AudioLab] Error checking git package {package.Name}: {ex.Message}");
             return false;
         }
     }
@@ -377,7 +377,7 @@ except Exception as e:
         {
             if (retry < maxRetries)
             {
-                Logs.Warning($"[VoiceAssistant] Retrying {package.Name} ({retry + 1}/{maxRetries})...");
+                Logs.Warning($"[AudioLab] Retrying {package.Name} ({retry + 1}/{maxRetries})...");
                 await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, retry)));
                 await InstallSinglePackageAsync(pythonInfo, package, tracker, retry + 1, maxRetries);
                 return;
@@ -408,7 +408,7 @@ except Exception as e:
         {
             startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(Path.GetFullPath("./dlbackend/ComfyUI/venv/bin"));
         }
-        PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[VoiceAssistant] ");
+        PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[AudioLab] ");
 
         using Process process = new() { StartInfo = startInfo };
         DateTime lastUpdate = DateTime.Now;
@@ -426,7 +426,7 @@ except Exception as e:
                     tracker.UpdateProgress(tracker.Progress, $"Installing {string.Join(", ", packageNames)}", line.Trim(), string.Join(", ", packageNames), dlPct);
                     lastUpdate = DateTime.Now;
                 }
-                Logs.Debug($"[VoiceAssistant] Pip: {line}");
+                Logs.Debug($"[AudioLab] Pip: {line}");
             }
         };
         process.ErrorDataReceived += (_, e) =>
@@ -493,7 +493,7 @@ except Exception as e:
                     {
                         startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(Path.GetFullPath("./dlbackend/ComfyUI/venv/bin"));
                     }
-                    PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[VoiceAssistant] ");
+                    PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[AudioLab] ");
 
                     using Process process = new() { StartInfo = startInfo };
                     StringBuilder output = new();
@@ -510,7 +510,7 @@ except Exception as e:
             }
             catch (Exception ex)
             {
-                Logs.Debug($"[VoiceAssistant] Error running Python script: {ex.Message}");
+                Logs.Debug($"[AudioLab] Error running Python script: {ex.Message}");
                 return null;
             }
         });

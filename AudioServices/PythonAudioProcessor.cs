@@ -1,11 +1,11 @@
 using System.Diagnostics;
 using System.Text;
-using Hartsy.Extensions.VoiceAssistant.AudioProviderTypes;
+using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Utils;
 using System.IO;
 
-namespace Hartsy.Extensions.VoiceAssistant.AudioServices;
+namespace Hartsy.Extensions.AudioLab.AudioServices;
 
 /// <summary>Provider-aware Python subprocess bridge.  Replaces PythonVoiceProcessor
 /// with a generic interface that routes requests through the engine_registry.</summary>
@@ -21,7 +21,7 @@ public class PythonAudioProcessor
 
     private PythonAudioProcessor()
     {
-        Logs.Debug("[VoiceAssistant] PythonAudioProcessor instance created");
+        Logs.Debug("[AudioLab] PythonAudioProcessor instance created");
     }
 
     /// <summary>Initializes the processor by detecting the Python environment.</summary>
@@ -35,22 +35,22 @@ public class PythonAudioProcessor
                 _pythonPath = GetSwarmUIPythonPath();
                 if (string.IsNullOrEmpty(_pythonPath))
                 {
-                    Logs.Error("[VoiceAssistant] Python environment not detected");
+                    Logs.Error("[AudioLab] Python environment not detected");
                     return false;
                 }
                 _scriptPath = Path.Combine(AudioConfiguration.ExtensionDirectory, "python_backend", "voice_processor.py");
                 if (!File.Exists(_scriptPath))
                 {
-                    Logs.Error($"[VoiceAssistant] Voice processor script not found: {_scriptPath}");
+                    Logs.Error($"[AudioLab] Voice processor script not found: {_scriptPath}");
                     return false;
                 }
                 _isInitialized = true;
-                Logs.Info("[VoiceAssistant] PythonAudioProcessor initialized successfully");
+                Logs.Info("[AudioLab] PythonAudioProcessor initialized successfully");
                 return true;
             }
             catch (Exception ex)
             {
-                Logs.Error($"[VoiceAssistant] PythonAudioProcessor init failed: {ex.Message}");
+                Logs.Error($"[AudioLab] PythonAudioProcessor init failed: {ex.Message}");
                 return false;
             }
         }
@@ -185,12 +185,12 @@ public class PythonAudioProcessor
 
                 if (!exited)
                 {
-                    Logs.Error($"[VoiceAssistant] Python script timed out after {timeoutMs}ms");
+                    Logs.Error($"[AudioLab] Python script timed out after {timeoutMs}ms");
                     try { process.Kill(); } catch { }
 
                     if (hasValidJson)
                     {
-                        Logs.Warning("[VoiceAssistant] Process hung but returned valid JSON, treating as success.");
+                        Logs.Warning("[AudioLab] Process hung but returned valid JSON, treating as success.");
                         return stdoutOutput;
                     }
                     throw new TimeoutException($"Python script timed out after {timeoutMs}ms");
@@ -198,7 +198,7 @@ public class PythonAudioProcessor
 
                 if (process.ExitCode != 0)
                 {
-                    Logs.Error($"[VoiceAssistant] Python script failed (exit {process.ExitCode}): {stderrOutput}");
+                    Logs.Error($"[AudioLab] Python script failed (exit {process.ExitCode}): {stderrOutput}");
                     throw new Exception($"Python script failed: {stderrOutput}");
                 }
 
@@ -211,7 +211,7 @@ public class PythonAudioProcessor
             }
             catch (Exception ex)
             {
-                Logs.Error($"[VoiceAssistant] Python script execution error: {ex.Message}");
+                Logs.Error($"[AudioLab] Python script execution error: {ex.Message}");
                 throw;
             }
         });
@@ -236,12 +236,12 @@ public class PythonAudioProcessor
                 startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(venvPath);
             }
 
-            PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[VoiceAssistant] ");
+            PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[AudioLab] ");
             startInfo.Environment["PYTHONPATH"] = scriptDirectory;
         }
         catch (Exception ex)
         {
-            Logs.Warning($"[VoiceAssistant] Error configuring Python environment: {ex.Message}");
+            Logs.Warning($"[AudioLab] Error configuring Python environment: {ex.Message}");
         }
     }
 

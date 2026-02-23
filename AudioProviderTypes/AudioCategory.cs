@@ -1,4 +1,4 @@
-namespace Hartsy.Extensions.VoiceAssistant.AudioProviderTypes;
+namespace Hartsy.Extensions.AudioLab.AudioProviderTypes;
 
 /// <summary>Categories of audio processing supported by the provider system.</summary>
 public enum AudioCategory

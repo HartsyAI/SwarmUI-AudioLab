@@ -1,7 +1,7 @@
 using Newtonsoft.Json.Linq;
 using System.IO;
 
-namespace Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
+namespace Hartsy.Extensions.AudioLab.WebAPI.Models;
 
 #region Base Models
 

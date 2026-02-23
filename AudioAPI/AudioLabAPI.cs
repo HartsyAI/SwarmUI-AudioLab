@@ -1,7 +1,7 @@
-using Hartsy.Extensions.VoiceAssistant.AudioProviderTypes;
-using Hartsy.Extensions.VoiceAssistant.AudioServices;
-using Hartsy.Extensions.VoiceAssistant.Progress;
-using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
+using Hartsy.Extensions.AudioLab.AudioProviderTypes;
+using Hartsy.Extensions.AudioLab.AudioServices;
+using Hartsy.Extensions.AudioLab.Progress;
+using Hartsy.Extensions.AudioLab.WebAPI.Models;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Accounts;
 using SwarmUI.Core;
@@ -9,20 +9,20 @@ using SwarmUI.Utils;
 using SwarmUI.WebAPI;
 using System.Text;
 
-namespace Hartsy.Extensions.VoiceAssistant.AudioAPI;
+namespace Hartsy.Extensions.AudioLab.AudioAPI;
 
-/// <summary>Permission definitions for the Voice Assistant API endpoints.</summary>
-public static class VoiceAssistantPermissions
+/// <summary>Permission definitions for the AudioLab API endpoints.</summary>
+public static class AudioLabPermissions
 {
-    public static readonly PermInfoGroup VoiceAssistantPermGroup = new("VoiceAssistant", "Permissions related to Voice Assistant functionality for API calls and voice processing.");
-    public static readonly PermInfo PermProcessAudio = Permissions.Register(new("voice_process_audio", "Process Audio", "Allows processing of audio through any audio provider.", PermissionDefault.POWERUSERS, VoiceAssistantPermGroup));
-    public static readonly PermInfo PermManageBackends = Permissions.Register(new("voice_manage_backends", "Manage Voice Backends", "Allows managing audio backend providers.", PermissionDefault.POWERUSERS, VoiceAssistantPermGroup));
-    public static readonly PermInfo PermCheckStatus = Permissions.Register(new("voice_check_status", "Check Voice Status", "Allows checking the status of audio providers.", PermissionDefault.POWERUSERS, VoiceAssistantPermGroup));
+    public static readonly PermInfoGroup AudioLabPermGroup = new("AudioLab", "Permissions related to AudioLab functionality for API calls and voice processing.");
+    public static readonly PermInfo PermProcessAudio = Permissions.Register(new("audio_process", "Process Audio", "Allows processing of audio through any audio provider.", PermissionDefault.POWERUSERS, AudioLabPermGroup));
+    public static readonly PermInfo PermManageBackends = Permissions.Register(new("audio_manage_backends", "Manage Audio Backends", "Allows managing audio backend providers.", PermissionDefault.POWERUSERS, AudioLabPermGroup));
+    public static readonly PermInfo PermCheckStatus = Permissions.Register(new("audio_check_status", "Check Audio Status", "Allows checking the status of audio providers.", PermissionDefault.POWERUSERS, AudioLabPermGroup));
 }
 
-/// <summary>Voice Assistant API endpoints — provider-aware audio processing.</summary>
-[API.APIClass("Voice Assistant API with provider-based audio processing")]
-public static class VoiceAssistantAPI
+/// <summary>AudioLab API endpoints — provider-aware audio processing.</summary>
+[API.APIClass("AudioLab API with provider-based audio processing")]
+public static class AudioLabAPI
 {
     /// <summary>Registers all API endpoints.</summary>
     public static void Register()
@@ -30,22 +30,22 @@ public static class VoiceAssistantAPI
         try
         {
             // Generic provider-based processing
-            API.RegisterAPICall(ProcessAudio, false, VoiceAssistantPermissions.PermProcessAudio);
+            API.RegisterAPICall(ProcessAudio, false, AudioLabPermissions.PermProcessAudio);
 
             // Backward-compatible endpoints
-            API.RegisterAPICall(ProcessSTT, false, VoiceAssistantPermissions.PermProcessAudio);
-            API.RegisterAPICall(ProcessTTS, false, VoiceAssistantPermissions.PermProcessAudio);
-            API.RegisterAPICall(ProcessWorkflow, false, VoiceAssistantPermissions.PermProcessAudio);
+            API.RegisterAPICall(ProcessSTT, false, AudioLabPermissions.PermProcessAudio);
+            API.RegisterAPICall(ProcessTTS, false, AudioLabPermissions.PermProcessAudio);
+            API.RegisterAPICall(ProcessWorkflow, false, AudioLabPermissions.PermProcessAudio);
 
             // Provider status and dependency management
-            API.RegisterAPICall(GetAllProvidersStatus, false, VoiceAssistantPermissions.PermCheckStatus);
-            API.RegisterAPICall(InstallProviderDependencies, false, VoiceAssistantPermissions.PermManageBackends);
-            API.RegisterAPICall(GetInstallationStatus, false, VoiceAssistantPermissions.PermCheckStatus);
-            API.RegisterAPICall(GetInstallationProgress, false, VoiceAssistantPermissions.PermCheckStatus);
+            API.RegisterAPICall(GetAllProvidersStatus, false, AudioLabPermissions.PermCheckStatus);
+            API.RegisterAPICall(InstallProviderDependencies, false, AudioLabPermissions.PermManageBackends);
+            API.RegisterAPICall(GetInstallationStatus, false, AudioLabPermissions.PermCheckStatus);
+            API.RegisterAPICall(GetInstallationProgress, false, AudioLabPermissions.PermCheckStatus);
         }
         catch (Exception ex)
         {
-            Logs.Error($"[VoiceAssistant] Failed to register API endpoints: {ex.Message}");
+            Logs.Error($"[AudioLab] Failed to register API endpoints: {ex.Message}");
             throw;
         }
     }
@@ -60,13 +60,13 @@ public static class VoiceAssistantAPI
             string providerId = input["provider_id"]?.ToString();
             if (string.IsNullOrEmpty(providerId))
             {
-                return VoiceAssistant.CreateErrorResponse("provider_id is required", "missing_provider");
+                return AudioLab.CreateErrorResponse("provider_id is required", "missing_provider");
             }
 
             AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId);
             if (provider == null)
             {
-                return VoiceAssistant.CreateErrorResponse($"Unknown provider: {providerId}", "unknown_provider");
+                return AudioLab.CreateErrorResponse($"Unknown provider: {providerId}", "unknown_provider");
             }
 
             // Build args from input
@@ -84,7 +84,7 @@ public static class VoiceAssistantAPI
         }
         catch (Exception ex)
         {
-            return VoiceAssistant.CreateErrorResponse("Audio processing failed", "processing_error", ex);
+            return AudioLab.CreateErrorResponse("Audio processing failed", "processing_error", ex);
         }
     }
 
@@ -105,7 +105,7 @@ public static class VoiceAssistantAPI
 
             if (sttProvider == null)
             {
-                return VoiceAssistant.CreateErrorResponse("No STT provider available", "no_provider");
+                return AudioLab.CreateErrorResponse("No STT provider available", "no_provider");
             }
 
             Dictionary<string, object> args = new()
@@ -133,11 +133,11 @@ public static class VoiceAssistantAPI
         }
         catch (ArgumentException ex)
         {
-            return VoiceAssistant.CreateErrorResponse("Invalid STT request parameters", "invalid_request", ex);
+            return AudioLab.CreateErrorResponse("Invalid STT request parameters", "invalid_request", ex);
         }
         catch (Exception ex)
         {
-            return VoiceAssistant.CreateErrorResponse("STT processing failed", "processing_error", ex);
+            return AudioLab.CreateErrorResponse("STT processing failed", "processing_error", ex);
         }
     }
 
@@ -154,7 +154,7 @@ public static class VoiceAssistantAPI
 
             if (ttsProvider == null)
             {
-                return VoiceAssistant.CreateErrorResponse("No TTS provider available", "no_provider");
+                return AudioLab.CreateErrorResponse("No TTS provider available", "no_provider");
             }
 
             Dictionary<string, object> args = new()
@@ -187,11 +187,11 @@ public static class VoiceAssistantAPI
         }
         catch (ArgumentException ex)
         {
-            return VoiceAssistant.CreateErrorResponse("Invalid TTS request parameters", "invalid_request", ex);
+            return AudioLab.CreateErrorResponse("Invalid TTS request parameters", "invalid_request", ex);
         }
         catch (Exception ex)
         {
-            return VoiceAssistant.CreateErrorResponse("TTS processing failed", "processing_error", ex);
+            return AudioLab.CreateErrorResponse("TTS processing failed", "processing_error", ex);
         }
     }
 
@@ -265,7 +265,7 @@ public static class VoiceAssistantAPI
         }
         catch (Exception ex)
         {
-            return VoiceAssistant.CreateErrorResponse("Workflow processing failed", "processing_error", ex);
+            return AudioLab.CreateErrorResponse("Workflow processing failed", "processing_error", ex);
         }
     }
 
@@ -300,7 +300,7 @@ public static class VoiceAssistantAPI
         }
         catch (Exception ex)
         {
-            return VoiceAssistant.CreateErrorResponse("Failed to get provider status", "status_error", ex);
+            return AudioLab.CreateErrorResponse("Failed to get provider status", "status_error", ex);
         }
     }
 
@@ -312,20 +312,20 @@ public static class VoiceAssistantAPI
             string providerId = input["provider_id"]?.ToString();
             if (string.IsNullOrEmpty(providerId))
             {
-                return VoiceAssistant.CreateErrorResponse("provider_id is required", "missing_provider");
+                return AudioLab.CreateErrorResponse("provider_id is required", "missing_provider");
             }
 
             AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId);
             if (provider == null)
             {
-                return VoiceAssistant.CreateErrorResponse($"Unknown provider: {providerId}", "unknown_provider");
+                return AudioLab.CreateErrorResponse($"Unknown provider: {providerId}", "unknown_provider");
             }
 
             AudioDependencyInstaller installer = new();
             PythonEnvironmentInfo pythonInfo = installer.DetectPythonEnvironment();
             if (pythonInfo?.IsValid != true)
             {
-                return VoiceAssistant.CreateErrorResponse("Python environment not detected", "python_not_found");
+                return AudioLab.CreateErrorResponse("Python environment not detected", "python_not_found");
             }
 
             bool success = await installer.InstallProviderDependenciesAsync(pythonInfo, provider);
@@ -338,7 +338,7 @@ public static class VoiceAssistantAPI
         }
         catch (Exception ex)
         {
-            return VoiceAssistant.CreateErrorResponse("Dependency installation failed", "install_error", ex);
+            return AudioLab.CreateErrorResponse("Dependency installation failed", "install_error", ex);
         }
     }
 
@@ -382,7 +382,7 @@ public static class VoiceAssistantAPI
         }
         catch (Exception ex)
         {
-            return VoiceAssistant.CreateErrorResponse("Failed to check installation status", "status_error", ex);
+            return AudioLab.CreateErrorResponse("Failed to check installation status", "status_error", ex);
         }
     }
 
@@ -407,7 +407,7 @@ public static class VoiceAssistantAPI
         }
         catch (Exception ex)
         {
-            return VoiceAssistant.CreateErrorResponse("Failed to get installation progress", "status_error", ex);
+            return AudioLab.CreateErrorResponse("Failed to get installation progress", "status_error", ex);
         }
     }
 

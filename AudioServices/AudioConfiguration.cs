@@ -1,9 +1,9 @@
 using SwarmUI.Utils;
 using System.IO;
 
-namespace Hartsy.Extensions.VoiceAssistant.AudioServices;
+namespace Hartsy.Extensions.AudioLab.AudioServices;
 
-/// <summary>Configuration settings for the Voice Assistant extension.
+/// <summary>Configuration settings for the AudioLab extension.
 /// Replaces ServiceConfiguration — removes hardcoded ports and BackendType enum
 /// in favor of provider-based routing through DynamicAudioBackend.</summary>
 public static class AudioConfiguration
@@ -21,7 +21,7 @@ public static class AudioConfiguration
 
     // API Configuration
     public static readonly TimeSpan ApiCallTimeout = TimeSpan.FromSeconds(45);
-    public static readonly string UserAgent = "SwarmUI-VoiceAssistant/3.0";
+    public static readonly string UserAgent = "SwarmUI-AudioLab/3.0";
 
     // Audio Configuration
     public static readonly int MaxAudioSizeMB = 50;
@@ -48,14 +48,14 @@ public static class AudioConfiguration
 
         if (string.IsNullOrEmpty(ExtensionDirectory))
         {
-            Logs.Error("[VoiceAssistant] Extension directory not set");
+            Logs.Error("[AudioLab] Extension directory not set");
             isValid = false;
         }
 
         string voiceProcessorScript = Path.Combine(PythonBackendDirectory, "voice_processor.py");
         if (!File.Exists(voiceProcessorScript))
         {
-            Logs.Error($"[VoiceAssistant] Voice processor script not found: {voiceProcessorScript}");
+            Logs.Error($"[AudioLab] Voice processor script not found: {voiceProcessorScript}");
             isValid = false;
         }
 

@@ -1,15 +1,15 @@
 using System.Collections.Concurrent;
 using System.Text;
 using FreneticUtilities.FreneticDataSyntax;
-using Hartsy.Extensions.VoiceAssistant.AudioProviderTypes;
-using Hartsy.Extensions.VoiceAssistant.AudioServices;
+using Hartsy.Extensions.AudioLab.AudioProviderTypes;
+using Hartsy.Extensions.AudioLab.AudioServices;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Backends;
 using SwarmUI.Core;
 using SwarmUI.Text2Image;
 using SwarmUI.Utils;
 
-namespace Hartsy.Extensions.VoiceAssistant.AudioBackends;
+namespace Hartsy.Extensions.AudioLab.AudioBackends;
 
 /// <summary>A single routing backend that replaces STTBackend + TTSBackend.
 /// Mirrors DynamicAPIBackend from SwarmUI-API-Backends — provider toggles in settings
@@ -74,7 +74,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
         List<string> enabledIds = GetEnabledProviderIds();
         if (enabledIds.Count == 0)
         {
-            Logs.Warning("[VoiceAssistant] No audio providers enabled. Enable at least one provider and save settings.");
+            Logs.Warning("[AudioLab] No audio providers enabled. Enable at least one provider and save settings.");
             Status = BackendStatus.DISABLED;
             AddLoadStatus("Enable at least one audio provider checkbox and click Save.");
             return;
@@ -86,7 +86,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             bool pythonReady = await PythonAudioProcessor.Instance.InitializeAsync();
             if (!pythonReady)
             {
-                Logs.Error("[VoiceAssistant] Python audio processor failed to initialize.");
+                Logs.Error("[AudioLab] Python audio processor failed to initialize.");
                 Status = BackendStatus.ERRORED;
                 AddLoadStatus("Python environment not available.");
                 return;
@@ -97,7 +97,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 AudioProviderDefinition definition = AudioProviderRegistry.GetById(providerId);
                 if (definition == null)
                 {
-                    Logs.Warning($"[VoiceAssistant] Provider '{providerId}' not found in registry, skipping.");
+                    Logs.Warning($"[AudioLab] Provider '{providerId}' not found in registry, skipping.");
                     continue;
                 }
 
@@ -110,17 +110,17 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
                 if (Settings.DebugMode)
                 {
-                    Logs.Debug($"[VoiceAssistant] Enabled provider: {definition.Name} ({providerId})");
+                    Logs.Debug($"[AudioLab] Enabled provider: {definition.Name} ({providerId})");
                 }
             }
 
             Status = BackendStatus.RUNNING;
-            Logs.Info($"[VoiceAssistant] Audio backend initialized with {_providers.Count} provider(s): " +
+            Logs.Info($"[AudioLab] Audio backend initialized with {_providers.Count} provider(s): " +
                       string.Join(", ", _providers.Keys));
         }
         catch (Exception ex)
         {
-            Logs.Error($"[VoiceAssistant] Audio backend initialization failed: {ex}");
+            Logs.Error($"[AudioLab] Audio backend initialization failed: {ex}");
             Status = BackendStatus.ERRORED;
         }
     }
@@ -133,7 +133,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
         if (providerId == null || !_providers.TryGetValue(providerId, out AudioProviderMetadata meta))
         {
-            Logs.Error($"[VoiceAssistant] No provider found for model: {modelName}");
+            Logs.Error($"[AudioLab] No provider found for model: {modelName}");
             return [];
         }
 
@@ -149,7 +149,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             if (result["success"]?.Value<bool>() != true)
             {
                 string error = result["error"]?.ToString() ?? "Unknown error";
-                Logs.Error($"[VoiceAssistant] Provider {provider.Name} failed: {error}");
+                Logs.Error($"[AudioLab] Provider {provider.Name} failed: {error}");
                 return [];
             }
 
@@ -159,12 +159,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
             if (provider.Category == AudioCategory.TTS)
             {
                 double duration = result["duration"]?.Value<double>() ?? 0;
-                Logs.Info($"[VoiceAssistant] TTS generated {duration:F2}s of audio via {provider.Name}");
+                Logs.Info($"[AudioLab] TTS generated {duration:F2}s of audio via {provider.Name}");
             }
             else if (provider.Category == AudioCategory.STT)
             {
                 string transcription = result["text"]?.ToString() ?? "";
-                Logs.Info($"[VoiceAssistant] STT transcription via {provider.Name}: {transcription}");
+                Logs.Info($"[AudioLab] STT transcription via {provider.Name}: {transcription}");
             }
 
             // Audio output is saved via API endpoints; Generate() returns empty since
@@ -173,7 +173,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
         catch (Exception ex)
         {
-            Logs.Error($"[VoiceAssistant] Error processing with {provider.Name}: {ex.Message}");
+            Logs.Error($"[AudioLab] Error processing with {provider.Name}: {ex.Message}");
             meta.LastError = ex.Message;
             return [];
         }
@@ -194,7 +194,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// <summary>Shuts down the backend and cleans up providers.</summary>
     public override async Task Shutdown()
     {
-        Logs.Info("[VoiceAssistant] Shutting down audio backend");
+        Logs.Info("[AudioLab] Shutting down audio backend");
         _providers.Clear();
         await PythonAudioProcessor.Instance.CleanupAsync();
         Status = BackendStatus.DISABLED;

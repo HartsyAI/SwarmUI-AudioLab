@@ -1,4 +1,4 @@
-namespace Hartsy.Extensions.VoiceAssistant.AudioProviderTypes;
+namespace Hartsy.Extensions.AudioLab.AudioProviderTypes;
 
 /// <summary>Metadata for a specific model within an audio provider.</summary>
 public sealed class AudioModelDefinition

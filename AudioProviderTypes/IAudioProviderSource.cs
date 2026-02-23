@@ -1,4 +1,4 @@
-namespace Hartsy.Extensions.VoiceAssistant.AudioProviderTypes;
+namespace Hartsy.Extensions.AudioLab.AudioProviderTypes;
 
 /// <summary>Interface for provider sources that supply audio provider definitions.</summary>
 public interface IAudioProviderSource

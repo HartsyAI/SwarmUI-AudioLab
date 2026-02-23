@@ -1,7 +1,7 @@
-using Hartsy.Extensions.VoiceAssistant.AudioProviderTypes;
-using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
+using Hartsy.Extensions.AudioLab.AudioProviderTypes;
+using Hartsy.Extensions.AudioLab.WebAPI.Models;
 
-namespace Hartsy.Extensions.VoiceAssistant.AudioProviders;
+namespace Hartsy.Extensions.AudioLab.AudioProviders;
 
 /// <summary>Zero-dependency fallback STT provider — returns placeholder transcription.</summary>
 public sealed class FallbackSTTProvider : IAudioProviderSource

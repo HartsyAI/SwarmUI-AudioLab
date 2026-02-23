@@ -1,7 +1,7 @@
-using Hartsy.Extensions.VoiceAssistant.AudioProviderTypes;
-using Hartsy.Extensions.VoiceAssistant.WebAPI.Models;
+using Hartsy.Extensions.AudioLab.AudioProviderTypes;
+using Hartsy.Extensions.AudioLab.WebAPI.Models;
 
-namespace Hartsy.Extensions.VoiceAssistant.AudioProviders;
+namespace Hartsy.Extensions.AudioLab.AudioProviders;
 
 /// <summary>Chatterbox TTS provider — high-quality voice synthesis with expressive controls.</summary>
 public sealed class ChatterboxProvider : IAudioProviderSource

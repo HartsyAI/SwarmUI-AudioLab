@@ -1,4 +1,4 @@
-namespace Hartsy.Extensions.VoiceAssistant.AudioProviderTypes;
+namespace Hartsy.Extensions.AudioLab.AudioProviderTypes;
 
 /// <summary>Runtime state for an initialized audio provider within the backend.</summary>
 public class AudioProviderMetadata
