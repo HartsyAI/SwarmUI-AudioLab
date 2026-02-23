@@ -20,18 +20,85 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// <summary>Settings for the dynamic audio backend.</summary>
     public class DynamicAudioSettings : AutoConfiguration
     {
+        // -- TTS providers --
         [ConfigComment("Enable Chatterbox TTS (high-quality voice synthesis with expressive controls).")]
         public bool EnableChatterbox = false;
 
         [ConfigComment("Enable Bark TTS (text-to-audio with speech, music, and sound effects).")]
         public bool EnableBark = false;
 
+        [ConfigComment("Enable VibeVoice TTS (Microsoft, long-form multi-speaker up to 90 min).")]
+        public bool EnableVibeVoice = false;
+
+        [ConfigComment("Enable Orpheus TTS (LLM-based emotional speech with emotion tags).")]
+        public bool EnableOrpheus = false;
+
+        [ConfigComment("Enable Kokoro TTS (ultra-fast lightweight TTS, 82M params, CPU-capable).")]
+        public bool EnableKokoro = false;
+
+        [ConfigComment("Enable Dia TTS (ultra-realistic dialogue generation with nonverbal sounds).")]
+        public bool EnableDia = false;
+
+        [ConfigComment("Enable F5-TTS (zero-shot voice cloning from 15-second reference audio).")]
+        public bool EnableF5TTS = false;
+
+        [ConfigComment("Enable CSM TTS (Sesame conversational speech model, Llama backbone).")]
+        public bool EnableCSM = false;
+
+        [ConfigComment("Enable Zonos TTS (multilingual TTS trained on 200k+ hours, zero-shot cloning).")]
+        public bool EnableZonos = false;
+
+        [ConfigComment("Enable CosyVoice TTS (Alibaba streaming TTS with ultra-low latency).")]
+        public bool EnableCosyVoice = false;
+
+        [ConfigComment("Enable NeuTTS Air (on-device TTS with instant voice cloning by Neuphonic).")]
+        public bool EnableNeuTTS = false;
+
+        [ConfigComment("Enable Piper TTS (CPU-only ONNX runtime with dozens of pre-trained voices).")]
+        public bool EnablePiper = false;
+
+        // -- STT providers --
         [ConfigComment("Enable Whisper STT (robust speech recognition across languages).")]
         public bool EnableWhisper = false;
 
         [ConfigComment("Enable RealtimeSTT (real-time streaming speech-to-text with wake word).")]
         public bool EnableRealtimeSTT = false;
 
+        [ConfigComment("Enable Moonshine STT (ultra-fast, 5x faster than Whisper).")]
+        public bool EnableMoonshine = false;
+
+        [ConfigComment("Enable Distil-Whisper STT (6x faster than Whisper large-v3, within 1% WER).")]
+        public bool EnableDistilWhisper = false;
+
+        // -- Music generation providers --
+        [ConfigComment("Enable ACE-Step (SOTA music generation, up to 4 min in 20 seconds).")]
+        public bool EnableAceStep = false;
+
+        [ConfigComment("Enable MusicGen (Meta AudioCraft text-to-music with melody conditioning).")]
+        public bool EnableMusicGen = false;
+
+        // -- Voice cloning providers --
+        [ConfigComment("Enable OpenVoice V2 (zero-shot voice cloning with tone/style control).")]
+        public bool EnableOpenVoice = false;
+
+        [ConfigComment("Enable RVC (retrieval-based voice conversion, industry standard).")]
+        public bool EnableRVC = false;
+
+        [ConfigComment("Enable GPT-SoVITS (few-shot voice cloning, strong CJK support).")]
+        public bool EnableGPTSoVITS = false;
+
+        // -- Audio FX providers --
+        [ConfigComment("Enable Demucs (Meta audio source separation — vocals, drums, bass, other).")]
+        public bool EnableDemucs = false;
+
+        [ConfigComment("Enable Resemble Enhance (speech denoising and super-resolution to 44.1kHz).")]
+        public bool EnableResembleEnhance = false;
+
+        // -- Sound FX providers --
+        [ConfigComment("Enable AudioGen (Meta AudioCraft text-to-sound-effects generation).")]
+        public bool EnableAudioGen = false;
+
+        // -- General --
         [ConfigComment("Enable debug logging for audio processing.")]
         public bool DebugMode = false;
     }
@@ -39,10 +106,36 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// <summary>Maps settings fields to provider IDs.</summary>
     private static readonly Dictionary<string, Func<DynamicAudioSettings, bool>> ProviderSettingsMap = new()
     {
+        // TTS
         ["chatterbox_tts"] = s => s.EnableChatterbox,
         ["bark_tts"] = s => s.EnableBark,
+        ["vibevoice_tts"] = s => s.EnableVibeVoice,
+        ["orpheus_tts"] = s => s.EnableOrpheus,
+        ["kokoro_tts"] = s => s.EnableKokoro,
+        ["dia_tts"] = s => s.EnableDia,
+        ["f5_tts"] = s => s.EnableF5TTS,
+        ["csm_tts"] = s => s.EnableCSM,
+        ["zonos_tts"] = s => s.EnableZonos,
+        ["cosyvoice_tts"] = s => s.EnableCosyVoice,
+        ["neutts_tts"] = s => s.EnableNeuTTS,
+        ["piper_tts"] = s => s.EnablePiper,
+        // STT
         ["whisper_stt"] = s => s.EnableWhisper,
         ["realtimestt_stt"] = s => s.EnableRealtimeSTT,
+        ["moonshine_stt"] = s => s.EnableMoonshine,
+        ["distilwhisper_stt"] = s => s.EnableDistilWhisper,
+        // Music
+        ["acestep_music"] = s => s.EnableAceStep,
+        ["musicgen_music"] = s => s.EnableMusicGen,
+        // Voice Clone
+        ["openvoice_clone"] = s => s.EnableOpenVoice,
+        ["rvc_clone"] = s => s.EnableRVC,
+        ["gptsovits_clone"] = s => s.EnableGPTSoVITS,
+        // Audio FX
+        ["demucs_fx"] = s => s.EnableDemucs,
+        ["resemble_enhance_fx"] = s => s.EnableResembleEnhance,
+        // Sound FX
+        ["audiogen_sfx"] = s => s.EnableAudioGen,
     };
 
     /// <summary>Runtime state for initialized providers, keyed by provider ID.</summary>
@@ -252,6 +345,26 @@ public class DynamicAudioBackend : AbstractT2IBackend
             case AudioCategory.STT:
                 args["audio_data"] = "";
                 args["language"] = "en-US";
+                break;
+
+            case AudioCategory.MusicGen:
+                args["prompt"] = input.Get(T2IParamTypes.Prompt, "");
+                args["duration"] = 30.0;
+                break;
+
+            case AudioCategory.VoiceClone:
+                args["source_audio"] = "";
+                args["target_voice"] = "";
+                break;
+
+            case AudioCategory.AudioFX:
+                args["audio_data"] = "";
+                args["effect"] = "enhance";
+                break;
+
+            case AudioCategory.SoundFX:
+                args["prompt"] = input.Get(T2IParamTypes.Prompt, "");
+                args["duration"] = 10.0;
                 break;
 
             default:
