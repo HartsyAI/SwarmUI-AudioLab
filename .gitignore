@@ -32,3 +32,5 @@
 *.app
 /python_backend/__pycache__
 *.log
+/obj
+/bin
