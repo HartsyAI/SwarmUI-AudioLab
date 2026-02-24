@@ -30,10 +30,15 @@ public class AudioLab : Extension
             AudioProviderDefinitions.RegisterAll();
             Logs.Info($"[AudioLab] Registered {AudioProviderDefinitions.All.Count} audio providers");
 
-            // Register web assets
+            // Register web assets — libraries first, then modules
+            ScriptFiles.Add("Assets/lib/wavesurfer.min.js");
+            ScriptFiles.Add("Assets/lib/wavesurfer-record.min.js");
+            ScriptFiles.Add("Assets/lib/wavesurfer-regions.min.js");
+            ScriptFiles.Add("Assets/lib/crunker.min.js");
+            ScriptFiles.Add("Assets/audio-player.js");
             ScriptFiles.Add("Assets/audio-api.js");
-            ScriptFiles.Add("Assets/audio-ui.js");
             ScriptFiles.Add("Assets/audio-core.js");
+            ScriptFiles.Add("Assets/audio-ui.js");
             StyleSheetFiles.Add("Assets/audio-lab.css");
         }
         catch (Exception ex)
@@ -52,6 +57,7 @@ public class AudioLab : Extension
 
         // Register API endpoints
         AudioLabAPI.Register();
+        VideoAudioEndpoints.Register();
     }
 
     /// <summary>Creates a standardized error response for API endpoints.</summary>

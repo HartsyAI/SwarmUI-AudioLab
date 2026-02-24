@@ -105,6 +105,28 @@ const AudioLabAPI = (() => {
         });
     }
 
+    // ===== VIDEO + AUDIO =====
+
+    /** Combine video with audio track.
+     *  Maps to C# endpoint: CombineVideoAudio
+     *  @param {string} videoData - base64 encoded video
+     *  @param {string} audioData - base64 encoded audio
+     *  @param {string} mode - "replace" or "mix" */
+    async function combineVideoAudio(videoData, audioData, mode = 'replace') {
+        return await callAPI('CombineVideoAudio', {
+            video_data: videoData,
+            audio_data: audioData,
+            mode
+        });
+    }
+
+    /** Extract audio track from a video file.
+     *  Maps to C# endpoint: ExtractAudioFromVideo
+     *  @param {string} videoData - base64 encoded video */
+    async function extractAudioFromVideo(videoData) {
+        return await callAPI('ExtractAudioFromVideo', { video_data: videoData });
+    }
+
     // ===== VALIDATION =====
 
     function validateAudioData(audioData) {
@@ -138,6 +160,9 @@ const AudioLabAPI = (() => {
         processSTT,
         processTTS,
         processWorkflow,
+        // Video + Audio
+        combineVideoAudio,
+        extractAudioFromVideo,
         // Validation
         validateAudioData,
         validateText

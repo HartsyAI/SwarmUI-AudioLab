@@ -144,6 +144,77 @@ const AudioLabCore = (() => {
         await stopAudio();
     }
 
+    // ===== AUDIO EDITING (Crunker.js + Web Audio API) =====
+
+    let crunkerInstance = null;
+
+    function getCrunker() {
+        if (!crunkerInstance && window.Crunker) {
+            crunkerInstance = new Crunker();
+        }
+        return crunkerInstance;
+    }
+
+    /** Trim audio to a region [start, end] in seconds.
+     *  @param {Blob|string} source - audio Blob or URL
+     *  @param {number} start - start time in seconds
+     *  @param {number} end - end time in seconds
+     *  @returns {Promise<Blob>} trimmed audio as WAV Blob */
+    async function trimAudio(source, start, end) {
+        const crunker = getCrunker();
+        if (!crunker) throw new Error('Crunker not available');
+        const buffers = await crunker.fetchAudio(source);
+        const trimmed = crunker.sliceAudio(buffers[0], start, end, 0.01, 0.01);
+        const { blob } = crunker.export(trimmed, 'audio/wav');
+        return blob;
+    }
+
+    /** Split audio at a given time into two blobs.
+     *  @param {Blob|string} source - audio Blob or URL
+     *  @param {number} splitTime - time in seconds to split at
+     *  @returns {Promise<{before: Blob, after: Blob}>} */
+    async function splitAudio(source, splitTime) {
+        const crunker = getCrunker();
+        if (!crunker) throw new Error('Crunker not available');
+        const buffers = await crunker.fetchAudio(source);
+        const buf = buffers[0];
+        const part1 = crunker.sliceAudio(buf, 0, splitTime);
+        const part2 = crunker.sliceAudio(buf, splitTime, buf.duration);
+        return {
+            before: crunker.export(part1, 'audio/wav').blob,
+            after: crunker.export(part2, 'audio/wav').blob
+        };
+    }
+
+    /** Concatenate multiple audio sources sequentially.
+     *  @param {Array<Blob|string>} sources - array of Blobs or URLs
+     *  @returns {Promise<Blob>} concatenated audio as WAV Blob */
+    async function concatAudio(sources) {
+        const crunker = getCrunker();
+        if (!crunker) throw new Error('Crunker not available');
+        const buffers = await crunker.fetchAudio(...sources);
+        const merged = crunker.concatAudio(buffers);
+        return crunker.export(merged, 'audio/wav').blob;
+    }
+
+    /** Mix/overlay multiple audio sources together.
+     *  @param {Array<Blob|string>} sources - array of Blobs or URLs
+     *  @returns {Promise<Blob>} mixed audio as WAV Blob */
+    async function mixAudio(sources) {
+        const crunker = getCrunker();
+        if (!crunker) throw new Error('Crunker not available');
+        const buffers = await crunker.fetchAudio(...sources);
+        const mixed = crunker.mergeAudio(buffers);
+        return crunker.export(mixed, 'audio/wav').blob;
+    }
+
+    /** Export an AudioBuffer or Blob to base64 WAV string.
+     *  @param {Blob} blob - audio Blob
+     *  @returns {Promise<string>} base64 string */
+    async function blobToBase64Export(blob) {
+        return blobToBase64(blob);
+    }
+
     return {
         isRecordingSupported,
         startRecording,
@@ -156,6 +227,12 @@ const AudioLabCore = (() => {
         fileToBase64,
         emergencyStop,
         cleanup,
+        // Audio editing
+        trimAudio,
+        splitAudio,
+        concatAudio,
+        mixAudio,
+        blobToBase64Export,
         getStatus: () => ({
             capabilities,
             isRecording: isRecording(),
