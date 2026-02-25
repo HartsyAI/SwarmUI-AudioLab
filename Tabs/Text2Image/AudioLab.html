@@ -202,245 +202,240 @@
                 <!-- Workspace Header -->
                 <div class="audiolab-workspace-header">
                     <button id="audiolabWorkspaceBack" class="basic-button small-button">
-                        <i class="fas fa-arrow-left"></i> Back
+                        <i class="fas fa-arrow-left"></i>
                     </button>
+                    <span class="audiolab-transport-divider"></span>
+                    <span class="audiolab-transport-led" id="audiolabTransportLed"></span>
                     <h4 id="audiolabWorkspaceTitle">
                         <i id="audiolabWorkspaceIcon" class="fas fa-volume-up"></i>
                         <span id="audiolabWorkspaceName">Text to Speech</span>
                     </h4>
+                    <span class="audiolab-transport-spacer"></span>
+                    <span class="audiolab-transport-readout" id="audiolabTransportReadout">READY</span>
                 </div>
 
                 <!-- ===== TTS Workspace ===== -->
-                <div id="audiolabWorkspaceTTS" class="audiolab-workspace-panel" style="display: none;">
-                    <!-- Configuration -->
-                    <div class="input-group">
-                        <div class="input-group-header">
-                            <div class="header-label-wrap">
-                                <span class="auto-input-name">Configuration</span>
-                            </div>
-                        </div>
-                        <div class="input-group-content">
-                            <div class="audiolab-tts-layout">
-                                <div class="audiolab-provider-select">
-                                    <label class="auto-input-name">Provider / Model</label>
-                                    <select id="audiolabTTSProvider" class="auto-dropdown"></select>
+                <div id="audiolabWorkspaceTTS" class="audiolab-workspace-panel audiolab-split-panel" style="display: none;">
+                    <div class="audiolab-panel-left">
+                        <div class="audiolab-panel-inner">
+                            <div class="input-group">
+                                <div class="input-group-header">
+                                    <div class="header-label-wrap"><span class="auto-input-name">Configuration</span></div>
                                 </div>
-                                <div class="audiolab-tts-input">
-                                    <label class="auto-input-name">Text to Speak</label>
-                                    <textarea id="audiolabTTSText" class="form-control audiolab-textarea" placeholder="Enter text to convert to speech..." maxlength="1000"></textarea>
-                                    <div class="audiolab-char-counter">
-                                        <span id="audiolabTTSCharCount">0</span>/1000
-                                    </div>
-                                </div>
-                                <div class="audiolab-tts-controls">
-                                    <div class="audiolab-control-group">
-                                        <label class="auto-input-name">Voice Style</label>
-                                        <select id="audiolabTTSVoice" class="auto-dropdown">
-                                            <option value="default">Default</option>
-                                            <option value="expressive">Expressive</option>
-                                            <option value="calm">Calm</option>
-                                            <option value="dramatic">Dramatic</option>
-                                        </select>
-                                    </div>
-                                    <div class="audiolab-control-group">
-                                        <label class="auto-input-name">Language</label>
-                                        <select id="audiolabTTSLanguage" class="auto-dropdown">
-                                            <option value="en-US">English (US)</option>
-                                            <option value="en-GB">English (UK)</option>
-                                            <option value="es-ES">Spanish</option>
-                                            <option value="fr-FR">French</option>
-                                            <option value="de-DE">German</option>
-                                            <option value="ja-JP">Japanese</option>
-                                            <option value="ko-KR">Korean</option>
-                                            <option value="zh-CN">Chinese</option>
-                                        </select>
-                                    </div>
-                                    <div class="audiolab-control-group">
-                                        <label class="auto-input-name">Volume</label>
-                                        <div class="auto-slider-box">
-                                            <div class="auto-slider-range-wrapper">
-                                                <input type="range" id="audiolabTTSVolume" class="auto-slider-range" min="0" max="1" step="0.1" value="0.8">
+                                <div class="input-group-content">
+                                    <div class="audiolab-tts-layout">
+                                        <div class="audiolab-provider-select">
+                                            <label class="auto-input-name">Provider / Model</label>
+                                            <select id="audiolabTTSProvider" class="auto-dropdown"></select>
+                                        </div>
+                                        <div class="audiolab-tts-input">
+                                            <label class="auto-input-name">Text to Speak</label>
+                                            <textarea id="audiolabTTSText" class="form-control audiolab-textarea" placeholder="Enter text to convert to speech..." maxlength="1000"></textarea>
+                                            <div class="audiolab-char-counter"><span id="audiolabTTSCharCount">0</span>/1000</div>
+                                        </div>
+                                        <div class="audiolab-tts-controls">
+                                            <div class="audiolab-control-group">
+                                                <label class="auto-input-name">Voice Style</label>
+                                                <select id="audiolabTTSVoice" class="auto-dropdown">
+                                                    <option value="default">Default</option>
+                                                    <option value="expressive">Expressive</option>
+                                                    <option value="calm">Calm</option>
+                                                    <option value="dramatic">Dramatic</option>
+                                                </select>
                                             </div>
-                                            <input type="number" id="audiolabTTSVolumeNum" class="auto-slider-number" min="0" max="1" step="0.1" value="0.8">
+                                            <div class="audiolab-control-group">
+                                                <label class="auto-input-name">Language</label>
+                                                <select id="audiolabTTSLanguage" class="auto-dropdown">
+                                                    <option value="en-US">English (US)</option>
+                                                    <option value="en-GB">English (UK)</option>
+                                                    <option value="es-ES">Spanish</option>
+                                                    <option value="fr-FR">French</option>
+                                                    <option value="de-DE">German</option>
+                                                    <option value="ja-JP">Japanese</option>
+                                                    <option value="ko-KR">Korean</option>
+                                                    <option value="zh-CN">Chinese</option>
+                                                </select>
+                                            </div>
+                                            <div class="audiolab-control-group">
+                                                <label class="auto-input-name">Volume</label>
+                                                <div class="auto-slider-box">
+                                                    <div class="auto-slider-range-wrapper">
+                                                        <input type="range" id="audiolabTTSVolume" class="auto-slider-range" min="0" max="1" step="0.1" value="0.8">
+                                                    </div>
+                                                    <input type="number" id="audiolabTTSVolumeNum" class="auto-slider-number" min="0" max="1" step="0.1" value="0.8">
+                                                </div>
+                                            </div>
+                                            <div class="audiolab-control-group">
+                                                <label class="auto-input-name">Speed</label>
+                                                <div class="auto-slider-box">
+                                                    <div class="auto-slider-range-wrapper">
+                                                        <input type="range" id="audiolabTTSSpeed" class="auto-slider-range" min="0.25" max="3.0" step="0.1" value="1.0">
+                                                    </div>
+                                                    <input type="number" id="audiolabTTSSpeedNum" class="auto-slider-number" min="0.25" max="3.0" step="0.1" value="1.0">
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
-                                    <div class="audiolab-control-group">
-                                        <label class="auto-input-name">Speed</label>
-                                        <div class="auto-slider-box">
-                                            <div class="auto-slider-range-wrapper">
-                                                <input type="range" id="audiolabTTSSpeed" class="auto-slider-range" min="0.25" max="3.0" step="0.1" value="1.0">
-                                            </div>
-                                            <input type="number" id="audiolabTTSSpeedNum" class="auto-slider-number" min="0.25" max="3.0" step="0.1" value="1.0">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="audiolab-split-bar"></div>
+                    <div class="audiolab-panel-right">
+                        <div class="audiolab-panel-inner">
+                            <div class="audiolab-action-row">
+                                <button id="audiolabTTSGenerate" class="basic-button btn-primary" disabled>
+                                    <i class="fas fa-volume-up"></i> Generate Speech
+                                </button>
+                                <button id="audiolabTTSStop" class="basic-button" disabled>
+                                    <i class="fas fa-stop"></i> Stop
+                                </button>
+                            </div>
+                            <div class="input-group">
+                                <div class="input-group-header">
+                                    <div class="header-label-wrap"><span class="auto-input-name">Output</span></div>
+                                </div>
+                                <div class="input-group-content">
+                                    <div class="audiolab-output">
+                                        <div id="audiolabTTSPlayerContainer" class="audiolab-player-container" style="display: none;"></div>
+                                        <div id="audiolabTTSPlaceholder" class="audiolab-output-placeholder">
+                                            <i class="fas fa-volume-mute"></i>
+                                            <span>Generated audio will appear here</span>
                                         </div>
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-                    <!-- Output -->
-                    <div class="input-group">
-                        <div class="input-group-header">
-                            <div class="header-label-wrap">
-                                <span class="auto-input-name">Output</span>
-                            </div>
-                        </div>
-                        <div class="input-group-content">
-                            <div class="audiolab-output-section">
-                                <div class="audiolab-action-row">
-                                    <button id="audiolabTTSGenerate" class="basic-button btn-primary" disabled>
-                                        <i class="fas fa-volume-up"></i> Generate Speech
-                                    </button>
-                                    <button id="audiolabTTSStop" class="basic-button" disabled>
-                                        <i class="fas fa-stop"></i> Stop
-                                    </button>
+                            <div class="input-group audiolab-history-panel">
+                                <div class="input-group-header">
+                                    <div class="header-label-wrap">
+                                        <span class="auto-input-name">Output History</span>
+                                        <div class="header-label-spacer"></div>
+                                        <button id="audiolabTTSClearHistory" class="basic-button small-button" title="Clear History"><i class="fas fa-trash"></i></button>
+                                    </div>
                                 </div>
-                                <div class="audiolab-output">
-                                    <div id="audiolabTTSPlayerContainer" class="audiolab-player-container" style="display: none;"></div>
-                                    <div id="audiolabTTSPlaceholder" class="audiolab-output-placeholder">
-                                        <i class="fas fa-volume-mute"></i>
-                                        <span>Generated audio will appear here</span>
+                                <div class="input-group-content">
+                                    <div id="audiolabTTSHistory" class="audiolab-history">
+                                        <div class="audiolab-history-empty"><i class="fas fa-history"></i><p>No TTS outputs yet</p></div>
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-                    <!-- History -->
-                    <div class="input-group audiolab-history-panel">
-                        <div class="input-group-header">
-                            <div class="header-label-wrap">
-                                <span class="auto-input-name">Output History</span>
-                                <div class="header-label-spacer"></div>
-                                <button id="audiolabTTSClearHistory" class="basic-button small-button" title="Clear History">
-                                    <i class="fas fa-trash"></i>
+                            <div class="audiolab-video-panel-wrapper">
+                                <button class="audiolab-video-panel-toggle basic-button small-button">
+                                    <i class="fas fa-film"></i> Attach to Video <i class="fas fa-chevron-down audiolab-video-chevron"></i>
                                 </button>
-                            </div>
-                        </div>
-                        <div class="input-group-content">
-                            <div id="audiolabTTSHistory" class="audiolab-history">
-                                <div class="audiolab-history-empty">
-                                    <i class="fas fa-history"></i>
-                                    <p>No TTS outputs yet</p>
+                                <div class="audiolab-video-panel" style="display: none;">
+                                    <div class="audiolab-video-upload">
+                                        <input type="file" class="audiolab-video-file form-control" accept="video/*">
+                                        <video class="audiolab-video-preview" controls style="display: none;"></video>
+                                    </div>
+                                    <div class="audiolab-video-controls">
+                                        <div class="audiolab-radio-group">
+                                            <label><input type="radio" name="ttsVideoMode" value="replace" checked> Replace audio</label>
+                                            <label><input type="radio" name="ttsVideoMode" value="mix"> Mix with original</label>
+                                        </div>
+                                        <button class="basic-button btn-primary audiolab-combine-btn" disabled>
+                                            <i class="fas fa-film"></i> Combine & Export
+                                        </button>
+                                    </div>
                                 </div>
-                            </div>
-                        </div>
-                    </div>
-                    <!-- Video Attachment -->
-                    <div class="audiolab-video-panel-wrapper">
-                        <button class="audiolab-video-panel-toggle basic-button small-button">
-                            <i class="fas fa-film"></i> Attach to Video <i class="fas fa-chevron-down audiolab-video-chevron"></i>
-                        </button>
-                        <div class="audiolab-video-panel" style="display: none;">
-                            <div class="audiolab-video-upload">
-                                <input type="file" class="audiolab-video-file form-control" accept="video/*">
-                                <video class="audiolab-video-preview" controls style="display: none;"></video>
-                            </div>
-                            <div class="audiolab-video-controls">
-                                <div class="audiolab-radio-group">
-                                    <label><input type="radio" name="ttsVideoMode" value="replace" checked> Replace audio</label>
-                                    <label><input type="radio" name="ttsVideoMode" value="mix"> Mix with original</label>
-                                </div>
-                                <button class="basic-button btn-primary audiolab-combine-btn" disabled>
-                                    <i class="fas fa-film"></i> Combine & Export
-                                </button>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- ===== STT Workspace ===== -->
-                <div id="audiolabWorkspaceSTT" class="audiolab-workspace-panel" style="display: none;">
-                    <!-- Input -->
-                    <div class="input-group">
-                        <div class="input-group-header">
-                            <div class="header-label-wrap">
-                                <span class="auto-input-name">Input</span>
-                            </div>
-                        </div>
-                        <div class="input-group-content">
-                            <div class="audiolab-stt-layout">
-                                <div class="audiolab-provider-select">
-                                    <label class="auto-input-name">Provider / Model</label>
-                                    <select id="audiolabSTTProvider" class="auto-dropdown"></select>
+                <div id="audiolabWorkspaceSTT" class="audiolab-workspace-panel audiolab-split-panel" style="display: none;">
+                    <div class="audiolab-panel-left">
+                        <div class="audiolab-panel-inner">
+                            <div class="input-group">
+                                <div class="input-group-header">
+                                    <div class="header-label-wrap"><span class="auto-input-name">Input</span></div>
                                 </div>
-                                <div class="audiolab-stt-controls">
-                                    <div class="audiolab-record-area">
-                                        <button id="audiolabSTTRecord" class="audiolab-record-button" disabled>
-                                            <i class="fas fa-microphone"></i>
-                                            <span class="audiolab-record-label">Record</span>
-                                        </button>
-                                        <div id="audiolabSTTStatus" class="audiolab-record-status ready">Ready</div>
-                                    </div>
-                                    <div class="audiolab-stt-settings">
-                                        <div class="audiolab-control-group">
-                                            <label class="auto-input-name">Language</label>
-                                            <select id="audiolabSTTLanguage" class="auto-dropdown">
-                                                <option value="en-US">English (US)</option>
-                                                <option value="en-GB">English (UK)</option>
-                                                <option value="es-ES">Spanish</option>
-                                                <option value="fr-FR">French</option>
-                                                <option value="de-DE">German</option>
-                                                <option value="it-IT">Italian</option>
-                                                <option value="pt-BR">Portuguese</option>
-                                                <option value="ru-RU">Russian</option>
-                                                <option value="ja-JP">Japanese</option>
-                                                <option value="ko-KR">Korean</option>
-                                                <option value="zh-CN">Chinese</option>
-                                            </select>
+                                <div class="input-group-content">
+                                    <div class="audiolab-stt-layout">
+                                        <div class="audiolab-provider-select">
+                                            <label class="auto-input-name">Provider / Model</label>
+                                            <select id="audiolabSTTProvider" class="auto-dropdown"></select>
                                         </div>
-                                        <div class="audiolab-control-group">
-                                            <label class="auto-input-name">Or Upload Audio File</label>
-                                            <input type="file" id="audiolabSTTFileInput" class="form-control" accept="audio/*">
+                                        <div class="audiolab-stt-controls">
+                                            <div class="audiolab-record-area">
+                                                <button id="audiolabSTTRecord" class="audiolab-record-button" disabled>
+                                                    <i class="fas fa-microphone"></i>
+                                                    <span class="audiolab-record-label">Record</span>
+                                                </button>
+                                                <div id="audiolabSTTStatus" class="audiolab-record-status ready">Ready</div>
+                                            </div>
+                                            <div class="audiolab-stt-settings">
+                                                <div class="audiolab-control-group">
+                                                    <label class="auto-input-name">Language</label>
+                                                    <select id="audiolabSTTLanguage" class="auto-dropdown">
+                                                        <option value="en-US">English (US)</option>
+                                                        <option value="en-GB">English (UK)</option>
+                                                        <option value="es-ES">Spanish</option>
+                                                        <option value="fr-FR">French</option>
+                                                        <option value="de-DE">German</option>
+                                                        <option value="it-IT">Italian</option>
+                                                        <option value="pt-BR">Portuguese</option>
+                                                        <option value="ru-RU">Russian</option>
+                                                        <option value="ja-JP">Japanese</option>
+                                                        <option value="ko-KR">Korean</option>
+                                                        <option value="zh-CN">Chinese</option>
+                                                    </select>
+                                                </div>
+                                                <div class="audiolab-control-group">
+                                                    <label class="auto-input-name">Or Upload Audio File</label>
+                                                    <input type="file" id="audiolabSTTFileInput" class="form-control" accept="audio/*">
+                                                </div>
+                                            </div>
                                         </div>
+                                        <div id="audiolabSTTRecordingWaveform" class="audiolab-recording-waveform" style="display: none;"></div>
+                                        <div id="audiolabSTTFilePreview" class="audiolab-file-preview" style="display: none;"></div>
                                     </div>
-                                </div>
-                                <div id="audiolabSTTRecordingWaveform" class="audiolab-recording-waveform" style="display: none;"></div>
-                                <div id="audiolabSTTFilePreview" class="audiolab-file-preview" style="display: none;"></div>
-                            </div>
-                        </div>
-                    </div>
-                    <!-- Transcription Output -->
-                    <div class="input-group">
-                        <div class="input-group-header">
-                            <div class="header-label-wrap">
-                                <span class="auto-input-name">Transcription</span>
-                                <div class="header-label-spacer"></div>
-                                <span class="audiolab-stt-confidence">
-                                    Confidence: <span id="audiolabSTTConfidence" class="audiolab-confidence-value">--</span>
-                                </span>
-                            </div>
-                        </div>
-                        <div class="input-group-content">
-                            <div class="audiolab-stt-output">
-                                <div id="audiolabSTTTranscription" class="audiolab-transcription empty">
-                                    Click Record or upload an audio file to transcribe
-                                </div>
-                                <div class="audiolab-stt-actions">
-                                    <button id="audiolabSTTCopy" class="basic-button small-button" title="Copy" disabled>
-                                        <i class="fas fa-copy"></i> Copy
-                                    </button>
-                                    <button id="audiolabSTTSendToTTS" class="basic-button small-button" title="Send to TTS" disabled>
-                                        <i class="fas fa-arrow-right"></i> Send to TTS
-                                    </button>
                                 </div>
                             </div>
                         </div>
                     </div>
-                    <!-- History -->
-                    <div class="input-group audiolab-history-panel">
-                        <div class="input-group-header">
-                            <div class="header-label-wrap">
-                                <span class="auto-input-name">Transcription History</span>
-                                <div class="header-label-spacer"></div>
-                                <button id="audiolabSTTClearHistory" class="basic-button small-button" title="Clear History">
-                                    <i class="fas fa-trash"></i>
-                                </button>
+                    <div class="audiolab-split-bar"></div>
+                    <div class="audiolab-panel-right">
+                        <div class="audiolab-panel-inner">
+                            <div class="input-group">
+                                <div class="input-group-header">
+                                    <div class="header-label-wrap">
+                                        <span class="auto-input-name">Transcription</span>
+                                        <div class="header-label-spacer"></div>
+                                        <span class="audiolab-stt-confidence">
+                                            Confidence: <span id="audiolabSTTConfidence" class="audiolab-confidence-value">--</span>
+                                        </span>
+                                    </div>
+                                </div>
+                                <div class="input-group-content">
+                                    <div class="audiolab-stt-output">
+                                        <div id="audiolabSTTTranscription" class="audiolab-transcription empty">
+                                            Click Record or upload an audio file to transcribe
+                                        </div>
+                                        <div class="audiolab-stt-actions">
+                                            <button id="audiolabSTTCopy" class="basic-button small-button" title="Copy" disabled>
+                                                <i class="fas fa-copy"></i> Copy
+                                            </button>
+                                            <button id="audiolabSTTSendToTTS" class="basic-button small-button" title="Send to TTS" disabled>
+                                                <i class="fas fa-arrow-right"></i> Send to TTS
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                        <div class="input-group-content">
-                            <div id="audiolabSTTHistory" class="audiolab-history">
-                                <div class="audiolab-history-empty">
-                                    <i class="fas fa-history"></i>
-                                    <p>No transcriptions yet</p>
+                            <div class="input-group audiolab-history-panel">
+                                <div class="input-group-header">
+                                    <div class="header-label-wrap">
+                                        <span class="auto-input-name">Transcription History</span>
+                                        <div class="header-label-spacer"></div>
+                                        <button id="audiolabSTTClearHistory" class="basic-button small-button" title="Clear History"><i class="fas fa-trash"></i></button>
+                                    </div>
+                                </div>
+                                <div class="input-group-content">
+                                    <div id="audiolabSTTHistory" class="audiolab-history">
+                                        <div class="audiolab-history-empty"><i class="fas fa-history"></i><p>No transcriptions yet</p></div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -448,160 +443,167 @@
                 </div>
 
                 <!-- ===== Music Generation Workspace ===== -->
-                <div id="audiolabWorkspaceMusic" class="audiolab-workspace-panel" style="display: none;">
-                    <!-- Configuration -->
-                    <div class="input-group">
-                        <div class="input-group-header">
-                            <div class="header-label-wrap"><span class="auto-input-name">Configuration</span></div>
-                        </div>
-                        <div class="input-group-content">
-                            <div class="audiolab-gen-layout">
-                                <div class="audiolab-provider-select">
-                                    <label class="auto-input-name">Provider / Model</label>
-                                    <select id="audiolabMusicProvider" class="auto-dropdown"></select>
+                <div id="audiolabWorkspaceMusic" class="audiolab-workspace-panel audiolab-split-panel" style="display: none;">
+                    <div class="audiolab-panel-left">
+                        <div class="audiolab-panel-inner">
+                            <div class="input-group">
+                                <div class="input-group-header">
+                                    <div class="header-label-wrap"><span class="auto-input-name">Configuration</span></div>
                                 </div>
-                                <div class="audiolab-control-group">
-                                    <label class="auto-input-name">Music Prompt</label>
-                                    <textarea id="audiolabMusicPrompt" class="form-control audiolab-textarea" placeholder="Describe the music... e.g. 'upbeat jazz piano with drums, 120 BPM'" maxlength="500"></textarea>
-                                </div>
-                                <div id="audiolabMusicLyricsGroup" class="audiolab-control-group" style="display: none;">
-                                    <label class="auto-input-name">Lyrics (optional, ACE-Step)</label>
-                                    <textarea id="audiolabMusicLyrics" class="form-control audiolab-textarea audiolab-textarea-sm" placeholder="Add lyrics for vocal alignment..."></textarea>
-                                </div>
-                                <div class="audiolab-tts-controls">
-                                    <div class="audiolab-control-group">
-                                        <label class="auto-input-name">Duration (seconds)</label>
-                                        <div class="auto-slider-box">
-                                            <div class="auto-slider-range-wrapper">
-                                                <input type="range" id="audiolabMusicDuration" class="auto-slider-range" min="5" max="240" step="5" value="30">
+                                <div class="input-group-content">
+                                    <div class="audiolab-gen-layout">
+                                        <div class="audiolab-provider-select">
+                                            <label class="auto-input-name">Provider / Model</label>
+                                            <select id="audiolabMusicProvider" class="auto-dropdown"></select>
+                                        </div>
+                                        <div class="audiolab-control-group">
+                                            <label class="auto-input-name">Music Prompt</label>
+                                            <textarea id="audiolabMusicPrompt" class="form-control audiolab-textarea" placeholder="Describe the music... e.g. 'upbeat jazz piano with drums, 120 BPM'" maxlength="500"></textarea>
+                                        </div>
+                                        <div id="audiolabMusicLyricsGroup" class="audiolab-control-group" style="display: none;">
+                                            <label class="auto-input-name">Lyrics (optional, ACE-Step)</label>
+                                            <textarea id="audiolabMusicLyrics" class="form-control audiolab-textarea audiolab-textarea-sm" placeholder="Add lyrics for vocal alignment..."></textarea>
+                                        </div>
+                                        <div class="audiolab-control-group">
+                                            <label class="auto-input-name">Duration (seconds)</label>
+                                            <div class="auto-slider-box">
+                                                <div class="auto-slider-range-wrapper">
+                                                    <input type="range" id="audiolabMusicDuration" class="auto-slider-range" min="5" max="240" step="5" value="30">
+                                                </div>
+                                                <input type="number" id="audiolabMusicDurationNum" class="auto-slider-number" min="5" max="240" step="5" value="30">
                                             </div>
-                                            <input type="number" id="audiolabMusicDurationNum" class="auto-slider-number" min="5" max="240" step="5" value="30">
+                                        </div>
+                                        <div class="audiolab-control-group">
+                                            <label class="auto-input-name">Reference Audio (optional)</label>
+                                            <input type="file" id="audiolabMusicReference" class="form-control" accept="audio/*">
+                                            <div id="audiolabMusicRefPreview" class="audiolab-file-preview" style="display: none;"></div>
                                         </div>
                                     </div>
-                                    <div class="audiolab-control-group">
-                                        <label class="auto-input-name">Reference Audio (optional)</label>
-                                        <input type="file" id="audiolabMusicReference" class="form-control" accept="audio/*">
-                                        <div id="audiolabMusicRefPreview" class="audiolab-file-preview" style="display: none;"></div>
-                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                    <!-- Output -->
-                    <div class="input-group">
-                        <div class="input-group-header">
-                            <div class="header-label-wrap"><span class="auto-input-name">Output</span></div>
-                        </div>
-                        <div class="input-group-content">
-                            <div class="audiolab-output-section">
-                                <div class="audiolab-action-row">
-                                    <button id="audiolabMusicGenerate" class="basic-button btn-primary" disabled>
-                                        <i class="fas fa-music"></i> Generate Music
-                                    </button>
-                                    <button id="audiolabMusicStop" class="basic-button" disabled>
-                                        <i class="fas fa-stop"></i> Stop
-                                    </button>
-                                </div>
-                                <div class="audiolab-output">
-                                    <div id="audiolabMusicPlayerContainer" class="audiolab-player-container" style="display: none;"></div>
-                                    <div id="audiolabMusicPlaceholder" class="audiolab-output-placeholder">
-                                        <i class="fas fa-music"></i>
-                                        <span>Generated music will appear here</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <!-- Video Attachment -->
-                    <div class="audiolab-video-panel-wrapper">
-                        <button class="audiolab-video-panel-toggle basic-button small-button">
-                            <i class="fas fa-film"></i> Attach to Video <i class="fas fa-chevron-down audiolab-video-chevron"></i>
-                        </button>
-                        <div class="audiolab-video-panel" style="display: none;">
-                            <div class="audiolab-video-upload">
-                                <input type="file" class="audiolab-video-file form-control" accept="video/*">
-                                <video class="audiolab-video-preview" controls style="display: none;"></video>
-                            </div>
-                            <div class="audiolab-video-controls">
-                                <div class="audiolab-radio-group">
-                                    <label><input type="radio" name="musicVideoMode" value="replace" checked> Replace audio</label>
-                                    <label><input type="radio" name="musicVideoMode" value="mix"> Mix with original</label>
-                                </div>
-                                <button class="basic-button btn-primary audiolab-combine-btn" disabled>
-                                    <i class="fas fa-film"></i> Combine & Export
+                    <div class="audiolab-split-bar"></div>
+                    <div class="audiolab-panel-right">
+                        <div class="audiolab-panel-inner">
+                            <div class="audiolab-action-row">
+                                <button id="audiolabMusicGenerate" class="basic-button btn-primary" disabled>
+                                    <i class="fas fa-music"></i> Generate Music
                                 </button>
+                                <button id="audiolabMusicStop" class="basic-button" disabled>
+                                    <i class="fas fa-stop"></i> Stop
+                                </button>
+                            </div>
+                            <div class="input-group">
+                                <div class="input-group-header">
+                                    <div class="header-label-wrap"><span class="auto-input-name">Output</span></div>
+                                </div>
+                                <div class="input-group-content">
+                                    <div class="audiolab-output">
+                                        <div id="audiolabMusicPlayerContainer" class="audiolab-player-container" style="display: none;"></div>
+                                        <div id="audiolabMusicPlaceholder" class="audiolab-output-placeholder">
+                                            <i class="fas fa-music"></i>
+                                            <span>Generated music will appear here</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="audiolab-video-panel-wrapper">
+                                <button class="audiolab-video-panel-toggle basic-button small-button">
+                                    <i class="fas fa-film"></i> Attach to Video <i class="fas fa-chevron-down audiolab-video-chevron"></i>
+                                </button>
+                                <div class="audiolab-video-panel" style="display: none;">
+                                    <div class="audiolab-video-upload">
+                                        <input type="file" class="audiolab-video-file form-control" accept="video/*">
+                                        <video class="audiolab-video-preview" controls style="display: none;"></video>
+                                    </div>
+                                    <div class="audiolab-video-controls">
+                                        <div class="audiolab-radio-group">
+                                            <label><input type="radio" name="musicVideoMode" value="replace" checked> Replace audio</label>
+                                            <label><input type="radio" name="musicVideoMode" value="mix"> Mix with original</label>
+                                        </div>
+                                        <button class="basic-button btn-primary audiolab-combine-btn" disabled>
+                                            <i class="fas fa-film"></i> Combine & Export
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- ===== Voice Clone Workspace ===== -->
-                <div id="audiolabWorkspaceVoiceClone" class="audiolab-workspace-panel" style="display: none;">
-                    <!-- Configuration -->
-                    <div class="input-group">
-                        <div class="input-group-header">
-                            <div class="header-label-wrap"><span class="auto-input-name">Configuration</span></div>
-                        </div>
-                        <div class="input-group-content">
-                            <div class="audiolab-clone-layout">
-                                <div class="audiolab-provider-select">
-                                    <label class="auto-input-name">Provider / Model</label>
-                                    <select id="audiolabCloneProvider" class="auto-dropdown"></select>
+                <div id="audiolabWorkspaceVoiceClone" class="audiolab-workspace-panel audiolab-split-panel" style="display: none;">
+                    <div class="audiolab-panel-left">
+                        <div class="audiolab-panel-inner">
+                            <div class="input-group">
+                                <div class="input-group-header">
+                                    <div class="header-label-wrap"><span class="auto-input-name">Configuration</span></div>
                                 </div>
-                                <div class="audiolab-clone-inputs">
-                                    <div class="audiolab-clone-source">
-                                        <label class="auto-input-name">Source Audio (voice to convert)</label>
-                                        <div class="audiolab-upload-row">
-                                            <input type="file" id="audiolabCloneSourceFile" class="form-control" accept="audio/*">
-                                            <button id="audiolabCloneSourceRecord" class="basic-button small-button" title="Record">
-                                                <i class="fas fa-microphone"></i>
-                                            </button>
+                                <div class="input-group-content">
+                                    <div class="audiolab-clone-layout">
+                                        <div class="audiolab-provider-select">
+                                            <label class="auto-input-name">Provider / Model</label>
+                                            <select id="audiolabCloneProvider" class="auto-dropdown"></select>
                                         </div>
-                                        <div id="audiolabCloneSourcePreview" class="audiolab-file-preview" style="display: none;"></div>
-                                    </div>
-                                    <div class="audiolab-clone-reference">
-                                        <label class="auto-input-name">Reference Voice (target to clone)</label>
-                                        <div class="audiolab-upload-row">
-                                            <input type="file" id="audiolabCloneRefFile" class="form-control" accept="audio/*">
-                                            <button id="audiolabCloneRefRecord" class="basic-button small-button" title="Record 15s+">
-                                                <i class="fas fa-microphone"></i>
-                                            </button>
+                                        <div class="audiolab-clone-inputs">
+                                            <div class="audiolab-clone-source">
+                                                <label class="auto-input-name">Source Audio (voice to convert)</label>
+                                                <div class="audiolab-upload-row">
+                                                    <input type="file" id="audiolabCloneSourceFile" class="form-control" accept="audio/*">
+                                                    <button id="audiolabCloneSourceRecord" class="basic-button small-button" title="Record">
+                                                        <i class="fas fa-microphone"></i>
+                                                    </button>
+                                                </div>
+                                                <div id="audiolabCloneSourcePreview" class="audiolab-file-preview" style="display: none;"></div>
+                                            </div>
+                                            <div class="audiolab-clone-reference">
+                                                <label class="auto-input-name">Reference Voice (target to clone)</label>
+                                                <div class="audiolab-upload-row">
+                                                    <input type="file" id="audiolabCloneRefFile" class="form-control" accept="audio/*">
+                                                    <button id="audiolabCloneRefRecord" class="basic-button small-button" title="Record 15s+">
+                                                        <i class="fas fa-microphone"></i>
+                                                    </button>
+                                                </div>
+                                                <div id="audiolabCloneRefPreview" class="audiolab-file-preview" style="display: none;"></div>
+                                            </div>
                                         </div>
-                                        <div id="audiolabCloneRefPreview" class="audiolab-file-preview" style="display: none;"></div>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                    <!-- Output -->
-                    <div class="input-group">
-                        <div class="input-group-header">
-                            <div class="header-label-wrap"><span class="auto-input-name">Output - A/B Comparison</span></div>
-                        </div>
-                        <div class="input-group-content">
-                            <div class="audiolab-output-section">
-                                <div class="audiolab-action-row">
-                                    <button id="audiolabCloneGenerate" class="basic-button btn-primary" disabled>
-                                        <i class="fas fa-user-circle"></i> Clone Voice
-                                    </button>
-                                    <button id="audiolabCloneStop" class="basic-button" disabled>
-                                        <i class="fas fa-stop"></i> Stop
-                                    </button>
+                    <div class="audiolab-split-bar"></div>
+                    <div class="audiolab-panel-right">
+                        <div class="audiolab-panel-inner">
+                            <div class="audiolab-action-row">
+                                <button id="audiolabCloneGenerate" class="basic-button btn-primary" disabled>
+                                    <i class="fas fa-user-circle"></i> Clone Voice
+                                </button>
+                                <button id="audiolabCloneStop" class="basic-button" disabled>
+                                    <i class="fas fa-stop"></i> Stop
+                                </button>
+                            </div>
+                            <div class="input-group">
+                                <div class="input-group-header">
+                                    <div class="header-label-wrap"><span class="auto-input-name">Output - A/B Comparison</span></div>
                                 </div>
-                                <div class="audiolab-output">
-                                    <div id="audiolabCloneOutputContainer" class="audiolab-ab-container" style="display: none;">
-                                        <div class="audiolab-ab-item">
-                                            <span class="audiolab-ab-label">Original</span>
-                                            <div id="audiolabCloneOrigPlayer"></div>
+                                <div class="input-group-content">
+                                    <div class="audiolab-output">
+                                        <div id="audiolabCloneOutputContainer" class="audiolab-ab-container" style="display: none;">
+                                            <div class="audiolab-ab-item">
+                                                <span class="audiolab-ab-label">Original</span>
+                                                <div id="audiolabCloneOrigPlayer"></div>
+                                            </div>
+                                            <div class="audiolab-ab-item">
+                                                <span class="audiolab-ab-label">Cloned</span>
+                                                <div id="audiolabCloneResultPlayer"></div>
+                                            </div>
                                         </div>
-                                        <div class="audiolab-ab-item">
-                                            <span class="audiolab-ab-label">Cloned</span>
-                                            <div id="audiolabCloneResultPlayer"></div>
+                                        <div id="audiolabClonePlaceholder" class="audiolab-output-placeholder">
+                                            <i class="fas fa-user-circle"></i>
+                                            <span>Upload source and reference audio, then click Clone Voice</span>
                                         </div>
-                                    </div>
-                                    <div id="audiolabClonePlaceholder" class="audiolab-output-placeholder">
-                                        <i class="fas fa-user-circle"></i>
-                                        <span>Upload source and reference audio, then click Clone Voice</span>
                                     </div>
                                 </div>
                             </div>
@@ -610,58 +612,65 @@
                 </div>
 
                 <!-- ===== Audio FX Workspace ===== -->
-                <div id="audiolabWorkspaceAudioFX" class="audiolab-workspace-panel" style="display: none;">
-                    <!-- Input -->
-                    <div class="input-group">
-                        <div class="input-group-header">
-                            <div class="header-label-wrap"><span class="auto-input-name">Input</span></div>
-                        </div>
-                        <div class="input-group-content">
-                            <div class="audiolab-fx-layout">
-                                <div class="audiolab-provider-select">
-                                    <label class="auto-input-name">Provider / Model</label>
-                                    <select id="audiolabFXProvider" class="auto-dropdown"></select>
+                <div id="audiolabWorkspaceAudioFX" class="audiolab-workspace-panel audiolab-split-panel" style="display: none;">
+                    <div class="audiolab-panel-left">
+                        <div class="audiolab-panel-inner">
+                            <div class="input-group">
+                                <div class="input-group-header">
+                                    <div class="header-label-wrap"><span class="auto-input-name">Input</span></div>
                                 </div>
-                                <div class="audiolab-control-group">
-                                    <label class="auto-input-name">Input Audio</label>
-                                    <input type="file" id="audiolabFXInputFile" class="form-control" accept="audio/*">
-                                    <div id="audiolabFXInputPreview" class="audiolab-file-preview" style="display: none;"></div>
+                                <div class="input-group-content">
+                                    <div class="audiolab-fx-layout">
+                                        <div class="audiolab-provider-select">
+                                            <label class="auto-input-name">Provider / Model</label>
+                                            <select id="audiolabFXProvider" class="auto-dropdown"></select>
+                                        </div>
+                                        <div class="audiolab-control-group">
+                                            <label class="auto-input-name">Input Audio</label>
+                                            <input type="file" id="audiolabFXInputFile" class="form-control" accept="audio/*">
+                                            <div id="audiolabFXInputPreview" class="audiolab-file-preview" style="display: none;"></div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                    <!-- Output -->
-                    <div class="input-group">
-                        <div class="input-group-header">
-                            <div class="header-label-wrap"><span class="auto-input-name">Output</span></div>
-                        </div>
-                        <div class="input-group-content">
-                            <div class="audiolab-output-section">
-                                <div class="audiolab-action-row">
-                                    <button id="audiolabFXProcess" class="basic-button btn-primary" disabled>
-                                        <i class="fas fa-sliders-h"></i> Process
-                                    </button>
-                                    <button id="audiolabFXStop" class="basic-button" disabled>
-                                        <i class="fas fa-stop"></i> Stop
-                                    </button>
+                    <div class="audiolab-split-bar"></div>
+                    <div class="audiolab-panel-right">
+                        <div class="audiolab-panel-inner">
+                            <div class="audiolab-action-row">
+                                <button id="audiolabFXProcess" class="basic-button btn-primary" disabled>
+                                    <i class="fas fa-sliders-h"></i> Process
+                                </button>
+                                <button id="audiolabFXStop" class="basic-button" disabled>
+                                    <i class="fas fa-stop"></i> Stop
+                                </button>
+                            </div>
+                            <div class="input-group">
+                                <div class="input-group-header">
+                                    <div class="header-label-wrap"><span class="auto-input-name">Output</span></div>
                                 </div>
-                                <!-- Demucs Stems -->
-                                <div id="audiolabFXStemsContainer" class="audiolab-stems-container" style="display: none;">
-                                    <label class="auto-input-name">Separated Stems</label>
-                                    <div class="audiolab-stem"><span class="audiolab-stem-label">Vocals</span><div class="audiolab-stem-player" id="audiolabStemVocals"></div></div>
-                                    <div class="audiolab-stem"><span class="audiolab-stem-label">Drums</span><div class="audiolab-stem-player" id="audiolabStemDrums"></div></div>
-                                    <div class="audiolab-stem"><span class="audiolab-stem-label">Bass</span><div class="audiolab-stem-player" id="audiolabStemBass"></div></div>
-                                    <div class="audiolab-stem"><span class="audiolab-stem-label">Other</span><div class="audiolab-stem-player" id="audiolabStemOther"></div></div>
-                                </div>
-                                <!-- Enhance Before/After -->
-                                <div id="audiolabFXEnhanceContainer" class="audiolab-ab-container" style="display: none;">
-                                    <label class="auto-input-name">Enhancement - Before / After</label>
-                                    <div class="audiolab-ab-item"><span class="audiolab-ab-label">Before</span><div id="audiolabFXBeforePlayer"></div></div>
-                                    <div class="audiolab-ab-item"><span class="audiolab-ab-label">After</span><div id="audiolabFXAfterPlayer"></div></div>
-                                </div>
-                                <div id="audiolabFXPlaceholder" class="audiolab-output-placeholder">
-                                    <i class="fas fa-sliders-h"></i>
-                                    <span>Upload audio and select a provider to process</span>
+                                <div class="input-group-content">
+                                    <div class="audiolab-output-section">
+                                        <!-- Demucs Stems -->
+                                        <div id="audiolabFXStemsContainer" class="audiolab-stems-container" style="display: none;">
+                                            <label class="auto-input-name">Separated Stems</label>
+                                            <div class="audiolab-stem"><span class="audiolab-stem-label">Vocals</span><div class="audiolab-stem-player" id="audiolabStemVocals"></div></div>
+                                            <div class="audiolab-stem"><span class="audiolab-stem-label">Drums</span><div class="audiolab-stem-player" id="audiolabStemDrums"></div></div>
+                                            <div class="audiolab-stem"><span class="audiolab-stem-label">Bass</span><div class="audiolab-stem-player" id="audiolabStemBass"></div></div>
+                                            <div class="audiolab-stem"><span class="audiolab-stem-label">Other</span><div class="audiolab-stem-player" id="audiolabStemOther"></div></div>
+                                        </div>
+                                        <!-- Enhance Before/After -->
+                                        <div id="audiolabFXEnhanceContainer" class="audiolab-ab-container" style="display: none;">
+                                            <label class="auto-input-name">Enhancement - Before / After</label>
+                                            <div class="audiolab-ab-item"><span class="audiolab-ab-label">Before</span><div id="audiolabFXBeforePlayer"></div></div>
+                                            <div class="audiolab-ab-item"><span class="audiolab-ab-label">After</span><div id="audiolabFXAfterPlayer"></div></div>
+                                        </div>
+                                        <div id="audiolabFXPlaceholder" class="audiolab-output-placeholder">
+                                            <i class="fas fa-sliders-h"></i>
+                                            <span>Upload audio and select a provider to process</span>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -669,157 +678,165 @@
                 </div>
 
                 <!-- ===== Sound FX Workspace ===== -->
-                <div id="audiolabWorkspaceSoundFX" class="audiolab-workspace-panel" style="display: none;">
-                    <!-- Configuration -->
-                    <div class="input-group">
-                        <div class="input-group-header">
-                            <div class="header-label-wrap"><span class="auto-input-name">Configuration</span></div>
-                        </div>
-                        <div class="input-group-content">
-                            <div class="audiolab-gen-layout">
-                                <div class="audiolab-provider-select">
-                                    <label class="auto-input-name">Provider / Model</label>
-                                    <select id="audiolabSFXProvider" class="auto-dropdown"></select>
+                <div id="audiolabWorkspaceSoundFX" class="audiolab-workspace-panel audiolab-split-panel" style="display: none;">
+                    <div class="audiolab-panel-left">
+                        <div class="audiolab-panel-inner">
+                            <div class="input-group">
+                                <div class="input-group-header">
+                                    <div class="header-label-wrap"><span class="auto-input-name">Configuration</span></div>
                                 </div>
-                                <div class="audiolab-control-group">
-                                    <label class="auto-input-name">Sound Effect Prompt</label>
-                                    <textarea id="audiolabSFXPrompt" class="form-control audiolab-textarea" placeholder="Describe the sound... e.g. 'thunderstorm with heavy rain and wind'" maxlength="500"></textarea>
-                                </div>
-                                <div class="audiolab-control-group">
-                                    <label class="auto-input-name">Duration (seconds)</label>
-                                    <div class="auto-slider-box">
-                                        <div class="auto-slider-range-wrapper">
-                                            <input type="range" id="audiolabSFXDuration" class="auto-slider-range" min="1" max="30" step="1" value="10">
+                                <div class="input-group-content">
+                                    <div class="audiolab-gen-layout">
+                                        <div class="audiolab-provider-select">
+                                            <label class="auto-input-name">Provider / Model</label>
+                                            <select id="audiolabSFXProvider" class="auto-dropdown"></select>
                                         </div>
-                                        <input type="number" id="audiolabSFXDurationNum" class="auto-slider-number" min="1" max="30" step="1" value="10">
+                                        <div class="audiolab-control-group">
+                                            <label class="auto-input-name">Sound Effect Prompt</label>
+                                            <textarea id="audiolabSFXPrompt" class="form-control audiolab-textarea" placeholder="Describe the sound... e.g. 'thunderstorm with heavy rain and wind'" maxlength="500"></textarea>
+                                        </div>
+                                        <div class="audiolab-control-group">
+                                            <label class="auto-input-name">Duration (seconds)</label>
+                                            <div class="auto-slider-box">
+                                                <div class="auto-slider-range-wrapper">
+                                                    <input type="range" id="audiolabSFXDuration" class="auto-slider-range" min="1" max="30" step="1" value="10">
+                                                </div>
+                                                <input type="number" id="audiolabSFXDurationNum" class="auto-slider-number" min="1" max="30" step="1" value="10">
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                    <!-- Output -->
-                    <div class="input-group">
-                        <div class="input-group-header">
-                            <div class="header-label-wrap"><span class="auto-input-name">Output</span></div>
-                        </div>
-                        <div class="input-group-content">
-                            <div class="audiolab-output-section">
-                                <div class="audiolab-action-row">
-                                    <button id="audiolabSFXGenerate" class="basic-button btn-primary" disabled>
-                                        <i class="fas fa-drum"></i> Generate SFX
-                                    </button>
-                                    <button id="audiolabSFXStop" class="basic-button" disabled>
-                                        <i class="fas fa-stop"></i> Stop
-                                    </button>
-                                </div>
-                                <div class="audiolab-output">
-                                    <div id="audiolabSFXPlayerContainer" class="audiolab-player-container" style="display: none;"></div>
-                                    <div id="audiolabSFXPlaceholder" class="audiolab-output-placeholder">
-                                        <i class="fas fa-drum"></i>
-                                        <span>Generated sound effects will appear here</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <!-- Video Attachment -->
-                    <div class="audiolab-video-panel-wrapper">
-                        <button class="audiolab-video-panel-toggle basic-button small-button">
-                            <i class="fas fa-film"></i> Attach to Video <i class="fas fa-chevron-down audiolab-video-chevron"></i>
-                        </button>
-                        <div class="audiolab-video-panel" style="display: none;">
-                            <div class="audiolab-video-upload">
-                                <input type="file" class="audiolab-video-file form-control" accept="video/*">
-                                <video class="audiolab-video-preview" controls style="display: none;"></video>
-                            </div>
-                            <div class="audiolab-video-controls">
-                                <div class="audiolab-radio-group">
-                                    <label><input type="radio" name="sfxVideoMode" value="replace" checked> Replace audio</label>
-                                    <label><input type="radio" name="sfxVideoMode" value="mix"> Mix with original</label>
-                                </div>
-                                <button class="basic-button btn-primary audiolab-combine-btn" disabled>
-                                    <i class="fas fa-film"></i> Combine & Export
+                    <div class="audiolab-split-bar"></div>
+                    <div class="audiolab-panel-right">
+                        <div class="audiolab-panel-inner">
+                            <div class="audiolab-action-row">
+                                <button id="audiolabSFXGenerate" class="basic-button btn-primary" disabled>
+                                    <i class="fas fa-drum"></i> Generate SFX
                                 </button>
+                                <button id="audiolabSFXStop" class="basic-button" disabled>
+                                    <i class="fas fa-stop"></i> Stop
+                                </button>
+                            </div>
+                            <div class="input-group">
+                                <div class="input-group-header">
+                                    <div class="header-label-wrap"><span class="auto-input-name">Output</span></div>
+                                </div>
+                                <div class="input-group-content">
+                                    <div class="audiolab-output">
+                                        <div id="audiolabSFXPlayerContainer" class="audiolab-player-container" style="display: none;"></div>
+                                        <div id="audiolabSFXPlaceholder" class="audiolab-output-placeholder">
+                                            <i class="fas fa-drum"></i>
+                                            <span>Generated sound effects will appear here</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="audiolab-video-panel-wrapper">
+                                <button class="audiolab-video-panel-toggle basic-button small-button">
+                                    <i class="fas fa-film"></i> Attach to Video <i class="fas fa-chevron-down audiolab-video-chevron"></i>
+                                </button>
+                                <div class="audiolab-video-panel" style="display: none;">
+                                    <div class="audiolab-video-upload">
+                                        <input type="file" class="audiolab-video-file form-control" accept="video/*">
+                                        <video class="audiolab-video-preview" controls style="display: none;"></video>
+                                    </div>
+                                    <div class="audiolab-video-controls">
+                                        <div class="audiolab-radio-group">
+                                            <label><input type="radio" name="sfxVideoMode" value="replace" checked> Replace audio</label>
+                                            <label><input type="radio" name="sfxVideoMode" value="mix"> Mix with original</label>
+                                        </div>
+                                        <button class="basic-button btn-primary audiolab-combine-btn" disabled>
+                                            <i class="fas fa-film"></i> Combine & Export
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- ===== Pipeline Workspace ===== -->
-                <div id="audiolabWorkspacePipeline" class="audiolab-workspace-panel" style="display: none;">
-                    <!-- Pipeline Builder -->
-                    <div class="input-group">
-                        <div class="input-group-header">
-                            <div class="header-label-wrap"><span class="auto-input-name">Pipeline Builder</span></div>
-                        </div>
-                        <div class="input-group-content">
-                            <div class="audiolab-pipeline-layout">
-                                <div class="audiolab-pipeline-steps" id="audiolabPipelineSteps"></div>
-                                <button id="audiolabPipelineAddStep" class="basic-button small-button">
-                                    <i class="fas fa-plus"></i> Add Step
-                                </button>
-                                <div class="audiolab-pipeline-presets">
-                                    <label class="auto-input-name">Quick Presets</label>
-                                    <div class="audiolab-preset-row">
-                                        <button class="basic-button small-button audiolab-preset-btn" data-preset="stt-tts">STT → TTS</button>
-                                        <button class="basic-button small-button audiolab-preset-btn" data-preset="tts-clone">TTS → Voice Clone</button>
-                                        <button class="basic-button small-button audiolab-preset-btn" data-preset="tts-enhance">TTS → Enhance</button>
-                                        <button class="basic-button small-button audiolab-preset-btn" data-preset="record-clone-enhance">Record → Clone → Enhance</button>
+                <div id="audiolabWorkspacePipeline" class="audiolab-workspace-panel audiolab-split-panel" style="display: none;">
+                    <div class="audiolab-panel-left">
+                        <div class="audiolab-panel-inner">
+                            <div class="input-group">
+                                <div class="input-group-header">
+                                    <div class="header-label-wrap"><span class="auto-input-name">Pipeline Builder</span></div>
+                                </div>
+                                <div class="input-group-content">
+                                    <div class="audiolab-pipeline-layout">
+                                        <div class="audiolab-pipeline-steps" id="audiolabPipelineSteps"></div>
+                                        <button id="audiolabPipelineAddStep" class="basic-button small-button">
+                                            <i class="fas fa-plus"></i> Add Step
+                                        </button>
+                                        <div class="audiolab-pipeline-presets">
+                                            <label class="auto-input-name">Quick Presets</label>
+                                            <div class="audiolab-preset-row">
+                                                <button class="basic-button small-button audiolab-preset-btn" data-preset="stt-tts">STT &rarr; TTS</button>
+                                                <button class="basic-button small-button audiolab-preset-btn" data-preset="tts-clone">TTS &rarr; Voice Clone</button>
+                                                <button class="basic-button small-button audiolab-preset-btn" data-preset="tts-enhance">TTS &rarr; Enhance</button>
+                                                <button class="basic-button small-button audiolab-preset-btn" data-preset="record-clone-enhance">Record &rarr; Clone &rarr; Enhance</button>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                    <!-- Output -->
-                    <div class="input-group">
-                        <div class="input-group-header">
-                            <div class="header-label-wrap"><span class="auto-input-name">Output</span></div>
-                        </div>
-                        <div class="input-group-content">
-                            <div class="audiolab-output-section">
-                                <div class="audiolab-action-row">
-                                    <button id="audiolabPipelineRun" class="basic-button btn-primary" disabled>
-                                        <i class="fas fa-play"></i> Run Pipeline
-                                    </button>
-                                    <button id="audiolabPipelineStop" class="basic-button" disabled>
-                                        <i class="fas fa-stop"></i> Stop
-                                    </button>
-                                    <button id="audiolabPipelineClear" class="basic-button small-button">
-                                        <i class="fas fa-trash"></i> Clear
-                                    </button>
+                    <div class="audiolab-split-bar"></div>
+                    <div class="audiolab-panel-right">
+                        <div class="audiolab-panel-inner">
+                            <div class="audiolab-action-row">
+                                <button id="audiolabPipelineRun" class="basic-button btn-primary" disabled>
+                                    <i class="fas fa-play"></i> Run Pipeline
+                                </button>
+                                <button id="audiolabPipelineStop" class="basic-button" disabled>
+                                    <i class="fas fa-stop"></i> Stop
+                                </button>
+                                <button id="audiolabPipelineClear" class="basic-button small-button">
+                                    <i class="fas fa-trash"></i> Clear
+                                </button>
+                            </div>
+                            <div id="audiolabPipelineProgress" class="audiolab-pipeline-progress" style="display: none;">
+                                <label class="auto-input-name">Progress</label>
+                                <div id="audiolabPipelineProgressSteps"></div>
+                            </div>
+                            <div class="input-group">
+                                <div class="input-group-header">
+                                    <div class="header-label-wrap"><span class="auto-input-name">Output</span></div>
                                 </div>
-                                <div id="audiolabPipelineProgress" class="audiolab-pipeline-progress" style="display: none;">
-                                    <label class="auto-input-name">Progress</label>
-                                    <div id="audiolabPipelineProgressSteps"></div>
-                                </div>
-                                <div class="audiolab-output">
-                                    <div id="audiolabPipelinePlayerContainer" class="audiolab-player-container" style="display: none;"></div>
-                                    <div id="audiolabPipelinePlaceholder" class="audiolab-output-placeholder">
-                                        <i class="fas fa-project-diagram"></i>
-                                        <span>Build a pipeline and click Run to see results</span>
+                                <div class="input-group-content">
+                                    <div class="audiolab-output">
+                                        <div id="audiolabPipelinePlayerContainer" class="audiolab-player-container" style="display: none;"></div>
+                                        <div id="audiolabPipelinePlaceholder" class="audiolab-output-placeholder">
+                                            <i class="fas fa-project-diagram"></i>
+                                            <span>Build a pipeline and click Run to see results</span>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-                    <!-- Video Attachment -->
-                    <div class="audiolab-video-panel-wrapper">
-                        <button class="audiolab-video-panel-toggle basic-button small-button">
-                            <i class="fas fa-film"></i> Attach to Video <i class="fas fa-chevron-down audiolab-video-chevron"></i>
-                        </button>
-                        <div class="audiolab-video-panel" style="display: none;">
-                            <div class="audiolab-video-upload">
-                                <input type="file" class="audiolab-video-file form-control" accept="video/*">
-                                <video class="audiolab-video-preview" controls style="display: none;"></video>
-                            </div>
-                            <div class="audiolab-video-controls">
-                                <div class="audiolab-radio-group">
-                                    <label><input type="radio" name="pipelineVideoMode" value="replace" checked> Replace audio</label>
-                                    <label><input type="radio" name="pipelineVideoMode" value="mix"> Mix with original</label>
-                                </div>
-                                <button class="basic-button btn-primary audiolab-combine-btn" disabled>
-                                    <i class="fas fa-film"></i> Combine & Export
+                            <div class="audiolab-video-panel-wrapper">
+                                <button class="audiolab-video-panel-toggle basic-button small-button">
+                                    <i class="fas fa-film"></i> Attach to Video <i class="fas fa-chevron-down audiolab-video-chevron"></i>
                                 </button>
+                                <div class="audiolab-video-panel" style="display: none;">
+                                    <div class="audiolab-video-upload">
+                                        <input type="file" class="audiolab-video-file form-control" accept="video/*">
+                                        <video class="audiolab-video-preview" controls style="display: none;"></video>
+                                    </div>
+                                    <div class="audiolab-video-controls">
+                                        <div class="audiolab-radio-group">
+                                            <label><input type="radio" name="pipelineVideoMode" value="replace" checked> Replace audio</label>
+                                            <label><input type="radio" name="pipelineVideoMode" value="mix"> Mix with original</label>
+                                        </div>
+                                        <button class="basic-button btn-primary audiolab-combine-btn" disabled>
+                                            <i class="fas fa-film"></i> Combine & Export
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

@@ -7,6 +7,19 @@
     position: relative;
 }
 
+.audiolab-main .auto-input-name {
+    text-align: left;
+}
+
+.audiolab-main .input-group-content {
+    width: 100%;
+}
+
+/* Override SwarmUI's max-width on .input-group inside split panels */
+.audiolab-split-panel .input-group {
+    max-width: none;
+}
+
 .audiolab-layout {
     display: grid;
     grid-template-columns: 320px 1fr;
@@ -40,6 +53,21 @@
     gap: 0.75rem;
     overflow: hidden;
     transition: opacity 0.3s ease, width 0.3s ease;
+    position: sticky;
+    top: 0.5rem;
+    align-self: start;
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+}
+
+.audiolab-sidebar .audiolab-console {
+    flex: 1;
+    min-height: 200px;
+}
+
+.audiolab-sidebar .audiolab-console .audiolab-console-output {
+    flex: 1;
+    min-height: 150px;
 }
 
 .sidebar-collapsed .audiolab-sidebar {
@@ -278,6 +306,613 @@
 
 .audiolab-workspace-panel { display: flex; flex-direction: column; gap: 1.25rem; }
 
+/* ===== 4a. SPLIT PANEL LAYOUT ===== */
+.audiolab-split-panel {
+    display: none;
+    flex-direction: row !important;
+    gap: 0 !important;
+    min-height: calc(100vh - 12rem);
+    overflow: hidden;
+    border: 1px solid var(--shadow);
+    border-radius: 0.5rem;
+    background: var(--background-soft);
+}
+
+.audiolab-panel-left,
+.audiolab-panel-right {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.audiolab-panel-left {
+    width: 420px;
+    min-width: 280px;
+    flex-shrink: 0;
+}
+
+.audiolab-panel-right {
+    flex: 1;
+    min-width: 300px;
+}
+
+.audiolab-panel-inner {
+    flex: 1;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.audiolab-panel-inner .input-group {
+    margin: 0;
+}
+
+.audiolab-split-panel .input-group-content > div {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.audiolab-split-bar {
+    width: 5px;
+    cursor: col-resize;
+    background: var(--shadow);
+    flex-shrink: 0;
+    position: relative;
+    transition: background-color 0.15s ease;
+    z-index: 2;
+}
+
+.audiolab-split-bar:hover,
+.audiolab-split-bar.dragging {
+    background: var(--emphasis);
+    box-shadow:
+        -0.35rem 0 0.35rem 0 color-mix(in srgb, transparent 50%, var(--emphasis)),
+        0.35rem 0 0.35rem 0 color-mix(in srgb, transparent 50%, var(--emphasis));
+}
+
+.audiolab-split-bar::after {
+    content: '\22EE';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--text-soft);
+    font-size: 1rem;
+    pointer-events: none;
+    opacity: 0.4;
+}
+
+.audiolab-split-bar:hover::after,
+.audiolab-split-bar.dragging::after {
+    color: var(--text-strong);
+    opacity: 0.8;
+}
+
+/* ===== 4b. WORKSPACE FORM OVERRIDES =====
+   SwarmUI's defaults: .auto-dropdown uses width:fit-content,
+   .input-group .auto-dropdown uses width:auto!important,
+   .auto-input-name uses text-align:center. Override all for full-width workspace forms. */
+
+.audiolab-workspace-panel .auto-input-name {
+    text-align: left;
+    display: block;
+    width: 100%;
+}
+
+.audiolab-workspace-panel .auto-dropdown {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box;
+}
+
+.audiolab-workspace-panel .form-control,
+.audiolab-workspace-panel textarea,
+.audiolab-workspace-panel input[type="file"] {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+.audiolab-workspace-panel .auto-slider-box {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: nowrap;
+}
+
+.audiolab-workspace-panel .auto-slider-range-wrapper {
+    flex: 1;
+    min-width: 0;
+}
+
+.audiolab-workspace-panel .auto-slider-range {
+    width: 100%;
+    margin: 0;
+}
+
+.audiolab-workspace-panel .auto-slider-number {
+    width: 4.5rem;
+    flex-shrink: 0;
+    text-align: center;
+    float: none;
+}
+
+/* ===== 4c. DAW THEME — Professional Audio Styling ===== */
+
+/* Panel surfaces — deep recessed look using theme vars */
+.audiolab-split-panel {
+    background: color-mix(in srgb, var(--background) 75%, var(--black));
+    border-color: color-mix(in srgb, var(--shadow) 50%, var(--background));
+    border-radius: 0.2rem;
+}
+
+.audiolab-panel-left .audiolab-panel-inner {
+    background: color-mix(in srgb, var(--background) 85%, var(--black));
+    padding: 0.75rem;
+    gap: 0.75rem;
+}
+
+.audiolab-panel-right .audiolab-panel-inner {
+    background: var(--background);
+    padding: 0.75rem;
+    gap: 0.75rem;
+}
+
+/* Workspace header — transport bar */
+.audiolab-workspace-header {
+    background: color-mix(in srgb, var(--background) 60%, var(--black));
+    border: 1px solid color-mix(in srgb, var(--shadow) 50%, var(--background));
+    border-radius: 0.2rem;
+    padding: 0.5rem 1rem;
+    margin-bottom: 0.75rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--shadow) 50%, var(--background));
+}
+
+.audiolab-workspace-header h4 {
+    color: var(--emphasis);
+    font-family: var(--font-monospace);
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+}
+
+.audiolab-workspace-header h4 i {
+    color: var(--emphasis);
+    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--emphasis) 40%, transparent));
+}
+
+.audiolab-workspace-header .basic-button {
+    background: var(--button-background);
+    border-color: var(--button-border);
+    color: var(--button-text);
+    font-size: 0.75rem;
+    border-radius: 0.2rem;
+}
+
+.audiolab-workspace-header .basic-button:hover {
+    background: var(--button-background-hover);
+    border-color: var(--emphasis);
+    color: var(--emphasis);
+}
+
+.audiolab-transport-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--shadow);
+    flex-shrink: 0;
+}
+
+.audiolab-transport-led {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--emphasis);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--emphasis) 50%, transparent);
+    flex-shrink: 0;
+}
+
+.audiolab-transport-led.processing {
+    background: var(--yellow);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--yellow) 50%, transparent);
+    animation: led-blink 1s infinite;
+}
+
+.audiolab-transport-led.error {
+    background: var(--red);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--red) 50%, transparent);
+}
+
+@keyframes led-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+.audiolab-transport-spacer { flex: 1; }
+
+.audiolab-transport-readout {
+    font-family: var(--font-monospace);
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: var(--emphasis);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    text-shadow: 0 0 4px color-mix(in srgb, var(--emphasis) 30%, transparent);
+    padding: 0.2rem 0.5rem;
+    background: color-mix(in srgb, var(--background) 30%, var(--black));
+    border: 1px solid color-mix(in srgb, var(--shadow) 35%, var(--background));
+    border-radius: 0.15rem;
+}
+
+/* Input-groups inside panels — recessed modules */
+.audiolab-split-panel .input-group {
+    background: color-mix(in srgb, var(--background) 85%, var(--black));
+    border: 1px solid color-mix(in srgb, var(--shadow) 35%, var(--background));
+    border-radius: 0.2rem;
+    overflow: hidden;
+}
+
+.audiolab-split-panel .input-group-header {
+    background: color-mix(in srgb, var(--background) 60%, var(--black));
+    border-bottom: 1px solid color-mix(in srgb, var(--shadow) 35%, var(--background));
+}
+
+.audiolab-split-panel .input-group-header .auto-input-name {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--darkgray);
+    font-weight: 700;
+}
+
+.audiolab-split-panel .input-group-content {
+    padding: 0.75rem;
+}
+
+/* Labels — channel strip micro-labels */
+.audiolab-split-panel .audiolab-control-group > .auto-input-name,
+.audiolab-split-panel .audiolab-provider-select > label,
+.audiolab-split-panel .audiolab-tts-input > label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-soft);
+    font-weight: 600;
+    margin-bottom: 0.1rem;
+}
+
+/* Action row — transport control bar */
+.audiolab-action-row {
+    background: color-mix(in srgb, var(--background) 60%, var(--black));
+    border: 1px solid color-mix(in srgb, var(--shadow) 50%, var(--background));
+    border-radius: 0.2rem;
+    padding: 0.5rem 0.75rem;
+    gap: 0.5rem;
+}
+
+.audiolab-action-row .basic-button {
+    border-radius: 0.2rem;
+    padding: 0.45rem 1.25rem;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.75px;
+    font-weight: 700;
+    border: 1px solid var(--button-border);
+    background: var(--button-background);
+    color: var(--button-text);
+    transition: all 0.15s ease;
+}
+
+.audiolab-action-row .basic-button:hover {
+    background: var(--button-background-hover);
+    border-color: color-mix(in srgb, var(--shadow) 80%, var(--text-soft));
+}
+
+.audiolab-action-row .btn-primary {
+    background: color-mix(in srgb, var(--emphasis) 30%, var(--background));
+    border-color: var(--emphasis);
+    color: var(--emphasis);
+    padding: 0.5rem 1.5rem;
+}
+
+.audiolab-action-row .btn-primary:hover {
+    background: color-mix(in srgb, var(--emphasis) 45%, var(--background));
+    border-color: var(--emphasis);
+    color: var(--text-strong);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--emphasis) 25%, transparent);
+}
+
+.audiolab-action-row .btn-primary i { color: var(--emphasis); }
+.audiolab-action-row .btn-primary:hover i { color: var(--text-strong); }
+
+/* Stop button — danger accent */
+.audiolab-action-row .basic-button:not(.btn-primary):not(.small-button) {
+    border-color: var(--danger-button-border);
+}
+
+.audiolab-action-row .basic-button:not(.btn-primary):not(.small-button):hover {
+    background: var(--danger-button-background);
+    border-color: var(--red);
+    color: color-mix(in srgb, var(--red) 70%, var(--text));
+}
+
+/* Form controls — precision instruments */
+.audiolab-split-panel .auto-dropdown,
+.audiolab-split-panel .form-control,
+.audiolab-split-panel textarea,
+.audiolab-split-panel input[type="file"] {
+    background: color-mix(in srgb, var(--background) 60%, var(--black));
+    border-color: color-mix(in srgb, var(--shadow) 45%, var(--background));
+    color: var(--text);
+    border-radius: 0.2rem;
+    font-size: 0.85rem;
+}
+
+.audiolab-split-panel .auto-dropdown:focus,
+.audiolab-split-panel .form-control:focus,
+.audiolab-split-panel textarea:focus {
+    border-color: var(--emphasis);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--emphasis) 15%, transparent);
+    outline: none;
+}
+
+.audiolab-split-panel textarea.audiolab-textarea {
+    min-height: 140px;
+    background: color-mix(in srgb, var(--background) 50%, var(--black));
+    font-family: var(--font-monospace);
+    font-size: 0.9rem;
+    line-height: 1.6;
+}
+
+/* Sliders — fader style */
+.audiolab-split-panel .auto-slider-range {
+    accent-color: var(--emphasis);
+    height: 4px;
+}
+
+.audiolab-split-panel .auto-slider-number {
+    background: color-mix(in srgb, var(--background) 50%, var(--black));
+    border-color: color-mix(in srgb, var(--shadow) 45%, var(--background));
+    color: var(--emphasis);
+    font-family: var(--font-monospace);
+    font-weight: 600;
+    font-size: 0.85rem;
+    border-radius: 0.2rem;
+}
+
+/* Char counter — readout */
+.audiolab-split-panel .audiolab-char-counter {
+    color: var(--darkgray);
+    font-family: var(--font-monospace);
+    font-size: 0.7rem;
+}
+
+/* Output placeholder — recessed void */
+.audiolab-split-panel .audiolab-output-placeholder {
+    background: color-mix(in srgb, var(--background) 50%, var(--black));
+    border: 1px dashed color-mix(in srgb, var(--shadow) 35%, var(--background));
+    border-radius: 0.2rem;
+    min-height: 160px;
+}
+
+.audiolab-split-panel .audiolab-output-placeholder i {
+    color: color-mix(in srgb, var(--shadow) 40%, var(--background));
+    opacity: 1;
+}
+
+.audiolab-split-panel .audiolab-output-placeholder span {
+    color: color-mix(in srgb, var(--text-soft) 40%, var(--background));
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    letter-spacing: 1.5px;
+}
+
+/* Player container — console style */
+.audiolab-split-panel .audiolab-player-container {
+    border-color: color-mix(in srgb, var(--shadow) 50%, var(--background));
+    border-radius: 0.2rem;
+    background: color-mix(in srgb, var(--background) 60%, var(--black));
+}
+
+/* Record area — studio */
+.audiolab-split-panel .audiolab-record-area {
+    background: color-mix(in srgb, var(--background) 60%, var(--black));
+    border-color: color-mix(in srgb, var(--shadow) 45%, var(--background));
+    border-radius: 0.2rem;
+    padding: 1.25rem;
+}
+
+.audiolab-split-panel .audiolab-record-button {
+    border-color: var(--red);
+    background: var(--button-background);
+    width: 72px;
+    height: 72px;
+}
+
+.audiolab-split-panel .audiolab-record-button i {
+    color: var(--red);
+    font-size: 1.5rem;
+}
+
+.audiolab-split-panel .audiolab-record-status {
+    font-family: var(--font-monospace);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    font-size: 0.7rem;
+}
+
+.audiolab-split-panel .audiolab-record-status.ready { color: var(--emphasis); }
+
+/* Transcription — terminal output */
+.audiolab-split-panel .audiolab-transcription {
+    background: color-mix(in srgb, var(--background) 50%, var(--black));
+    border-color: color-mix(in srgb, var(--shadow) 45%, var(--background));
+    border-radius: 0.2rem;
+    color: var(--emphasis);
+    font-size: 0.9rem;
+}
+
+.audiolab-split-panel .audiolab-transcription.empty {
+    color: color-mix(in srgb, var(--text-soft) 30%, var(--background));
+}
+
+/* Confidence — LED display */
+.audiolab-split-panel .audiolab-confidence-value {
+    color: var(--emphasis);
+    text-shadow: 0 0 4px color-mix(in srgb, var(--emphasis) 30%, transparent);
+}
+
+/* Voice clone upload boxes */
+.audiolab-split-panel .audiolab-clone-source,
+.audiolab-split-panel .audiolab-clone-reference {
+    background: color-mix(in srgb, var(--background) 60%, var(--black));
+    border-color: color-mix(in srgb, var(--shadow) 45%, var(--background));
+    border-radius: 0.2rem;
+}
+
+/* A/B comparison labels */
+.audiolab-split-panel .audiolab-ab-label {
+    color: var(--text-soft);
+    letter-spacing: 2px;
+    font-size: 0.6rem;
+}
+
+/* Stem labels */
+.audiolab-split-panel .audiolab-stem-label {
+    color: var(--text-soft);
+    letter-spacing: 1.5px;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+}
+
+/* Pipeline steps — channel strip modules */
+.audiolab-split-panel .audiolab-pipeline-step {
+    background: color-mix(in srgb, var(--background) 75%, var(--black));
+    border-color: color-mix(in srgb, var(--shadow) 50%, var(--background));
+    border-radius: 0.2rem;
+}
+
+.audiolab-split-panel .audiolab-pipeline-step::before {
+    background: var(--emphasis);
+    color: var(--black);
+    font-family: var(--font-monospace);
+    font-weight: 800;
+}
+
+.audiolab-split-panel .audiolab-pipeline-arrow {
+    color: var(--emphasis);
+}
+
+/* History — compact log entries */
+.audiolab-split-panel .audiolab-history-item {
+    background: color-mix(in srgb, var(--background) 75%, var(--black));
+    border-color: color-mix(in srgb, var(--shadow) 30%, var(--background));
+    border-radius: 0.15rem;
+    padding: 0.45rem 0.6rem;
+}
+
+.audiolab-split-panel .audiolab-history-item .history-timestamp {
+    color: var(--emphasis);
+    font-size: 0.65rem;
+}
+
+.audiolab-split-panel .audiolab-history-empty {
+    color: color-mix(in srgb, var(--text-soft) 40%, var(--background));
+}
+
+.audiolab-split-panel .audiolab-history-empty i {
+    color: color-mix(in srgb, var(--text-soft) 30%, var(--background));
+    opacity: 1;
+}
+
+/* Video panel — dark module */
+.audiolab-split-panel .audiolab-video-panel {
+    background: color-mix(in srgb, var(--background) 60%, var(--black));
+    border-color: color-mix(in srgb, var(--shadow) 50%, var(--background));
+    border-radius: 0.2rem;
+}
+
+.audiolab-split-panel .audiolab-video-panel-toggle {
+    background: color-mix(in srgb, var(--background) 85%, var(--black));
+    border-color: color-mix(in srgb, var(--shadow) 50%, var(--background));
+    color: var(--text-soft);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-radius: 0.2rem;
+}
+
+.audiolab-split-panel .audiolab-video-panel-toggle:hover {
+    border-color: var(--emphasis);
+    color: var(--emphasis);
+}
+
+/* Split bar — subtle groove */
+.audiolab-split-bar {
+    background: color-mix(in srgb, var(--background-soft) 50%, var(--background));
+}
+
+/* STT actions — compact buttons */
+.audiolab-split-panel .audiolab-stt-actions .basic-button {
+    background: var(--button-background);
+    border-color: var(--button-border);
+    color: var(--button-text);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-radius: 0.2rem;
+}
+
+.audiolab-split-panel .audiolab-stt-actions .basic-button:hover {
+    background: var(--button-background-hover);
+    border-color: var(--emphasis);
+    color: var(--emphasis);
+}
+
+/* Preset buttons — mixer style */
+.audiolab-split-panel .audiolab-preset-row .basic-button {
+    background: var(--button-background);
+    border-color: var(--button-border);
+    color: var(--button-text);
+    font-size: 0.75rem;
+    border-radius: 0.15rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.audiolab-split-panel .audiolab-preset-row .basic-button:hover {
+    background: var(--button-background-hover);
+    border-color: var(--emphasis);
+    color: var(--emphasis);
+}
+
+/* Pipeline progress — status LEDs */
+.audiolab-split-panel .audiolab-pipeline-progress-step.completed .step-status { color: var(--emphasis); }
+.audiolab-split-panel .audiolab-pipeline-progress-step.running .step-status { color: var(--yellow); }
+.audiolab-split-panel .audiolab-pipeline-progress-step {
+    font-family: var(--font-monospace);
+    font-size: 0.8rem;
+    color: var(--text-soft);
+}
+
+/* Radio groups — compact */
+.audiolab-split-panel .audiolab-radio-group {
+    font-size: 0.8rem;
+    color: var(--text-soft);
+}
+
+/* File preview / waveform containers */
+.audiolab-split-panel .audiolab-recording-waveform,
+.audiolab-split-panel .audiolab-file-preview,
+.audiolab-split-panel .audiolab-stem-player {
+    border-color: color-mix(in srgb, var(--shadow) 50%, var(--background));
+    border-radius: 0.2rem;
+    background: color-mix(in srgb, var(--background) 60%, var(--black));
+}
+
 /* ===== 5. PROVIDER SELECT ===== */
 .audiolab-provider-select {
     display: flex;
@@ -294,16 +929,19 @@
 .audiolab-gen-layout,
 .audiolab-clone-layout,
 .audiolab-fx-layout,
+.audiolab-stt-layout,
 .audiolab-pipeline-layout {
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
+    width: 100%;
 }
 
 .audiolab-textarea {
-    min-height: 120px;
+    min-height: 180px;
     resize: vertical;
     line-height: 1.5;
+    width: 100%;
 }
 
 .audiolab-textarea-sm { min-height: 80px; }
@@ -311,66 +949,73 @@
 
 .audiolab-tts-controls {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1rem;
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+    width: 100%;
 }
 
 .audiolab-control-group {
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
+    width: 100%;
 }
 
 .audiolab-action-row {
     display: flex;
     gap: 0.75rem;
     align-items: center;
-    padding-top: 0.25rem;
+    padding-top: 0.5rem;
+    width: 100%;
 }
 
 .audiolab-action-row .basic-button {
-    padding: 0.65rem 1.5rem;
-    font-size: 0.95rem;
+    padding: 0.75rem 2rem;
+    font-size: 1rem;
 }
 
 .audiolab-action-row .basic-button i { margin-right: 0.5rem; }
 
 .audiolab-action-row .btn-primary {
-    flex: 1;
-    max-width: 280px;
+    padding: 0.75rem 2.5rem;
 }
 
 .audiolab-output-section {
     display: flex;
     flex-direction: column;
     gap: 1rem;
+    width: 100%;
 }
 
-.audiolab-output { display: flex; flex-direction: column; gap: 0.5rem; }
+.audiolab-output { display: flex; flex-direction: column; gap: 0.5rem; width: 100%; }
 
 .audiolab-player-container {
     border: 1px solid var(--shadow);
     border-radius: 0.5rem;
     overflow: hidden;
     background: var(--background);
+    width: 100%;
 }
 
 .audiolab-output-placeholder {
     background: var(--background);
     border: 1px dashed color-mix(in srgb, var(--shadow) 80%, var(--emphasis));
     border-radius: 0.5rem;
-    padding: 2.5rem 2rem;
+    padding: 3rem 2rem;
     text-align: center;
     color: var(--text-soft);
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 0.75rem;
+    width: 100%;
+    min-height: 120px;
+    justify-content: center;
 }
 
 .audiolab-output-placeholder i {
-    font-size: 2rem;
-    opacity: 0.3;
+    font-size: 2.5rem;
+    opacity: 0.25;
     color: var(--emphasis);
 }
 
@@ -379,13 +1024,12 @@
 }
 
 /* ===== 7. STT WORKSPACE ===== */
-.audiolab-stt-layout { display: flex; flex-direction: column; gap: 1.5rem; }
-
 .audiolab-stt-controls {
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
     align-items: stretch;
+    width: 100%;
 }
 
 .audiolab-record-area {
@@ -393,10 +1037,11 @@
     flex-direction: column;
     align-items: center;
     gap: 0.75rem;
-    padding: 1.5rem;
+    padding: 2rem;
     background: color-mix(in srgb, var(--emphasis) 5%, var(--background));
     border: 1px solid color-mix(in srgb, var(--emphasis) 15%, var(--shadow));
     border-radius: 0.75rem;
+    width: 100%;
 }
 
 .audiolab-record-button {
@@ -433,11 +1078,12 @@
 
 .audiolab-stt-settings {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1rem;
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+    width: 100%;
 }
 
-.audiolab-stt-output { display: flex; flex-direction: column; gap: 0.5rem; }
+.audiolab-stt-output { display: flex; flex-direction: column; gap: 0.5rem; width: 100%; }
 
 .audiolab-stt-confidence { font-size: 0.85rem; color: var(--text-soft); }
 .audiolab-confidence-value { font-family: var(--font-monospace); font-weight: 600; color: var(--emphasis); }
@@ -471,13 +1117,15 @@
     border-radius: 0.5rem;
     overflow: hidden;
     background: var(--background);
+    width: 100%;
 }
 
 /* ===== 8. VOICE CLONE ===== */
 .audiolab-clone-inputs {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1.5rem;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    width: 100%;
 }
 
 .audiolab-clone-source,
@@ -551,7 +1199,7 @@
     height: 28px;
     border-radius: 50%;
     background: var(--emphasis);
-    color: #fff;
+    color: var(--text-strong);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -611,7 +1259,7 @@
     width: 100%;
     max-height: 300px;
     border-radius: 0.5rem;
-    background: #000;
+    background: var(--black);
     margin-top: 0.5rem;
 }
 
@@ -628,6 +1276,11 @@
     border-radius: 0.375rem;
 }
 
+.audiolab-split-panel .audiolab-player {
+    background: color-mix(in srgb, var(--background) 60%, var(--black));
+    border-radius: 0.2rem;
+}
+
 .audiolab-player-waveform { min-height: 60px; cursor: pointer; }
 
 .audiolab-player-controls {
@@ -637,6 +1290,11 @@
     padding: 0.4rem 0.6rem;
     border-top: 1px solid var(--shadow);
     flex-wrap: wrap;
+}
+
+.audiolab-split-panel .audiolab-player-controls {
+    background: color-mix(in srgb, var(--background) 75%, var(--black));
+    border-top-color: color-mix(in srgb, var(--shadow) 35%, var(--background));
 }
 
 .audiolab-player-compact .audiolab-player-controls { padding: 0.25rem 0.4rem; gap: 0.35rem; }
@@ -656,6 +1314,12 @@
 .alp-btn:hover { background: var(--background-soft); color: var(--emphasis); }
 
 .alp-time { font-family: var(--font-monospace); font-size: 0.8rem; color: var(--text-soft); white-space: nowrap; }
+.audiolab-split-panel .alp-time { color: var(--emphasis); text-shadow: 0 0 3px color-mix(in srgb, var(--emphasis) 20%, transparent); }
+.audiolab-split-panel .alp-btn { color: var(--text-soft); }
+.audiolab-split-panel .alp-btn:hover { background: var(--button-background); color: var(--emphasis); }
+.audiolab-split-panel .alp-volume { accent-color: var(--emphasis); }
+.audiolab-split-panel .alp-speed { background: color-mix(in srgb, var(--background) 85%, var(--black)); border-color: color-mix(in srgb, var(--shadow) 45%, var(--background)); color: var(--text-soft); }
+.audiolab-split-panel .alp-separator { background: color-mix(in srgb, var(--shadow) 45%, var(--background)); }
 
 .alp-volume-group { display: flex; align-items: center; gap: 0.25rem; }
 .alp-volume { width: 60px; height: 4px; accent-color: var(--emphasis); cursor: pointer; }
@@ -758,9 +1422,9 @@
 
 /* ===== 17. ANIMATIONS ===== */
 @keyframes recording-pulse {
-    0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
-    50% { box-shadow: 0 0 0 20px rgba(220, 53, 69, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+    0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--red) 70%, transparent); }
+    50% { box-shadow: 0 0 0 20px color-mix(in srgb, var(--red) 0%, transparent); }
+    100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--red) 0%, transparent); }
 }
 
 @keyframes fadeInUp {
@@ -780,6 +1444,21 @@
     .audiolab-card-grid { grid-template-columns: repeat(2, 1fr); gap: 1rem; }
     .audiolab-clone-inputs { grid-template-columns: 1fr; }
     .audiolab-stt-settings { grid-template-columns: 1fr; }
+    .audiolab-split-panel {
+        flex-direction: column !important;
+        min-height: auto;
+    }
+    .audiolab-panel-left {
+        width: 100% !important;
+        min-width: 0;
+        max-height: 50vh;
+    }
+    .audiolab-panel-right { min-width: 0; }
+    .audiolab-split-bar {
+        width: 100%;
+        height: 5px;
+        cursor: row-resize;
+    }
 }
 
 @media (max-width: 768px) {

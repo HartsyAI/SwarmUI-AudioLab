@@ -135,6 +135,72 @@ const AudioLabUI = (() => {
 
         // Install
         document.getElementById('audiolabConfirmInstall')?.addEventListener('click', handleConfirmInstall);
+
+        // Split panels
+        setupSplitPanels();
+    }
+
+    // ===== SPLIT PANEL RESIZE =====
+    let splitDragState = { active: false, bar: null, panel: null };
+
+    function setupSplitPanels() {
+        document.querySelectorAll('.audiolab-split-bar').forEach(bar => {
+            bar.addEventListener('mousedown', (e) => {
+                splitDragState.active = true;
+                splitDragState.bar = bar;
+                splitDragState.panel = bar.previousElementSibling;
+                bar.classList.add('dragging');
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+                e.preventDefault();
+            });
+            bar.addEventListener('touchstart', (e) => {
+                splitDragState.active = true;
+                splitDragState.bar = bar;
+                splitDragState.panel = bar.previousElementSibling;
+                bar.classList.add('dragging');
+                e.preventDefault();
+            }, { passive: false });
+        });
+
+        function onMove(clientX) {
+            if (!splitDragState.active || !splitDragState.panel) return;
+            const container = splitDragState.panel.parentElement;
+            const rect = container.getBoundingClientRect();
+            const newWidth = clientX - rect.left;
+            const minW = 280;
+            const maxW = rect.width * 0.65;
+            splitDragState.panel.style.width = Math.min(Math.max(newWidth, minW), maxW) + 'px';
+        }
+
+        document.addEventListener('mousemove', (e) => onMove(e.clientX));
+        document.addEventListener('touchmove', (e) => {
+            if (splitDragState.active) onMove(e.touches[0].clientX);
+        }, { passive: true });
+
+        function onEnd() {
+            if (!splitDragState.active) return;
+            if (splitDragState.bar) splitDragState.bar.classList.remove('dragging');
+            if (splitDragState.panel) {
+                localStorage.setItem('audiolab_splitWidth', splitDragState.panel.style.width);
+            }
+            splitDragState.active = false;
+            splitDragState.bar = null;
+            splitDragState.panel = null;
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        }
+
+        document.addEventListener('mouseup', onEnd);
+        document.addEventListener('touchend', onEnd);
+
+        // Restore saved width
+        const saved = localStorage.getItem('audiolab_splitWidth');
+        if (saved) {
+            document.querySelectorAll('.audiolab-panel-left').forEach(p => {
+                p.style.width = saved;
+            });
+        }
     }
 
     function setupSliderSync(sliderId, numberId) {
