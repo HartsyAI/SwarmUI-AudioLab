@@ -510,15 +510,32 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--emphasis);
-    box-shadow: 0 0 6px color-mix(in srgb, var(--emphasis) 50%, transparent);
+    background: var(--shadow);
+    box-shadow: none;
     flex-shrink: 0;
+    transition: background 0.3s, box-shadow 0.3s;
 }
 
-.audiolab-transport-led.processing {
+.audiolab-transport-led.active {
+    background: var(--emphasis);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--emphasis) 50%, transparent);
+}
+
+.audiolab-transport-led.active.recording {
+    background: var(--red);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--red) 50%, transparent);
+    animation: led-blink 0.8s infinite;
+}
+
+.audiolab-transport-led.active.processing {
     background: var(--yellow);
     box-shadow: 0 0 6px color-mix(in srgb, var(--yellow) 50%, transparent);
     animation: led-blink 1s infinite;
+}
+
+.audiolab-transport-led.active.playing {
+    background: var(--green);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--green) 50%, transparent);
 }
 
 .audiolab-transport-led.error {

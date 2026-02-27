@@ -63,9 +63,9 @@ const AudioLabAPI = (() => {
     /** Process Speech-to-Text.
      *  Maps to C# endpoint: ProcessSTT
      *  @param {string} audioData - base64
-     *  @param {Object} options - { language } */
+     *  @param {Object} options - { language, providerId } */
     async function processSTT(audioData, options = {}) {
-        return await callAPI('ProcessSTT', {
+        const payload = {
             audio_data: audioData,
             language: options.language || 'en-US',
             options: {
@@ -73,15 +73,17 @@ const AudioLabAPI = (() => {
                 return_alternatives: options.returnAlternatives || false,
                 model_preference: options.modelPreference || 'accuracy'
             }
-        });
+        };
+        if (options.providerId) payload.provider_id = options.providerId;
+        return await callAPI('ProcessSTT', payload);
     }
 
     /** Process Text-to-Speech.
      *  Maps to C# endpoint: ProcessTTS
      *  @param {string} text
-     *  @param {Object} options - { voice, language, volume, speed, pitch, format } */
+     *  @param {Object} options - { voice, language, volume, speed, pitch, format, providerId } */
     async function processTTS(text, options = {}) {
-        return await callAPI('ProcessTTS', {
+        const payload = {
             text: text,
             voice: options.voice || 'default',
             language: options.language || 'en-US',
@@ -91,7 +93,9 @@ const AudioLabAPI = (() => {
                 pitch: options.pitch ?? 1.0,
                 format: options.format || 'wav'
             }
-        });
+        };
+        if (options.providerId) payload.provider_id = options.providerId;
+        return await callAPI('ProcessTTS', payload);
     }
 
     /** Process a chained workflow (STT -> TTS pipeline).

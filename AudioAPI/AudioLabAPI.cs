@@ -92,16 +92,19 @@ public static class AudioLabAPI
 
     #region Backward-Compatible Endpoints
 
-    /// <summary>Process Speech-to-Text (backward compatible).</summary>
+    /// <summary>Process Speech-to-Text.</summary>
     public static async Task<JObject> ProcessSTT(Session session, JObject input)
     {
         try
         {
             STTRequest request = ParseSTTRequest(input, session.ID);
 
-            // Route through the first available STT provider
-            AudioProviderDefinition sttProvider = AudioProviderRegistry.GetByCategory(AudioCategory.STT)
-                .FirstOrDefault(p => p.Id != "fallback_stt") ?? AudioProviderRegistry.GetById("fallback_stt");
+            // Use provider_id from request if supplied, otherwise fall back to first available
+            string requestedProvider = input["provider_id"]?.ToString();
+            AudioProviderDefinition sttProvider = !string.IsNullOrEmpty(requestedProvider)
+                ? AudioProviderRegistry.GetById(requestedProvider)
+                : AudioProviderRegistry.GetByCategory(AudioCategory.STT)
+                    .FirstOrDefault(p => p.Id != "fallback_stt") ?? AudioProviderRegistry.GetById("fallback_stt");
 
             if (sttProvider == null)
             {
@@ -148,9 +151,12 @@ public static class AudioLabAPI
         {
             TTSRequest request = ParseTTSRequest(input, session.ID);
 
-            // Route through the first available TTS provider
-            AudioProviderDefinition ttsProvider = AudioProviderRegistry.GetByCategory(AudioCategory.TTS)
-                .FirstOrDefault(p => p.Id != "fallback_tts") ?? AudioProviderRegistry.GetById("fallback_tts");
+            // Use provider_id from request if supplied, otherwise fall back to first available
+            string requestedProvider = input["provider_id"]?.ToString();
+            AudioProviderDefinition ttsProvider = !string.IsNullOrEmpty(requestedProvider)
+                ? AudioProviderRegistry.GetById(requestedProvider)
+                : AudioProviderRegistry.GetByCategory(AudioCategory.TTS)
+                    .FirstOrDefault(p => p.Id != "fallback_tts") ?? AudioProviderRegistry.GetById("fallback_tts");
 
             if (ttsProvider == null)
             {

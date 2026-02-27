@@ -81,14 +81,14 @@ const AudioLabUI = (() => {
 
         // Music Gen
         document.getElementById('audiolabMusicGenerate')?.addEventListener('click', handleMusicGenerate);
-        document.getElementById('audiolabMusicStop')?.addEventListener('click', () => addConsoleMessage('info', 'Music: Stop requested'));
+        document.getElementById('audiolabMusicStop')?.addEventListener('click', () => { if (players.musicOutput) players.musicOutput.stop(); AudioLabCore.emergencyStop(); addConsoleMessage('info', 'Music: Stopped'); updateTransportStatus('idle'); });
         setupSliderSync('audiolabMusicDuration', 'audiolabMusicDurationNum');
         document.getElementById('audiolabMusicReference')?.addEventListener('change', (e) => handleFilePreview(e, 'audiolabMusicRefPreview'));
         document.getElementById('audiolabMusicPrompt')?.addEventListener('input', updateControlStates);
 
         // Sound FX
         document.getElementById('audiolabSFXGenerate')?.addEventListener('click', handleSFXGenerate);
-        document.getElementById('audiolabSFXStop')?.addEventListener('click', () => addConsoleMessage('info', 'SFX: Stop requested'));
+        document.getElementById('audiolabSFXStop')?.addEventListener('click', () => { if (players.sfxOutput) players.sfxOutput.stop(); AudioLabCore.emergencyStop(); addConsoleMessage('info', 'SFX: Stopped'); updateTransportStatus('idle'); });
         setupSliderSync('audiolabSFXDuration', 'audiolabSFXDurationNum');
         document.getElementById('audiolabSFXPrompt')?.addEventListener('input', updateControlStates);
 
@@ -96,10 +96,12 @@ const AudioLabUI = (() => {
         document.getElementById('audiolabCloneSourceFile')?.addEventListener('change', (e) => handleFilePreview(e, 'audiolabCloneSourcePreview'));
         document.getElementById('audiolabCloneRefFile')?.addEventListener('change', (e) => handleFilePreview(e, 'audiolabCloneRefPreview'));
         document.getElementById('audiolabCloneGenerate')?.addEventListener('click', handleCloneGenerate);
+        document.getElementById('audiolabCloneStop')?.addEventListener('click', () => { AudioLabCore.emergencyStop(); addConsoleMessage('info', 'Clone: Stopped'); updateTransportStatus('idle'); });
 
         // Audio FX
         document.getElementById('audiolabFXInputFile')?.addEventListener('change', (e) => handleFilePreview(e, 'audiolabFXInputPreview'));
         document.getElementById('audiolabFXProcess')?.addEventListener('click', handleFXProcess);
+        document.getElementById('audiolabFXStop')?.addEventListener('click', () => { AudioLabCore.emergencyStop(); addConsoleMessage('info', 'FX: Stopped'); updateTransportStatus('idle'); });
 
         // Pipeline
         document.getElementById('audiolabPipelineAddStep')?.addEventListener('click', addPipelineStep);
@@ -423,9 +425,11 @@ const AudioLabUI = (() => {
             AudioLabAPI.validateText(text);
             if (generateBtn) { generateBtn.disabled = true; generateBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...'; }
             if (stopBtn) stopBtn.disabled = false;
+            updateTransportStatus('processing');
             addConsoleMessage('info', `TTS: Generating speech for "${text.substring(0, 40)}..."`);
 
             const options = {
+                providerId: document.getElementById('audiolabTTSProvider')?.value || '',
                 voice: document.getElementById('audiolabTTSVoice')?.value || 'default',
                 language: document.getElementById('audiolabTTSLanguage')?.value || 'en-US',
                 volume: parseFloat(document.getElementById('audiolabTTSVolume')?.value || '0.8'),
@@ -452,6 +456,7 @@ const AudioLabUI = (() => {
         } finally {
             if (generateBtn) { generateBtn.disabled = false; generateBtn.innerHTML = '<i class="fas fa-volume-up"></i> Generate Speech'; }
             if (stopBtn) stopBtn.disabled = true;
+            updateTransportStatus('idle');
             updateControlStates();
         }
     }
@@ -501,6 +506,7 @@ const AudioLabUI = (() => {
         if (btn) { btn.classList.add('recording'); btn.querySelector('.audiolab-record-label').textContent = 'Stop'; }
         if (status) { status.textContent = 'Listening...'; status.className = 'audiolab-record-status listening'; }
         if (waveformEl) waveformEl.style.display = 'block';
+        updateTransportStatus('recording');
         addConsoleMessage('info', 'STT: Recording started');
         await AudioLabCore.startRecording();
     }
@@ -510,11 +516,13 @@ const AudioLabUI = (() => {
         const status = document.getElementById('audiolabSTTStatus');
         if (btn) { btn.classList.remove('recording'); btn.querySelector('.audiolab-record-label').textContent = 'Processing...'; }
         if (status) { status.textContent = 'Processing...'; status.className = 'audiolab-record-status processing'; }
+        updateTransportStatus('processing');
         addConsoleMessage('info', 'STT: Processing audio...');
         const audioData = await AudioLabCore.stopRecording();
         document.getElementById('audiolabSTTRecordingWaveform').style.display = 'none';
         const language = document.getElementById('audiolabSTTLanguage')?.value || 'en-US';
-        const result = await AudioLabAPI.processSTT(audioData, { language });
+        const providerId = document.getElementById('audiolabSTTProvider')?.value || '';
+        const result = await AudioLabAPI.processSTT(audioData, { language, providerId });
         if (result.success && result.transcription) {
             showSTTResult(result.transcription, result.confidence);
             addSTTHistoryItem(result.transcription, result.confidence);
@@ -541,7 +549,8 @@ const AudioLabUI = (() => {
             addConsoleMessage('info', `STT: Processing file "${file.name}"...`);
             const audioData = await AudioLabCore.fileToBase64(file);
             const language = document.getElementById('audiolabSTTLanguage')?.value || 'en-US';
-            const result = await AudioLabAPI.processSTT(audioData, { language });
+            const providerId = document.getElementById('audiolabSTTProvider')?.value || '';
+            const result = await AudioLabAPI.processSTT(audioData, { language, providerId });
             if (result.success && result.transcription) {
                 showSTTResult(result.transcription, result.confidence);
                 addSTTHistoryItem(result.transcription, result.confidence);
@@ -587,6 +596,7 @@ const AudioLabUI = (() => {
         const status = document.getElementById('audiolabSTTStatus');
         if (btn) { btn.classList.remove('recording'); btn.querySelector('.audiolab-record-label').textContent = 'Record'; }
         if (status) { status.textContent = 'Ready'; status.className = 'audiolab-record-status ready'; }
+        updateTransportStatus('idle');
     }
 
     function addSTTHistoryItem(transcription, confidence) {
@@ -612,9 +622,17 @@ const AudioLabUI = (() => {
         const btn = document.getElementById('audiolabMusicGenerate');
         try {
             if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...'; }
+            updateTransportStatus('processing');
             addConsoleMessage('info', `Music: Generating for "${prompt.substring(0, 40)}..."`);
             const duration = parseFloat(document.getElementById('audiolabMusicDuration')?.value || '30');
-            const result = await AudioLabAPI.processAudio(document.getElementById('audiolabMusicProvider')?.value || '', { prompt, duration });
+            const args = { prompt, duration };
+            // Include reference audio if provided
+            const refFile = document.getElementById('audiolabMusicReference')?.files?.[0];
+            if (refFile) { args.reference_audio = await AudioLabCore.fileToBase64(refFile); }
+            // Include lyrics if provided
+            const lyrics = document.getElementById('audiolabMusicLyrics')?.value?.trim();
+            if (lyrics) { args.lyrics = lyrics; }
+            const result = await AudioLabAPI.processAudio(document.getElementById('audiolabMusicProvider')?.value || '', args);
             if (result.success && result.audio_data) {
                 const container = document.getElementById('audiolabMusicPlayerContainer');
                 if (players.musicOutput) players.musicOutput.destroy();
@@ -629,6 +647,7 @@ const AudioLabUI = (() => {
             addConsoleMessage('error', `Music: ${err.message}`);
         } finally {
             if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-music"></i> Generate Music'; }
+            updateTransportStatus('idle');
         }
     }
 
@@ -639,6 +658,7 @@ const AudioLabUI = (() => {
         const btn = document.getElementById('audiolabSFXGenerate');
         try {
             if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...'; }
+            updateTransportStatus('processing');
             addConsoleMessage('info', `SFX: Generating for "${prompt.substring(0, 40)}..."`);
             const duration = parseFloat(document.getElementById('audiolabSFXDuration')?.value || '10');
             const result = await AudioLabAPI.processAudio(document.getElementById('audiolabSFXProvider')?.value || '', { prompt, duration });
@@ -656,6 +676,7 @@ const AudioLabUI = (() => {
             addConsoleMessage('error', `SFX: ${err.message}`);
         } finally {
             if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-drum"></i> Generate SFX'; }
+            updateTransportStatus('idle');
         }
     }
 
@@ -665,14 +686,57 @@ const AudioLabUI = (() => {
         const btn = document.getElementById('audiolabCloneGenerate');
         try {
             if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Cloning...'; }
-            const result = await AudioLabAPI.processAudio(document.getElementById('audiolabCloneProvider')?.value || '', { source_audio: '', target_voice: '' });
-            if (result.success) { addConsoleMessage('success', 'Voice Clone: Complete'); }
-            else { throw new Error(result.error || 'Clone failed'); }
+            updateTransportStatus('processing');
+
+            // Get source audio from file input
+            const sourceFile = document.getElementById('audiolabCloneSourceFile')?.files?.[0];
+            if (!sourceFile) { throw new Error('Select a source audio file'); }
+            const sourceAudio = await AudioLabCore.fileToBase64(sourceFile);
+
+            // Get reference voice from file input
+            const refFile = document.getElementById('audiolabCloneRefFile')?.files?.[0];
+            if (!refFile) { throw new Error('Select a reference voice file'); }
+            const targetVoice = await AudioLabCore.fileToBase64(refFile);
+
+            const providerId = document.getElementById('audiolabCloneProvider')?.value || '';
+            const result = await AudioLabAPI.processAudio(providerId, {
+                source_audio: sourceAudio,
+                target_voice: targetVoice,
+            });
+
+            if (result.success && result.audio_data) {
+                // Show A/B comparison
+                const outputContainer = document.getElementById('audiolabCloneOutputContainer');
+                if (outputContainer) outputContainer.style.display = 'flex';
+                const placeholder = document.getElementById('audiolabClonePlaceholder');
+                if (placeholder) placeholder.style.display = 'none';
+
+                // Load original audio to orig player
+                const origContainer = document.getElementById('audiolabCloneOrigPlayer');
+                if (origContainer) {
+                    if (players.cloneOrig) players.cloneOrig.destroy();
+                    players.cloneOrig = AudioLabPlayer.create(origContainer);
+                    await players.cloneOrig.loadBase64(sourceAudio);
+                }
+
+                // Load cloned audio to result player
+                const resultContainer = document.getElementById('audiolabCloneResultPlayer');
+                if (resultContainer) {
+                    if (players.cloneResult) players.cloneResult.destroy();
+                    players.cloneResult = AudioLabPlayer.create(resultContainer);
+                    await players.cloneResult.loadBase64(result.audio_data);
+                }
+
+                addConsoleMessage('success', `Voice Clone: Complete (${result.duration?.toFixed(1) || '?'}s)`);
+            } else {
+                throw new Error(result.error || 'Clone failed');
+            }
         } catch (err) {
             showError(`Voice clone failed: ${err.message}`);
             addConsoleMessage('error', `Clone: ${err.message}`);
         } finally {
             if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-user-circle"></i> Clone Voice'; }
+            updateTransportStatus('idle');
         }
     }
 
@@ -682,14 +746,69 @@ const AudioLabUI = (() => {
         const btn = document.getElementById('audiolabFXProcess');
         try {
             if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...'; }
-            const result = await AudioLabAPI.processAudio(document.getElementById('audiolabFXProvider')?.value || '', { audio_data: '', effect: 'enhance' });
-            if (result.success) { addConsoleMessage('success', 'Audio FX: Processing complete'); }
-            else { throw new Error(result.error || 'Processing failed'); }
+            updateTransportStatus('processing');
+
+            // Get input audio from file
+            const inputFile = document.getElementById('audiolabFXInputFile')?.files?.[0];
+            if (!inputFile) { throw new Error('Select an input audio file'); }
+            const inputAudio = await AudioLabCore.fileToBase64(inputFile);
+
+            const providerId = document.getElementById('audiolabFXProvider')?.value || '';
+            const result = await AudioLabAPI.processAudio(providerId, { audio_data: inputAudio });
+
+            if (!result.success) { throw new Error(result.error || 'Processing failed'); }
+
+            const placeholder = document.getElementById('audiolabFXPlaceholder');
+            if (placeholder) placeholder.style.display = 'none';
+
+            if (result.stems) {
+                // Demucs source separation — show stem players
+                const stemsContainer = document.getElementById('audiolabFXStemsContainer');
+                if (stemsContainer) stemsContainer.style.display = 'block';
+                const enhanceContainer = document.getElementById('audiolabFXEnhanceContainer');
+                if (enhanceContainer) enhanceContainer.style.display = 'none';
+
+                const stemMap = { vocals: 'audiolabStemVocals', drums: 'audiolabStemDrums', bass: 'audiolabStemBass', other: 'audiolabStemOther' };
+                for (const [stemName, elemId] of Object.entries(stemMap)) {
+                    const stemData = result.stems[stemName];
+                    if (stemData) {
+                        const container = document.getElementById(elemId);
+                        if (container) {
+                            if (players[elemId]) players[elemId].destroy();
+                            players[elemId] = AudioLabPlayer.create(container);
+                            await players[elemId].loadBase64(stemData);
+                        }
+                    }
+                }
+                addConsoleMessage('success', `Audio FX: Separated into ${Object.keys(result.stems).length} stems`);
+            } else if (result.audio_data) {
+                // Enhancement — show before/after
+                const stemsContainer = document.getElementById('audiolabFXStemsContainer');
+                if (stemsContainer) stemsContainer.style.display = 'none';
+                const enhanceContainer = document.getElementById('audiolabFXEnhanceContainer');
+                if (enhanceContainer) enhanceContainer.style.display = 'flex';
+
+                const beforeContainer = document.getElementById('audiolabFXBeforePlayer');
+                if (beforeContainer) {
+                    if (players.fxBefore) players.fxBefore.destroy();
+                    players.fxBefore = AudioLabPlayer.create(beforeContainer);
+                    await players.fxBefore.loadBase64(inputAudio);
+                }
+
+                const afterContainer = document.getElementById('audiolabFXAfterPlayer');
+                if (afterContainer) {
+                    if (players.fxAfter) players.fxAfter.destroy();
+                    players.fxAfter = AudioLabPlayer.create(afterContainer);
+                    await players.fxAfter.loadBase64(result.audio_data);
+                }
+                addConsoleMessage('success', 'Audio FX: Enhancement complete');
+            }
         } catch (err) {
             showError(`Audio FX failed: ${err.message}`);
             addConsoleMessage('error', `FX: ${err.message}`);
         } finally {
             if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sliders-h"></i> Process'; }
+            updateTransportStatus('idle');
         }
     }
 
@@ -778,6 +897,8 @@ const AudioLabUI = (() => {
         const steps = document.querySelectorAll('.audiolab-pipeline-step');
         if (steps.length === 0) return;
         addConsoleMessage('info', `Pipeline: Running ${steps.length} step(s)...`);
+        updateTransportStatus('processing');
+
         const progressEl = document.getElementById('audiolabPipelineProgress');
         const progressSteps = document.getElementById('audiolabPipelineProgressSteps');
         if (progressEl) progressEl.style.display = 'block';
@@ -790,14 +911,94 @@ const AudioLabUI = (() => {
                 </div>`;
             }).join('');
         }
-        for (let i = 0; i < steps.length; i++) {
-            const progressStep = progressSteps?.children[i];
-            if (progressStep) progressStep.className = 'audiolab-pipeline-progress-step running';
-            addConsoleMessage('info', `Pipeline: Step ${i + 1} running...`);
-            await new Promise(r => setTimeout(r, 1000)); // TODO: actual API calls
-            if (progressStep) progressStep.className = 'audiolab-pipeline-progress-step completed';
+
+        let pipelineData = null;
+        try {
+            for (let i = 0; i < steps.length; i++) {
+                const step = steps[i];
+                const type = step.querySelector('.step-type')?.value;
+                const provider = step.querySelector('.step-provider')?.value;
+                const progressStep = progressSteps?.children[i];
+                if (progressStep) progressStep.className = 'audiolab-pipeline-progress-step running';
+                addConsoleMessage('info', `Pipeline: Step ${i + 1} (${type}) running...`);
+
+                try {
+                    switch (type) {
+                        case 'tts': {
+                            const text = pipelineData?.text || document.getElementById('audiolabTTSText')?.value || 'Hello world';
+                            const voice = document.getElementById('audiolabTTSVoice')?.value || 'default';
+                            const volume = parseFloat(document.getElementById('audiolabTTSVolume')?.value || '0.8');
+                            pipelineData = await AudioLabAPI.processTTS(text, { voice, volume });
+                            break;
+                        }
+                        case 'stt': {
+                            if (!pipelineData?.audio_data) { throw new Error('STT step requires audio input from a previous step'); }
+                            pipelineData = await AudioLabAPI.processSTT(pipelineData.audio_data, { language: 'en-US' });
+                            break;
+                        }
+                        case 'voiceclone': {
+                            if (!pipelineData?.audio_data) { throw new Error('Voice Clone step requires audio input'); }
+                            const refFile = document.getElementById('audiolabCloneRefFile')?.files?.[0];
+                            let targetVoice = '';
+                            if (refFile) { targetVoice = await AudioLabCore.fileToBase64(refFile); }
+                            pipelineData = await AudioLabAPI.processAudio(provider, {
+                                source_audio: pipelineData.audio_data,
+                                target_voice: targetVoice,
+                            });
+                            break;
+                        }
+                        case 'audiofx': {
+                            if (!pipelineData?.audio_data) { throw new Error('Audio FX step requires audio input'); }
+                            pipelineData = await AudioLabAPI.processAudio(provider, { audio_data: pipelineData.audio_data });
+                            break;
+                        }
+                        case 'musicgen': {
+                            const prompt = document.getElementById('audiolabMusicPrompt')?.value || 'upbeat electronic music';
+                            const duration = parseFloat(document.getElementById('audiolabMusicDuration')?.value || '30');
+                            pipelineData = await AudioLabAPI.processAudio(provider, { prompt, duration });
+                            break;
+                        }
+                        case 'soundfx': {
+                            const prompt = document.getElementById('audiolabSFXPrompt')?.value || 'ambient sounds';
+                            const duration = parseFloat(document.getElementById('audiolabSFXDuration')?.value || '10');
+                            pipelineData = await AudioLabAPI.processAudio(provider, { prompt, duration });
+                            break;
+                        }
+                        default:
+                            throw new Error(`Unknown step type: ${type}`);
+                    }
+
+                    if (!pipelineData?.success && pipelineData?.success !== undefined) {
+                        throw new Error(pipelineData?.error || `Step ${i + 1} failed`);
+                    }
+
+                    if (progressStep) progressStep.className = 'audiolab-pipeline-progress-step completed';
+                } catch (stepErr) {
+                    if (progressStep) progressStep.className = 'audiolab-pipeline-progress-step error';
+                    throw stepErr;
+                }
+            }
+
+            // Load final output to player if we have audio
+            if (pipelineData?.audio_data) {
+                const container = document.getElementById('audiolabPipelinePlayerContainer');
+                if (container) {
+                    if (players.pipelineOutput) players.pipelineOutput.destroy();
+                    container.style.display = 'block';
+                    players.pipelineOutput = AudioLabPlayer.create(container);
+                    await players.pipelineOutput.loadBase64(pipelineData.audio_data);
+                    const placeholder = document.getElementById('audiolabPipelinePlaceholder');
+                    if (placeholder) placeholder.style.display = 'none';
+                }
+            }
+
+            addConsoleMessage('success', `Pipeline: Complete (${steps.length} steps)`);
+        } catch (err) {
+            showError(`Pipeline failed: ${err.message}`);
+            addConsoleMessage('error', `Pipeline: ${err.message}`);
+        } finally {
+            updateTransportStatus('idle');
         }
-        addConsoleMessage('success', 'Pipeline: Complete');
     }
 
     // ===== VIDEO + AUDIO COMBINE =====
@@ -932,6 +1133,22 @@ const AudioLabUI = (() => {
         if (out && progress.completed_packages) {
             out.textContent = progress.completed_packages.map(p => `Installed: ${p}`).join('\n');
             out.scrollTop = out.scrollHeight;
+        }
+    }
+
+    // ===== TRANSPORT STATUS =====
+    function updateTransportStatus(state) {
+        const led = document.getElementById('audiolabTransportLed');
+        const readout = document.getElementById('audiolabTransportReadout');
+        if (led) {
+            led.classList.remove('active', 'recording', 'processing', 'playing');
+            if (state !== 'idle') {
+                led.classList.add('active', state);
+            }
+        }
+        if (readout) {
+            const labels = { idle: 'READY', recording: 'RECORDING', processing: 'PROCESSING', playing: 'PLAYING' };
+            readout.textContent = labels[state] || 'READY';
         }
     }
 
