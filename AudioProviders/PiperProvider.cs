@@ -18,6 +18,7 @@ public sealed class PiperProvider : IAudioProviderSource
         .AddFeatureFlag("piper_tts_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
+        .WithEngineGroup("core")
         .Build();
 
     private static PackageDefinition[] Dependencies =>
@@ -29,8 +30,6 @@ public sealed class PiperProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "en-us-amy", Name = "Piper Amy (US)", Description = "English US female voice, medium quality (CPU only)", EngineConfig = new() { ["voice"] = "en_US-amy-medium" } },
-        new() { Id = "en-us-danny", Name = "Piper Danny (US)", Description = "English US male voice, medium quality (CPU only)", EngineConfig = new() { ["voice"] = "en_US-danny-low" } },
-        new() { Id = "en-gb-alba", Name = "Piper Alba (GB)", Description = "English GB female voice, medium quality (CPU only)", EngineConfig = new() { ["voice"] = "en_GB-alba-medium" } }
+        new() { Id = "default", Name = "Piper TTS", Description = "CPU-only ONNX runtime TTS with dozens of pre-trained voices" }
     ];
 }

@@ -18,6 +18,7 @@ public sealed class MusicGenProvider : IAudioProviderSource
         .AddFeatureFlag("musicgen_music_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
+        .WithEngineGroup("audiocraft")
         .Build();
 
     private static PackageDefinition[] Dependencies =>

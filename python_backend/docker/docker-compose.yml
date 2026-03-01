@@ -1,0 +1,39 @@
+# AudioLab Docker Compose — Linux-only engines
+#
+# Usage:
+#   docker compose -f python_backend/docker/docker-compose.yml up -d
+#
+# Prerequisites:
+#   - NVIDIA Container Toolkit installed
+#   - Docker with GPU support
+
+services:
+  audiolab-linux:
+    build:
+      context: ../..
+      dockerfile: python_backend/docker/Dockerfile
+    container_name: audiolab-linux
+    ports:
+      - "18716:18716"
+    volumes:
+      - ../../Models/audio:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - AUDIOLAB_MODEL_ROOT=/models
+      - HF_HOME=/models/.cache
+      - TRANSFORMERS_CACHE=/models/.cache
+      - HUGGINGFACE_HUB_CACHE=/models/.cache
+      - NVIDIA_VISIBLE_DEVICES=all
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18716/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

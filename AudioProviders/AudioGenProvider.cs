@@ -18,6 +18,7 @@ public sealed class AudioGenProvider : IAudioProviderSource
         .AddFeatureFlag("audiogen_sfx_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
+        .WithEngineGroup("audiocraft")
         .Build();
 
     private static PackageDefinition[] Dependencies =>

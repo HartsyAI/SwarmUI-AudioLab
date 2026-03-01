@@ -3,6 +3,7 @@
 
 import base64
 import io
+import os
 import struct
 
 import numpy as np
@@ -47,6 +48,20 @@ class BaseAudioEngine(ABC):
         pass
 
     # Helpers shared across engines ----------------------------------------
+
+    @staticmethod
+    def get_model_dir(category: str = "") -> str:
+        """Get centralized model directory from AUDIOLAB_MODEL_ROOT env var.
+
+        Returns the path ``<root>/<category>/`` if set, creating it if needed.
+        Returns empty string if the env var is not set.
+        """
+        root = os.environ.get("AUDIOLAB_MODEL_ROOT", "")
+        if root and category:
+            path = os.path.join(root, category)
+            os.makedirs(path, exist_ok=True)
+            return path
+        return ""
 
     @staticmethod
     def has_cuda() -> bool:

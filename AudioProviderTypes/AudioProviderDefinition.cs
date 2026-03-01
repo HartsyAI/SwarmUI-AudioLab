@@ -38,6 +38,12 @@ public sealed class AudioProviderDefinition
     /// <summary>Available models for this provider.</summary>
     public required IReadOnlyList<AudioModelDefinition> Models { get; init; }
 
+    /// <summary>Engine group for venv/Docker isolation (e.g. "core", "transformers", "audiocraft", "linux_docker").</summary>
+    public string EngineGroup { get; init; } = "default";
+
+    /// <summary>Whether this provider requires Docker to run (Linux-only engines).</summary>
+    public bool RequiresDocker { get; init; } = false;
+
     /// <summary>Creates the full model name with the Audio Models prefix for SwarmUI routing.</summary>
     public string GetFullModelName(string modelId) => $"Audio Models/{ModelPrefix}/{modelId}";
 }

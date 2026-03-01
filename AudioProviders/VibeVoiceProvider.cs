@@ -18,6 +18,7 @@ public sealed class VibeVoiceProvider : IAudioProviderSource
         .AddFeatureFlag("vibevoice_tts_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
+        .WithEngineGroup("transformers")
         .Build();
 
     private static PackageDefinition[] Dependencies =>

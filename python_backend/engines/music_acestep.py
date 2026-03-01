@@ -23,7 +23,7 @@ class AceStepEngine(BaseAudioEngine):
 
     def initialize(self) -> bool:
         try:
-            from acestep.pipeline import ACEStepPipeline  # noqa: F401
+            from acestep.pipeline_ace_step import ACEStepPipeline  # noqa: F401
 
             logger.info("ACE-Step ready (model loaded on first request)")
             return True
@@ -36,7 +36,7 @@ class AceStepEngine(BaseAudioEngine):
         if self.handler is not None:
             return
 
-        from acestep.pipeline import ACEStepPipeline
+        from acestep.pipeline_ace_step import ACEStepPipeline
 
         device = "cuda" if self.has_cuda() else "cpu"
         self.handler = ACEStepPipeline(device=device)

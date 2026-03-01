@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
-"""Dia TTS engine — dialogue-capable speech generation."""
+"""Dia TTS engine — dialogue-capable speech generation from Nari Labs.
+
+Uses the dia package API:
+  - from dia.model import Dia
+  - Dia.from_pretrained("nari-labs/Dia-1.6B")
+  - model.generate(text) -> numpy array at 44100 Hz
+  - Supports [S1]/[S2] speaker tags and nonverbal tokens like (laughs), (sighs)
+"""
 
 import logging
+
 import numpy as np
 
 from .base_engine import BaseAudioEngine
@@ -10,47 +18,40 @@ logger = logging.getLogger("TTS.Dia")
 
 
 class DiaEngine(BaseAudioEngine):
-    """Dia 1.6B dialogue TTS engine using HuggingFace transformers."""
+    """Dia 1.6B dialogue TTS engine from Nari Labs."""
 
     name = "dia"
     category = "tts"
 
     def __init__(self):
         self.model = None
-        self.processor = None
         self.sample_rate = 44100
         self.device = None
 
     def initialize(self) -> bool:
         try:
-            from transformers import AutoProcessor  # noqa: F401
-            from transformers import DiaForConditionalGeneration  # noqa: F401
+            from dia.model import Dia  # noqa: F401
 
             self.device = "cuda" if self.has_cuda() else "cpu"
-            logger.info("Dia ready on %s (model loaded on first request)",
-                        self.device)
+            logger.info("Dia ready on %s (model loaded on first request)", self.device)
             return True
         except Exception as e:
             logger.error("Dia init failed: %s", e)
             return False
 
-    def _ensure_loaded(self, model_name: str = "nari-labs/Dia-1.6B-0626"):
+    def _ensure_loaded(self, model_name: str = "nari-labs/Dia-1.6B"):
         if self.model is not None:
             return
 
-        import torch
-        from transformers import AutoProcessor, DiaForConditionalGeneration
+        from dia.model import Dia
 
-        self.processor = AutoProcessor.from_pretrained(model_name)
-        self.model = DiaForConditionalGeneration.from_pretrained(
-            model_name
-        ).to(self.device)
+        self.model = Dia.from_pretrained(model_name, compute_dtype="float16")
         logger.info("Dia model loaded: %s", model_name)
 
     def process(self, **kwargs) -> dict:
         text = kwargs.get("text", "")
         volume = float(kwargs.get("volume", 0.8))
-        model_name = kwargs.get("model_name", "nari-labs/Dia-1.6B-0626")
+        model_name = kwargs.get("model_name", "nari-labs/Dia-1.6B")
 
         if not text.strip():
             return {"success": False, "error": "No text provided"}
@@ -63,34 +64,21 @@ class DiaEngine(BaseAudioEngine):
             if "[S1]" not in text and "[S2]" not in text:
                 text = f"[S1] {text}"
 
-            inputs = self.processor(
-                text=[text], padding=True, return_tensors="pt"
-            ).to(self.device)
-
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=3072,
-                guidance_scale=3.0,
-                temperature=1.8,
-                top_p=0.90,
-                top_k=45,
+            # Generate speech — returns numpy array at 44100 Hz
+            audio_data = self.model.generate(
+                text,
+                use_torch_compile=False,
+                verbose=False,
             )
 
-            decoded = self.processor.batch_decode(outputs)
-            # decoded contains audio data — save and read back
-            import tempfile
-            import os
-            import soundfile as sf
+            if audio_data is None or len(audio_data) == 0:
+                return {"success": False, "error": "No audio output generated"}
 
-            tmp_path = tempfile.mktemp(suffix=".wav")
-            try:
-                self.processor.save_audio(decoded, tmp_path)
-                audio_data, sr = sf.read(tmp_path, dtype="float32")
-                self.sample_rate = sr
-            finally:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
+            audio_data = np.array(audio_data, dtype=np.float32)
+            if audio_data.ndim > 1:
+                audio_data = audio_data.squeeze()
 
+            sr = self.sample_rate
             audio_data = audio_data * volume
 
             audio_b64 = self.audio_to_base64(audio_data, sr)
@@ -112,4 +100,3 @@ class DiaEngine(BaseAudioEngine):
 
     def cleanup(self):
         self.model = None
-        self.processor = None

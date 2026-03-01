@@ -22,22 +22,42 @@ class BarkEngine(BaseAudioEngine):
         self.model = None
         self.sample_rate = 24000
 
+    @staticmethod
+    def _patch_torch_safe_globals():
+        """Allow numpy scalar unpickling needed by Bark checkpoints."""
+        try:
+            import torch
+            import numpy.core.multiarray
+            torch.serialization.add_safe_globals([numpy.core.multiarray.scalar])
+        except (AttributeError, ImportError):
+            pass
+
     def initialize(self) -> bool:
         try:
-            from bark import SAMPLE_RATE, preload_models
+            self._patch_torch_safe_globals()
+            from bark import SAMPLE_RATE  # noqa: F401
 
-            preload_models()
             self.sample_rate = SAMPLE_RATE
-            logger.info("Bark initialized")
+            logger.info("Bark ready (models loaded on first request)")
             return True
         except Exception as e:
             logger.error("Bark init failed: %s", e)
             return False
 
+    def _ensure_loaded(self):
+        if self.model is not None:
+            return
+        self._patch_torch_safe_globals()
+        from bark import preload_models
+        preload_models()
+        self.model = True
+        logger.info("Bark models loaded")
+
     def process(self, **kwargs) -> dict:
         text = kwargs.get("text", "")
         volume = float(kwargs.get("volume", 0.8))
 
+        self._ensure_loaded()
         from bark import generate_audio
 
         audio_array = generate_audio(text)

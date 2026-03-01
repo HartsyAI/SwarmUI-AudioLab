@@ -18,6 +18,8 @@ public sealed class AceStepProvider : IAudioProviderSource
         .AddFeatureFlag("acestep_music_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
+        .WithEngineGroup("linux_docker")
+        .WithRequiresDocker()
         .Build();
 
     private static PackageDefinition[] Dependencies =>

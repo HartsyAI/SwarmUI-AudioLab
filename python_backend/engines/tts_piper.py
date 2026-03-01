@@ -91,21 +91,25 @@ class PiperEngine(BaseAudioEngine):
         try:
             voice = self._get_voice(voice_name)
 
-            # Synthesize to WAV in memory
-            wav_buf = io.BytesIO()
-            with wave.open(wav_buf, "wb") as wav_file:
-                voice.synthesize(text, wav_file, length_scale=1.0 / speed if speed > 0 else 1.0)
+            # Collect raw PCM audio from synthesize() → AudioChunk objects
+            from piper.config import SynthesisConfig
 
-            # Read back the PCM data from the WAV
-            wav_buf.seek(0)
-            with wave.open(wav_buf, "rb") as wav_in:
-                sr = wav_in.getframerate()
-                frames = wav_in.readframes(wav_in.getnframes())
-                self.sample_rate = sr
+            sr = voice.config.sample_rate
+            syn_config = SynthesisConfig(
+                length_scale=1.0 / speed if speed > 0 else 1.0
+            )
+            audio_chunks = []
+            for chunk in voice.synthesize(text, syn_config=syn_config):
+                audio_chunks.append(chunk.audio_int16_bytes)
 
-            audio_int16 = np.frombuffer(frames, dtype=np.int16)
+            if not audio_chunks:
+                return {"success": False, "error": "No audio generated"}
+
+            raw_bytes = b"".join(audio_chunks)
+            audio_int16 = np.frombuffer(raw_bytes, dtype=np.int16)
             audio_float = audio_int16.astype(np.float32) / 32767.0
             audio_float = audio_float * volume
+            self.sample_rate = sr
 
             audio_b64 = self.audio_to_base64(audio_float, self.sample_rate)
             duration = len(audio_float) / self.sample_rate

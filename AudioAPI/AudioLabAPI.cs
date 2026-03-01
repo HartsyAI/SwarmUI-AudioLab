@@ -79,7 +79,7 @@ public static class AudioLabAPI
                 }
             }
 
-            JObject result = await PythonAudioProcessor.Instance.ProcessAsync(provider, args);
+            JObject result = await AudioServerManager.Instance.ProcessAsync(provider, args);
             return result;
         }
         catch (Exception ex)
@@ -103,8 +103,7 @@ public static class AudioLabAPI
             string requestedProvider = input["provider_id"]?.ToString();
             AudioProviderDefinition sttProvider = !string.IsNullOrEmpty(requestedProvider)
                 ? AudioProviderRegistry.GetById(requestedProvider)
-                : AudioProviderRegistry.GetByCategory(AudioCategory.STT)
-                    .FirstOrDefault(p => p.Id != "fallback_stt") ?? AudioProviderRegistry.GetById("fallback_stt");
+                : AudioProviderRegistry.GetByCategory(AudioCategory.STT).FirstOrDefault();
 
             if (sttProvider == null)
             {
@@ -117,7 +116,7 @@ public static class AudioLabAPI
                 ["language"] = request.Language
             };
 
-            JObject result = await PythonAudioProcessor.Instance.ProcessAsync(sttProvider, args);
+            JObject result = await AudioServerManager.Instance.ProcessAsync(sttProvider, args);
 
             if (result["success"]?.Value<bool>() == true)
             {
@@ -153,15 +152,16 @@ public static class AudioLabAPI
 
             // Use provider_id from request if supplied, otherwise fall back to first available
             string requestedProvider = input["provider_id"]?.ToString();
+            Logs.Debug($"[AudioLab] ProcessTTS: requested provider_id='{requestedProvider}'");
             AudioProviderDefinition ttsProvider = !string.IsNullOrEmpty(requestedProvider)
                 ? AudioProviderRegistry.GetById(requestedProvider)
-                : AudioProviderRegistry.GetByCategory(AudioCategory.TTS)
-                    .FirstOrDefault(p => p.Id != "fallback_tts") ?? AudioProviderRegistry.GetById("fallback_tts");
+                : AudioProviderRegistry.GetByCategory(AudioCategory.TTS).FirstOrDefault();
 
             if (ttsProvider == null)
             {
-                return AudioLab.CreateErrorResponse("No TTS provider available", "no_provider");
+                return AudioLab.CreateErrorResponse($"No TTS provider available (requested: '{requestedProvider}')", "no_provider");
             }
+            Logs.Info($"[AudioLab] ProcessTTS: routing to provider '{ttsProvider.Id}' ({ttsProvider.Name}), module={ttsProvider.PythonModule}, class={ttsProvider.PythonEngineClass}");
 
             Dictionary<string, object> args = new()
             {
@@ -171,7 +171,7 @@ public static class AudioLabAPI
                 ["volume"] = request.Volume
             };
 
-            JObject result = await PythonAudioProcessor.Instance.ProcessAsync(ttsProvider, args);
+            JObject result = await AudioServerManager.Instance.ProcessAsync(ttsProvider, args);
 
             if (result["success"]?.Value<bool>() == true)
             {
@@ -225,7 +225,7 @@ public static class AudioLabAPI
                 };
 
                 AudioProviderDefinition provider = AudioProviderRegistry.GetByCategory(category)
-                    .FirstOrDefault(p => !p.Id.StartsWith("fallback_"));
+                    .FirstOrDefault();
 
                 if (provider == null) continue;
 
@@ -243,7 +243,7 @@ public static class AudioLabAPI
                     args["volume"] = step.Config?["volume"]?.Value<float>() ?? 0.8f;
                 }
 
-                JObject stepResult = await PythonAudioProcessor.Instance.ProcessAsync(provider, args);
+                JObject stepResult = await AudioServerManager.Instance.ProcessAsync(provider, args);
                 results[step.Type] = stepResult;
                 executedSteps.Add(step.Type);
 

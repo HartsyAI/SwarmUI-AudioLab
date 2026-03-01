@@ -18,6 +18,7 @@ public sealed class KokoroProvider : IAudioProviderSource
         .AddFeatureFlag("kokoro_tts_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
+        .WithEngineGroup("core")
         .Build();
 
     private static PackageDefinition[] Dependencies =>

@@ -18,6 +18,7 @@ public sealed class ChatterboxProvider : IAudioProviderSource
         .AddFeatureFlag("chatterbox_tts_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
+        .WithEngineGroup("transformers")
         .Build();
 
     private static PackageDefinition[] Dependencies =>
@@ -38,9 +39,6 @@ public sealed class ChatterboxProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "default", Name = "Chatterbox Default", Description = "Balanced voice with moderate expression", EngineConfig = new() { ["exaggeration"] = 0.5, ["cfg_weight"] = 0.5 } },
-        new() { Id = "expressive", Name = "Chatterbox Expressive", Description = "High expressiveness, more animated speech", EngineConfig = new() { ["exaggeration"] = 0.7, ["cfg_weight"] = 0.3 } },
-        new() { Id = "calm", Name = "Chatterbox Calm", Description = "Calm and measured delivery", EngineConfig = new() { ["exaggeration"] = 0.3, ["cfg_weight"] = 0.7 } },
-        new() { Id = "dramatic", Name = "Chatterbox Dramatic", Description = "Highly expressive, dramatic delivery", EngineConfig = new() { ["exaggeration"] = 0.8, ["cfg_weight"] = 0.2 } }
+        new() { Id = "default", Name = "Chatterbox TTS", Description = "High-quality voice synthesis with expressive controls (Exaggeration, CFG Weight)" }
     ];
 }

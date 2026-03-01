@@ -58,6 +58,11 @@ def remove_engine(module_name: str, class_name: str) -> None:
             logger.warning("Error during cleanup of %s: %s", key, e)
 
 
+def list_loaded_engines() -> list:
+    """Return keys of currently loaded engines."""
+    return list(_engine_cache.keys())
+
+
 def cleanup_all() -> None:
     """Cleanup and remove all cached engines."""
     for key in list(_engine_cache.keys()):

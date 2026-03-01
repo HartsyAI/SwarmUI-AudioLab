@@ -1,9 +1,11 @@
 using Hartsy.Extensions.AudioLab.AudioAPI;
 using Hartsy.Extensions.AudioLab.AudioBackends;
 using Hartsy.Extensions.AudioLab.AudioProviders;
+using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using Hartsy.Extensions.AudioLab.AudioServices;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Core;
+using SwarmUI.Text2Image;
 using SwarmUI.Utils;
 using System.IO;
 
@@ -11,10 +13,10 @@ namespace Hartsy.Extensions.AudioLab;
 
 /// <summary>SwarmUI AudioLab Extension - Main Entry Point.
 /// Provides modular audio processing (TTS, STT, music gen, voice cloning, etc.)
-/// through a provider-based architecture integrated into SwarmUI.</summary>
+/// through a provider-based architecture integrated into SwarmUI's Generate tab.</summary>
 public class AudioLab : Extension
 {
-    public static new readonly string Version = "3.0.0";
+    public static new readonly string Version = "4.0.0";
 
     /// <summary>Pre-initialization — registers providers and web assets before SwarmUI core is ready.</summary>
     public override void OnPreInit()
@@ -26,11 +28,19 @@ public class AudioLab : Extension
             AudioConfiguration.ExtensionDirectory = Path.GetFullPath(Path.Combine(projectRoot, "Extensions", "SwarmUI-VoiceAssistant"));
             Logs.Info($"[AudioLab] Extension directory: {AudioConfiguration.ExtensionDirectory}");
 
+            // Ensure centralized model storage directories exist
+            string audioModelRoot = Path.GetFullPath(AudioConfiguration.ModelRoot);
+            foreach (string sub in new[] { "tts", "stt", "music", "clone", "fx", ".cache" })
+            {
+                Directory.CreateDirectory(Path.Combine(audioModelRoot, sub));
+            }
+            Logs.Info($"[AudioLab] Audio model root: {audioModelRoot}");
+
             // Register all built-in audio providers
             AudioProviderDefinitions.RegisterAll();
             Logs.Info($"[AudioLab] Registered {AudioProviderDefinitions.All.Count} audio providers");
 
-            // Register web assets — libraries first, then modules
+            // Register web assets — libraries first, then integration module
             ScriptFiles.Add("Assets/lib/wavesurfer.min.js");
             ScriptFiles.Add("Assets/lib/wavesurfer-record.min.js");
             ScriptFiles.Add("Assets/lib/wavesurfer-regions.min.js");
@@ -38,7 +48,7 @@ public class AudioLab : Extension
             ScriptFiles.Add("Assets/audio-player.js");
             ScriptFiles.Add("Assets/audio-api.js");
             ScriptFiles.Add("Assets/audio-core.js");
-            ScriptFiles.Add("Assets/audio-ui.js");
+            ScriptFiles.Add("Assets/audio-integration.js");
             StyleSheetFiles.Add("Assets/audio-lab.css");
         }
         catch (Exception ex)
@@ -47,10 +57,18 @@ public class AudioLab : Extension
         }
     }
 
-    /// <summary>Main initialization — registers the unified audio backend and API endpoints.</summary>
+    /// <summary>Main initialization — registers backend, T2I params, feature flags, and API endpoints.</summary>
     public override async void OnInit()
     {
-        // Register ONE unified backend (replaces separate STT + TTS backend registrations)
+        // Register T2I parameters for audio workflows (TTS, STT, Music, Clone, FX, SFX)
+        AudioLabParams.RegisterAll();
+        Logs.Info("[AudioLab] Registered audio T2I parameters");
+
+        // Register feature flags so SwarmUI knows these are extension-managed
+        RegisterFeatureFlags();
+        Logs.Info("[AudioLab] Registered feature flags");
+
+        // Register ONE unified backend
         Program.Backends.RegisterBackendType<DynamicAudioBackend>(
             "audio-backend", "Audio Backend",
             "Dynamic audio backend supporting TTS, STT, music generation, and more.", true);
@@ -58,6 +76,30 @@ public class AudioLab : Extension
         // Register API endpoints
         AudioLabAPI.Register();
         VideoAudioEndpoints.Register();
+    }
+
+    /// <summary>Registers all feature flags that should be disregarded for audio backends.
+    /// Mirrors the pattern from SwarmUI-API-Backends RegisterFeatureFlags().</summary>
+    private static void RegisterFeatureFlags()
+    {
+        // Category-level flags (one per AudioCategory)
+        string[] categoryFlags = ["audiolab_tts", "audiolab_stt", "audiolab_music", "audiolab_clone", "audiolab_fx", "audiolab_sfx"];
+
+        // Per-provider flags from each provider's FeatureFlags list
+        string[] providerFlags = AudioProviderRegistry.All
+            .SelectMany(p => p.FeatureFlags).Distinct().ToArray();
+
+        // Image-only features incompatible with audio models
+        string[] incompatibleFlags = [
+            "sampling", "zero_negative", "refiners", "controlnet", "variation_seed",
+            "video", "autowebui", "comfyui", "frameinterps", "ipadapter", "sdxl",
+            "dynamic_thresholding", "cascade", "sd3", "flux-dev", "seamless",
+            "freeu", "teacache", "text2video", "yolov8", "aitemplate", "sdcpp"
+        ];
+
+        foreach (string flag in categoryFlags) T2IEngine.DisregardedFeatureFlags.Add(flag);
+        foreach (string flag in providerFlags) T2IEngine.DisregardedFeatureFlags.Add(flag);
+        foreach (string flag in incompatibleFlags) T2IEngine.DisregardedFeatureFlags.Add(flag);
     }
 
     /// <summary>Creates a standardized error response for API endpoints.</summary>

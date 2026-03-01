@@ -18,6 +18,8 @@ public sealed class CosyVoiceProvider : IAudioProviderSource
         .AddFeatureFlag("cosyvoice_tts_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
+        .WithEngineGroup("linux_docker")
+        .WithRequiresDocker()
         .Build();
 
     private static PackageDefinition[] Dependencies =>
@@ -25,7 +27,7 @@ public sealed class CosyVoiceProvider : IAudioProviderSource
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
         new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        new() { Name = "transformers>=4.40.0", InstallName = "transformers>=4.40.0", ImportName = "transformers", Category = "tts" },
+        new() { Name = "cosyvoice", InstallName = "git+https://github.com/FunAudioLLM/CosyVoice.git", ImportName = "cosyvoice", Category = "tts", IsGitPackage = true, EstimatedInstallTimeMinutes = 15 },
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
     ];
 

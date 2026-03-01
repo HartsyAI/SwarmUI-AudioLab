@@ -2,6 +2,7 @@
 """Kokoro TTS engine — lightweight, high-quality, CPU-capable."""
 
 import logging
+import os
 import numpy as np
 
 from .base_engine import BaseAudioEngine
@@ -19,8 +20,20 @@ class KokoroEngine(BaseAudioEngine):
         self.pipeline = None
         self.sample_rate = 24000
 
+    @staticmethod
+    def _setup_espeak():
+        """Ensure espeak-ng data path is set before Kokoro loads."""
+        try:
+            import espeakng_loader
+            data_path = espeakng_loader.get_data_path()
+            if os.path.isdir(data_path):
+                os.environ["ESPEAK_DATA_PATH"] = os.path.dirname(data_path)
+        except ImportError:
+            pass
+
     def initialize(self) -> bool:
         try:
+            self._setup_espeak()
             from kokoro import KPipeline
 
             device = "cuda" if self.has_cuda() else "cpu"

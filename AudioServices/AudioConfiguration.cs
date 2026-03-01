@@ -41,6 +41,21 @@ public static class AudioConfiguration
     public static string ExtensionDirectory { get; set; } = "";
     public static string PythonBackendDirectory => Path.Combine(ExtensionDirectory, "python_backend");
 
+    // Model Storage — centralized under Models/audio/ instead of ~/.cache/huggingface/
+    public static string ModelRoot { get; set; } = "Models/audio";
+
+    /// <summary>Path for HuggingFace model cache (redirected from ~/.cache/huggingface/).</summary>
+    public static string GetHuggingFaceCachePath() => Path.Combine(Path.GetFullPath(ModelRoot), ".cache");
+
+    /// <summary>Path for a specific model category (e.g. tts, stt, music).</summary>
+    public static string GetModelPath(string category) => Path.Combine(Path.GetFullPath(ModelRoot), category);
+
+    // Docker — optional for Linux-only engines
+    public static bool UseDocker { get; set; } = false;
+
+    // Request timeout — configurable from backend settings
+    public static int TimeoutSeconds { get; set; } = 300;
+
     /// <summary>Validates the current configuration and logs any issues.</summary>
     public static bool ValidateConfiguration()
     {

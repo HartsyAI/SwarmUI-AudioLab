@@ -37,15 +37,14 @@ class ChatterboxEngine(BaseAudioEngine):
 
     def process(self, **kwargs) -> dict:
         text = kwargs.get("text", "")
-        voice = kwargs.get("voice", "default")
+        exaggeration = float(kwargs.get("exaggeration", 0.5))
+        cfg_weight = float(kwargs.get("cfg_weight", 0.5))
         volume = float(kwargs.get("volume", 0.8))
-
-        voice_params = self._get_voice_params(voice)
 
         audio_tensor = self.model.generate(
             text,
-            exaggeration=voice_params["exaggeration"],
-            cfg_weight=voice_params["cfg_weight"],
+            exaggeration=exaggeration,
+            cfg_weight=cfg_weight,
         )
 
         audio_numpy = audio_tensor.cpu().numpy()
@@ -68,16 +67,6 @@ class ChatterboxEngine(BaseAudioEngine):
         self.model = None
 
     # -- private helpers --------------------------------------------------
-
-    @staticmethod
-    def _get_voice_params(voice: str) -> dict:
-        voice_map = {
-            "default": {"exaggeration": 0.5, "cfg_weight": 0.5},
-            "expressive": {"exaggeration": 0.7, "cfg_weight": 0.3},
-            "calm": {"exaggeration": 0.3, "cfg_weight": 0.7},
-            "dramatic": {"exaggeration": 0.8, "cfg_weight": 0.2},
-        }
-        return voice_map.get(voice, voice_map["default"])
 
     def _numpy_to_wav(self, audio_numpy: np.ndarray) -> bytes:
         max_amplitude = np.max(np.abs(audio_numpy))

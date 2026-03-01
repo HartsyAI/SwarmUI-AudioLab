@@ -18,6 +18,7 @@ public sealed class F5TTSProvider : IAudioProviderSource
         .AddFeatureFlag("f5_tts_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
+        .WithEngineGroup("transformers")
         .Build();
 
     private static PackageDefinition[] Dependencies =>

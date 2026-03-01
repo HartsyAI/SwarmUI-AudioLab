@@ -18,6 +18,7 @@ public sealed class DemucsProvider : IAudioProviderSource
         .AddFeatureFlag("demucs_fx_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
+        .WithEngineGroup("fx")
         .Build();
 
     private static PackageDefinition[] Dependencies =>

@@ -18,6 +18,8 @@ public sealed class RealtimeSTTProvider : IAudioProviderSource
         .AddFeatureFlag("realtimestt_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
+        .WithEngineGroup("linux_docker")
+        .WithRequiresDocker()
         .Build();
 
     private static PackageDefinition[] Dependencies =>

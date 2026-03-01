@@ -18,6 +18,7 @@ public sealed class OpenVoiceProvider : IAudioProviderSource
         .AddFeatureFlag("openvoice_clone_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
+        .WithEngineGroup("clone")
         .Build();
 
     private static PackageDefinition[] Dependencies =>

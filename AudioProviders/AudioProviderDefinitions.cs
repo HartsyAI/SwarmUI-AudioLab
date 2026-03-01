@@ -37,10 +37,7 @@ public static class AudioProviderDefinitions
         DemucsProvider.Instance,
         ResembleEnhanceProvider.Instance,
         // Sound FX providers
-        AudioGenProvider.Instance,
-        // Fallback providers
-        FallbackTTSProvider.Instance,
-        FallbackSTTProvider.Instance
+        AudioGenProvider.Instance
     ];
 
     /// <summary>Registers all built-in providers with the AudioProviderRegistry.</summary>

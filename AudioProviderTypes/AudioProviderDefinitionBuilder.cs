@@ -16,6 +16,8 @@ public sealed class AudioProviderDefinitionBuilder
     private readonly List<string> _featureFlags = [];
     private readonly List<PackageDefinition> _dependencies = [];
     private readonly List<AudioModelDefinition> _models = [];
+    private string _engineGroup = "default";
+    private bool _requiresDocker = false;
 
     public AudioProviderDefinitionBuilder WithId(string id) { _id = id; return this; }
     public AudioProviderDefinitionBuilder WithName(string name) { _name = name; return this; }
@@ -38,6 +40,8 @@ public sealed class AudioProviderDefinitionBuilder
     public AudioProviderDefinitionBuilder AddDependencies(IEnumerable<PackageDefinition> deps) { _dependencies.AddRange(deps); return this; }
     public AudioProviderDefinitionBuilder AddModel(AudioModelDefinition model) { _models.Add(model); return this; }
     public AudioProviderDefinitionBuilder AddModels(IEnumerable<AudioModelDefinition> models) { _models.AddRange(models); return this; }
+    public AudioProviderDefinitionBuilder WithEngineGroup(string group) { _engineGroup = group; return this; }
+    public AudioProviderDefinitionBuilder WithRequiresDocker() { _requiresDocker = true; return this; }
 
     public AudioProviderDefinition Build()
     {
@@ -59,7 +63,9 @@ public sealed class AudioProviderDefinitionBuilder
             ModelClassName = _modelClassName,
             FeatureFlags = _featureFlags.AsReadOnly(),
             Dependencies = _dependencies.AsReadOnly(),
-            Models = _models.AsReadOnly()
+            Models = _models.AsReadOnly(),
+            EngineGroup = _engineGroup,
+            RequiresDocker = _requiresDocker
         };
     }
 

@@ -18,6 +18,7 @@ public sealed class BarkProvider : IAudioProviderSource
         .AddFeatureFlag("bark_tts_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
+        .WithEngineGroup("core")
         .Build();
 
     private static PackageDefinition[] Dependencies =>
@@ -30,7 +31,6 @@ public sealed class BarkProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "default", Name = "Bark Default", Description = "General-purpose text-to-audio generation" },
-        new() { Id = "multilingual", Name = "Bark Multilingual", Description = "Multilingual speech synthesis with diverse voices" }
+        new() { Id = "default", Name = "Bark TTS", Description = "Text-to-audio generation with speech, music, and sound effects" }
     ];
 }
