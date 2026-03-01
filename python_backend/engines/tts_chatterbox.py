@@ -4,7 +4,9 @@
 import base64
 import io
 import logging
+import os
 import struct
+import tempfile
 import numpy as np
 
 from .base_engine import BaseAudioEngine
@@ -39,29 +41,64 @@ class ChatterboxEngine(BaseAudioEngine):
         text = kwargs.get("text", "")
         exaggeration = float(kwargs.get("exaggeration", 0.5))
         cfg_weight = float(kwargs.get("cfg_weight", 0.5))
+        temperature = float(kwargs.get("temperature", 0.8))
+        repetition_penalty = float(kwargs.get("repetition_penalty", 1.2))
+        top_p = float(kwargs.get("top_p", 1.0))
+        min_p = float(kwargs.get("min_p", 0.05))
         volume = float(kwargs.get("volume", 0.8))
+        reference_audio = kwargs.get("reference_audio", "")
 
-        audio_tensor = self.model.generate(
-            text,
-            exaggeration=exaggeration,
-            cfg_weight=cfg_weight,
-        )
+        # Decode reference audio to temp file if provided
+        audio_prompt_path = None
+        tmp_path = None
+        if reference_audio:
+            try:
+                ref_bytes = base64.b64decode(reference_audio)
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                    tmp.write(ref_bytes)
+                    tmp_path = tmp.name
+                audio_prompt_path = tmp_path
+                logger.info("Using reference audio for voice cloning (%d bytes)", len(ref_bytes))
+            except Exception as e:
+                logger.warning("Failed to decode reference audio, proceeding without: %s", e)
 
-        audio_numpy = audio_tensor.cpu().numpy()
-        if len(audio_numpy.shape) > 1:
-            audio_numpy = np.mean(audio_numpy, axis=0)
+        try:
+            audio_tensor = self.model.generate(
+                text,
+                exaggeration=exaggeration,
+                cfg_weight=cfg_weight,
+                temperature=temperature,
+                repetition_penalty=repetition_penalty,
+                top_p=top_p,
+                min_p=min_p,
+                audio_prompt_path=audio_prompt_path,
+            )
 
-        audio_numpy = audio_numpy * volume
-        wav_bytes = self._numpy_to_wav(audio_numpy)
-        audio_base64 = base64.b64encode(wav_bytes).decode("utf-8")
-        duration = len(audio_numpy) / self.sample_rate
+            audio_numpy = audio_tensor.cpu().numpy()
+            if len(audio_numpy.shape) > 1:
+                audio_numpy = np.mean(audio_numpy, axis=0)
 
-        return {
-            "success": True,
-            "audio_data": audio_base64,
-            "duration": duration,
-            "metadata": {"engine": "chatterbox", "sample_rate": self.sample_rate},
-        }
+            audio_numpy = audio_numpy * volume
+            wav_bytes = self._numpy_to_wav(audio_numpy)
+            audio_base64 = base64.b64encode(wav_bytes).decode("utf-8")
+            duration = len(audio_numpy) / self.sample_rate
+
+            return {
+                "success": True,
+                "audio_data": audio_base64,
+                "duration": duration,
+                "metadata": {
+                    "engine": "chatterbox",
+                    "sample_rate": self.sample_rate,
+                    "voice_cloned": audio_prompt_path is not None,
+                },
+            }
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     def cleanup(self):
         self.model = None

@@ -638,6 +638,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
             case "chatterbox_tts":
                 args["exaggeration"] = input.TryGet(AudioLabParams.Exaggeration, out double exag) ? exag : 0.5;
                 args["cfg_weight"] = input.TryGet(AudioLabParams.CFGWeight, out double cfgw) ? cfgw : 0.5;
+                args["temperature"] = input.TryGet(AudioLabParams.Temperature, out double temp) ? temp : 0.8;
+                args["repetition_penalty"] = input.TryGet(AudioLabParams.RepetitionPenalty, out double repPen) ? repPen : 1.2;
+                args["top_p"] = input.TryGet(AudioLabParams.TopP, out double topP) ? topP : 1.0;
+                args["min_p"] = input.TryGet(AudioLabParams.MinP, out double minP) ? minP : 0.05;
+                string chatterboxRef = GetBase64Audio(input, AudioLabParams.ReferenceAudio);
+                if (!string.IsNullOrEmpty(chatterboxRef))
+                    args["reference_audio"] = chatterboxRef;
                 break;
 
             case "kokoro_tts":

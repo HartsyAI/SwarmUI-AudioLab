@@ -12,6 +12,7 @@ public static class AudioLabParams
     public static T2IParamGroup TTSGroup;
     public static T2IParamGroup STTGroup;
     public static T2IParamGroup MusicGroup;
+    public static T2IParamGroup VoiceRefGroup;
     public static T2IParamGroup CloneGroup;
     public static T2IParamGroup FXGroup;
     public static T2IParamGroup SFXGroup;
@@ -22,6 +23,13 @@ public static class AudioLabParams
     // ===== TTS — Chatterbox (flag: chatterbox_tts_params) =====
     public static T2IRegisteredParam<double> Exaggeration;
     public static T2IRegisteredParam<double> CFGWeight;
+    public static T2IRegisteredParam<double> Temperature;
+    public static T2IRegisteredParam<double> RepetitionPenalty;
+    public static T2IRegisteredParam<double> TopP;
+    public static T2IRegisteredParam<double> MinP;
+
+    // ===== Voice Reference — Chatterbox (flag: chatterbox_tts_params) =====
+    public static T2IRegisteredParam<AudioFile> ReferenceAudio;
 
     // ===== TTS — Kokoro (flag: kokoro_tts_params) =====
     public static T2IRegisteredParam<string> KokoroVoice;
@@ -93,15 +101,17 @@ public static class AudioLabParams
         // ========================== Groups ==========================
         TTSGroup = new("TTS", Open: true, OrderPriority: -28, Toggles: false,
             Description: "Text-to-speech parameters. Enter text in the Prompt box above.");
-        STTGroup = new("STT", Open: true, OrderPriority: -27, Toggles: false,
+        VoiceRefGroup = new("Voice Reference", Open: true, OrderPriority: -27, Toggles: false,
+            Description: "Reference audio for voice cloning in TTS. Upload a clean ~10 second recording to clone.");
+        STTGroup = new("STT", Open: true, OrderPriority: -26, Toggles: false,
             Description: "Speech-to-text parameters. Upload audio to transcribe.");
-        MusicGroup = new("Music Generation", Open: true, OrderPriority: -26, Toggles: false,
+        MusicGroup = new("Music Generation", Open: true, OrderPriority: -25, Toggles: false,
             Description: "Music generation parameters. Describe the music in the Prompt box above.");
-        CloneGroup = new("Voice Clone", Open: true, OrderPriority: -25, Toggles: false,
+        CloneGroup = new("Voice Clone", Open: true, OrderPriority: -24, Toggles: false,
             Description: "Voice cloning parameters. Provide source and target audio.");
-        FXGroup = new("Audio FX", Open: true, OrderPriority: -24, Toggles: false,
+        FXGroup = new("Audio FX", Open: true, OrderPriority: -23, Toggles: false,
             Description: "Audio effects parameters. Upload audio to process.");
-        SFXGroup = new("Sound FX", Open: true, OrderPriority: -23, Toggles: false,
+        SFXGroup = new("Sound FX", Open: true, OrderPriority: -22, Toggles: false,
             Description: "Sound effects generation. Describe the sound in the Prompt box above.");
 
         // ========================== TTS Shared ==========================
@@ -123,6 +133,36 @@ public static class AudioLabParams
             "0.5",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
             OrderPriority: -4, Group: TTSGroup, FeatureFlag: "chatterbox_tts_params"));
+
+        Temperature = T2IParamTypes.Register<double>(new("Temperature",
+            "Sampling temperature.\nHigher = more varied/creative speech. Lower = more consistent.",
+            "0.8",
+            Min: 0.1, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -3, Group: TTSGroup, FeatureFlag: "chatterbox_tts_params"));
+
+        RepetitionPenalty = T2IParamTypes.Register<double>(new("Repetition Penalty",
+            "Penalizes repeated tokens.\nHigher values reduce stuttering and repetitive speech patterns.",
+            "1.2",
+            Min: 1.0, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -2, Group: TTSGroup, FeatureFlag: "chatterbox_tts_params"));
+
+        TopP = T2IParamTypes.Register<double>(new("Top P",
+            "Nucleus sampling threshold.\n1.0 = no filtering. Lower values restrict to higher probability tokens.",
+            "1.0",
+            Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -1, Group: TTSGroup, FeatureFlag: "chatterbox_tts_params"));
+
+        MinP = T2IParamTypes.Register<double>(new("Min P",
+            "Minimum probability threshold.\nTokens below this probability are excluded from sampling.",
+            "0.05",
+            Min: 0.0, Max: 1.0, Step: 0.01, ViewType: ParamViewType.SLIDER,
+            OrderPriority: 0, Group: TTSGroup, FeatureFlag: "chatterbox_tts_params"));
+
+        // ========================== Voice Reference — Chatterbox ==========================
+        ReferenceAudio = T2IParamTypes.Register<AudioFile>(new("Reference Audio",
+            "~10 second reference audio clip for voice cloning.\nOptional — uses default voice when not provided.",
+            null,
+            OrderPriority: -10, Group: VoiceRefGroup, FeatureFlag: "chatterbox_tts_params"));
 
         // ========================== TTS — Kokoro ==========================
         KokoroVoice = T2IParamTypes.Register<string>(new("Kokoro Voice",
