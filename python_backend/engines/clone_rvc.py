@@ -36,6 +36,10 @@ class RVCEngine(BaseAudioEngine):
         source_audio = kwargs.get("source_audio", "")
         target_voice = kwargs.get("target_voice", "")
         pitch_shift = int(kwargs.get("pitch_shift", 0))
+        f0method = kwargs.get("f0method", "rmvpe")
+        index_rate = float(kwargs.get("index_rate", 0.5))
+        rms_mix_rate = float(kwargs.get("rms_mix_rate", 1.0))
+        protect = float(kwargs.get("protect", 0.33))
 
         if not source_audio:
             return {"success": False, "error": "No source audio provided"}
@@ -54,17 +58,21 @@ class RVCEngine(BaseAudioEngine):
 
             rvc.load_model(model_path)
 
+            # Configure inference params via set_params() (not inline kwargs)
+            rvc.set_params(
+                f0method=f0method,
+                f0up_key=pitch_shift,
+                index_rate=index_rate,
+                rms_mix_rate=rms_mix_rate,
+                protect=protect,
+            )
+
             src_path = self._write_temp(source_audio, ".wav")
             tmp_files.append(src_path)
             out_path = tempfile.mktemp(suffix=".wav")
             tmp_files.append(out_path)
 
-            rvc.infer_file(
-                src_path,
-                out_path,
-                f0method="rmvpe",
-                f0up_key=pitch_shift,
-            )
+            rvc.infer_file(src_path, out_path)
 
             # Read output
             import soundfile as sf
@@ -80,6 +88,7 @@ class RVCEngine(BaseAudioEngine):
                     "engine": "rvc",
                     "sample_rate": sr,
                     "pitch_shift": pitch_shift,
+                    "f0method": f0method,
                 },
             }
         except Exception as e:

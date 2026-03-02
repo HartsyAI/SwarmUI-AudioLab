@@ -58,6 +58,8 @@ class DemucsEngine(BaseAudioEngine):
     def process(self, **kwargs) -> dict:
         audio_data = kwargs.get("audio_data", "")
         model_name = kwargs.get("model_name", "htdemucs")
+        overlap = float(kwargs.get("overlap", 0.25))
+        shifts = int(kwargs.get("shifts", 1))
 
         if not audio_data:
             return {"success": False, "error": "No audio data provided"}
@@ -93,7 +95,8 @@ class DemucsEngine(BaseAudioEngine):
             # Add batch dimension and separate
             with torch.no_grad():
                 sources = apply_model(
-                    self.model, waveform_norm[None], device=self.device
+                    self.model, waveform_norm[None], device=self.device,
+                    overlap=overlap, shifts=shifts,
                 )[0]
 
             # Denormalize

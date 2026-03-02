@@ -19,56 +19,69 @@ class DistilWhisperEngine(BaseAudioEngine):
 
     def __init__(self):
         self.pipe = None
-        self.model_id = "distil-whisper/distil-large-v3"
+        self.current_model_id = None
 
     def initialize(self) -> bool:
         try:
-            import torch
-            from transformers import (
-                AutoModelForSpeechSeq2Seq,
-                AutoProcessor,
-                pipeline,
-            )
+            from transformers import AutoModelForSpeechSeq2Seq  # noqa: F401
 
-            device = "cuda:0" if self.has_cuda() else "cpu"
-            torch_dtype = torch.float16 if self.has_cuda() else torch.float32
-
-            model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                self.model_id,
-                torch_dtype=torch_dtype,
-                low_cpu_mem_usage=True,
-                use_safetensors=True,
-            )
-            model.to(device)
-
-            processor = AutoProcessor.from_pretrained(self.model_id)
-
-            self.pipe = pipeline(
-                "automatic-speech-recognition",
-                model=model,
-                tokenizer=processor.tokenizer,
-                feature_extractor=processor.feature_extractor,
-                max_new_tokens=128,
-                chunk_length_s=25,
-                torch_dtype=torch_dtype,
-                device=device,
-            )
-
-            logger.info("Distil-Whisper initialized on %s", device)
+            logger.info("Distil-Whisper ready (model loaded on first request)")
             return True
         except Exception as e:
             logger.error("Distil-Whisper init failed: %s", e)
             return False
 
+    def _ensure_loaded(self, model_id: str = "distil-whisper/distil-large-v3"):
+        if self.pipe is not None and self.current_model_id == model_id:
+            return
+
+        import torch
+        from transformers import (
+            AutoModelForSpeechSeq2Seq,
+            AutoProcessor,
+            pipeline,
+        )
+
+        device = "cuda:0" if self.has_cuda() else "cpu"
+        torch_dtype = torch.float16 if self.has_cuda() else torch.float32
+
+        local_path = self.ensure_model_local(model_id, "stt")
+        model = AutoModelForSpeechSeq2Seq.from_pretrained(
+            local_path,
+            torch_dtype=torch_dtype,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+        )
+        model.to(device)
+
+        processor = AutoProcessor.from_pretrained(local_path)
+
+        self.pipe = pipeline(
+            "automatic-speech-recognition",
+            model=model,
+            tokenizer=processor.tokenizer,
+            feature_extractor=processor.feature_extractor,
+            max_new_tokens=128,
+            chunk_length_s=25,
+            torch_dtype=torch_dtype,
+            device=device,
+        )
+
+        self.current_model_id = model_id
+        logger.info("Distil-Whisper model loaded: %s on %s", model_id, device)
+
     def process(self, **kwargs) -> dict:
         audio_data = kwargs.get("audio_data", "")
         language = kwargs.get("language", "en-US")
+        model_name = kwargs.get("model_name", "distil-whisper/distil-large-v3")
 
         if not audio_data:
             return {"success": False, "error": "No audio data provided"}
 
         temp_path = None
         try:
+            self._ensure_loaded(model_name)
+
             audio_bytes = base64.b64decode(audio_data)
 
             with tempfile.NamedTemporaryFile(
@@ -107,7 +120,7 @@ class DistilWhisperEngine(BaseAudioEngine):
                 "confidence": round(avg_confidence, 3),
                 "metadata": {
                     "engine": "distilwhisper",
-                    "model": self.model_id,
+                    "model": model_name,
                     "language": lang_code,
                 },
             }
@@ -120,3 +133,4 @@ class DistilWhisperEngine(BaseAudioEngine):
 
     def cleanup(self):
         self.pipe = None
+        self.current_model_id = None

@@ -16,9 +16,10 @@ public sealed class OrpheusTTSProvider : IAudioProviderSource
         .WithModelPrefix("Orpheus")
         .WithModelClass("orpheus_tts", "Orpheus TTS")
         .AddFeatureFlag("orpheus_tts_params")
+        .AddFeatureFlag("tts_sampling")
         .AddDependencies(Dependencies)
         .AddModels(Models)
-        .WithEngineGroup("transformers")
+        .WithEngineGroup("main")
         .Build();
 
     private static PackageDefinition[] Dependencies =>
@@ -31,11 +32,10 @@ public sealed class OrpheusTTSProvider : IAudioProviderSource
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
     ];
 
+    // Only the 3B model has been released by Canopy Labs. Smaller variants (1B, 400M, 150M) are
+    // on their roadmap but not yet available on HuggingFace. Add them back when released.
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "3b", Name = "Orpheus 3B", Description = "Full-size model, best quality with emotion tags (~16GB VRAM)", EngineConfig = new() { ["model_name"] = "canopylabs/orpheus-3b-0.1-ft", ["model_size"] = "3b" } },
-        new() { Id = "1b", Name = "Orpheus 1B", Description = "Mid-size model, good quality with lower VRAM (~8GB VRAM)", EngineConfig = new() { ["model_name"] = "canopylabs/orpheus-1b-0.1-ft", ["model_size"] = "1b" } },
-        new() { Id = "400m", Name = "Orpheus 400M", Description = "Compact model, fast inference (~4GB VRAM)", EngineConfig = new() { ["model_name"] = "canopylabs/orpheus-400m-0.1-ft", ["model_size"] = "400m" } },
-        new() { Id = "150m", Name = "Orpheus 150M", Description = "Tiny model, fastest inference (~2GB VRAM)", EngineConfig = new() { ["model_name"] = "canopylabs/orpheus-150m-0.1-ft", ["model_size"] = "150m" } }
+        new() { Id = "3b", Name = "Orpheus 3B", Description = "Expressive speech with emotion tags: <laugh>, <sigh>, <gasp>, etc. (~16GB VRAM)", EngineConfig = new() { ["model_name"] = "canopylabs/orpheus-3b-0.1-ft", ["model_size"] = "3b" } }
     ];
 }

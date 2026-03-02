@@ -172,6 +172,119 @@ featureSetChangers.push(() => {
     return [addFlags, removeFlags];
 });
 
+// ============================================================
+// AudioStreamPlayer — auto-play queue for streaming TTS chunks
+// ============================================================
+const AudioStreamPlayer = {
+    /** @type {string[]} Queue of audio data URLs waiting to play */
+    queue: [],
+    /** @type {HTMLAudioElement|null} Currently playing audio element */
+    current: null,
+    /** @type {boolean} Whether streaming playback is active */
+    active: false,
+
+    /** Reset state and prepare for a new streaming session. */
+    start() {
+        this.stop();
+        this.active = true;
+        console.log('[audiolab] Stream playback started');
+    },
+
+    /** Add a chunk data URL to the play queue; begin playback if idle. */
+    enqueue(dataUrl) {
+        if (!this.active) return;
+        this.queue.push(dataUrl);
+        if (!this.current) {
+            this.playNext();
+        }
+    },
+
+    /** Play the next chunk from the queue. Chains via the 'ended' event. */
+    playNext() {
+        if (!this.active || this.queue.length === 0) {
+            this.current = null;
+            return;
+        }
+        let src = this.queue.shift();
+        let audio = new Audio(src);
+        this.current = audio;
+        audio.addEventListener('ended', () => {
+            this.current = null;
+            this.playNext();
+        });
+        audio.addEventListener('error', (e) => {
+            console.warn('[audiolab] Chunk playback error:', e);
+            this.current = null;
+            this.playNext();
+        });
+        audio.play().catch(err => {
+            console.warn('[audiolab] Autoplay blocked:', err.message);
+            this.current = null;
+            this.playNext();
+        });
+    },
+
+    /** Stop playback, clear queue, reset state. */
+    stop() {
+        this.active = false;
+        if (this.current) {
+            this.current.pause();
+            this.current = null;
+        }
+        this.queue = [];
+    }
+};
+
+// ============================================================
+// Hook into doGenerate + internalHandleData for streaming
+// ============================================================
+setTimeout(() => {
+    // Find the main GenerateHandler instance (genHandler or mainGenHandler)
+    let handler = typeof mainGenHandler !== 'undefined' ? mainGenHandler
+                : typeof genHandler !== 'undefined' ? genHandler : null;
+    if (!handler) {
+        console.warn('[audiolab] No generate handler found, streaming hooks not installed');
+        return;
+    }
+
+    // Wrap doGenerate to start AudioStreamPlayer when streaming TTS is active
+    let origDoGenerate = handler.doGenerate.bind(handler);
+    handler.doGenerate = function(input_overrides = {}, input_preoverrides = {}, postCollectRun = null) {
+        let curArch = currentModelHelper.curArch;
+        if (AudioLabConfig.isAudioModel(curArch)) {
+            let config = AudioLabConfig.archToCategory[curArch];
+            if (config.category === 'audiolab_tts') {
+                // Check if Stream Audio checkbox is checked
+                let streamParam = document.getElementById('input_streamaudio');
+                if (streamParam && (streamParam.checked || streamParam.value === 'true')) {
+                    AudioStreamPlayer.start();
+                }
+            }
+        }
+        return origDoGenerate(input_overrides, input_preoverrides, postCollectRun);
+    };
+
+    // Wrap internalHandleData to enqueue streaming chunks and stop on close
+    let origHandleData = handler.internalHandleData.bind(handler);
+    handler.internalHandleData = function(data, images, discardable, timeLastGenHit, actualInput, socketId, socket, isPreview, batch_id) {
+        // Detect streaming chunk: negative batch_index + audio data URL
+        if (data.image && AudioStreamPlayer.active) {
+            let batchIdx = parseInt(data.batch_index);
+            if (batchIdx < 0 && isAudioExt(data.image)) {
+                AudioStreamPlayer.enqueue(data.image);
+            }
+        }
+        // Detect session close
+        if (data.socket_intention === 'close') {
+            AudioStreamPlayer.stop();
+        }
+        // Always call original handler
+        return origHandleData(data, images, discardable, timeLastGenHit, actualInput, socketId, socket, isPreview, batch_id);
+    };
+
+    console.log('[audiolab] Streaming audio hooks installed');
+}, 600);
+
 // Initial setup
 setTimeout(() => {
     console.log('[audiolab] Initial parameter setup starting');

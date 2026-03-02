@@ -328,10 +328,10 @@ public static class AudioLabAPI
             }
 
             AudioDependencyInstaller installer = new();
-            PythonEnvironmentInfo pythonInfo = installer.DetectPythonEnvironment();
+            PythonEnvironmentInfo pythonInfo = await installer.DetectPythonEnvironmentForGroupAsync(provider.EngineGroup);
             if (pythonInfo?.IsValid != true)
             {
-                return AudioLab.CreateErrorResponse("Python environment not detected", "python_not_found");
+                return AudioLab.CreateErrorResponse("Python environment not available. Install Python 3.10+ or ensure python/python3 is on your system PATH.", "python_not_found");
             }
 
             bool success = await installer.InstallProviderDependenciesAsync(pythonInfo, provider);
@@ -348,25 +348,21 @@ public static class AudioLabAPI
         }
     }
 
-    /// <summary>Get installation status for all providers.</summary>
+    /// <summary>Get installation status for all providers (checks per-group venvs).</summary>
     public static async Task<JObject> GetInstallationStatus(Session session, JObject input)
     {
         try
         {
             AudioDependencyInstaller installer = new();
-            PythonEnvironmentInfo pythonInfo = installer.DetectPythonEnvironment();
 
-            if (pythonInfo?.IsValid != true)
-            {
-                return new JObject
-                {
-                    ["success"] = false,
-                    ["message"] = "Python environment not detected",
-                    ["python_detected"] = false
-                };
-            }
+            // Check if base Python is available at all
+            string basePython = VenvManager.GetBasePythonPath();
+            bool pythonDetected = basePython != null;
 
             JObject providerStatuses = [];
+            // Cache PythonEnvironmentInfo per group to avoid redundant lookups
+            Dictionary<string, PythonEnvironmentInfo> groupEnvCache = [];
+
             foreach (AudioProviderDefinition provider in AudioProviderRegistry.All)
             {
                 if (provider.Dependencies.Count == 0)
@@ -374,15 +370,41 @@ public static class AudioLabAPI
                     providerStatuses[provider.Id] = true;
                     continue;
                 }
-                bool installed = await installer.CheckProviderDependenciesAsync(pythonInfo, provider);
+
+                string group = provider.EngineGroup;
+
+                // Get or create the PythonEnvironmentInfo for this group
+                if (!groupEnvCache.TryGetValue(group, out PythonEnvironmentInfo groupPython))
+                {
+                    string venvPython = VenvManager.GetVenvPythonPath(group);
+                    if (System.IO.File.Exists(venvPython))
+                    {
+                        groupPython = new PythonEnvironmentInfo
+                        {
+                            PythonPath = venvPython,
+                            OperatingSystem = Environment.OSVersion.ToString(),
+                            IsEmbedded = false,
+                            Version = "detected",
+                        };
+                    }
+                    groupEnvCache[group] = groupPython; // may be null
+                }
+
+                if (groupPython?.IsValid != true)
+                {
+                    providerStatuses[provider.Id] = false;
+                    continue;
+                }
+
+                bool installed = await installer.CheckProviderDependenciesAsync(groupPython, provider);
                 providerStatuses[provider.Id] = installed;
             }
 
             return new JObject
             {
                 ["success"] = true,
-                ["python_detected"] = true,
-                ["python_path"] = pythonInfo.PythonPath,
+                ["python_detected"] = pythonDetected,
+                ["base_python"] = basePython ?? "not found",
                 ["providers"] = providerStatuses
             };
         }

@@ -48,10 +48,12 @@ class NeuTTSEngine(BaseAudioEngine):
         from neutts import NeuTTS
 
         device = "cuda" if self.has_cuda() else "cpu"
+        backbone_path = self.ensure_model_local(model_name, "tts")
+        codec_path = self.ensure_model_local("neuphonic/neucodec", "tts")
         self.tts = NeuTTS(
-            backbone_repo=model_name,
+            backbone_repo=backbone_path,
             backbone_device=device,
-            codec_repo="neuphonic/neucodec",
+            codec_repo=codec_path,
             codec_device=device,
         )
         logger.info("NeuTTS model loaded: %s on %s", model_name, device)

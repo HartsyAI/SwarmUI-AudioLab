@@ -45,6 +45,9 @@ class F5TTSEngine(BaseAudioEngine):
         reference_audio = kwargs.get("reference_audio", "")
         ref_text = kwargs.get("ref_text", "")
         volume = float(kwargs.get("volume", 0.8))
+        cfg_strength = float(kwargs.get("cfg_scale", 2.0))
+        nfe_step = int(kwargs.get("nfe_step", 32))
+        speed = float(kwargs.get("speed", 1.0))
 
         if not text.strip():
             return {"success": False, "error": "No text provided"}
@@ -69,6 +72,9 @@ class F5TTSEngine(BaseAudioEngine):
                 ref_text=ref_text,
                 gen_text=text,
                 seed=-1,
+                cfg_strength=cfg_strength,
+                nfe_step=nfe_step,
+                speed=speed,
             )
 
             self.sample_rate = sr

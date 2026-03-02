@@ -35,3 +35,4 @@
 /obj
 /bin
 /python_backend/engines/__pycache__
+/python_backend/venvs

@@ -16,25 +16,35 @@ public sealed class ChatterboxProvider : IAudioProviderSource
         .WithModelPrefix("Chatterbox")
         .WithModelClass("chatterbox_tts", "Chatterbox TTS")
         .AddFeatureFlag("chatterbox_tts_params")
+        .AddFeatureFlag("tts_sampling")
+        .AddFeatureFlag("tts_voice_ref")
         .AddDependencies(Dependencies)
         .AddModels(Models)
-        .WithEngineGroup("transformers")
+        .WithEngineGroup("chatterbox")
         .Build();
 
     private static PackageDefinition[] Dependencies =>
     [
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
+        new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" },
         new() { Name = "librosa==0.11.0", InstallName = "librosa==0.11.0", ImportName = "librosa", Category = "core" },
         new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchvision==0.21.0+cu126", InstallName = "torchvision==0.21.0+cu126", ImportName = "torchvision", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        new() { Name = "chatterbox-tts", InstallName = "git+https://github.com/JarodMica/chatterbox.git", ImportName = "chatterbox", Category = "tts", IsGitPackage = true, EstimatedInstallTimeMinutes = 15, AlternativeNames = ["chatterbox_tts", "resemble", "resemblevoice", "chatterbox", "chatterbox.preprocessing", "chatterbox.models"] },
+        // chatterbox installed with --no-deps to skip dev/training deps (gradio, fastapi, tensorboard, pre-commit, etc.)
+        new() { Name = "chatterbox-tts", InstallName = "git+https://github.com/JarodMica/chatterbox.git", ImportName = "chatterbox", Category = "tts", IsGitPackage = true, EstimatedInstallTimeMinutes = 15, CustomInstallArgs = "--no-deps", AlternativeNames = ["chatterbox_tts", "resemble", "resemblevoice", "chatterbox", "chatterbox.preprocessing", "chatterbox.models"] },
+        // Explicit chatterbox runtime dependencies (inference only)
         new() { Name = "s3tokenizer", InstallName = "s3tokenizer", ImportName = "s3tokenizer", Category = "tts" },
         new() { Name = "transformers==4.46.3", InstallName = "transformers==4.46.3", ImportName = "transformers", Category = "tts" },
         new() { Name = "diffusers==0.29.0", InstallName = "diffusers==0.29.0", ImportName = "diffusers", Category = "tts" },
         new() { Name = "resemble-perth==1.0.1", InstallName = "resemble-perth==1.0.1", ImportName = "resemble_perth", Category = "tts" },
         new() { Name = "conformer==0.3.2", InstallName = "conformer==0.3.2", ImportName = "conformer", Category = "tts" },
-        new() { Name = "safetensors==0.5.3", InstallName = "safetensors==0.5.3", ImportName = "safetensors", Category = "tts" }
+        new() { Name = "safetensors==0.5.3", InstallName = "safetensors==0.5.3", ImportName = "safetensors", Category = "tts" },
+        new() { Name = "omegaconf==2.3.0", InstallName = "omegaconf==2.3.0", ImportName = "omegaconf", Category = "tts" },
+        new() { Name = "resampy==0.4.3", InstallName = "resampy==0.4.3", ImportName = "resampy", Category = "tts" },
+        new() { Name = "peft", InstallName = "peft", ImportName = "peft", Category = "tts" },
+        new() { Name = "langdetect", InstallName = "langdetect", ImportName = "langdetect", Category = "tts" },
+        new() { Name = "huggingface_hub", InstallName = "huggingface_hub", ImportName = "huggingface_hub", Category = "tts" }
     ];
 
     private static AudioModelDefinition[] Models =>

@@ -12,6 +12,17 @@ from .base_engine import BaseAudioEngine
 logger = logging.getLogger("TTS.Zonos")
 
 
+EMOTION_PRESETS = {
+    "neutral": [0, 0, 0, 0, 0, 0, 0, 1],
+    "happy": [1, 0, 0, 0, 0, 0, 0, 0],
+    "sad": [0, 1, 0, 0, 0, 0, 0, 0],
+    "disgusted": [0, 0, 1, 0, 0, 0, 0, 0],
+    "fearful": [0, 0, 0, 1, 0, 0, 0, 0],
+    "surprised": [0, 0, 0, 0, 1, 0, 0, 0],
+    "angry": [0, 0, 0, 0, 0, 1, 0, 0],
+}
+
+
 class ZonosEngine(BaseAudioEngine):
     """Zonos TTS engine from Zyphra."""
 
@@ -40,7 +51,8 @@ class ZonosEngine(BaseAudioEngine):
 
         from zonos.model import Zonos
 
-        self.model = Zonos.from_pretrained(model_name, device=self.device)
+        local_path = self.ensure_model_local(model_name, "tts")
+        self.model = Zonos.from_pretrained(local_path, device=self.device)
         self.sample_rate = self.model.autoencoder.sampling_rate
         logger.info("Zonos model loaded: %s (sr=%d)", model_name,
                      self.sample_rate)
@@ -51,6 +63,10 @@ class ZonosEngine(BaseAudioEngine):
         model_name = kwargs.get("model_name", "Zyphra/Zonos-v0.1-transformer")
         reference_audio = kwargs.get("reference_audio", "")
         language = kwargs.get("language", "en-us")
+        emotion_name = kwargs.get("emotion", "neutral")
+        speaking_rate = float(kwargs.get("speaking_rate", 15.0))
+        cfg_scale = float(kwargs.get("cfg_scale", 2.0))
+        min_p = float(kwargs.get("min_p", 0.1))
 
         if not text.strip():
             return {"success": False, "error": "No text provided"}
@@ -73,14 +89,28 @@ class ZonosEngine(BaseAudioEngine):
                 wav, sr = torchaudio.load(tmp_path)
                 speaker = self.model.make_speaker_embedding(wav, sr)
 
+            # Map emotion preset name to 8-element vector
+            emotion = EMOTION_PRESETS.get(emotion_name, EMOTION_PRESETS["neutral"])
+
             try:
                 cond_dict = make_cond_dict(
                     text=text,
                     speaker=speaker,
                     language=language,
+                    emotion=emotion,
+                    speaking_rate=speaking_rate,
                 )
                 conditioning = self.model.prepare_conditioning(cond_dict)
-                codes = self.model.generate(conditioning)
+
+                sampling_params = {}
+                if min_p > 0:
+                    sampling_params["min_p"] = min_p
+
+                codes = self.model.generate(
+                    conditioning,
+                    cfg_scale=cfg_scale,
+                    sampling_params=sampling_params if sampling_params else None,
+                )
                 wavs = self.model.autoencoder.decode(codes).cpu()
 
                 audio_numpy = wavs[0].numpy().astype(np.float32)
@@ -101,6 +131,7 @@ class ZonosEngine(BaseAudioEngine):
                         "sample_rate": self.sample_rate,
                         "model": model_name,
                         "language": language,
+                        "emotion": emotion_name,
                     },
                 }
             finally:

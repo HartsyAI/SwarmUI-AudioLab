@@ -18,7 +18,7 @@ public sealed class WhisperProvider : IAudioProviderSource
         .AddFeatureFlag("whisper_stt_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
-        .WithEngineGroup("stt")
+        .WithEngineGroup("main")
         .Build();
 
     private static PackageDefinition[] Dependencies =>

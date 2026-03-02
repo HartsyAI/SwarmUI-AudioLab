@@ -36,7 +36,8 @@ class AudioGenEngine(BaseAudioEngine):
 
         from audiocraft.models import AudioGen
 
-        self.model = AudioGen.get_pretrained(model_name)
+        local_path = self.ensure_model_local(model_name, "music")
+        self.model = AudioGen.get_pretrained(local_path)
         self.sample_rate = self.model.sample_rate
         logger.info("Loaded AudioGen model: %s (sr=%d)", model_name,
                      self.sample_rate)
@@ -45,13 +46,24 @@ class AudioGenEngine(BaseAudioEngine):
         prompt = kwargs.get("prompt", "")
         duration = float(kwargs.get("duration", 10))
         model_name = kwargs.get("model_name", "facebook/audiogen-medium")
+        cfg_coef = float(kwargs.get("cfg_coef", 3.0))
+        temperature = float(kwargs.get("temperature", 1.0))
+        top_k = int(kwargs.get("top_k", 250))
+        top_p = float(kwargs.get("top_p", 0.0))
 
         if not prompt.strip():
             return {"success": False, "error": "No prompt provided"}
 
         try:
             self._load_model(model_name)
-            self.model.set_generation_params(duration=duration)
+            self.model.set_generation_params(
+                use_sampling=True,
+                duration=duration,
+                cfg_coef=cfg_coef,
+                temperature=temperature,
+                top_k=top_k,
+                top_p=top_p,
+            )
 
             wav = self.model.generate([prompt])
 

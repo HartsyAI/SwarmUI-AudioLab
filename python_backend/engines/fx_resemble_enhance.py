@@ -36,6 +36,10 @@ class ResembleEnhanceEngine(BaseAudioEngine):
     def process(self, **kwargs) -> dict:
         audio_data = kwargs.get("audio_data", "")
         mode = kwargs.get("mode", "enhance")
+        nfe = int(kwargs.get("nfe", 64))
+        solver = kwargs.get("solver", "midpoint")
+        lambd = float(kwargs.get("lambd", 0.1))
+        tau = float(kwargs.get("tau", 0.5))
 
         if not audio_data:
             return {"success": False, "error": "No audio data provided"}
@@ -68,10 +72,10 @@ class ResembleEnhanceEngine(BaseAudioEngine):
             else:
                 out_wav, out_sr = enhance(
                     dwav, sr, self.device,
-                    nfe=64,
-                    solver="midpoint",
-                    lambd=0.1,
-                    tau=0.5,
+                    nfe=nfe,
+                    solver=solver,
+                    lambd=lambd,
+                    tau=tau,
                 )
 
             self.sample_rate = out_sr

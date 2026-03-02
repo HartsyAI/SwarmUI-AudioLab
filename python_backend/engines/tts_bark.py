@@ -2,11 +2,13 @@
 """Bark TTS engine — extracted from tts_engines.py."""
 
 import base64
+import functools
 import io
 import logging
 import struct
 import numpy as np
 
+from contextlib import contextmanager
 from .base_engine import BaseAudioEngine
 
 logger = logging.getLogger("TTS.Bark")
@@ -23,19 +25,33 @@ class BarkEngine(BaseAudioEngine):
         self.sample_rate = 24000
 
     @staticmethod
-    def _patch_torch_safe_globals():
-        """Allow numpy scalar unpickling needed by Bark checkpoints."""
+    @contextmanager
+    def _unsafe_torch_load():
+        """Temporarily override torch.load to use weights_only=False.
+
+        PyTorch 2.6 changed the default from False to True, breaking Bark's
+        checkpoint loading which pickles numpy.core.multiarray.scalar.
+        We scope the override to Bark operations only so other engines
+        sharing the same process are unaffected.
+        """
+        import torch
+        original = torch.load
+
+        @functools.wraps(original)
+        def _patched(*args, **kwargs):
+            kwargs.setdefault("weights_only", False)
+            return original(*args, **kwargs)
+
+        torch.load = _patched
         try:
-            import torch
-            import numpy.core.multiarray
-            torch.serialization.add_safe_globals([numpy.core.multiarray.scalar])
-        except (AttributeError, ImportError):
-            pass
+            yield
+        finally:
+            torch.load = original
 
     def initialize(self) -> bool:
         try:
-            self._patch_torch_safe_globals()
-            from bark import SAMPLE_RATE  # noqa: F401
+            with self._unsafe_torch_load():
+                from bark import SAMPLE_RATE  # noqa: F401
 
             self.sample_rate = SAMPLE_RATE
             logger.info("Bark ready (models loaded on first request)")
@@ -47,20 +63,31 @@ class BarkEngine(BaseAudioEngine):
     def _ensure_loaded(self):
         if self.model is not None:
             return
-        self._patch_torch_safe_globals()
-        from bark import preload_models
-        preload_models()
+        with self._unsafe_torch_load():
+            from bark import preload_models
+            preload_models()
         self.model = True
         logger.info("Bark models loaded")
 
     def process(self, **kwargs) -> dict:
         text = kwargs.get("text", "")
         volume = float(kwargs.get("volume", 0.8))
+        voice = kwargs.get("voice", "")
+        text_temp = float(kwargs.get("text_temp", 0.7))
+        waveform_temp = float(kwargs.get("waveform_temp", 0.7))
 
         self._ensure_loaded()
         from bark import generate_audio
 
-        audio_array = generate_audio(text)
+        history_prompt = voice if voice and voice != "random" else None
+
+        with self._unsafe_torch_load():
+            audio_array = generate_audio(
+                text,
+                history_prompt=history_prompt,
+                text_temp=text_temp,
+                waveform_temp=waveform_temp,
+            )
         audio_array = audio_array * volume
 
         wav_bytes = self._numpy_to_wav(audio_array)
@@ -71,7 +98,11 @@ class BarkEngine(BaseAudioEngine):
             "success": True,
             "audio_data": audio_base64,
             "duration": duration,
-            "metadata": {"engine": "bark", "sample_rate": self.sample_rate},
+            "metadata": {
+                "engine": "bark",
+                "sample_rate": self.sample_rate,
+                "voice": history_prompt or "random",
+            },
         }
 
     def cleanup(self):

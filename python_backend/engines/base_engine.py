@@ -64,6 +64,43 @@ class BaseAudioEngine(ABC):
         return ""
 
     @staticmethod
+    def ensure_model_local(model_name: str, category: str = "") -> str:
+        """Download a HuggingFace model to a clean local directory.
+
+        Converts ``"microsoft/VibeVoice-1.5B"`` to
+        ``Models/audio/tts/VibeVoice-1.5B/`` and downloads via
+        ``huggingface_hub.snapshot_download()``.  Returns the local path
+        for use with ``from_pretrained()``.
+
+        If the model directory already contains model files, the download
+        is skipped.  Falls back to the raw *model_name* (HF cache) when
+        ``AUDIOLAB_MODEL_ROOT`` is not set.
+        """
+        import logging
+        logger = logging.getLogger("AudioLab.ModelDownload")
+
+        model_dir = BaseAudioEngine.get_model_dir(category)
+        if not model_dir:
+            return model_name  # No model root configured — HF cache fallback
+
+        local_name = model_name.split("/")[-1] if "/" in model_name else model_name
+        local_path = os.path.join(model_dir, local_name)
+
+        # Already downloaded?
+        if os.path.isdir(local_path) and any(
+            f.endswith((".bin", ".safetensors", ".json", ".model", ".onnx"))
+            for f in os.listdir(local_path)
+        ):
+            logger.debug("Model already local: %s", local_path)
+            return local_path
+
+        logger.info("Downloading %s → %s ...", model_name, local_path)
+        from huggingface_hub import snapshot_download
+        snapshot_download(repo_id=model_name, local_dir=local_path)
+        logger.info("Download complete: %s", local_path)
+        return local_path
+
+    @staticmethod
     def has_cuda() -> bool:
         """Check if CUDA is available."""
         try:

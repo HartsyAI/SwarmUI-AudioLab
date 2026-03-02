@@ -16,9 +16,11 @@ public sealed class DiaTTSProvider : IAudioProviderSource
         .WithModelPrefix("Dia")
         .WithModelClass("dia_tts", "Dia TTS")
         .AddFeatureFlag("dia_tts_params")
+        .AddFeatureFlag("tts_sampling")
+        .AddFeatureFlag("tts_cfg")
         .AddDependencies(Dependencies)
         .AddModels(Models)
-        .WithEngineGroup("transformers")
+        .WithEngineGroup("main")
         .Build();
 
     private static PackageDefinition[] Dependencies =>
@@ -32,6 +34,6 @@ public sealed class DiaTTSProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "1.6b", Name = "Dia 1.6B", Description = "Ultra-realistic dialogue, 2 speakers in one pass, nonverbal sounds (~10GB VRAM)", EngineConfig = new() { ["model_name"] = "nari-labs/Dia-1.6B" } }
+        new() { Id = "1.6b", Name = "Dia 1.6B", Description = "Ultra-realistic dialogue, 2 speakers in one pass, nonverbal sounds (~10GB VRAM)", EngineConfig = new() { ["model_name"] = "nari-labs/Dia-1.6B-0626" } }
     ];
 }

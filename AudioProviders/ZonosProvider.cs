@@ -16,9 +16,12 @@ public sealed class ZonosProvider : IAudioProviderSource
         .WithModelPrefix("Zonos")
         .WithModelClass("zonos_tts", "Zonos TTS")
         .AddFeatureFlag("zonos_tts_params")
+        .AddFeatureFlag("tts_sampling")
+        .AddFeatureFlag("tts_cfg")
+        .AddFeatureFlag("tts_voice_ref")
         .AddDependencies(Dependencies)
         .AddModels(Models)
-        .WithEngineGroup("transformers")
+        .WithEngineGroup("main")
         .Build();
 
     private static PackageDefinition[] Dependencies =>

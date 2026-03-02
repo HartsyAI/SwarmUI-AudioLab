@@ -58,12 +58,15 @@ class OrpheusEngine(BaseAudioEngine):
         from transformers import AutoModelForCausalLM, AutoTokenizer
         from snac import SNAC
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        local_path = self.ensure_model_local(model_name, "tts")
+        snac_path = self.ensure_model_local("hubertsiuzdak/snac_24khz", "tts")
+
+        self.tokenizer = AutoTokenizer.from_pretrained(local_path)
         self.model = AutoModelForCausalLM.from_pretrained(
-            model_name, torch_dtype=torch.bfloat16
+            local_path, torch_dtype=torch.bfloat16
         ).to(self.device)
 
-        self.snac_model = SNAC.from_pretrained("hubertsiuzdak/snac_24khz")
+        self.snac_model = SNAC.from_pretrained(snac_path)
         self.snac_model = self.snac_model.to(self.device)
 
         logger.info("Orpheus model loaded: %s", model_name)
@@ -131,6 +134,9 @@ class OrpheusEngine(BaseAudioEngine):
         voice = kwargs.get("voice", "tara")
         volume = float(kwargs.get("volume", 0.8))
         model_name = kwargs.get("model_name", "canopylabs/orpheus-3b-0.1-ft")
+        temperature = float(kwargs.get("temperature", 0.6))
+        top_p = float(kwargs.get("top_p", 0.95))
+        repetition_penalty = float(kwargs.get("repetition_penalty", 1.1))
 
         if not text.strip():
             return {"success": False, "error": "No text provided"}
@@ -147,9 +153,9 @@ class OrpheusEngine(BaseAudioEngine):
                     attention_mask=torch.ones_like(input_ids),
                     max_new_tokens=1200,
                     do_sample=True,
-                    temperature=0.6,
-                    top_p=0.95,
-                    repetition_penalty=1.1,
+                    temperature=temperature,
+                    top_p=top_p,
+                    repetition_penalty=repetition_penalty,
                     eos_token_id=END_OF_SPEECH,
                 )
 

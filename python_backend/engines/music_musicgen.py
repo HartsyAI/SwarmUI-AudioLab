@@ -46,7 +46,8 @@ class MusicGenEngine(BaseAudioEngine):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-        self.model = MusicGen.get_pretrained(model_name)
+        local_path = self.ensure_model_local(model_name, "music")
+        self.model = MusicGen.get_pretrained(local_path)
         self.sample_rate = self.model.sample_rate
         self.current_model_name = model_name
         logger.info("Loaded MusicGen model: %s (sr=%d)", model_name,
@@ -57,13 +58,24 @@ class MusicGenEngine(BaseAudioEngine):
         duration = float(kwargs.get("duration", 30))
         model_name = kwargs.get("model_name", "facebook/musicgen-small")
         reference_audio = kwargs.get("reference_audio", "")
+        cfg_coef = float(kwargs.get("cfg_coef", 3.0))
+        temperature = float(kwargs.get("temperature", 1.0))
+        top_k = int(kwargs.get("top_k", 250))
+        top_p = float(kwargs.get("top_p", 0.0))
 
         if not prompt.strip():
             return {"success": False, "error": "No prompt provided"}
 
         try:
             self._load_model(model_name)
-            self.model.set_generation_params(duration=duration)
+            self.model.set_generation_params(
+                use_sampling=True,
+                duration=duration,
+                cfg_coef=cfg_coef,
+                temperature=temperature,
+                top_k=top_k,
+                top_p=top_p,
+            )
 
             # Melody conditioning if reference audio and melody model
             if reference_audio and "melody" in model_name:

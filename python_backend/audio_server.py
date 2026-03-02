@@ -120,6 +120,8 @@ def main():
         os.environ["HF_HOME"] = args.hf_cache
         os.environ["TRANSFORMERS_CACHE"] = args.hf_cache
         os.environ["HUGGINGFACE_HUB_CACHE"] = args.hf_cache
+        # Bark uses XDG_CACHE_HOME instead of HF_HOME for model storage
+        os.environ["XDG_CACHE_HOME"] = args.hf_cache
         print(f"[AudioServer] HuggingFace cache: {args.hf_cache}", file=sys.stderr, flush=True)
 
     if args.model_root:

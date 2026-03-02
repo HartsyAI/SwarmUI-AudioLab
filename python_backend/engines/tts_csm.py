@@ -40,9 +40,10 @@ class CSMEngine(BaseAudioEngine):
 
         from transformers import CsmForConditionalGeneration, AutoProcessor
 
-        self.processor = AutoProcessor.from_pretrained(model_name)
+        local_path = self.ensure_model_local(model_name, "tts")
+        self.processor = AutoProcessor.from_pretrained(local_path)
         self.model = CsmForConditionalGeneration.from_pretrained(
-            model_name, device_map=self.device
+            local_path, device_map=self.device
         )
         logger.info("CSM model loaded: %s", model_name)
 
@@ -51,6 +52,8 @@ class CSMEngine(BaseAudioEngine):
         volume = float(kwargs.get("volume", 0.8))
         speaker_id = kwargs.get("speaker_id", "0")
         model_name = kwargs.get("model_name", "sesame/csm-1b")
+        temperature = float(kwargs.get("temperature", 0.9))
+        top_k = int(kwargs.get("top_k", 50))
 
         if not text.strip():
             return {"success": False, "error": "No text provided"}
@@ -64,7 +67,13 @@ class CSMEngine(BaseAudioEngine):
                 prompt_text, add_special_tokens=True
             ).to(self.device)
 
-            audio = self.model.generate(**inputs, output_audio=True)
+            gen_kwargs = {"output_audio": True, "do_sample": True}
+            if temperature != 1.0:
+                gen_kwargs["temperature"] = temperature
+            if top_k > 0:
+                gen_kwargs["top_k"] = top_k
+
+            audio = self.model.generate(**inputs, **gen_kwargs)
 
             # Save to temp file and read back
             import tempfile

@@ -3,6 +3,7 @@
 
 import logging
 import os
+import shutil
 import tempfile
 import numpy as np
 
@@ -36,45 +37,63 @@ class AceStepEngine(BaseAudioEngine):
         if self.handler is not None:
             return
 
+        import torch
         from acestep.pipeline_ace_step import ACEStepPipeline
 
-        device = "cuda" if self.has_cuda() else "cpu"
-        self.handler = ACEStepPipeline(device=device)
-        logger.info("ACE-Step pipeline loaded on %s", device)
+        device_id = 0 if torch.cuda.is_available() else -1
+        self.handler = ACEStepPipeline(device_id=device_id)
+        logger.info("ACE-Step pipeline loaded on device %d", device_id)
 
     def process(self, **kwargs) -> dict:
         prompt = kwargs.get("prompt", "")
         lyrics = kwargs.get("lyrics", "[Instrumental]")
         duration = float(kwargs.get("duration", 30))
+        seed = int(kwargs.get("seed", -1))
+        infer_step = int(kwargs.get("infer_step", 60))
+        guidance_scale = float(kwargs.get("guidance_scale", 15.0))
+        scheduler_type = kwargs.get("scheduler_type", "euler")
+        cfg_type = kwargs.get("cfg_type", "apg")
 
         if not prompt.strip():
             return {"success": False, "error": "No prompt provided"}
 
+        save_dir = None
         try:
+            import torchaudio
+
             self._ensure_loaded()
 
-            result = self.handler.generate(
+            # ACE-Step uses manual_seeds as a list
+            manual_seeds = [seed] if seed >= 0 else None
+
+            # Create temp dir for output files
+            save_dir = tempfile.mkdtemp(prefix="acestep_")
+
+            # ACE-Step pipeline is callable (__call__), not .generate()
+            result = self.handler(
                 prompt=prompt,
                 lyrics=lyrics,
-                duration=duration,
-                seed=-1,
+                audio_duration=duration,
+                manual_seeds=manual_seeds,
+                infer_step=infer_step,
+                guidance_scale=guidance_scale,
+                scheduler_type=scheduler_type,
+                cfg_type=cfg_type,
+                save_path=save_dir,
             )
 
-            if result is None:
+            if result is None or len(result) < 2:
                 return {"success": False, "error": "ACE-Step returned no output"}
 
-            # Result may be a dict with 'audio' tensor or similar
-            if isinstance(result, dict):
-                audio_tensor = result.get("audio", result.get("tensor"))
-                sr = result.get("sample_rate", self.sample_rate)
-            else:
-                audio_tensor = result
-                sr = self.sample_rate
+            # Result is [output_path_0, ..., params_dict]
+            audio_path = result[0]
 
-            if audio_tensor is None:
-                return {"success": False, "error": "No audio in ACE-Step result"}
+            if not os.path.exists(audio_path):
+                return {"success": False, "error": f"Output file not found: {audio_path}"}
 
-            audio_numpy = audio_tensor.cpu().numpy().astype(np.float32)
+            # Read the generated audio file
+            waveform, sr = torchaudio.load(audio_path)
+            audio_numpy = waveform.cpu().numpy().astype(np.float32)
 
             # If stereo [channels, samples], convert to mono
             if len(audio_numpy.shape) > 1:
@@ -98,6 +117,12 @@ class AceStepEngine(BaseAudioEngine):
         except Exception as e:
             logger.error("ACE-Step process failed: %s", e)
             return {"success": False, "error": str(e)}
+        finally:
+            if save_dir and os.path.exists(save_dir):
+                try:
+                    shutil.rmtree(save_dir)
+                except OSError:
+                    pass
 
     def cleanup(self):
         self.handler = None

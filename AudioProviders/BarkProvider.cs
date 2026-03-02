@@ -18,7 +18,7 @@ public sealed class BarkProvider : IAudioProviderSource
         .AddFeatureFlag("bark_tts_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
-        .WithEngineGroup("core")
+        .WithEngineGroup("main")
         .Build();
 
     private static PackageDefinition[] Dependencies =>

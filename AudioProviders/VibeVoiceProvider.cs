@@ -16,9 +16,12 @@ public sealed class VibeVoiceProvider : IAudioProviderSource
         .WithModelPrefix("VibeVoice")
         .WithModelClass("vibevoice_tts", "VibeVoice TTS")
         .AddFeatureFlag("vibevoice_tts_params")
+        .AddFeatureFlag("tts_sampling")
+        .AddFeatureFlag("tts_cfg")
+        .AddFeatureFlag("tts_voice_ref")
         .AddDependencies(Dependencies)
         .AddModels(Models)
-        .WithEngineGroup("transformers")
+        .WithEngineGroup("main")
         .Build();
 
     private static PackageDefinition[] Dependencies =>
@@ -33,7 +36,8 @@ public sealed class VibeVoiceProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "realtime-0.5b", Name = "VibeVoice Realtime 0.5B", Description = "Real-time streaming TTS, 9 languages, 11 English styles (~3GB VRAM)", EngineConfig = new() { ["model_name"] = "microsoft/VibeVoice-Realtime-0.5B" } },
-        new() { Id = "1.5b", Name = "VibeVoice 1.5B", Description = "Long-form multi-speaker TTS, up to 90 min, 4 speakers (~7GB VRAM)", EngineConfig = new() { ["model_name"] = "microsoft/VibeVoice-1.5B" } }
+        new() { Id = "realtime-0.5b", Name = "VibeVoice Realtime 0.5B", Description = "Real-time streaming TTS, single speaker, low latency (~3GB VRAM)", EngineConfig = new() { ["model_name"] = "microsoft/VibeVoice-Realtime-0.5B" } },
+        new() { Id = "1.5b", Name = "VibeVoice 1.5B", Description = "Long-form multi-speaker TTS, up to 90 min, 4 speakers (~7GB VRAM)", EngineConfig = new() { ["model_name"] = "microsoft/VibeVoice-1.5B" } },
+        new() { Id = "large", Name = "VibeVoice Large 7B", Description = "Highest quality TTS, best non-English stability, 4 speakers (~16GB VRAM)", EngineConfig = new() { ["model_name"] = "microsoft/VibeVoice-7B-hf" } }
     ];
 }

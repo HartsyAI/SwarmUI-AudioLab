@@ -50,6 +50,10 @@ public static class AudioConfiguration
     /// <summary>Path for a specific model category (e.g. tts, stt, music).</summary>
     public static string GetModelPath(string category) => Path.Combine(Path.GetFullPath(ModelRoot), category);
 
+    /// <summary>Root directory for per-group Python virtual environments.
+    /// Delegates to VenvManager.VenvRoot which uses a short path on Windows.</summary>
+    public static string VenvRoot => VenvManager.VenvRoot;
+
     // Docker — optional for Linux-only engines
     public static bool UseDocker { get; set; } = false;
 

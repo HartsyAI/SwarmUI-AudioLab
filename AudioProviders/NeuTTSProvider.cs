@@ -18,7 +18,7 @@ public sealed class NeuTTSProvider : IAudioProviderSource
         .AddFeatureFlag("neutts_tts_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
-        .WithEngineGroup("transformers")
+        .WithEngineGroup("main")
         .Build();
 
     private static PackageDefinition[] Dependencies =>

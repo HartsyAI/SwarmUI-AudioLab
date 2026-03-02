@@ -1,10 +1,13 @@
 using System.Collections.Concurrent;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using FreneticUtilities.FreneticDataSyntax;
 using FreneticUtilities.FreneticExtensions;
 using Hartsy.Extensions.AudioLab.AudioModels;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using Hartsy.Extensions.AudioLab.AudioServices;
+using Hartsy.Extensions.AudioLab.WebAPI.Models;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Backends;
 using SwarmUI.Core;
@@ -248,14 +251,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
         try
         {
-            // Start the persistent audio server (uses SwarmUI's DoSelfStart for lifecycle)
-            await AudioServerManager.Instance.StartAsync(this);
-            if (Status == BackendStatus.ERRORED)
-            {
-                AddLoadStatus("Audio server failed to start. Check Python environment.");
-                return;
-            }
-
             foreach (string providerId in enabledIds)
             {
                 AudioProviderDefinition definition = AudioProviderRegistry.GetById(providerId);
@@ -301,6 +296,47 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
             UpdateRemoteModels();
             Program.ModelRefreshEvent += ReRegisterModelsAfterRefresh;
+
+            // Pre-create venvs and install dependencies for active compatibility groups
+            HashSet<string> activeGroups = [];
+            foreach (AudioProviderMetadata providerMeta in _providers.Values)
+            {
+                if (!providerMeta.Definition.RequiresDocker)
+                {
+                    activeGroups.Add(providerMeta.Definition.EngineGroup);
+                }
+            }
+            AudioDependencyInstaller installer = new();
+            foreach (string group in activeGroups)
+            {
+                string venvPython = await VenvManager.Instance.EnsureVenvAsync(group);
+                if (venvPython == null)
+                {
+                    Logs.Warning($"[AudioLab] Failed to create venv for group '{group}'. Providers in this group may not work until Python is available.");
+                    continue;
+                }
+                // Install dependencies for all enabled providers in this group
+                List<AudioProviderDefinition> groupProviders = [.. _providers.Values
+                    .Where(p => !p.Definition.RequiresDocker && p.Definition.EngineGroup == group)
+                    .Select(p => p.Definition)];
+                if (groupProviders.Count == 0) continue;
+                PythonEnvironmentInfo groupPython = await installer.DetectPythonEnvironmentForGroupAsync(group);
+                if (groupPython?.IsValid != true)
+                {
+                    Logs.Warning($"[AudioLab] Cannot install dependencies for group '{group}' — venv not available.");
+                    continue;
+                }
+                Logs.Info($"[AudioLab] Installing dependencies for {groupProviders.Count} provider(s) in group '{group}'...");
+                try
+                {
+                    await installer.InstallMultipleProviderDependenciesAsync(groupPython, groupProviders);
+                    Logs.Info($"[AudioLab] Dependencies ready for group '{group}'");
+                }
+                catch (Exception ex)
+                {
+                    Logs.Warning($"[AudioLab] Dependency install for group '{group}' had issues: {ex.Message}. Some providers may not work until dependencies are installed.");
+                }
+            }
 
             // Start Docker container if any enabled providers require it
             if (AudioConfiguration.UseDocker && _providers.Values.Any(p => p.Definition.RequiresDocker))
@@ -413,20 +449,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
     }
 
     /// <summary>Generate with live output. Yields AudioFile objects via takeOutput.
+    /// Routes to streaming or normal path based on StreamAudio param.
     /// Mirrors DynamicAPIBackend.GenerateLive().</summary>
     public override async Task GenerateLive(T2IParamInput user_input, string batchId, Action<object> takeOutput)
     {
-        // Send progress indicator
-        takeOutput(new JObject
-        {
-            ["gen_progress"] = new JObject
-            {
-                ["batch_index"] = batchId,
-                ["step"] = 0,
-                ["total_steps"] = 1
-            }
-        });
-
         string modelName = user_input.Get(T2IParamTypes.Model)?.Name ?? "";
         string providerId = GetProviderIdFromModel(modelName);
 
@@ -438,6 +464,37 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
         AudioProviderDefinition provider = meta.Definition;
         AudioModelDefinition modelDef = GetModelDefinition(modelName, provider);
+
+        // Check streaming conditions: TTS + StreamAudio enabled + 2+ sentences
+        if (provider.Category == AudioCategory.TTS
+            && user_input.TryGet(AudioLabParams.StreamAudio, out bool streamOn) && streamOn)
+        {
+            string text = user_input.Get(T2IParamTypes.Prompt, "");
+            List<string> sentences = SplitIntoSentences(text);
+            if (sentences != null)
+            {
+                await GenerateLiveStreaming(user_input, batchId, takeOutput, meta, provider, modelDef, sentences);
+                return;
+            }
+        }
+
+        await GenerateLiveNormal(user_input, batchId, takeOutput, meta, provider, modelDef);
+    }
+
+    /// <summary>Normal (non-streaming) generation path — original behavior.</summary>
+    private async Task GenerateLiveNormal(T2IParamInput user_input, string batchId, Action<object> takeOutput,
+        AudioProviderMetadata meta, AudioProviderDefinition provider, AudioModelDefinition modelDef)
+    {
+        takeOutput(new JObject
+        {
+            ["gen_progress"] = new JObject
+            {
+                ["batch_index"] = batchId,
+                ["step"] = 0,
+                ["total_steps"] = 1
+            }
+        });
+
         Dictionary<string, object> args = BuildEngineArgs(user_input, provider, modelDef);
 
         try
@@ -488,6 +545,134 @@ public class DynamicAudioBackend : AbstractT2IBackend
             Logs.Error($"[AudioLab] Error processing with {provider.Name}: {ex.Message}");
             meta.LastError = ex.Message;
         }
+    }
+
+    /// <summary>Streaming generation path — generates each sentence separately,
+    /// sends intermediate audio chunks for immediate playback, then concatenates
+    /// all PCM data into a final WAV file as the real output.</summary>
+    private async Task GenerateLiveStreaming(T2IParamInput user_input, string batchId, Action<object> takeOutput,
+        AudioProviderMetadata meta, AudioProviderDefinition provider, AudioModelDefinition modelDef, List<string> sentences)
+    {
+        Logs.Info($"[AudioLab] Streaming TTS: {sentences.Count} sentences via {provider.Name}");
+
+        // Enable DoNotSaveIntermediates so chunk outputs aren't saved to disk
+        user_input.Set(T2IParamTypes.DoNotSaveIntermediates, true);
+
+        List<byte[]> pcmChunks = [];
+        int sampleRate = 24000;
+        int channels = 1;
+        int bitsPerSample = 16;
+        bool formatRead = false;
+        double totalDuration = 0;
+        int consecutiveFailures = 0;
+
+        for (int i = 0; i < sentences.Count; i++)
+        {
+            // Send progress update
+            double overallPercent = (double)i / sentences.Count * 100;
+            takeOutput(new JObject
+            {
+                ["gen_progress"] = new JObject
+                {
+                    ["batch_index"] = batchId,
+                    ["overall_percent"] = overallPercent,
+                    ["current_status"] = $"Generating sentence {i + 1}/{sentences.Count}..."
+                }
+            });
+
+            // Build args with this sentence as the text
+            T2IParamInput chunkInput = user_input.Clone();
+            chunkInput.Set(T2IParamTypes.Prompt, sentences[i]);
+            Dictionary<string, object> args = BuildEngineArgs(chunkInput, provider, modelDef);
+
+            try
+            {
+                JObject result = await AudioServerManager.Instance.ProcessAsync(provider, args);
+
+                if (result["success"]?.Value<bool>() == true)
+                {
+                    string audioBase64 = result["audio_data"]?.ToString();
+                    if (!string.IsNullOrEmpty(audioBase64))
+                    {
+                        byte[] audioBytes = Convert.FromBase64String(audioBase64);
+
+                        // Read format from first chunk
+                        if (!formatRead)
+                        {
+                            (sampleRate, channels, bitsPerSample) = ReadWavFormat(audioBytes);
+                            formatRead = true;
+                        }
+
+                        // Accumulate raw PCM for final concatenation
+                        pcmChunks.Add(StripWavHeader(audioBytes));
+
+                        // Send chunk as intermediate (non-real) output for auto-play
+                        AudioFile chunkAudio = new(audioBytes, MediaType.AudioWav);
+                        takeOutput(new T2IEngine.ImageOutput { File = chunkAudio, IsReal = false });
+
+                        double chunkDuration = result["duration"]?.Value<double>() ?? 0;
+                        totalDuration += chunkDuration;
+                        Logs.Debug($"[AudioLab] Streamed sentence {i + 1}/{sentences.Count}: {chunkDuration:F2}s");
+                    }
+                    consecutiveFailures = 0;
+                }
+                else
+                {
+                    string error = result["error"]?.ToString() ?? "Unknown error";
+                    Logs.Warning($"[AudioLab] Sentence {i + 1} failed: {error}");
+                    // Abort early on missing dependencies — all subsequent sentences will fail identically
+                    if (error.Contains("No module named") || error.Contains("ModuleNotFoundError"))
+                    {
+                        Logs.Error($"[AudioLab] Missing Python dependency for {provider.Name}: {error}. Install provider dependencies via the AudioLab UI before generating audio.");
+                        meta.LastError = $"Missing dependency: {error}. Install via AudioLab UI.";
+                        break;
+                    }
+                    consecutiveFailures++;
+                    if (consecutiveFailures >= 3)
+                    {
+                        Logs.Error($"[AudioLab] {consecutiveFailures} consecutive failures, aborting remaining sentences.");
+                        break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logs.Warning($"[AudioLab] Sentence {i + 1} error: {ex.Message}");
+                consecutiveFailures++;
+                if (consecutiveFailures >= 3)
+                {
+                    Logs.Error($"[AudioLab] {consecutiveFailures} consecutive failures, aborting remaining sentences.");
+                    break;
+                }
+            }
+        }
+
+        // Concatenate all PCM chunks into final WAV
+        if (pcmChunks.Count > 0)
+        {
+            byte[] finalWav = BuildWavFromPcm(pcmChunks, sampleRate, channels, bitsPerSample);
+            AudioFile finalAudio = new(finalWav, MediaType.AudioWav);
+            takeOutput(finalAudio);  // Real output — saved to disk
+
+            meta.LastUsed = DateTime.UtcNow;
+            Logs.Info($"[AudioLab] Streaming TTS complete: {totalDuration:F2}s total via {provider.Name}");
+        }
+        else
+        {
+            Logs.Error($"[AudioLab] Streaming TTS produced no audio via {provider.Name}");
+            meta.LastError ??= "Streaming generation produced no audio";
+        }
+
+        // Final progress
+        takeOutput(new JObject
+        {
+            ["gen_progress"] = new JObject
+            {
+                ["batch_index"] = batchId,
+                ["overall_percent"] = 100.0,
+                ["current_status"] = "Complete"
+            }
+        });
     }
 
     /// <summary>Fallback Generate() — returns empty since GenerateLive() handles output.</summary>
@@ -592,6 +777,26 @@ public class DynamicAudioBackend : AbstractT2IBackend
             case AudioCategory.TTS:
                 args["text"] = input.Get(T2IParamTypes.Prompt, "Hello world");
                 args["volume"] = input.TryGet(AudioLabParams.Volume, out double vol) ? vol : 0.8;
+                // Shared sampling params (tts_sampling flag)
+                if (input.TryGet(AudioLabParams.Temperature, out double sharedTemp))
+                    args["temperature"] = sharedTemp;
+                if (input.TryGet(AudioLabParams.TopP, out double sharedTopP))
+                    args["top_p"] = sharedTopP;
+                if (input.TryGet(AudioLabParams.RepetitionPenalty, out double sharedRepPen))
+                    args["repetition_penalty"] = sharedRepPen;
+                if (input.TryGet(AudioLabParams.TopK, out int sharedTopK))
+                    args["top_k"] = sharedTopK;
+                if (input.TryGet(AudioLabParams.MinP, out double sharedMinP))
+                    args["min_p"] = sharedMinP;
+                // Use SwarmUI's built-in CFG Scale
+                if (input.TryGet(T2IParamTypes.CFGScale, out double sharedCfg))
+                    args["cfg_scale"] = sharedCfg;
+                // Shared voice reference (tts_voice_ref flag)
+                string sharedRef = GetBase64Audio(input, AudioLabParams.ReferenceAudio);
+                if (!string.IsNullOrEmpty(sharedRef))
+                    args["reference_audio"] = sharedRef;
+                if (input.TryGet(AudioLabParams.ReferenceText, out string sharedRefText) && !string.IsNullOrEmpty(sharedRefText))
+                    args["ref_text"] = sharedRefText;
                 break;
 
             case AudioCategory.STT:
@@ -602,6 +807,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
             case AudioCategory.MusicGen:
                 args["prompt"] = input.Get(T2IParamTypes.Prompt, "");
                 args["duration"] = input.TryGet(AudioLabParams.Duration, out double musicDur) ? musicDur : 30.0;
+                // Shared AudioCraft sampling (audiocraft_sampling flag)
+                if (input.TryGet(AudioLabParams.GuidanceScale, out double musicGuidance))
+                    args["cfg_coef"] = musicGuidance;
                 break;
 
             case AudioCategory.VoiceClone:
@@ -616,6 +824,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
             case AudioCategory.SoundFX:
                 args["prompt"] = input.Get(T2IParamTypes.Prompt, "");
                 args["duration"] = input.TryGet(AudioLabParams.SFXDuration, out double sfxDur) ? sfxDur : 10.0;
+                // Shared AudioCraft sampling (audiocraft_sampling flag)
+                if (input.TryGet(AudioLabParams.GuidanceScale, out double sfxGuidance))
+                    args["cfg_coef"] = sfxGuidance;
                 break;
 
             default:
@@ -638,13 +849,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
             case "chatterbox_tts":
                 args["exaggeration"] = input.TryGet(AudioLabParams.Exaggeration, out double exag) ? exag : 0.5;
                 args["cfg_weight"] = input.TryGet(AudioLabParams.CFGWeight, out double cfgw) ? cfgw : 0.5;
-                args["temperature"] = input.TryGet(AudioLabParams.Temperature, out double temp) ? temp : 0.8;
-                args["repetition_penalty"] = input.TryGet(AudioLabParams.RepetitionPenalty, out double repPen) ? repPen : 1.2;
-                args["top_p"] = input.TryGet(AudioLabParams.TopP, out double topP) ? topP : 1.0;
-                args["min_p"] = input.TryGet(AudioLabParams.MinP, out double minP) ? minP : 0.05;
-                string chatterboxRef = GetBase64Audio(input, AudioLabParams.ReferenceAudio);
-                if (!string.IsNullOrEmpty(chatterboxRef))
-                    args["reference_audio"] = chatterboxRef;
                 break;
 
             case "kokoro_tts":
@@ -665,22 +869,31 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["speaker_id"] = input.TryGet(AudioLabParams.Speaker, out string sp) ? sp : "0";
                 break;
 
+            case "bark_tts":
+                args["voice"] = input.TryGet(AudioLabParams.BarkVoice, out string bv) ? bv : "v2/en_speaker_6";
+                args["text_temp"] = input.TryGet(AudioLabParams.TextTemp, out double tt) ? tt : 0.7;
+                args["waveform_temp"] = input.TryGet(AudioLabParams.WaveformTemp, out double wt) ? wt : 0.7;
+                break;
+
             case "vibevoice_tts":
-                args["cfg_scale"] = input.TryGet(AudioLabParams.CFGScale, out double vcs) ? vcs : 1.3;
+                args["diffusion_steps"] = input.TryGet(AudioLabParams.DiffusionSteps, out int diffSteps) ? diffSteps : 20;
+                break;
+
+            case "dia_tts":
+                args["cfg_filter_top_k"] = input.TryGet(AudioLabParams.CFGFilterTopK, out int cfgTopK) ? cfgTopK : 35;
                 break;
 
             case "f5_tts":
-                args["reference_audio"] = GetBase64Audio(input, AudioLabParams.F5ReferenceAudio);
-                if (input.TryGet(AudioLabParams.F5ReferenceText, out string frt) && !string.IsNullOrEmpty(frt))
-                    args["ref_text"] = frt;
+                args["nfe_step"] = input.TryGet(AudioLabParams.NFEStep, out int nfeStep) ? nfeStep : 32;
+                args["speed"] = input.TryGet(AudioLabParams.F5Speed, out double f5spd) ? f5spd : 1.0;
                 break;
 
             case "zonos_tts":
-                string zonosRef = GetBase64Audio(input, AudioLabParams.ZonosReferenceAudio);
-                if (!string.IsNullOrEmpty(zonosRef))
-                    args["reference_audio"] = zonosRef;
                 if (input.TryGet(AudioLabParams.ZonosLanguage, out string zl))
                     args["language"] = zl;
+                if (input.TryGet(AudioLabParams.ZonosEmotion, out string ze))
+                    args["emotion"] = ze;
+                args["speaking_rate"] = input.TryGet(AudioLabParams.SpeakingRate, out double sr) ? sr : 15.0;
                 break;
 
             case "cosyvoice_tts":
@@ -700,6 +913,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
             case "acestep_music":
                 args["lyrics"] = input.TryGet(AudioLabParams.Lyrics, out string ly) ? ly : "[Instrumental]";
+                args["seed"] = input.TryGet(AudioLabParams.AudioSeed, out int aceSeed) ? aceSeed : -1;
+                args["infer_step"] = input.TryGet(AudioLabParams.InferStep, out int infStep) ? infStep : 60;
+                args["guidance_scale"] = input.TryGet(AudioLabParams.ACEGuidanceScale, out double aceGuide) ? aceGuide : 15.0;
+                args["scheduler_type"] = input.TryGet(AudioLabParams.SchedulerType, out string sched) ? sched : "euler";
+                args["cfg_type"] = input.TryGet(AudioLabParams.CFGType, out string cfgType) ? cfgType : "apg";
                 break;
 
             case "musicgen_music":
@@ -710,6 +928,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
             case "rvc_clone":
                 args["pitch_shift"] = input.TryGet(AudioLabParams.PitchShift, out int pitchShift) ? pitchShift : 0;
+                args["f0method"] = input.TryGet(AudioLabParams.F0Method, out string f0m) ? f0m : "rmvpe";
+                args["index_rate"] = input.TryGet(AudioLabParams.IndexRate, out double idxRate) ? idxRate : 0.5;
+                args["rms_mix_rate"] = input.TryGet(AudioLabParams.RMSMixRate, out double rmsMix) ? rmsMix : 1.0;
+                args["protect"] = input.TryGet(AudioLabParams.Protect, out double prot) ? prot : 0.33;
                 break;
 
             case "gptsovits_clone":
@@ -718,8 +940,157 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     args["prompt_text"] = gpt;
                 args["language"] = input.TryGet(AudioLabParams.CloneLanguage, out string gl) ? gl : "en";
                 break;
+
+            case "demucs_fx":
+                args["overlap"] = input.TryGet(AudioLabParams.Overlap, out double overlap) ? overlap : 0.25;
+                args["shifts"] = input.TryGet(AudioLabParams.Shifts, out int shifts) ? shifts : 1;
+                break;
+
+            case "resemble_enhance_fx":
+                args["nfe"] = input.TryGet(AudioLabParams.EnhanceNFE, out int nfe) ? nfe : 64;
+                args["solver"] = input.TryGet(AudioLabParams.EnhanceSolver, out string solver) ? solver : "midpoint";
+                args["lambd"] = input.TryGet(AudioLabParams.EnhanceLambda, out double lambd) ? lambd : 0.1;
+                args["tau"] = input.TryGet(AudioLabParams.EnhanceTau, out double tau) ? tau : 0.5;
+                break;
         }
 
         return args;
+    }
+
+    // -- Sentence splitting + WAV helpers for streaming -------------------
+
+    /// <summary>Common abbreviations that should not trigger sentence breaks.</summary>
+    private static readonly HashSet<string> Abbreviations = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Mr", "Mrs", "Ms", "Dr", "Prof", "Sr", "Jr", "St", "vs", "etc",
+        "Inc", "Ltd", "Corp", "Ave", "Blvd", "Dept", "Est", "Fig", "Gen",
+        "Gov", "No", "Sgt", "Vol"
+    };
+
+    /// <summary>Splits text into sentences for streaming TTS.
+    /// Returns null if fewer than 2 sentences (caller should use normal path).</summary>
+    private static List<string> SplitIntoSentences(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+
+        // Replace abbreviation periods with placeholder to avoid false splits
+        string processed = text;
+        foreach (string abbr in Abbreviations)
+        {
+            processed = Regex.Replace(processed, $@"\b{Regex.Escape(abbr)}\.", $"{abbr}\x00");
+        }
+        // Also handle U.S.-style abbreviations (single letters with periods)
+        processed = Regex.Replace(processed, @"\b([A-Z])\.([A-Z])\.", "$1\x00$2\x00");
+
+        // Split on sentence-ending punctuation followed by whitespace or end
+        string[] parts = Regex.Split(processed, @"(?<=[.!?])\s+");
+
+        // Restore abbreviation periods
+        List<string> sentences = [];
+        foreach (string part in parts)
+        {
+            string restored = part.Replace("\x00", ".").Trim();
+            if (!string.IsNullOrWhiteSpace(restored))
+            {
+                sentences.Add(restored);
+            }
+        }
+
+        // Merge short fragments (< 20 chars) with the previous sentence
+        for (int i = sentences.Count - 1; i > 0; i--)
+        {
+            if (sentences[i].Length < 20)
+            {
+                sentences[i - 1] = sentences[i - 1] + " " + sentences[i];
+                sentences.RemoveAt(i);
+            }
+        }
+
+        return sentences.Count >= 2 ? sentences : null;
+    }
+
+    /// <summary>Reads WAV format info (sample rate, channels, bits per sample) from a WAV byte array.</summary>
+    private static (int sampleRate, int channels, int bitsPerSample) ReadWavFormat(byte[] wav)
+    {
+        // Find "fmt " chunk
+        for (int i = 0; i < wav.Length - 24; i++)
+        {
+            if (wav[i] == 'f' && wav[i + 1] == 'm' && wav[i + 2] == 't' && wav[i + 3] == ' ')
+            {
+                int channels = BitConverter.ToInt16(wav, i + 10);
+                int sampleRate = BitConverter.ToInt32(wav, i + 12);
+                int bitsPerSample = BitConverter.ToInt16(wav, i + 22);
+                return (sampleRate, channels, bitsPerSample);
+            }
+        }
+        // Defaults for typical TTS output
+        return (24000, 1, 16);
+    }
+
+    /// <summary>Strips the WAV header and returns only raw PCM data bytes.</summary>
+    private static byte[] StripWavHeader(byte[] wav)
+    {
+        // Find "data" chunk
+        for (int i = 0; i < wav.Length - 8; i++)
+        {
+            if (wav[i] == 'd' && wav[i + 1] == 'a' && wav[i + 2] == 't' && wav[i + 3] == 'a')
+            {
+                int dataSize = BitConverter.ToInt32(wav, i + 4);
+                int dataStart = i + 8;
+                int actualSize = Math.Min(dataSize, wav.Length - dataStart);
+                byte[] pcm = new byte[actualSize];
+                Buffer.BlockCopy(wav, dataStart, pcm, 0, actualSize);
+                return pcm;
+            }
+        }
+        // If no data chunk found, skip standard 44-byte header
+        if (wav.Length > 44)
+        {
+            byte[] pcm = new byte[wav.Length - 44];
+            Buffer.BlockCopy(wav, 44, pcm, 0, pcm.Length);
+            return pcm;
+        }
+        return wav;
+    }
+
+    /// <summary>Builds a complete WAV file from concatenated PCM data.</summary>
+    private static byte[] BuildWavFromPcm(List<byte[]> pcmChunks, int sampleRate, int channels, int bitsPerSample)
+    {
+        int totalPcmBytes = 0;
+        foreach (byte[] chunk in pcmChunks)
+        {
+            totalPcmBytes += chunk.Length;
+        }
+
+        int byteRate = sampleRate * channels * (bitsPerSample / 8);
+        int blockAlign = channels * (bitsPerSample / 8);
+
+        using MemoryStream ms = new();
+        using BinaryWriter bw = new(ms);
+
+        // RIFF header
+        bw.Write("RIFF"u8);
+        bw.Write(36 + totalPcmBytes);  // File size - 8
+        bw.Write("WAVE"u8);
+
+        // fmt chunk
+        bw.Write("fmt "u8);
+        bw.Write(16);                  // Chunk size
+        bw.Write((short)1);            // PCM format
+        bw.Write((short)channels);
+        bw.Write(sampleRate);
+        bw.Write(byteRate);
+        bw.Write((short)blockAlign);
+        bw.Write((short)bitsPerSample);
+
+        // data chunk
+        bw.Write("data"u8);
+        bw.Write(totalPcmBytes);
+        foreach (byte[] chunk in pcmChunks)
+        {
+            bw.Write(chunk);
+        }
+
+        return ms.ToArray();
     }
 }

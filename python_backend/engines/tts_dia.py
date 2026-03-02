@@ -3,7 +3,7 @@
 
 Uses the dia package API:
   - from dia.model import Dia
-  - Dia.from_pretrained("nari-labs/Dia-1.6B")
+  - Dia.from_pretrained("nari-labs/Dia-1.6B-0626")
   - model.generate(text) -> numpy array at 44100 Hz
   - Supports [S1]/[S2] speaker tags and nonverbal tokens like (laughs), (sighs)
 """
@@ -39,19 +39,24 @@ class DiaEngine(BaseAudioEngine):
             logger.error("Dia init failed: %s", e)
             return False
 
-    def _ensure_loaded(self, model_name: str = "nari-labs/Dia-1.6B"):
+    def _ensure_loaded(self, model_name: str = "nari-labs/Dia-1.6B-0626"):
         if self.model is not None:
             return
 
         from dia.model import Dia
 
-        self.model = Dia.from_pretrained(model_name, compute_dtype="float16")
+        local_path = self.ensure_model_local(model_name, "tts")
+        self.model = Dia.from_pretrained(local_path, compute_dtype="float16")
         logger.info("Dia model loaded: %s", model_name)
 
     def process(self, **kwargs) -> dict:
         text = kwargs.get("text", "")
         volume = float(kwargs.get("volume", 0.8))
-        model_name = kwargs.get("model_name", "nari-labs/Dia-1.6B")
+        model_name = kwargs.get("model_name", "nari-labs/Dia-1.6B-0626")
+        temperature = float(kwargs.get("temperature", 1.3))
+        top_p = float(kwargs.get("top_p", 0.95))
+        cfg_scale = float(kwargs.get("cfg_scale", 3.0))
+        cfg_filter_top_k = int(kwargs.get("cfg_filter_top_k", 35))
 
         if not text.strip():
             return {"success": False, "error": "No text provided"}
@@ -67,6 +72,10 @@ class DiaEngine(BaseAudioEngine):
             # Generate speech — returns numpy array at 44100 Hz
             audio_data = self.model.generate(
                 text,
+                temperature=temperature,
+                top_p=top_p,
+                cfg_scale=cfg_scale,
+                cfg_filter_top_k=cfg_filter_top_k,
                 use_torch_compile=False,
                 verbose=False,
             )

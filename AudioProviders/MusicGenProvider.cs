@@ -16,6 +16,7 @@ public sealed class MusicGenProvider : IAudioProviderSource
         .WithModelPrefix("MusicGen")
         .WithModelClass("musicgen_music", "MusicGen")
         .AddFeatureFlag("musicgen_music_params")
+        .AddFeatureFlag("audiocraft_sampling")
         .AddDependencies(Dependencies)
         .AddModels(Models)
         .WithEngineGroup("audiocraft")
@@ -26,7 +27,21 @@ public sealed class MusicGenProvider : IAudioProviderSource
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
         new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        new() { Name = "audiocraft", InstallName = "audiocraft", ImportName = "audiocraft", Category = "music", EstimatedInstallTimeMinutes = 10 },
+        // audiocraft installed with --no-deps to skip spacy (training-only dep, incompatible with Python 3.13)
+        new() { Name = "audiocraft", InstallName = "audiocraft", ImportName = "audiocraft", Category = "music", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--no-deps" },
+        // Explicit audiocraft runtime dependencies (inference only, no spacy/thinc/blis needed)
+        new() { Name = "encodec", InstallName = "encodec", ImportName = "encodec", Category = "music" },
+        new() { Name = "einops", InstallName = "einops", ImportName = "einops", Category = "music" },
+        new() { Name = "flashy>=0.0.1", InstallName = "flashy>=0.0.1", ImportName = "flashy", Category = "music" },
+        new() { Name = "hydra-core>=1.1", InstallName = "hydra-core>=1.1", ImportName = "hydra", Category = "music" },
+        new() { Name = "hydra_colorlog", InstallName = "hydra_colorlog", ImportName = "hydra_colorlog", Category = "music" },
+        new() { Name = "julius", InstallName = "julius", ImportName = "julius", Category = "music" },
+        new() { Name = "sentencepiece", InstallName = "sentencepiece", ImportName = "sentencepiece", Category = "music" },
+        new() { Name = "huggingface_hub", InstallName = "huggingface_hub", ImportName = "huggingface_hub", Category = "music" },
+        new() { Name = "transformers", InstallName = "transformers", ImportName = "transformers", Category = "music" },
+        new() { Name = "num2words", InstallName = "num2words", ImportName = "num2words", Category = "music" },
+        new() { Name = "av", InstallName = "av", ImportName = "av", Category = "music" },
+        new() { Name = "lameenc", InstallName = "lameenc", ImportName = "lameenc", Category = "music" },
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
     ];
 

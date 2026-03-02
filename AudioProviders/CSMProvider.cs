@@ -16,9 +16,10 @@ public sealed class CSMProvider : IAudioProviderSource
         .WithModelPrefix("CSM")
         .WithModelClass("csm_tts", "CSM Conversational")
         .AddFeatureFlag("csm_tts_params")
+        .AddFeatureFlag("tts_sampling")
         .AddDependencies(Dependencies)
         .AddModels(Models)
-        .WithEngineGroup("transformers")
+        .WithEngineGroup("main")
         .Build();
 
     private static PackageDefinition[] Dependencies =>

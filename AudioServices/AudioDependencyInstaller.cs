@@ -17,31 +17,73 @@ public class AudioDependencyInstaller
     private static readonly object _installLock = new();
     private bool _isInstalling;
     private Dictionary<string, string> _cachedInstalledPackages;
+    private string _cachedInstalledPackagesKey;
 
     public bool IsInstalling => _isInstalling;
 
-    /// <summary>Detects the SwarmUI Python environment.</summary>
+    /// <summary>Detects the Python environment for the "main" venv group.
+    /// Falls back to base Python if the venv hasn't been created yet.</summary>
     public PythonEnvironmentInfo DetectPythonEnvironment()
     {
         try
         {
-            string pythonPath = GetSwarmUIPythonPath();
+            // Check if "main" group venv exists
+            string venvPython = VenvManager.GetVenvPythonPath("main");
+            if (File.Exists(venvPython))
+            {
+                return new PythonEnvironmentInfo
+                {
+                    PythonPath = venvPython,
+                    OperatingSystem = Environment.OSVersion.ToString(),
+                    IsEmbedded = false,
+                    Version = "detected",
+                };
+            }
+            // Fall back to base python (for initial setup before venv exists)
+            string basePython = VenvManager.GetBasePythonPath();
+            if (basePython != null)
+            {
+                return new PythonEnvironmentInfo
+                {
+                    PythonPath = basePython,
+                    OperatingSystem = Environment.OSVersion.ToString(),
+                    IsEmbedded = basePython.Contains("python_embeded"),
+                    Version = "detected",
+                };
+            }
+            Logs.Error("[AudioLab] No Python environment found! Install Python 3.10+ or ensure python/python3 is on your system PATH.");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] Error detecting Python environment: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>Detects the Python environment for a specific compatibility group.
+    /// Creates the group's venv if it doesn't exist yet.</summary>
+    public async Task<PythonEnvironmentInfo> DetectPythonEnvironmentForGroupAsync(string group)
+    {
+        try
+        {
+            string pythonPath = await VenvManager.Instance.EnsureVenvAsync(group);
             if (pythonPath == null)
             {
-                Logs.Error("[AudioLab] SwarmUI Python environment not found!");
+                Logs.Error($"[AudioLab] Could not create Python venv for group '{group}'");
                 return null;
             }
             return new PythonEnvironmentInfo
             {
                 PythonPath = pythonPath,
                 OperatingSystem = Environment.OSVersion.ToString(),
-                IsEmbedded = pythonPath.Contains("python_embeded"),
+                IsEmbedded = false,
                 Version = "detected",
             };
         }
         catch (Exception ex)
         {
-            Logs.Error($"[AudioLab] Error detecting Python environment: {ex.Message}");
+            Logs.Error($"[AudioLab] Error detecting Python environment for group '{group}': {ex.Message}");
             return null;
         }
     }
@@ -253,11 +295,12 @@ public class AudioDependencyInstaller
     private void InvalidatePackageCache()
     {
         _cachedInstalledPackages = null;
+        _cachedInstalledPackagesKey = null;
     }
 
     private async Task<Dictionary<string, string>> GetInstalledPackagesAsync(PythonEnvironmentInfo pythonInfo, bool forceRefresh = false)
     {
-        if (_cachedInstalledPackages != null && !forceRefresh)
+        if (_cachedInstalledPackages != null && !forceRefresh && _cachedInstalledPackagesKey == pythonInfo.PythonPath)
             return _cachedInstalledPackages;
 
         try
@@ -290,6 +333,7 @@ except Exception as e:
             }
 
             _cachedInstalledPackages = packages;
+            _cachedInstalledPackagesKey = pythonInfo.PythonPath;
             return packages;
         }
         catch (Exception ex)
@@ -399,16 +443,19 @@ except Exception as e:
             WorkingDirectory = Environment.CurrentDirectory
         };
 
-        if (pythonInfo.IsEmbedded)
-        {
-            startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(Path.GetFullPath("./dlbackend/comfy/python_embeded"));
-            startInfo.WorkingDirectory = Path.GetFullPath("./dlbackend/comfy/");
-        }
-        else
-        {
-            startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(Path.GetFullPath("./dlbackend/ComfyUI/venv/bin"));
-        }
+        // Derive PATH from the python executable's own directory
+        string pythonDir = Path.GetDirectoryName(Path.GetFullPath(pythonInfo.PythonPath));
+        startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(pythonDir);
         PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[AudioLab] ");
+
+        // Use a short temp path to avoid Windows 260-char path limit during pip extraction.
+        // Must override TMPDIR too — SwarmUI sets it globally (Program.cs) and Python's
+        // tempfile module checks TMPDIR before TMP/TEMP on all platforms.
+        string shortTmp = Path.Combine(Path.GetPathRoot(Environment.CurrentDirectory) ?? "C:\\", "tmp", "audiolab");
+        Directory.CreateDirectory(shortTmp);
+        startInfo.Environment["TMP"] = shortTmp;
+        startInfo.Environment["TEMP"] = shortTmp;
+        startInfo.Environment["TMPDIR"] = shortTmp;
 
         using Process process = new() { StartInfo = startInfo };
         DateTime lastUpdate = DateTime.Now;
@@ -454,15 +501,6 @@ except Exception as e:
         }
     }
 
-    private static string GetSwarmUIPythonPath()
-    {
-        if (File.Exists("./dlbackend/comfy/python_embeded/python.exe"))
-            return Path.GetFullPath("./dlbackend/comfy/python_embeded/python.exe");
-        if (File.Exists("./dlbackend/ComfyUI/venv/bin/python"))
-            return Path.GetFullPath("./dlbackend/ComfyUI/venv/bin/python");
-        return null;
-    }
-
     private async Task<string> RunPythonScriptAsync(string pythonPath, string script)
     {
         return await Task.Run(() =>
@@ -483,16 +521,9 @@ except Exception as e:
                         RedirectStandardError = true
                     };
 
-                    bool isEmbedded = pythonPath.Contains("python_embeded");
-                    if (isEmbedded)
-                    {
-                        startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(Path.GetFullPath("./dlbackend/comfy/python_embeded"));
-                        startInfo.WorkingDirectory = Path.GetFullPath("./dlbackend/comfy/");
-                    }
-                    else
-                    {
-                        startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(Path.GetFullPath("./dlbackend/ComfyUI/venv/bin"));
-                    }
+                    // Derive PATH from the python executable's own directory
+                    string pythonDir = Path.GetDirectoryName(Path.GetFullPath(pythonPath));
+                    startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(pythonDir);
                     PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[AudioLab] ");
 
                     using Process process = new() { StartInfo = startInfo };
