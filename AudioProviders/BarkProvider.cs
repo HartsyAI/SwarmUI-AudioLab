@@ -31,6 +31,6 @@ public sealed class BarkProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "default", Name = "Bark TTS", Description = "Text-to-audio generation with speech, music, and sound effects" }
+        new() { Id = "default", Name = "Bark TTS", Description = "Text-to-audio generation with speech, music, and sound effects", SourceUrl = "https://huggingface.co/suno/bark", License = "MIT", EstimatedSize = "~5GB", EstimatedVram = "~5GB" }
     ];
 }

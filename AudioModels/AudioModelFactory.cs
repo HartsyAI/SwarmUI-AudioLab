@@ -37,7 +37,7 @@ public static class AudioModelFactory
                 PreviewImage = previewImage,
                 StandardWidth = 0,
                 StandardHeight = 0,
-                License = "Open Source",
+                License = string.IsNullOrEmpty(model.License) ? "Open Source" : model.License,
                 UsageHint = $"Audio processing via {provider.Name}",
                 ModelClassType = provider.ModelClassId,
                 Tags = [.. allTags],

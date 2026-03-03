@@ -34,6 +34,6 @@ public sealed class GPTSoVITSProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "default", Name = "GPT-SoVITS Default", Description = "Few-shot voice cloning from 1 min reference, CJK + English (~4GB VRAM)" }
+        new() { Id = "default", Name = "GPT-SoVITS Default", Description = "Few-shot voice cloning from 1 min reference, CJK + English", SourceUrl = "https://github.com/RVC-Boss/GPT-SoVITS", License = "MIT", EstimatedSize = "~2GB", EstimatedVram = "~4GB" }
     ];
 }

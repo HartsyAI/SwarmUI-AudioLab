@@ -1,9 +1,13 @@
+using System.Net.WebSockets;
+using System.Runtime.InteropServices;
+using Hartsy.Extensions.AudioLab.AudioBackends;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using Hartsy.Extensions.AudioLab.AudioServices;
 using Hartsy.Extensions.AudioLab.Progress;
 using Hartsy.Extensions.AudioLab.WebAPI.Models;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Accounts;
+using SwarmUI.Backends;
 using SwarmUI.Core;
 using SwarmUI.Utils;
 using SwarmUI.WebAPI;
@@ -42,6 +46,11 @@ public static class AudioLabAPI
             API.RegisterAPICall(InstallProviderDependencies, false, AudioLabPermissions.PermManageBackends);
             API.RegisterAPICall(GetInstallationStatus, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(GetInstallationProgress, false, AudioLabPermissions.PermCheckStatus);
+
+            // Engine management (install-driven registration)
+            API.RegisterAPICall(AudioLabListEngines, false, AudioLabPermissions.PermCheckStatus);
+            API.RegisterAPICall(AudioLabInstallEngine, true, AudioLabPermissions.PermManageBackends);
+            API.RegisterAPICall(AudioLabUninstallEngine, true, AudioLabPermissions.PermManageBackends);
         }
         catch (Exception ex)
         {
@@ -436,6 +445,187 @@ public static class AudioLabAPI
         catch (Exception ex)
         {
             return AudioLab.CreateErrorResponse("Failed to get installation progress", "status_error", ex);
+        }
+    }
+
+    #endregion
+
+    #region Engine Management
+
+    /// <summary>Lists all available audio engines with their install status, metadata, and dependencies.</summary>
+    public static async Task<JObject> AudioLabListEngines(Session session, JObject input)
+    {
+        try
+        {
+            DynamicAudioBackend backend = Program.Backends.RunningBackendsOfType<DynamicAudioBackend>().FirstOrDefault();
+            IReadOnlySet<string> installedIds = backend?.GetInstalledEngineIds() ?? new HashSet<string>();
+            bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+            bool dockerEnabled = AudioConfiguration.UseDocker;
+
+            JArray engines = [];
+            foreach (AudioProviderDefinition provider in AudioProviderRegistry.All)
+            {
+                // Platform compatibility check
+                bool platformCompatible = true;
+                string platformNote = "";
+                if (provider.RequiresDocker && isWindows && !dockerEnabled)
+                {
+                    platformCompatible = false;
+                    platformNote = "Requires Docker on Windows. Enable 'Use Docker' in backend settings.";
+                }
+
+                // Build dependencies list
+                JArray deps = [];
+                foreach (PackageDefinition dep in provider.Dependencies)
+                {
+                    deps.Add(new JObject
+                    {
+                        ["name"] = dep.Name,
+                        ["category"] = dep.Category
+                    });
+                }
+
+                // Build models list
+                JArray models = [];
+                foreach (AudioModelDefinition modelDef in provider.Models)
+                {
+                    models.Add(new JObject
+                    {
+                        ["id"] = modelDef.Id,
+                        ["name"] = modelDef.Name,
+                        ["description"] = modelDef.Description,
+                        ["source_url"] = modelDef.SourceUrl,
+                        ["license"] = modelDef.License,
+                        ["estimated_size"] = modelDef.EstimatedSize,
+                        ["estimated_vram"] = modelDef.EstimatedVram
+                    });
+                }
+
+                engines.Add(new JObject
+                {
+                    ["id"] = provider.Id,
+                    ["name"] = provider.Name,
+                    ["category"] = provider.Category.ToString(),
+                    ["engine_group"] = provider.EngineGroup,
+                    ["requires_docker"] = provider.RequiresDocker,
+                    ["platform_compatible"] = platformCompatible,
+                    ["platform_note"] = platformNote,
+                    ["installed"] = installedIds.Contains(provider.Id),
+                    ["dependencies"] = deps,
+                    ["models"] = models
+                });
+            }
+
+            return new JObject
+            {
+                ["success"] = true,
+                ["engines"] = engines
+            };
+        }
+        catch (Exception ex)
+        {
+            return AudioLab.CreateErrorResponse("Failed to list engines", "list_error", ex);
+        }
+    }
+
+    /// <summary>Installs an audio engine via WebSocket with streaming progress.
+    /// Follows the DoModelDownloadWS pattern: WebSocket parameter auto-detected by API framework.</summary>
+    public static async Task<JObject> AudioLabInstallEngine(Session session, WebSocket ws, string provider_id)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(provider_id))
+            {
+                await ws.SendJson(new JObject { ["error"] = "provider_id is required" }, API.WebsocketTimeout);
+                return null;
+            }
+
+            AudioProviderDefinition provider = AudioProviderRegistry.GetById(provider_id);
+            if (provider == null)
+            {
+                await ws.SendJson(new JObject { ["error"] = $"Unknown provider: {provider_id}" }, API.WebsocketTimeout);
+                return null;
+            }
+
+            DynamicAudioBackend backend = Program.Backends.RunningBackendsOfType<DynamicAudioBackend>().FirstOrDefault();
+            if (backend == null)
+            {
+                await ws.SendJson(new JObject { ["error"] = "Audio backend is not running. Add and enable the Audio Backend first." }, API.WebsocketTimeout);
+                return null;
+            }
+
+            if (backend.GetInstalledEngineIds().Contains(provider_id))
+            {
+                await ws.SendJson(new JObject { ["success"] = true, ["message"] = $"{provider.Name} is already installed." }, API.WebsocketTimeout);
+                return null;
+            }
+
+            bool success = await backend.InstallAndRegisterEngine(provider_id, msg =>
+            {
+                Logs.Info($"[AudioLab] Install progress: {msg}");
+                ws.SendJson(new JObject { ["info"] = msg }, API.WebsocketTimeout).Wait();
+            });
+
+            if (success)
+            {
+                await ws.SendJson(new JObject { ["success"] = true, ["provider_id"] = provider_id, ["message"] = $"{provider.Name} installed successfully!" }, API.WebsocketTimeout);
+            }
+            else
+            {
+                await ws.SendJson(new JObject { ["error"] = $"Failed to install {provider.Name}. Check server logs for details." }, API.WebsocketTimeout);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] Engine installation failed: {ex}");
+            await ws.SendJson(new JObject { ["error"] = $"Engine installation failed: {ex.Message}" }, API.WebsocketTimeout);
+        }
+        return null;
+    }
+
+    /// <summary>Uninstalls an audio engine: removes models from registry and persists the change.</summary>
+    public static async Task<JObject> AudioLabUninstallEngine(Session session, string provider_id)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(provider_id))
+            {
+                return AudioLab.CreateErrorResponse("provider_id is required", "missing_provider");
+            }
+
+            AudioProviderDefinition provider = AudioProviderRegistry.GetById(provider_id);
+            if (provider == null)
+            {
+                return AudioLab.CreateErrorResponse($"Unknown provider: {provider_id}", "unknown_provider");
+            }
+
+            DynamicAudioBackend backend = Program.Backends.RunningBackendsOfType<DynamicAudioBackend>().FirstOrDefault();
+            if (backend == null)
+            {
+                return AudioLab.CreateErrorResponse("Audio backend is not running.", "no_backend");
+            }
+
+            if (!backend.GetInstalledEngineIds().Contains(provider_id))
+            {
+                return new JObject
+                {
+                    ["success"] = true,
+                    ["message"] = $"{provider.Name} is not installed."
+                };
+            }
+
+            backend.UnregisterEngine(provider_id);
+
+            return new JObject
+            {
+                ["success"] = true,
+                ["provider_id"] = provider_id,
+                ["message"] = $"{provider.Name} removed successfully."
+            };
+        }
+        catch (Exception ex)
+        {
+            return AudioLab.CreateErrorResponse($"Engine uninstall failed: {ex.Message}", "uninstall_error", ex);
         }
     }
 

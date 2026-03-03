@@ -35,6 +35,6 @@ public sealed class F5TTSProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "default", Name = "F5-TTS Default", Description = "Zero-shot voice cloning from 15s reference audio (~4GB VRAM)", EngineConfig = new() { ["model_name"] = "SWivid/F5-TTS" } }
+        new() { Id = "default", Name = "F5-TTS Default", Description = "Zero-shot voice cloning from 15s reference audio", SourceUrl = "https://huggingface.co/SWivid/F5-TTS", License = "CC-BY-NC-4.0", EstimatedSize = "~2.5GB", EstimatedVram = "~4GB", EngineConfig = new() { ["model_name"] = "SWivid/F5-TTS" } }
     ];
 }

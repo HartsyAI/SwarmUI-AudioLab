@@ -9,6 +9,7 @@ Uses the dia package API:
 """
 
 import logging
+import os
 
 import numpy as np
 
@@ -46,7 +47,12 @@ class DiaEngine(BaseAudioEngine):
         from dia.model import Dia
 
         local_path = self.ensure_model_local(model_name, "tts")
-        self.model = Dia.from_pretrained(local_path, compute_dtype="float16")
+        # Use from_local() instead of from_pretrained() because the HF model
+        # is sharded (model-00001-of-00002.safetensors) and PyTorchModelHubMixin
+        # doesn't handle sharded safetensors from local directories correctly.
+        config_path = os.path.join(local_path, "config.json")
+        checkpoint_path = os.path.join(local_path, "dia-v1.pth")
+        self.model = Dia.from_local(config_path, checkpoint_path, compute_dtype="float16")
         logger.info("Dia model loaded: %s", model_name)
 
     def process(self, **kwargs) -> dict:

@@ -254,9 +254,9 @@ setTimeout(() => {
         if (AudioLabConfig.isAudioModel(curArch)) {
             let config = AudioLabConfig.archToCategory[curArch];
             if (config.category === 'audiolab_tts') {
-                // Check if Stream Audio checkbox is checked
-                let streamParam = document.getElementById('input_streamaudio');
-                if (streamParam && (streamParam.checked || streamParam.value === 'true')) {
+                // Check if Stream Chunk Size slider is set above 0
+                let streamParam = document.getElementById('input_streamchunksize');
+                if (streamParam && parseInt(streamParam.value) > 0) {
                     AudioStreamPlayer.start();
                 }
             }
@@ -291,3 +291,303 @@ setTimeout(() => {
     reviseBackendFeatureSet();
     hideUnsupportableParams();
 }, 500);
+
+// ============================================================
+// Engine Manager — injected into Audio Backend card body
+// ============================================================
+
+/** Category display order and labels */
+const ENGINE_CATEGORIES = [
+    { key: 'TTS', label: 'Text-to-Speech' },
+    { key: 'STT', label: 'Speech-to-Text' },
+    { key: 'MusicGen', label: 'Music Generation' },
+    { key: 'VoiceClone', label: 'Voice Cloning' },
+    { key: 'AudioFX', label: 'Audio Effects' },
+    { key: 'SoundFX', label: 'Sound Effects' }
+];
+
+/** Cached engine data from the API */
+let audioLabEngineData = null;
+
+/** Loads engine list from the API and caches it. */
+function audioLabLoadEngines(callback) {
+    genericRequest('AudioLabListEngines', {}, data => {
+        if (data.success) {
+            audioLabEngineData = data.engines;
+            if (callback) callback(data.engines);
+        } else {
+            console.error('[audiolab] Failed to load engines:', data);
+        }
+    });
+}
+
+/** Renders the engine manager section into the given container element. */
+function audioLabRenderEngineManager(container, engines) {
+    container.innerHTML = '';
+    let header = createDiv(null, 'audiolab-engine-section-header');
+    header.innerHTML = '<b>Available Engines</b>';
+    container.appendChild(header);
+
+    for (let cat of ENGINE_CATEGORIES) {
+        let catEngines = engines.filter(e => e.category === cat.key);
+        if (catEngines.length === 0) continue;
+
+        // Count installed in this category
+        let installedCount = catEngines.filter(e => e.installed).length;
+        let countLabel = installedCount > 0 ? ` (${installedCount}/${catEngines.length} installed)` : ` (${catEngines.length})`;
+
+        // Collapsible group
+        let catGroup = createDiv(null, 'audiolab-cat-group');
+        let catHeader = createDiv(null, 'audiolab-cat-header');
+        let arrow = document.createElement('span');
+        arrow.className = 'audiolab-cat-arrow';
+        arrow.innerHTML = '&#x2B9F;';
+        catHeader.appendChild(arrow);
+        let label = document.createElement('span');
+        label.innerText = cat.label;
+        catHeader.appendChild(label);
+        let count = document.createElement('span');
+        count.style.cssText = 'color:var(--text-soft);font-weight:normal;font-size:0.85em';
+        count.innerText = countLabel;
+        catHeader.appendChild(count);
+        catHeader.addEventListener('click', () => {
+            catGroup.classList.toggle('collapsed');
+        });
+        catGroup.appendChild(catHeader);
+
+        // Card grid body
+        let catBody = createDiv(null, 'audiolab-cat-body');
+        for (let engine of catEngines) {
+            catBody.appendChild(audioLabBuildEngineCard(engine));
+        }
+        catGroup.appendChild(catBody);
+        container.appendChild(catGroup);
+    }
+}
+
+/** Builds a single engine card element. */
+function audioLabBuildEngineCard(engine) {
+    let card = createDiv(null, 'audiolab-engine-card');
+    if (!engine.platform_compatible) card.classList.add('incompatible');
+
+    // Header: status dot + name
+    let cardHeader = createDiv(null, 'audiolab-engine-card-header');
+    let status = createDiv(null, 'audiolab-engine-status-dot');
+    if (engine.installed) {
+        status.style.backgroundColor = 'var(--backend-running)';
+        status.title = 'Installed';
+    } else if (!engine.platform_compatible) {
+        status.style.backgroundColor = 'var(--backend-disabled)';
+        status.title = engine.platform_note || 'Not compatible';
+    }
+    cardHeader.appendChild(status);
+    let nameSpan = document.createElement('span');
+    nameSpan.className = 'audiolab-engine-name';
+    nameSpan.innerText = engine.name;
+    cardHeader.appendChild(nameSpan);
+    card.appendChild(cardHeader);
+
+    // Metadata line: VRAM | License | Size
+    let firstModel = engine.models && engine.models.length > 0 ? engine.models[0] : null;
+    if (firstModel) {
+        let meta = createDiv(null, 'audiolab-engine-meta');
+        let parts = [];
+        if (firstModel.estimated_vram) parts.push(firstModel.estimated_vram + ' VRAM');
+        if (firstModel.license) parts.push(firstModel.license);
+        if (firstModel.estimated_size) parts.push(firstModel.estimated_size);
+        meta.innerText = parts.join(' | ');
+        card.appendChild(meta);
+    }
+
+    // Description
+    if (firstModel && firstModel.description) {
+        let desc = createDiv(null, 'audiolab-engine-desc');
+        desc.innerText = firstModel.description;
+        card.appendChild(desc);
+    }
+
+    // Footer with action button
+    let footer = createDiv(null, 'audiolab-engine-card-footer');
+    if (!engine.platform_compatible) {
+        let note = document.createElement('span');
+        note.style.cssText = 'color:var(--text-soft);font-size:0.8em';
+        note.innerText = 'Requires Docker';
+        footer.appendChild(note);
+    } else if (engine.installed) {
+        let btn = document.createElement('button');
+        btn.className = 'basic-button';
+        btn.innerText = 'Remove';
+        btn.addEventListener('click', (e) => { e.stopPropagation(); audioLabConfirmUninstall(engine); });
+        footer.appendChild(btn);
+    } else {
+        let btn = document.createElement('button');
+        btn.className = 'basic-button btn-primary';
+        btn.innerText = 'Install';
+        btn.addEventListener('click', (e) => { e.stopPropagation(); audioLabShowInstallModal(engine); });
+        footer.appendChild(btn);
+    }
+    card.appendChild(footer);
+
+    return card;
+}
+
+/** Shows the install confirmation modal for an engine. */
+function audioLabShowInstallModal(engine) {
+    let existingModal = document.getElementById('audiolab_install_modal');
+    if (existingModal) existingModal.remove();
+
+    let firstModel = engine.models && engine.models.length > 0 ? engine.models[0] : {};
+
+    // Build dependency list
+    let depNames = engine.dependencies ? engine.dependencies.map(d => d.name) : [];
+    let depListHtml = depNames.length > 0
+        ? `<ul style="margin:0.5em 0;padding-left:1.5em">${depNames.map(d => `<li style="font-size:0.9em">${escapeHtml(d)}</li>`).join('')}</ul>`
+        : '<em>None</em>';
+
+    let sourceLink = firstModel.source_url
+        ? `<a href="${escapeHtml(firstModel.source_url)}" target="_blank" rel="noopener">${escapeHtml(firstModel.source_url)}</a>`
+        : 'N/A';
+
+    let bodyHtml = `
+        <div class="modal-body">
+            <p><b>${escapeHtml(engine.name)}</b></p>
+            <p>${escapeHtml(firstModel.description || '')}</p>
+            <table style="width:100%;margin:0.5em 0">
+                <tr><td style="padding:2px 8px 2px 0;color:var(--text-soft)">Source:</td><td>${sourceLink}</td></tr>
+                <tr><td style="padding:2px 8px 2px 0;color:var(--text-soft)">License:</td><td>${escapeHtml(firstModel.license || 'Unknown')}</td></tr>
+                <tr><td style="padding:2px 8px 2px 0;color:var(--text-soft)">Download Size:</td><td>${escapeHtml(firstModel.estimated_size || 'Unknown')}</td></tr>
+                <tr><td style="padding:2px 8px 2px 0;color:var(--text-soft)">VRAM Required:</td><td>${escapeHtml(firstModel.estimated_vram || 'Unknown')}</td></tr>
+            </table>
+            <p style="color:var(--text-soft);margin-top:0.5em"><b>Dependencies:</b></p>
+            ${depListHtml}
+            <div id="audiolab_install_progress" style="display:none;margin-top:1em">
+                <p style="color:var(--text-soft)"><b>Install Progress:</b></p>
+                <div id="audiolab_install_progress_text" style="font-family:monospace;font-size:0.85em;max-height:150px;overflow-y:auto;padding:0.5em;border:1px solid var(--border-color);border-radius:4px"></div>
+            </div>
+        </div>`;
+
+    let footerHtml = `
+        <div class="modal-footer">
+            <button class="btn btn-primary basic-button" id="audiolab_install_confirm_btn">Install</button>
+            <button class="btn btn-secondary basic-button" id="audiolab_install_cancel_btn">Cancel</button>
+        </div>`;
+
+    let html = modalHeader('audiolab_install_modal', `Install ${escapeHtml(engine.name)}`)
+        + bodyHtml + footerHtml + modalFooter();
+
+    let wrapper = document.createElement('div');
+    wrapper.innerHTML = html;
+    document.body.appendChild(wrapper.firstElementChild);
+
+    let modal = document.getElementById('audiolab_install_modal');
+    let confirmBtn = document.getElementById('audiolab_install_confirm_btn');
+    let cancelBtn = document.getElementById('audiolab_install_cancel_btn');
+
+    confirmBtn.addEventListener('click', () => audioLabDoInstall(engine, modal));
+    cancelBtn.addEventListener('click', () => {
+        $(modal).modal('hide');
+        setTimeout(() => modal.remove(), 300);
+    });
+
+    $(modal).modal('show');
+}
+
+/** Executes the install flow for an engine via WebSocket with streaming progress. */
+function audioLabDoInstall(engine, modal) {
+    let confirmBtn = document.getElementById('audiolab_install_confirm_btn');
+    let cancelBtn = document.getElementById('audiolab_install_cancel_btn');
+    let progressArea = document.getElementById('audiolab_install_progress');
+    let progressText = document.getElementById('audiolab_install_progress_text');
+
+    confirmBtn.disabled = true;
+    confirmBtn.innerText = 'Installing...';
+    cancelBtn.disabled = true;
+    progressArea.style.display = 'block';
+    progressText.innerText = 'Starting installation...\n';
+
+    makeWSRequest('AudioLabInstallEngine', { provider_id: engine.id }, data => {
+        if (data.info) {
+            // Streaming progress message
+            progressText.innerText += data.info + '\n';
+            progressText.scrollTop = progressText.scrollHeight;
+        }
+        else if (data.success) {
+            progressText.innerText += 'Installation complete!\n';
+            setTimeout(() => {
+                $(modal).modal('hide');
+                setTimeout(() => modal.remove(), 300);
+                doNoticePopover(`${engine.name} installed!`, 'notice-pop-green');
+                audioLabRefreshEngineManager();
+            }, 1000);
+        }
+        else if (data.error) {
+            progressText.innerText += `Error: ${data.error}\n`;
+            confirmBtn.disabled = false;
+            confirmBtn.innerText = 'Retry';
+            cancelBtn.disabled = false;
+            showError(`Failed to install ${engine.name}: ${data.error}`);
+        }
+    }, 0, e => {
+        progressText.innerText += `Connection error: ${e}\n`;
+        confirmBtn.disabled = false;
+        confirmBtn.innerText = 'Retry';
+        cancelBtn.disabled = false;
+        showError(`Failed to install ${engine.name}: ${e}`);
+    });
+}
+
+/** Confirms and uninstalls an engine. */
+function audioLabConfirmUninstall(engine) {
+    if (!confirm(`Remove ${engine.name}? Its models will be unregistered from the model browser.`)) {
+        return;
+    }
+    genericRequest('AudioLabUninstallEngine', { provider_id: engine.id }, data => {
+        if (data.success) {
+            doNoticePopover(`${engine.name} removed.`, 'notice-pop-green');
+            audioLabRefreshEngineManager();
+        } else {
+            showError(`Failed to remove ${engine.name}: ${data.error || 'Unknown error'}`);
+        }
+    });
+}
+
+/** Refreshes the engine manager UI by reloading data from the API. */
+function audioLabRefreshEngineManager() {
+    audioLabLoadEngines(engines => {
+        let container = document.getElementById('audiolab_engine_manager');
+        if (container) {
+            audioLabRenderEngineManager(container, engines);
+        }
+    });
+}
+
+/** Hook into backendsRevisedCallbacks to inject engine manager into Audio Backend cards. */
+backendsRevisedCallbacks.push(() => {
+    // Find Audio Backend cards by checking backend type
+    for (let [id, backend] of Object.entries(backends_loaded)) {
+        if (backend.type !== 'audio-backend') continue;
+
+        let card = document.getElementById(`backend-card-${id}`);
+        if (!card) continue;
+
+        let cardBody = card.querySelector('.card-body');
+        if (!cardBody) continue;
+
+        // Don't re-inject if already present
+        if (document.getElementById('audiolab_engine_manager')) continue;
+
+        let separator = document.createElement('hr');
+        separator.style.borderColor = 'var(--border-color)';
+        separator.style.margin = '1em 0';
+        cardBody.appendChild(separator);
+
+        let container = createDiv('audiolab_engine_manager', 'audiolab-engine-manager');
+        container.innerHTML = '<em style="color:var(--text-soft)">Loading engines...</em>';
+        cardBody.appendChild(container);
+
+        // Load and render engines
+        audioLabLoadEngines(engines => {
+            audioLabRenderEngineManager(container, engines);
+        });
+    }
+});

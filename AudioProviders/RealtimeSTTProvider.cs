@@ -40,6 +40,6 @@ public sealed class RealtimeSTTProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "default", Name = "RealtimeSTT Default", Description = "Real-time streaming transcription with wake word detection" }
+        new() { Id = "default", Name = "RealtimeSTT Default", Description = "Real-time streaming transcription with wake word detection", SourceUrl = "https://github.com/KoljaB/RealtimeSTT", License = "MIT", EstimatedSize = "~1GB", EstimatedVram = "~2GB" }
     ];
 }

@@ -31,13 +31,15 @@ public sealed class ChatterboxProvider : IAudioProviderSource
         new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchvision==0.21.0+cu126", InstallName = "torchvision==0.21.0+cu126", ImportName = "torchvision", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        // chatterbox installed with --no-deps to skip dev/training deps (gradio, fastapi, tensorboard, pre-commit, etc.)
-        new() { Name = "chatterbox-tts", InstallName = "git+https://github.com/JarodMica/chatterbox.git", ImportName = "chatterbox", Category = "tts", IsGitPackage = true, EstimatedInstallTimeMinutes = 15, CustomInstallArgs = "--no-deps", AlternativeNames = ["chatterbox_tts", "resemble", "resemblevoice", "chatterbox", "chatterbox.preprocessing", "chatterbox.models"] },
+        // chatterbox-tts from PyPI with --no-deps to skip dev/training deps (gradio, fastapi, tensorboard, etc.)
+        new() { Name = "chatterbox-tts", InstallName = "chatterbox-tts", ImportName = "chatterbox", Category = "tts", EstimatedInstallTimeMinutes = 2, CustomInstallArgs = "--no-deps" },
         // Explicit chatterbox runtime dependencies (inference only)
         new() { Name = "s3tokenizer", InstallName = "s3tokenizer", ImportName = "s3tokenizer", Category = "tts" },
         new() { Name = "transformers==4.46.3", InstallName = "transformers==4.46.3", ImportName = "transformers", Category = "tts" },
         new() { Name = "diffusers==0.29.0", InstallName = "diffusers==0.29.0", ImportName = "diffusers", Category = "tts" },
         new() { Name = "resemble-perth==1.0.1", InstallName = "resemble-perth==1.0.1", ImportName = "resemble_perth", Category = "tts" },
+        // perth needs pkg_resources which was removed from setuptools 78+ on Python 3.13
+        new() { Name = "setuptools<78", InstallName = "setuptools<78", ImportName = "pkg_resources", Category = "tts" },
         new() { Name = "conformer==0.3.2", InstallName = "conformer==0.3.2", ImportName = "conformer", Category = "tts" },
         new() { Name = "safetensors==0.5.3", InstallName = "safetensors==0.5.3", ImportName = "safetensors", Category = "tts" },
         new() { Name = "omegaconf==2.3.0", InstallName = "omegaconf==2.3.0", ImportName = "omegaconf", Category = "tts" },
@@ -49,6 +51,6 @@ public sealed class ChatterboxProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "default", Name = "Chatterbox TTS", Description = "High-quality voice synthesis with expressive controls (Exaggeration, CFG Weight)" }
+        new() { Id = "default", Name = "Chatterbox TTS", Description = "High-quality voice synthesis with expressive controls (Exaggeration, CFG Weight)", SourceUrl = "https://github.com/resemble-ai/chatterbox", License = "MIT", EstimatedSize = "~2GB", EstimatedVram = "~4GB" }
     ];
 }

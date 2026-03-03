@@ -36,8 +36,8 @@ public sealed class VibeVoiceProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "realtime-0.5b", Name = "VibeVoice Realtime 0.5B", Description = "Real-time streaming TTS, single speaker, low latency (~3GB VRAM)", EngineConfig = new() { ["model_name"] = "microsoft/VibeVoice-Realtime-0.5B" } },
-        new() { Id = "1.5b", Name = "VibeVoice 1.5B", Description = "Long-form multi-speaker TTS, up to 90 min, 4 speakers (~7GB VRAM)", EngineConfig = new() { ["model_name"] = "microsoft/VibeVoice-1.5B" } },
-        new() { Id = "large", Name = "VibeVoice Large 7B", Description = "Highest quality TTS, best non-English stability, 4 speakers (~16GB VRAM)", EngineConfig = new() { ["model_name"] = "microsoft/VibeVoice-7B-hf" } }
+        new() { Id = "realtime-0.5b", Name = "VibeVoice Realtime 0.5B", Description = "Real-time streaming TTS, single speaker, low latency", SourceUrl = "https://huggingface.co/microsoft/VibeVoice-Realtime-0.5B", License = "MIT", EstimatedSize = "~1GB", EstimatedVram = "~3GB", EngineConfig = new() { ["model_name"] = "microsoft/VibeVoice-Realtime-0.5B" } },
+        new() { Id = "1.5b", Name = "VibeVoice 1.5B", Description = "Long-form multi-speaker TTS, up to 90 min, 4 speakers", SourceUrl = "https://huggingface.co/microsoft/VibeVoice-1.5B", License = "MIT", EstimatedSize = "~3GB", EstimatedVram = "~7GB", EngineConfig = new() { ["model_name"] = "microsoft/VibeVoice-1.5B" } },
+        new() { Id = "large", Name = "VibeVoice Large 7B", Description = "Highest quality TTS, best non-English stability, 4 speakers", SourceUrl = "https://huggingface.co/microsoft/VibeVoice-7B-hf", License = "MIT", EstimatedSize = "~14GB", EstimatedVram = "~16GB", EngineConfig = new() { ["model_name"] = "microsoft/VibeVoice-7B-hf" } }
     ];
 }

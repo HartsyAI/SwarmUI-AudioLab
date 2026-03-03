@@ -18,10 +18,10 @@ using SwarmUI.WebAPI;
 
 namespace Hartsy.Extensions.AudioLab.AudioBackends;
 
-/// <summary>A single routing backend that replaces STTBackend + TTSBackend.
-/// Mirrors DynamicAPIBackend from SwarmUI-API-Backends — provider toggles in settings
-/// control which audio engines are available, and model prefix matching routes requests
-/// to the correct provider's Python engine.</summary>
+/// <summary>A single routing backend for all AudioLab engines.
+/// Engines are installed on-demand via the backend UI — only installed engines
+/// get their models registered into the model browser. Model prefix matching
+/// routes generation requests to the correct provider's Python engine.</summary>
 public class DynamicAudioBackend : AbstractT2IBackend
 {
     /// <summary>Static constructor to register our model provider with ModelsAPI.
@@ -58,85 +58,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// <summary>Settings for the dynamic audio backend.</summary>
     public class DynamicAudioSettings : AutoConfiguration
     {
-        // -- TTS providers --
-        [ConfigComment("Enable Chatterbox TTS (high-quality voice synthesis with expressive controls).")]
-        public bool EnableChatterbox = false;
-
-        [ConfigComment("Enable Bark TTS (text-to-audio with speech, music, and sound effects).")]
-        public bool EnableBark = false;
-
-        [ConfigComment("Enable VibeVoice TTS (Microsoft, long-form multi-speaker up to 90 min).")]
-        public bool EnableVibeVoice = false;
-
-        [ConfigComment("Enable Orpheus TTS (LLM-based emotional speech with emotion tags).")]
-        public bool EnableOrpheus = false;
-
-        [ConfigComment("Enable Kokoro TTS (ultra-fast lightweight TTS, 82M params, CPU-capable).")]
-        public bool EnableKokoro = false;
-
-        [ConfigComment("Enable Dia TTS (ultra-realistic dialogue generation with nonverbal sounds).")]
-        public bool EnableDia = false;
-
-        [ConfigComment("Enable F5-TTS (zero-shot voice cloning from 15-second reference audio).")]
-        public bool EnableF5TTS = false;
-
-        [ConfigComment("Enable CSM TTS (Sesame conversational speech model, Llama backbone).")]
-        public bool EnableCSM = false;
-
-        [ConfigComment("Enable Zonos TTS (multilingual TTS trained on 200k+ hours, zero-shot cloning).")]
-        public bool EnableZonos = false;
-
-        [ConfigComment("Enable CosyVoice TTS (Alibaba streaming TTS with ultra-low latency). Requires Docker on Windows.")]
-        public bool EnableCosyVoice = false;
-
-        [ConfigComment("Enable NeuTTS Air (on-device TTS with instant voice cloning by Neuphonic).")]
-        public bool EnableNeuTTS = false;
-
-        [ConfigComment("Enable Piper TTS (CPU-only ONNX runtime with dozens of pre-trained voices).")]
-        public bool EnablePiper = false;
-
-        // -- STT providers --
-        [ConfigComment("Enable Whisper STT (robust speech recognition across languages).")]
-        public bool EnableWhisper = false;
-
-        [ConfigComment("Enable RealtimeSTT (real-time streaming speech-to-text with wake word). Requires Docker on Windows.")]
-        public bool EnableRealtimeSTT = false;
-
-        [ConfigComment("Enable Moonshine STT (ultra-fast, 5x faster than Whisper).")]
-        public bool EnableMoonshine = false;
-
-        [ConfigComment("Enable Distil-Whisper STT (6x faster than Whisper large-v3, within 1% WER).")]
-        public bool EnableDistilWhisper = false;
-
-        // -- Music generation providers --
-        [ConfigComment("Enable ACE-Step (SOTA music generation, up to 4 min in 20 seconds). Requires Docker on Windows.")]
-        public bool EnableAceStep = false;
-
-        [ConfigComment("Enable MusicGen (Meta AudioCraft text-to-music with melody conditioning).")]
-        public bool EnableMusicGen = false;
-
-        // -- Voice cloning providers --
-        [ConfigComment("Enable OpenVoice V2 (zero-shot voice cloning with tone/style control).")]
-        public bool EnableOpenVoice = false;
-
-        [ConfigComment("Enable RVC (retrieval-based voice conversion, industry standard). Requires Docker on Windows.")]
-        public bool EnableRVC = false;
-
-        [ConfigComment("Enable GPT-SoVITS (few-shot voice cloning, strong CJK support). Requires Docker on Windows.")]
-        public bool EnableGPTSoVITS = false;
-
-        // -- Audio FX providers --
-        [ConfigComment("Enable Demucs (Meta audio source separation — vocals, drums, bass, other).")]
-        public bool EnableDemucs = false;
-
-        [ConfigComment("Enable Resemble Enhance (speech denoising and super-resolution to 44.1kHz). Requires Docker on Windows.")]
-        public bool EnableResembleEnhance = false;
-
-        // -- Sound FX providers --
-        [ConfigComment("Enable AudioGen (Meta AudioCraft text-to-sound-effects generation).")]
-        public bool EnableAudioGen = false;
-
-        // -- General --
         [ConfigComment("Enable Docker for Linux-only engines (ACE-Step, RVC, GPT-SoVITS, Resemble-Enhance, CosyVoice, RealtimeSTT). Requires Docker with NVIDIA Container Toolkit.")]
         public bool UseDocker = false;
 
@@ -149,41 +70,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
         [ConfigComment("Enable debug logging for audio processing.")]
         public bool DebugMode = false;
     }
-
-    /// <summary>Maps settings fields to provider IDs.</summary>
-    private static readonly Dictionary<string, Func<DynamicAudioSettings, bool>> ProviderSettingsMap = new()
-    {
-        // TTS
-        ["chatterbox_tts"] = s => s.EnableChatterbox,
-        ["bark_tts"] = s => s.EnableBark,
-        ["vibevoice_tts"] = s => s.EnableVibeVoice,
-        ["orpheus_tts"] = s => s.EnableOrpheus,
-        ["kokoro_tts"] = s => s.EnableKokoro,
-        ["dia_tts"] = s => s.EnableDia,
-        ["f5_tts"] = s => s.EnableF5TTS,
-        ["csm_tts"] = s => s.EnableCSM,
-        ["zonos_tts"] = s => s.EnableZonos,
-        ["cosyvoice_tts"] = s => s.EnableCosyVoice,
-        ["neutts_tts"] = s => s.EnableNeuTTS,
-        ["piper_tts"] = s => s.EnablePiper,
-        // STT
-        ["whisper_stt"] = s => s.EnableWhisper,
-        ["realtimestt_stt"] = s => s.EnableRealtimeSTT,
-        ["moonshine_stt"] = s => s.EnableMoonshine,
-        ["distilwhisper_stt"] = s => s.EnableDistilWhisper,
-        // Music
-        ["acestep_music"] = s => s.EnableAceStep,
-        ["musicgen_music"] = s => s.EnableMusicGen,
-        // Voice Clone
-        ["openvoice_clone"] = s => s.EnableOpenVoice,
-        ["rvc_clone"] = s => s.EnableRVC,
-        ["gptsovits_clone"] = s => s.EnableGPTSoVITS,
-        // Audio FX
-        ["demucs_fx"] = s => s.EnableDemucs,
-        ["resemble_enhance_fx"] = s => s.EnableResembleEnhance,
-        // Sound FX
-        ["audiogen_sfx"] = s => s.EnableAudioGen,
-    };
 
     /// <summary>Maps AudioCategory enum to category-level feature flag names.</summary>
     private static readonly Dictionary<AudioCategory, string> CategoryFlags = new()
@@ -214,14 +100,20 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// <summary>Collection of all registered models, keyed by model name.</summary>
     private Dictionary<string, T2IModel> RegisteredAudioModels { get; set; } = [];
 
+    /// <summary>Set of installed engine provider IDs, persisted to JSON config.</summary>
+    private HashSet<string> InstalledEngines { get; set; } = [];
+
+    /// <summary>Path to the installed engines config file.</summary>
+    private static string InstalledEnginesConfigPath => Path.Combine(Program.DataDir, "AudioLabInstalledEngines.json");
+
     public DynamicAudioBackend()
     {
         SettingsRaw = new DynamicAudioSettings();
         Status = BackendStatus.LOADING;
     }
 
-    /// <summary>Initializes the backend — enables providers based on settings toggles,
-    /// registers virtual models, and starts the Python audio server.</summary>
+    /// <summary>Initializes the backend — loads installed engines config,
+    /// registers models for installed engines, and starts Python servers.</summary>
     public override async Task Init()
     {
         Status = BackendStatus.LOADING;
@@ -240,31 +132,23 @@ public class DynamicAudioBackend : AbstractT2IBackend
             AudioConfiguration.ModelRoot = Settings.AudioModelRoot;
         }
 
-        List<string> enabledIds = GetEnabledProviderIds();
-        if (enabledIds.Count == 0)
-        {
-            Logs.Warning("[AudioLab] No audio providers enabled. Enable at least one provider and save settings.");
-            Status = BackendStatus.DISABLED;
-            AddLoadStatus("Enable at least one audio provider checkbox and click Save.");
-            return;
-        }
+        LoadInstalledEnginesConfig();
 
         try
         {
-            foreach (string providerId in enabledIds)
+            foreach (string providerId in InstalledEngines)
             {
                 AudioProviderDefinition definition = AudioProviderRegistry.GetById(providerId);
                 if (definition == null)
                 {
-                    Logs.Warning($"[AudioLab] Provider '{providerId}' not found in registry, skipping.");
+                    Logs.Warning($"[AudioLab] Installed provider '{providerId}' not found in registry, skipping.");
                     continue;
                 }
 
-                // Platform check: warn about Docker-only engines on Windows
+                // Platform check: skip Docker-only engines on Windows without Docker
                 if (definition.RequiresDocker && RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && !Settings.UseDocker)
                 {
-                    Logs.Warning($"[AudioLab] {definition.Name} requires Docker on Windows (Linux-only engine). Enable 'Use Docker' in settings.");
-                    AddLoadStatus($"{definition.Name} requires Docker on Windows. Enable 'Use Docker' to use this engine.");
+                    Logs.Warning($"[AudioLab] {definition.Name} requires Docker on Windows. Enable 'Use Docker' in settings.");
                     continue;
                 }
 
@@ -275,10 +159,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 };
                 _providers[providerId] = meta;
 
-                // Register models for this provider (mirrors DynamicAPIBackend pattern)
                 RegisterModelsForProvider(definition);
 
-                // Add feature flags: category-level + provider-specific
                 if (CategoryFlags.TryGetValue(definition.Category, out string categoryFlag))
                 {
                     _supportedFeatureSet.Add(categoryFlag);
@@ -290,14 +172,17 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
                 if (Settings.DebugMode)
                 {
-                    Logs.Debug($"[AudioLab] Enabled provider: {definition.Name} ({providerId})");
+                    Logs.Debug($"[AudioLab] Loaded installed provider: {definition.Name} ({providerId})");
                 }
             }
 
-            UpdateRemoteModels();
+            if (_providers.Count > 0)
+            {
+                UpdateRemoteModels();
+            }
             Program.ModelRefreshEvent += ReRegisterModelsAfterRefresh;
 
-            // Pre-create venvs and install dependencies for active compatibility groups
+            // Start servers for installed engine groups
             HashSet<string> activeGroups = [];
             foreach (AudioProviderMetadata providerMeta in _providers.Values)
             {
@@ -306,47 +191,34 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     activeGroups.Add(providerMeta.Definition.EngineGroup);
                 }
             }
-            AudioDependencyInstaller installer = new();
             foreach (string group in activeGroups)
             {
-                string venvPython = await VenvManager.Instance.EnsureVenvAsync(group);
-                if (venvPython == null)
-                {
-                    Logs.Warning($"[AudioLab] Failed to create venv for group '{group}'. Providers in this group may not work until Python is available.");
-                    continue;
-                }
-                // Install dependencies for all enabled providers in this group
-                List<AudioProviderDefinition> groupProviders = [.. _providers.Values
-                    .Where(p => !p.Definition.RequiresDocker && p.Definition.EngineGroup == group)
-                    .Select(p => p.Definition)];
-                if (groupProviders.Count == 0) continue;
-                PythonEnvironmentInfo groupPython = await installer.DetectPythonEnvironmentForGroupAsync(group);
-                if (groupPython?.IsValid != true)
-                {
-                    Logs.Warning($"[AudioLab] Cannot install dependencies for group '{group}' — venv not available.");
-                    continue;
-                }
-                Logs.Info($"[AudioLab] Installing dependencies for {groupProviders.Count} provider(s) in group '{group}'...");
                 try
                 {
-                    await installer.InstallMultipleProviderDependenciesAsync(groupPython, groupProviders);
-                    Logs.Info($"[AudioLab] Dependencies ready for group '{group}'");
+                    await AudioServerManager.Instance.EnsureGroupRunningAsync(group);
                 }
                 catch (Exception ex)
                 {
-                    Logs.Warning($"[AudioLab] Dependency install for group '{group}' had issues: {ex.Message}. Some providers may not work until dependencies are installed.");
+                    Logs.Warning($"[AudioLab] Failed to start server for group '{group}': {ex.Message}");
                 }
             }
 
-            // Start Docker container if any enabled providers require it
+            // Start Docker container if any installed providers require it
             if (AudioConfiguration.UseDocker && _providers.Values.Any(p => p.Definition.RequiresDocker))
             {
                 await AudioServerManager.Instance.StartDockerAsync();
             }
 
             Status = BackendStatus.RUNNING;
-            Logs.Info($"[AudioLab] Audio backend initialized with {_providers.Count} provider(s), " +
-                      $"{RegisteredAudioModels.Count} model(s): {string.Join(", ", _providers.Keys)}");
+            if (_providers.Count > 0)
+            {
+                Logs.Info($"[AudioLab] Audio backend initialized with {_providers.Count} installed engine(s), " +
+                          $"{RegisteredAudioModels.Count} model(s): {string.Join(", ", _providers.Keys)}");
+            }
+            else
+            {
+                Logs.Info("[AudioLab] Audio backend initialized. No engines installed yet — use the backend settings to install engines.");
+            }
         }
         catch (Exception ex)
         {
@@ -444,7 +316,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
             ["is_supported_model_format"] = true,
             ["is_audio_model"] = true,
             ["local"] = false,
-            ["api_source"] = "audiolab"
+            ["api_source"] = "audiolab",
+            ["license"] = model.Metadata?.License ?? ""
         };
     }
 
@@ -465,15 +338,15 @@ public class DynamicAudioBackend : AbstractT2IBackend
         AudioProviderDefinition provider = meta.Definition;
         AudioModelDefinition modelDef = GetModelDefinition(modelName, provider);
 
-        // Check streaming conditions: TTS + StreamAudio enabled + 2+ sentences
+        // Check streaming conditions: TTS + StreamChunkSize > 0 + 2+ chunks
         if (provider.Category == AudioCategory.TTS
-            && user_input.TryGet(AudioLabParams.StreamAudio, out bool streamOn) && streamOn)
+            && user_input.TryGet(AudioLabParams.StreamChunkSize, out int chunkSize) && chunkSize > 0)
         {
             string text = user_input.Get(T2IParamTypes.Prompt, "");
-            List<string> sentences = SplitIntoSentences(text);
-            if (sentences != null)
+            List<string> chunks = SplitIntoChunks(text, chunkSize);
+            if (chunks != null)
             {
-                await GenerateLiveStreaming(user_input, batchId, takeOutput, meta, provider, modelDef, sentences);
+                await GenerateLiveStreaming(user_input, batchId, takeOutput, meta, provider, modelDef, chunks);
                 return;
             }
         }
@@ -547,13 +420,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
     }
 
-    /// <summary>Streaming generation path — generates each sentence separately,
+    /// <summary>Streaming generation path — generates each text chunk separately,
     /// sends intermediate audio chunks for immediate playback, then concatenates
     /// all PCM data into a final WAV file as the real output.</summary>
     private async Task GenerateLiveStreaming(T2IParamInput user_input, string batchId, Action<object> takeOutput,
-        AudioProviderMetadata meta, AudioProviderDefinition provider, AudioModelDefinition modelDef, List<string> sentences)
+        AudioProviderMetadata meta, AudioProviderDefinition provider, AudioModelDefinition modelDef, List<string> chunks)
     {
-        Logs.Info($"[AudioLab] Streaming TTS: {sentences.Count} sentences via {provider.Name}");
+        Logs.Info($"[AudioLab] Streaming TTS: {chunks.Count} chunks via {provider.Name}");
 
         // Enable DoNotSaveIntermediates so chunk outputs aren't saved to disk
         user_input.Set(T2IParamTypes.DoNotSaveIntermediates, true);
@@ -566,23 +439,23 @@ public class DynamicAudioBackend : AbstractT2IBackend
         double totalDuration = 0;
         int consecutiveFailures = 0;
 
-        for (int i = 0; i < sentences.Count; i++)
+        for (int i = 0; i < chunks.Count; i++)
         {
             // Send progress update
-            double overallPercent = (double)i / sentences.Count * 100;
+            double overallPercent = (double)i / chunks.Count * 100;
             takeOutput(new JObject
             {
                 ["gen_progress"] = new JObject
                 {
                     ["batch_index"] = batchId,
                     ["overall_percent"] = overallPercent,
-                    ["current_status"] = $"Generating sentence {i + 1}/{sentences.Count}..."
+                    ["current_status"] = $"Generating chunk {i + 1}/{chunks.Count}..."
                 }
             });
 
-            // Build args with this sentence as the text
+            // Build args with this chunk as the text
             T2IParamInput chunkInput = user_input.Clone();
-            chunkInput.Set(T2IParamTypes.Prompt, sentences[i]);
+            chunkInput.Set(T2IParamTypes.Prompt, chunks[i]);
             Dictionary<string, object> args = BuildEngineArgs(chunkInput, provider, modelDef);
 
             try
@@ -612,15 +485,15 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
                         double chunkDuration = result["duration"]?.Value<double>() ?? 0;
                         totalDuration += chunkDuration;
-                        Logs.Debug($"[AudioLab] Streamed sentence {i + 1}/{sentences.Count}: {chunkDuration:F2}s");
+                        Logs.Debug($"[AudioLab] Streamed chunk {i + 1}/{chunks.Count}: {chunkDuration:F2}s");
                     }
                     consecutiveFailures = 0;
                 }
                 else
                 {
                     string error = result["error"]?.ToString() ?? "Unknown error";
-                    Logs.Warning($"[AudioLab] Sentence {i + 1} failed: {error}");
-                    // Abort early on missing dependencies — all subsequent sentences will fail identically
+                    Logs.Warning($"[AudioLab] Chunk {i + 1} failed: {error}");
+                    // Abort early on missing dependencies — all subsequent chunks will fail identically
                     if (error.Contains("No module named") || error.Contains("ModuleNotFoundError"))
                     {
                         Logs.Error($"[AudioLab] Missing Python dependency for {provider.Name}: {error}. Install provider dependencies via the AudioLab UI before generating audio.");
@@ -630,18 +503,18 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     consecutiveFailures++;
                     if (consecutiveFailures >= 3)
                     {
-                        Logs.Error($"[AudioLab] {consecutiveFailures} consecutive failures, aborting remaining sentences.");
+                        Logs.Error($"[AudioLab] {consecutiveFailures} consecutive failures, aborting remaining chunks.");
                         break;
                     }
                 }
             }
             catch (Exception ex)
             {
-                Logs.Warning($"[AudioLab] Sentence {i + 1} error: {ex.Message}");
+                Logs.Warning($"[AudioLab] Chunk {i + 1} error: {ex.Message}");
                 consecutiveFailures++;
                 if (consecutiveFailures >= 3)
                 {
-                    Logs.Error($"[AudioLab] {consecutiveFailures} consecutive failures, aborting remaining sentences.");
+                    Logs.Error($"[AudioLab] {consecutiveFailures} consecutive failures, aborting remaining chunks.");
                     break;
                 }
             }
@@ -719,21 +592,227 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// <summary>Gets all currently enabled provider metadata (for API status endpoints).</summary>
     public IReadOnlyDictionary<string, AudioProviderMetadata> GetProviders() => _providers;
 
-    // -- private helpers --------------------------------------------------
+    // -- Install / uninstall engine management -----------------------------
 
-    /// <summary>Gets the list of enabled provider IDs based on current settings.</summary>
-    private List<string> GetEnabledProviderIds()
+    /// <summary>Installs an engine: creates venv, installs deps, starts server,
+    /// registers models, and persists the installed state.</summary>
+    public async Task<bool> InstallAndRegisterEngine(string providerId, Action<string> onProgress = null)
     {
-        List<string> enabled = [];
-        foreach (KeyValuePair<string, Func<DynamicAudioSettings, bool>> kvp in ProviderSettingsMap)
+        AudioProviderDefinition definition = AudioProviderRegistry.GetById(providerId);
+        if (definition == null)
         {
-            if (kvp.Value(Settings))
+            Logs.Error($"[AudioLab] Provider '{providerId}' not found in registry.");
+            return false;
+        }
+
+        onProgress?.Invoke($"Installing {definition.Name}...");
+
+        try
+        {
+            if (!definition.RequiresDocker)
             {
-                enabled.Add(kvp.Key);
+                // 1. Ensure venv exists for this engine group
+                onProgress?.Invoke($"Creating Python environment for group '{definition.EngineGroup}'...");
+                string venvPython = await VenvManager.Instance.EnsureVenvAsync(definition.EngineGroup);
+                if (venvPython == null)
+                {
+                    Logs.Error($"[AudioLab] Failed to create venv for group '{definition.EngineGroup}'.");
+                    onProgress?.Invoke("Error: Failed to create Python environment.");
+                    return false;
+                }
+
+                // 2. Install pip dependencies
+                onProgress?.Invoke($"Installing dependencies for {definition.Name}...");
+                AudioDependencyInstaller installer = new();
+                PythonEnvironmentInfo pythonInfo = await installer.DetectPythonEnvironmentForGroupAsync(definition.EngineGroup);
+                if (pythonInfo?.IsValid != true)
+                {
+                    Logs.Error($"[AudioLab] Python environment not available for group '{definition.EngineGroup}'.");
+                    onProgress?.Invoke("Error: Python environment not available.");
+                    return false;
+                }
+                bool depsOk = await installer.InstallProviderDependenciesAsync(pythonInfo, definition);
+                if (!depsOk)
+                {
+                    Logs.Error($"[AudioLab] Dependency installation failed for {definition.Name}.");
+                    onProgress?.Invoke("Error: Dependency installation failed.");
+                    return false;
+                }
+
+                // 3. Start the server for this group
+                onProgress?.Invoke($"Starting audio server for group '{definition.EngineGroup}'...");
+                await AudioServerManager.Instance.EnsureGroupRunningAsync(definition.EngineGroup);
+            }
+            else
+            {
+                // Docker-based engine
+                if (!AudioConfiguration.UseDocker)
+                {
+                    Logs.Error($"[AudioLab] {definition.Name} requires Docker but Docker is not enabled.");
+                    onProgress?.Invoke("Error: Enable 'Use Docker' in backend settings first.");
+                    return false;
+                }
+                onProgress?.Invoke("Starting Docker container...");
+                await AudioServerManager.Instance.StartDockerAsync();
+            }
+
+            // 4. Register models
+            onProgress?.Invoke($"Registering models for {definition.Name}...");
+            AudioProviderMetadata meta = new()
+            {
+                Definition = definition,
+                IsEnabled = true,
+                DependenciesInstalled = true
+            };
+            _providers[providerId] = meta;
+            RegisterModelsForProvider(definition);
+
+            if (CategoryFlags.TryGetValue(definition.Category, out string categoryFlag))
+            {
+                _supportedFeatureSet.Add(categoryFlag);
+            }
+            foreach (string flag in definition.FeatureFlags)
+            {
+                _supportedFeatureSet.Add(flag);
+            }
+
+            UpdateRemoteModels();
+
+            // 5. Persist installed state
+            InstalledEngines.Add(providerId);
+            SaveInstalledEnginesConfig();
+
+            // 6. Trigger model refresh so UI picks up the new models
+            Program.ModelRefreshEvent?.Invoke();
+
+            onProgress?.Invoke($"{definition.Name} installed successfully!");
+            Logs.Info($"[AudioLab] Engine '{definition.Name}' installed and registered.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] Failed to install engine '{providerId}': {ex}");
+            onProgress?.Invoke($"Error: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>Uninstalls an engine: removes models from registry and persists the change.</summary>
+    public void UnregisterEngine(string providerId)
+    {
+        AudioProviderDefinition definition = AudioProviderRegistry.GetById(providerId);
+        string providerName = definition?.Name ?? providerId;
+
+        // Remove models from MainSDModels
+        if (definition != null)
+        {
+            foreach (AudioModelDefinition modelDef in definition.Models)
+            {
+                string modelName = $"Audio Models/{definition.ModelPrefix}/{modelDef.Id}";
+                if (Program.MainSDModels.Models.ContainsKey(modelName))
+                {
+                    Program.MainSDModels.Models.Remove(modelName, out _);
+                    Logs.Debug($"[AudioLab] Removed model: {modelName}");
+                }
+                RegisteredAudioModels.Remove(modelName);
             }
         }
-        return enabled;
+
+        // Remove from Models list
+        if (Models.TryGetValue("Stable-Diffusion", out List<string> modelList) && definition != null)
+        {
+            foreach (AudioModelDefinition modelDef in definition.Models)
+            {
+                modelList.Remove($"Audio Models/{definition.ModelPrefix}/{modelDef.Id}");
+            }
+        }
+
+        // Remove provider metadata and feature flags
+        _providers.Remove(providerId);
+        RebuildFeatureFlags();
+        UpdateRemoteModels();
+
+        // Persist
+        InstalledEngines.Remove(providerId);
+        SaveInstalledEnginesConfig();
+
+        Program.ModelRefreshEvent?.Invoke();
+        Logs.Info($"[AudioLab] Engine '{providerName}' unregistered.");
     }
+
+    /// <summary>Returns the set of currently installed engine IDs.</summary>
+    public IReadOnlySet<string> GetInstalledEngineIds() => InstalledEngines;
+
+    /// <summary>Rebuilds the supported feature flags from currently active providers.</summary>
+    private void RebuildFeatureFlags()
+    {
+        _supportedFeatureSet.Clear();
+        foreach (AudioProviderMetadata meta in _providers.Values)
+        {
+            if (CategoryFlags.TryGetValue(meta.Definition.Category, out string categoryFlag))
+            {
+                _supportedFeatureSet.Add(categoryFlag);
+            }
+            foreach (string flag in meta.Definition.FeatureFlags)
+            {
+                _supportedFeatureSet.Add(flag);
+            }
+        }
+    }
+
+    // -- Installed engines config persistence --------------------------------
+
+    /// <summary>Loads the installed engines set from the JSON config file.</summary>
+    private void LoadInstalledEnginesConfig()
+    {
+        InstalledEngines.Clear();
+        try
+        {
+            if (File.Exists(InstalledEnginesConfigPath))
+            {
+                string json = File.ReadAllText(InstalledEnginesConfigPath);
+                JObject config = JObject.Parse(json);
+                JArray installed = config["installed"] as JArray;
+                if (installed != null)
+                {
+                    foreach (JToken token in installed)
+                    {
+                        string id = token.ToString();
+                        if (!string.IsNullOrEmpty(id))
+                        {
+                            InstalledEngines.Add(id);
+                        }
+                    }
+                }
+                Logs.Debug($"[AudioLab] Loaded {InstalledEngines.Count} installed engine(s) from config.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logs.Warning($"[AudioLab] Failed to load installed engines config: {ex.Message}");
+        }
+    }
+
+    /// <summary>Saves the installed engines set to the JSON config file.</summary>
+    private void SaveInstalledEnginesConfig()
+    {
+        try
+        {
+            JObject config = new()
+            {
+                ["installed"] = new JArray(InstalledEngines.OrderBy(id => id).ToArray())
+            };
+            Directory.CreateDirectory(Path.GetDirectoryName(InstalledEnginesConfigPath));
+            File.WriteAllText(InstalledEnginesConfigPath, config.ToString());
+            Logs.Debug($"[AudioLab] Saved {InstalledEngines.Count} installed engine(s) to config.");
+        }
+        catch (Exception ex)
+        {
+            Logs.Warning($"[AudioLab] Failed to save installed engines config: {ex.Message}");
+        }
+    }
+
+    // -- private helpers --------------------------------------------------
 
     /// <summary>Determines the provider ID from a model name by matching prefixes.</summary>
     private string GetProviderIdFromModel(string modelName)
@@ -957,9 +1036,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
         return args;
     }
 
-    // -- Sentence splitting + WAV helpers for streaming -------------------
+    // -- Chunk splitting + WAV helpers for streaming ----------------------
 
-    /// <summary>Common abbreviations that should not trigger sentence breaks.</summary>
+    /// <summary>Common abbreviations whose trailing period should NOT be treated as a sentence boundary.</summary>
     private static readonly HashSet<string> Abbreviations = new(StringComparer.OrdinalIgnoreCase)
     {
         "Mr", "Mrs", "Ms", "Dr", "Prof", "Sr", "Jr", "St", "vs", "etc",
@@ -967,46 +1046,90 @@ public class DynamicAudioBackend : AbstractT2IBackend
         "Gov", "No", "Sgt", "Vol"
     };
 
-    /// <summary>Splits text into sentences for streaming TTS.
-    /// Returns null if fewer than 2 sentences (caller should use normal path).</summary>
-    private static List<string> SplitIntoSentences(string text)
+    /// <summary>Check whether a word ends with clause/sentence punctuation (ignoring abbreviations).</summary>
+    private static bool EndsWithBreakPunctuation(string word)
     {
-        if (string.IsNullOrWhiteSpace(text)) return null;
-
-        // Replace abbreviation periods with placeholder to avoid false splits
-        string processed = text;
-        foreach (string abbr in Abbreviations)
+        if (string.IsNullOrEmpty(word)) return false;
+        char last = word[^1];
+        if (last == '!' || last == '?' || last == ';' || last == ':' || last == '\u2014') return true;
+        if (last == '.' || last == ',')
         {
-            processed = Regex.Replace(processed, $@"\b{Regex.Escape(abbr)}\.", $"{abbr}\x00");
+            // Check for abbreviation — strip trailing period and see if base is a known abbr
+            string baseName = word.TrimEnd('.', ',');
+            if (Abbreviations.Contains(baseName)) return false;
+            // Single-letter initials like "U." or "A." — not a break
+            if (baseName.Length == 1 && char.IsUpper(baseName[0])) return false;
+            return true;
         }
-        // Also handle U.S.-style abbreviations (single letters with periods)
-        processed = Regex.Replace(processed, @"\b([A-Z])\.([A-Z])\.", "$1\x00$2\x00");
+        return false;
+    }
 
-        // Split on sentence-ending punctuation followed by whitespace or end
-        string[] parts = Regex.Split(processed, @"(?<=[.!?])\s+");
+    /// <summary>Splits text into chunks of approximately <paramref name="wordsPerChunk"/> words,
+    /// snapping to the nearest punctuation boundary within ±2 words of the target.
+    /// Returns null if fewer than 2 chunks (caller should use the normal non-streaming path).</summary>
+    private static List<string> SplitIntoChunks(string text, int wordsPerChunk)
+    {
+        if (string.IsNullOrWhiteSpace(text) || wordsPerChunk < 1) return null;
 
-        // Restore abbreviation periods
-        List<string> sentences = [];
-        foreach (string part in parts)
+        string[] words = text.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length < 2) return null;
+
+        // Per-word mode: each word is its own chunk (no boundary snapping)
+        if (wordsPerChunk == 1)
         {
-            string restored = part.Replace("\x00", ".").Trim();
-            if (!string.IsNullOrWhiteSpace(restored))
+            List<string> perWord = new(words.Length);
+            foreach (string w in words) perWord.Add(w);
+            return perWord.Count >= 2 ? perWord : null;
+        }
+
+        List<string> chunks = [];
+        int pos = 0;
+
+        while (pos < words.Length)
+        {
+            int remaining = words.Length - pos;
+            // If the remainder fits in one chunk, take it all
+            if (remaining <= wordsPerChunk + 2)
             {
-                sentences.Add(restored);
+                chunks.Add(string.Join(' ', words, pos, remaining));
+                break;
+            }
+
+            int target = pos + wordsPerChunk; // ideal break index (exclusive)
+
+            // Look for the best punctuation boundary in [target-2 .. target+2]
+            int bestBreak = -1;
+            for (int probe = Math.Max(pos + 1, target - 2); probe <= Math.Min(words.Length - 1, target + 2); probe++)
+            {
+                // probe is inclusive — we'd take words[pos..probe]
+                if (EndsWithBreakPunctuation(words[probe]))
+                {
+                    bestBreak = probe + 1; // exclusive end
+                    break; // take the first (closest-to-target) punctuation hit
+                }
+            }
+
+            int end = bestBreak > 0 ? bestBreak : target; // fall back to exact count
+            end = Math.Min(end, words.Length);
+
+            chunks.Add(string.Join(' ', words, pos, end - pos));
+            pos = end;
+        }
+
+        // Merge a tiny trailing chunk into the previous one
+        int minTrailing = Math.Max(2, wordsPerChunk / 3);
+        if (chunks.Count >= 2)
+        {
+            string lastChunk = chunks[^1];
+            int lastWordCount = lastChunk.Split((char[])null, StringSplitOptions.RemoveEmptyEntries).Length;
+            if (lastWordCount < minTrailing)
+            {
+                chunks[^2] = chunks[^2] + " " + lastChunk;
+                chunks.RemoveAt(chunks.Count - 1);
             }
         }
 
-        // Merge short fragments (< 20 chars) with the previous sentence
-        for (int i = sentences.Count - 1; i > 0; i--)
-        {
-            if (sentences[i].Length < 20)
-            {
-                sentences[i - 1] = sentences[i - 1] + " " + sentences[i];
-                sentences.RemoveAt(i);
-            }
-        }
-
-        return sentences.Count >= 2 ? sentences : null;
+        return chunks.Count >= 2 ? chunks : null;
     }
 
     /// <summary>Reads WAV format info (sample rate, channels, bits per sample) from a WAV byte array.</summary>

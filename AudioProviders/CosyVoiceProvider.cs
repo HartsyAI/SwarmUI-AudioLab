@@ -33,6 +33,6 @@ public sealed class CosyVoiceProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "2-0.5b", Name = "CosyVoice2 0.5B", Description = "Streaming TTS with ultra-low latency, multilingual (~8GB VRAM)", EngineConfig = new() { ["model_name"] = "FunAudioLLM/CosyVoice2-0.5B" } }
+        new() { Id = "2-0.5b", Name = "CosyVoice2 0.5B", Description = "Streaming TTS with ultra-low latency, multilingual", SourceUrl = "https://huggingface.co/FunAudioLLM/CosyVoice2-0.5B", License = "Apache 2.0", EstimatedSize = "~2GB", EstimatedVram = "~8GB", EngineConfig = new() { ["model_name"] = "FunAudioLLM/CosyVoice2-0.5B" } }
     ];
 }

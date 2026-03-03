@@ -19,7 +19,7 @@ public static class AudioLabParams
 
     // ===== TTS shared (flag: audiolab_tts) =====
     public static T2IRegisteredParam<double> Volume;
-    public static T2IRegisteredParam<bool> StreamAudio;
+    public static T2IRegisteredParam<int> StreamChunkSize;
 
     // ===== TTS shared sampling (flag: tts_sampling) =====
     public static T2IRegisteredParam<double> Temperature;
@@ -157,9 +157,10 @@ public static class AudioLabParams
             Min: 0.1, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
             OrderPriority: -10, Group: TTSGroup, FeatureFlag: "audiolab_tts"));
 
-        StreamAudio = T2IParamTypes.Register<bool>(new("Stream Audio",
-            "Stream audio sentence-by-sentence as it generates.\nEach sentence plays immediately while the next generates.\nThe complete audio is saved as one file when done.",
-            "false", IgnoreIf: "false",
+        StreamChunkSize = T2IParamTypes.Register<int>(new("Stream Chunk Size",
+            "Words per audio chunk when streaming. 0 = Off (full text at once).\n1 = Per word, 10 = Short phrases, 25+ = Sentences.\nSmaller chunks = faster first audio but lower quality per chunk.\nEach chunk plays immediately while the next generates.",
+            "0", IgnoreIf: "0",
+            Min: 0, Max: 50, Step: 1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -9, Group: TTSGroup, FeatureFlag: "audiolab_tts"));
 
         // ========================== TTS Shared Sampling ==========================

@@ -31,10 +31,10 @@ public sealed class WhisperProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "tiny", Name = "Whisper Tiny", Description = "Fastest model, lowest accuracy (~1GB VRAM)", EngineConfig = new() { ["model_size"] = "tiny" } },
-        new() { Id = "base", Name = "Whisper Base", Description = "Good balance of speed and accuracy (~1GB VRAM)", EngineConfig = new() { ["model_size"] = "base" } },
-        new() { Id = "small", Name = "Whisper Small", Description = "Better accuracy, moderate speed (~2GB VRAM)", EngineConfig = new() { ["model_size"] = "small" } },
-        new() { Id = "medium", Name = "Whisper Medium", Description = "High accuracy, slower (~5GB VRAM)", EngineConfig = new() { ["model_size"] = "medium" } },
-        new() { Id = "large-v3", Name = "Whisper Large V3", Description = "Best accuracy, slowest (~10GB VRAM)", EngineConfig = new() { ["model_size"] = "large-v3" } }
+        new() { Id = "tiny", Name = "Whisper Tiny", Description = "Fastest model, lowest accuracy", SourceUrl = "https://huggingface.co/openai/whisper-tiny", License = "MIT", EstimatedSize = "~75MB", EstimatedVram = "~1GB", EngineConfig = new() { ["model_size"] = "tiny" } },
+        new() { Id = "base", Name = "Whisper Base", Description = "Good balance of speed and accuracy", SourceUrl = "https://huggingface.co/openai/whisper-base", License = "MIT", EstimatedSize = "~150MB", EstimatedVram = "~1GB", EngineConfig = new() { ["model_size"] = "base" } },
+        new() { Id = "small", Name = "Whisper Small", Description = "Better accuracy, moderate speed", SourceUrl = "https://huggingface.co/openai/whisper-small", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~2GB", EngineConfig = new() { ["model_size"] = "small" } },
+        new() { Id = "medium", Name = "Whisper Medium", Description = "High accuracy, slower", SourceUrl = "https://huggingface.co/openai/whisper-medium", License = "MIT", EstimatedSize = "~1.5GB", EstimatedVram = "~5GB", EngineConfig = new() { ["model_size"] = "medium" } },
+        new() { Id = "large-v3", Name = "Whisper Large V3", Description = "Best accuracy, slowest", SourceUrl = "https://huggingface.co/openai/whisper-large-v3", License = "MIT", EstimatedSize = "~3GB", EstimatedVram = "~10GB", EngineConfig = new() { ["model_size"] = "large-v3" } }
     ];
 }

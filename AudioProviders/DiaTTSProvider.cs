@@ -34,6 +34,6 @@ public sealed class DiaTTSProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "1.6b", Name = "Dia 1.6B", Description = "Ultra-realistic dialogue, 2 speakers in one pass, nonverbal sounds (~10GB VRAM)", EngineConfig = new() { ["model_name"] = "nari-labs/Dia-1.6B-0626" } }
+        new() { Id = "1.6b", Name = "Dia 1.6B", Description = "Ultra-realistic dialogue, 2 speakers in one pass, nonverbal sounds", SourceUrl = "https://huggingface.co/nari-labs/Dia-1.6B-0626", License = "Apache 2.0", EstimatedSize = "~3.5GB", EstimatedVram = "~10GB", EngineConfig = new() { ["model_name"] = "nari-labs/Dia-1.6B-0626" } }
     ];
 }

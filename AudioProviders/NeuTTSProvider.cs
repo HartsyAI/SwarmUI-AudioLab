@@ -31,6 +31,6 @@ public sealed class NeuTTSProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "air", Name = "NeuTTS Air", Description = "On-device TTS with instant voice cloning, 0.5B params (low VRAM / CPU)", EngineConfig = new() { ["model_name"] = "neuphonic/neutts-air" } }
+        new() { Id = "air", Name = "NeuTTS Air", Description = "On-device TTS with instant voice cloning, 0.5B params", SourceUrl = "https://huggingface.co/neuphonic/neutts-air", License = "Apache 2.0", EstimatedSize = "~1GB", EstimatedVram = "~2GB (or CPU)", EngineConfig = new() { ["model_name"] = "neuphonic/neutts-air" } }
     ];
 }

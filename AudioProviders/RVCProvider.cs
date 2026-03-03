@@ -35,6 +35,6 @@ public sealed class RVCProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "v2", Name = "RVC V2", Description = "Retrieval-based voice conversion with pre-trained index models (~4GB VRAM)", EngineConfig = new() { ["model_version"] = "v2" } }
+        new() { Id = "v2", Name = "RVC V2", Description = "Retrieval-based voice conversion with pre-trained index models", SourceUrl = "https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~4GB", EngineConfig = new() { ["model_version"] = "v2" } }
     ];
 }

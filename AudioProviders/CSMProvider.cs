@@ -34,6 +34,6 @@ public sealed class CSMProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "1b", Name = "CSM 1B", Description = "Conversational speech, multi-turn dialogue (~4.5GB VRAM on CUDA)", EngineConfig = new() { ["model_name"] = "sesame/csm-1b" } }
+        new() { Id = "1b", Name = "CSM 1B", Description = "Conversational speech, multi-turn dialogue", SourceUrl = "https://huggingface.co/sesame/csm-1b", License = "CC-BY-NC-4.0", EstimatedSize = "~2GB", EstimatedVram = "~4.5GB", EngineConfig = new() { ["model_name"] = "sesame/csm-1b" } }
     ];
 }

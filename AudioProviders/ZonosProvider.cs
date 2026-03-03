@@ -35,7 +35,7 @@ public sealed class ZonosProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "transformer", Name = "Zonos Transformer", Description = "Transformer-based, multilingual (EN/JP/CN/FR/DE) (~4GB VRAM)", EngineConfig = new() { ["model_name"] = "Zyphra/Zonos-v0.1-transformer" } },
-        new() { Id = "hybrid", Name = "Zonos Hybrid", Description = "Hybrid architecture, best quality with zero-shot cloning (~4GB VRAM)", EngineConfig = new() { ["model_name"] = "Zyphra/Zonos-v0.1-hybrid" } }
+        new() { Id = "transformer", Name = "Zonos Transformer", Description = "Transformer-based, multilingual (EN/JP/CN/FR/DE)", SourceUrl = "https://huggingface.co/Zyphra/Zonos-v0.1-transformer", License = "Apache 2.0", EstimatedSize = "~2GB", EstimatedVram = "~4GB", EngineConfig = new() { ["model_name"] = "Zyphra/Zonos-v0.1-transformer" } },
+        new() { Id = "hybrid", Name = "Zonos Hybrid", Description = "Hybrid architecture, best quality with zero-shot cloning", SourceUrl = "https://huggingface.co/Zyphra/Zonos-v0.1-hybrid", License = "Apache 2.0", EstimatedSize = "~2GB", EstimatedVram = "~4GB", EngineConfig = new() { ["model_name"] = "Zyphra/Zonos-v0.1-hybrid" } }
     ];
 }

@@ -33,7 +33,7 @@ public sealed class DistilWhisperProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "large-v3", Name = "Distil-Whisper Large V3", Description = "6x faster than Whisper large-v3, within 1% WER (~2GB VRAM)", EngineConfig = new() { ["model_name"] = "distil-whisper/distil-large-v3" } },
-        new() { Id = "large-v3.5", Name = "Distil-Whisper Large V3.5", Description = "Latest, trained on 98k hours, 1.5x faster than Turbo (~2GB VRAM)", EngineConfig = new() { ["model_name"] = "distil-whisper/distil-large-v3.5" } }
+        new() { Id = "large-v3", Name = "Distil-Whisper Large V3", Description = "6x faster than Whisper large-v3, within 1% WER", SourceUrl = "https://huggingface.co/distil-whisper/distil-large-v3", License = "MIT", EstimatedSize = "~1.5GB", EstimatedVram = "~2GB", EngineConfig = new() { ["model_name"] = "distil-whisper/distil-large-v3" } },
+        new() { Id = "large-v3.5", Name = "Distil-Whisper Large V3.5", Description = "Latest, trained on 98k hours, 1.5x faster than Turbo", SourceUrl = "https://huggingface.co/distil-whisper/distil-large-v3.5", License = "MIT", EstimatedSize = "~1.5GB", EstimatedVram = "~2GB", EngineConfig = new() { ["model_name"] = "distil-whisper/distil-large-v3.5" } }
     ];
 }

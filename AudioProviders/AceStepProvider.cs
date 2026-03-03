@@ -33,7 +33,7 @@ public sealed class AceStepProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "v1.5", Name = "ACE-Step v1.5", Description = "SOTA music generation, up to 4 min in 20s, lyrics alignment (~8GB VRAM)", EngineConfig = new() { ["model_version"] = "1.5" } },
-        new() { Id = "v1", Name = "ACE-Step v1", Description = "Original music generation model (~6GB VRAM)", EngineConfig = new() { ["model_version"] = "1.0" } }
+        new() { Id = "v1.5", Name = "ACE-Step v1.5", Description = "SOTA music generation, up to 4 min in 20s, lyrics alignment", SourceUrl = "https://github.com/ace-step/ACE-Step", License = "Apache 2.0", EstimatedSize = "~4GB", EstimatedVram = "~8GB", EngineConfig = new() { ["model_version"] = "1.5" } },
+        new() { Id = "v1", Name = "ACE-Step v1", Description = "Original music generation model", SourceUrl = "https://github.com/ace-step/ACE-Step", License = "Apache 2.0", EstimatedSize = "~3GB", EstimatedVram = "~6GB", EngineConfig = new() { ["model_version"] = "1.0" } }
     ];
 }

@@ -30,6 +30,6 @@ public sealed class PiperProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "default", Name = "Piper TTS", Description = "CPU-only ONNX runtime TTS with dozens of pre-trained voices" }
+        new() { Id = "default", Name = "Piper TTS", Description = "CPU-only ONNX runtime TTS with dozens of pre-trained voices", SourceUrl = "https://github.com/rhasspy/piper", License = "MIT", EstimatedSize = "~100MB", EstimatedVram = "CPU only" }
     ];
 }

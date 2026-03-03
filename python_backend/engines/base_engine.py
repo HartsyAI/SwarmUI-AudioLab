@@ -96,7 +96,24 @@ class BaseAudioEngine(ABC):
 
         logger.info("Downloading %s → %s ...", model_name, local_path)
         from huggingface_hub import snapshot_download
-        snapshot_download(repo_id=model_name, local_dir=local_path)
+        try:
+            snapshot_download(repo_id=model_name, local_dir=local_path)
+        except Exception as e:
+            err = str(e)
+            if "gated repo" in err.lower() or "401" in err:
+                has_token = bool(os.environ.get("HF_TOKEN"))
+                if has_token:
+                    raise RuntimeError(
+                        f"Model '{model_name}' is gated. Your HuggingFace token was sent but access was denied. "
+                        f"Go to https://huggingface.co/{model_name} and accept the model agreement, then try again."
+                    ) from e
+                raise RuntimeError(
+                    f"Model '{model_name}' is gated and requires authentication. "
+                    f"1) Go to https://huggingface.co/{model_name} and accept the model agreement. "
+                    f"2) Set your HuggingFace token in SwarmUI: Server tab > User Settings > API Keys. "
+                    f"Get a token at https://huggingface.co/settings/tokens (needs 'Read' permission)."
+                ) from e
+            raise
         logger.info("Download complete: %s", local_path)
         return local_path
 

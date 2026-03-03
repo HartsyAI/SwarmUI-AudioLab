@@ -32,8 +32,8 @@ public sealed class DemucsProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "htdemucs", Name = "HTDemucs", Description = "Hybrid Transformer Demucs — best quality 4-stem separation (~2GB VRAM)", EngineConfig = new() { ["model_name"] = "htdemucs" } },
-        new() { Id = "htdemucs_ft", Name = "HTDemucs Fine-tuned", Description = "Fine-tuned variant, highest quality separation (~2GB VRAM)", EngineConfig = new() { ["model_name"] = "htdemucs_ft" } },
-        new() { Id = "htdemucs_6s", Name = "HTDemucs 6-Stem", Description = "6-stem separation (vocals, drums, bass, guitar, piano, other)", EngineConfig = new() { ["model_name"] = "htdemucs_6s" } }
+        new() { Id = "htdemucs", Name = "HTDemucs", Description = "Hybrid Transformer Demucs — best quality 4-stem separation", SourceUrl = "https://github.com/facebookresearch/demucs", License = "MIT", EstimatedSize = "~80MB", EstimatedVram = "~2GB", EngineConfig = new() { ["model_name"] = "htdemucs" } },
+        new() { Id = "htdemucs_ft", Name = "HTDemucs Fine-tuned", Description = "Fine-tuned variant, highest quality separation", SourceUrl = "https://github.com/facebookresearch/demucs", License = "MIT", EstimatedSize = "~80MB", EstimatedVram = "~2GB", EngineConfig = new() { ["model_name"] = "htdemucs_ft" } },
+        new() { Id = "htdemucs_6s", Name = "HTDemucs 6-Stem", Description = "6-stem separation (vocals, drums, bass, guitar, piano, other)", SourceUrl = "https://github.com/facebookresearch/demucs", License = "MIT", EstimatedSize = "~80MB", EstimatedVram = "~2GB", EngineConfig = new() { ["model_name"] = "htdemucs_6s" } }
     ];
 }

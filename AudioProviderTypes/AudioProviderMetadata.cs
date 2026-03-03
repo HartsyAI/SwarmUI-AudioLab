@@ -6,7 +6,7 @@ public class AudioProviderMetadata
     /// <summary>The provider definition this metadata is for.</summary>
     public required AudioProviderDefinition Definition { get; init; }
 
-    /// <summary>Whether this provider is currently enabled in the backend settings.</summary>
+    /// <summary>Whether this provider is currently installed and active.</summary>
     public bool IsEnabled { get; set; }
 
     /// <summary>Whether all dependencies for this provider are installed.</summary>

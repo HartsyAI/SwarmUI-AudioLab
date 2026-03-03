@@ -47,9 +47,9 @@ public sealed class MusicGenProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "small", Name = "MusicGen Small", Description = "300M params, fast generation (~4GB VRAM)", EngineConfig = new() { ["model_name"] = "facebook/musicgen-small" } },
-        new() { Id = "medium", Name = "MusicGen Medium", Description = "1.5B params, better quality (~6GB VRAM)", EngineConfig = new() { ["model_name"] = "facebook/musicgen-medium" } },
-        new() { Id = "large", Name = "MusicGen Large", Description = "3.3B params, best quality (~10GB VRAM)", EngineConfig = new() { ["model_name"] = "facebook/musicgen-large" } },
-        new() { Id = "melody", Name = "MusicGen Melody", Description = "1.5B params with melody conditioning input (~6GB VRAM)", EngineConfig = new() { ["model_name"] = "facebook/musicgen-melody" } }
+        new() { Id = "small", Name = "MusicGen Small", Description = "300M params, fast generation", SourceUrl = "https://huggingface.co/facebook/musicgen-small", License = "CC-BY-NC-4.0", EstimatedSize = "~1.2GB", EstimatedVram = "~4GB", EngineConfig = new() { ["model_name"] = "facebook/musicgen-small" } },
+        new() { Id = "medium", Name = "MusicGen Medium", Description = "1.5B params, better quality", SourceUrl = "https://huggingface.co/facebook/musicgen-medium", License = "CC-BY-NC-4.0", EstimatedSize = "~3.3GB", EstimatedVram = "~6GB", EngineConfig = new() { ["model_name"] = "facebook/musicgen-medium" } },
+        new() { Id = "large", Name = "MusicGen Large", Description = "3.3B params, best quality", SourceUrl = "https://huggingface.co/facebook/musicgen-large", License = "CC-BY-NC-4.0", EstimatedSize = "~7GB", EstimatedVram = "~10GB", EngineConfig = new() { ["model_name"] = "facebook/musicgen-large" } },
+        new() { Id = "melody", Name = "MusicGen Melody", Description = "1.5B params with melody conditioning input", SourceUrl = "https://huggingface.co/facebook/musicgen-melody", License = "CC-BY-NC-4.0", EstimatedSize = "~3.3GB", EstimatedVram = "~6GB", EngineConfig = new() { ["model_name"] = "facebook/musicgen-melody" } }
     ];
 }

@@ -31,6 +31,6 @@ public sealed class OpenVoiceProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "v2", Name = "OpenVoice V2", Description = "Zero-shot voice cloning with tone/style transfer (~2GB VRAM)", EngineConfig = new() { ["model_version"] = "v2" } }
+        new() { Id = "v2", Name = "OpenVoice V2", Description = "Zero-shot voice cloning with tone/style transfer", SourceUrl = "https://github.com/myshell-ai/OpenVoice", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~2GB", EngineConfig = new() { ["model_version"] = "v2" } }
     ];
 }

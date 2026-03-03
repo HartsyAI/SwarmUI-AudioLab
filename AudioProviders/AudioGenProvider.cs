@@ -47,6 +47,6 @@ public sealed class AudioGenProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "medium", Name = "AudioGen Medium", Description = "Text-to-sound-effects, 1.5B params (~4GB VRAM)", EngineConfig = new() { ["model_name"] = "facebook/audiogen-medium" } }
+        new() { Id = "medium", Name = "AudioGen Medium", Description = "Text-to-sound-effects, 1.5B params", SourceUrl = "https://huggingface.co/facebook/audiogen-medium", License = "CC-BY-NC-4.0", EstimatedSize = "~3.3GB", EstimatedVram = "~4GB", EngineConfig = new() { ["model_name"] = "facebook/audiogen-medium" } }
     ];
 }

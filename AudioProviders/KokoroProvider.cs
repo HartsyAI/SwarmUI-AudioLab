@@ -43,6 +43,6 @@ public sealed class KokoroProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "default", Name = "Kokoro Default", Description = "82M param model, 96x real-time on GPU, CPU-capable (~1GB VRAM or CPU)" }
+        new() { Id = "default", Name = "Kokoro Default", Description = "82M param model, 96x real-time on GPU, CPU-capable", SourceUrl = "https://huggingface.co/hexgrad/Kokoro-82M", License = "Apache 2.0", EstimatedSize = "~200MB", EstimatedVram = "~1GB (or CPU)" }
     ];
 }
