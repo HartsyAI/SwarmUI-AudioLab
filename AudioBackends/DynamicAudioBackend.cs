@@ -991,12 +991,48 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "acestep_music":
+                // Core DiT params (acestep_music_params)
                 args["lyrics"] = input.TryGet(AudioLabParams.Lyrics, out string ly) ? ly : "[Instrumental]";
                 args["seed"] = input.TryGet(AudioLabParams.AudioSeed, out int aceSeed) ? aceSeed : -1;
-                args["infer_step"] = input.TryGet(AudioLabParams.InferStep, out int infStep) ? infStep : 60;
-                args["guidance_scale"] = input.TryGet(AudioLabParams.ACEGuidanceScale, out double aceGuide) ? aceGuide : 15.0;
-                args["scheduler_type"] = input.TryGet(AudioLabParams.SchedulerType, out string sched) ? sched : "euler";
-                args["cfg_type"] = input.TryGet(AudioLabParams.CFGType, out string cfgType) ? cfgType : "apg";
+                args["infer_step"] = input.TryGet(AudioLabParams.InferStep, out int infStep) ? infStep : 8;
+                args["guidance_scale"] = input.TryGet(AudioLabParams.ACEGuidanceScale, out double aceGuide) ? aceGuide : 7.0;
+                args["instrumental"] = input.TryGet(AudioLabParams.Instrumental, out string aceInst) ? aceInst : "false";
+                args["bpm"] = input.TryGet(AudioLabParams.BPM, out int aceBpm) ? aceBpm : 120;
+                if (input.TryGet(AudioLabParams.KeyScale, out string aceKey) && !string.IsNullOrEmpty(aceKey))
+                    args["key_scale"] = aceKey;
+                args["time_signature"] = input.TryGet(AudioLabParams.TimeSignature, out string aceTs) ? aceTs : "4";
+                args["vocal_language"] = input.TryGet(AudioLabParams.VocalLanguage, out string aceVl) ? aceVl : "en";
+                args["shift"] = input.TryGet(AudioLabParams.ACEShift, out double aceShift) ? aceShift : 3.0;
+                args["infer_method"] = input.TryGet(AudioLabParams.InferMethod, out string aceIm) ? aceIm : "ode";
+                args["use_adg"] = input.TryGet(AudioLabParams.UseADG, out string aceAdg) ? aceAdg : "false";
+                args["cfg_interval_start"] = input.TryGet(AudioLabParams.CFGIntervalStart, out double aceCfgS) ? aceCfgS : 0.0;
+                args["cfg_interval_end"] = input.TryGet(AudioLabParams.CFGIntervalEnd, out double aceCfgE) ? aceCfgE : 1.0;
+                args["enable_normalization"] = input.TryGet(AudioLabParams.EnableNormalization, out string aceNorm) ? aceNorm : "true";
+                args["normalization_db"] = input.TryGet(AudioLabParams.NormalizationDB, out double aceNormDb) ? aceNormDb : -14.0;
+                // LM planner params (acestep_lm_params) — TODO: integrate with SwarmUI AbstractLLMBackend
+                args["lm_model"] = input.TryGet(AudioLabParams.ACELMModel, out string aceLm) ? aceLm : "none";
+                args["thinking"] = input.TryGet(AudioLabParams.Thinking, out string aceThink) ? aceThink : "true";
+                args["lm_temperature"] = input.TryGet(AudioLabParams.LMTemperature, out double aceLmTemp) ? aceLmTemp : 0.85;
+                args["lm_cfg_scale"] = input.TryGet(AudioLabParams.LMCFGScale, out double aceLmCfg) ? aceLmCfg : 2.0;
+                args["lm_top_k"] = input.TryGet(AudioLabParams.LMTopK, out int aceLmTopK) ? aceLmTopK : 0;
+                args["lm_top_p"] = input.TryGet(AudioLabParams.LMTopP, out double aceLmTopP) ? aceLmTopP : 0.9;
+                if (input.TryGet(AudioLabParams.LMNegativePrompt, out string aceLmNeg) && !string.IsNullOrEmpty(aceLmNeg))
+                    args["lm_negative_prompt"] = aceLmNeg;
+                args["use_cot_metas"] = input.TryGet(AudioLabParams.UseCotMetas, out string aceCotM) ? aceCotM : "true";
+                args["use_cot_caption"] = input.TryGet(AudioLabParams.UseCotCaption, out string aceCotC) ? aceCotC : "true";
+                args["use_cot_language"] = input.TryGet(AudioLabParams.UseCotLanguage, out string aceCotL) ? aceCotL : "true";
+                // Task params (acestep_task_params)
+                args["task_type"] = input.TryGet(AudioLabParams.ACETaskType, out string aceTask) ? aceTask : "text2music";
+                string aceSrcAudio = GetBase64Audio(input, AudioLabParams.ACESourceAudio);
+                if (!string.IsNullOrEmpty(aceSrcAudio))
+                    args["src_audio"] = aceSrcAudio;
+                string aceRefAudio = GetBase64Audio(input, AudioLabParams.ACEReferenceAudio);
+                if (!string.IsNullOrEmpty(aceRefAudio))
+                    args["reference_audio"] = aceRefAudio;
+                args["repaint_start"] = input.TryGet(AudioLabParams.RepaintStart, out double aceRpS) ? aceRpS : 0.0;
+                args["repaint_end"] = input.TryGet(AudioLabParams.RepaintEnd, out double aceRpE) ? aceRpE : -1.0;
+                args["cover_strength"] = input.TryGet(AudioLabParams.CoverStrength, out double aceCovStr) ? aceCovStr : 1.0;
+                args["cover_noise_strength"] = input.TryGet(AudioLabParams.CoverNoiseStrength, out double aceCovNs) ? aceCovNs : 0.0;
                 break;
 
             case "musicgen_music":

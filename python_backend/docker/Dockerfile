@@ -4,7 +4,7 @@
 # Build:  docker build -t audiolab-linux -f python_backend/docker/Dockerfile .
 # Run:    docker compose -f python_backend/docker/docker-compose.yml up -d
 
-FROM nvidia/cuda:12.6.0-devel-ubuntu22.04
+FROM nvidia/cuda:12.8.0-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -28,8 +28,8 @@ COPY python_backend/ /app/
 
 # Install base Python dependencies (torch with CUDA)
 RUN pip install --no-cache-dir \
-    torch==2.6.0+cu126 torchaudio==2.6.0+cu126 \
-    --extra-index-url https://download.pytorch.org/whl/cu126
+    torch==2.7.1+cu128 torchaudio==2.7.1+cu128 \
+    --extra-index-url https://download.pytorch.org/whl/cu128
 
 # Install common dependencies
 RUN pip install --no-cache-dir \
@@ -37,9 +37,8 @@ RUN pip install --no-cache-dir \
     accelerate scipy librosa
 
 # Install Linux-only engine dependencies
-# ACE-Step (requires triton which only builds on Linux)
-RUN pip install --no-cache-dir triton && \
-    pip install --no-cache-dir git+https://github.com/ace-step/ACE-Step.git || true
+# ACE-Step 1.5
+RUN pip install --no-cache-dir ace-step || true
 
 # Resemble-Enhance (requires deepspeed which only builds on Linux)
 RUN pip install --no-cache-dir deepspeed && \
