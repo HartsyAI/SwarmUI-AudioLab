@@ -84,10 +84,20 @@ class MusicGenEngine(BaseAudioEngine):
                 wav = self.model.generate([prompt])
 
             # wav shape: [batch, channels, samples]
-            audio_numpy = wav[0, 0].cpu().numpy().astype(np.float32)
-
-            audio_b64 = self.audio_to_base64(audio_numpy, self.sample_rate)
-            actual_duration = len(audio_numpy) / self.sample_rate
+            num_channels = wav.shape[1]
+            if num_channels >= 2:
+                # Stereo: interleave L/R channels for WAV format
+                left = wav[0, 0].cpu().numpy().astype(np.float32)
+                right = wav[0, 1].cpu().numpy().astype(np.float32)
+                audio_numpy = np.stack([left, right], axis=0)  # [2, samples]
+                audio_b64 = self.audio_to_base64(
+                    audio_numpy.T.flatten(), self.sample_rate, num_channels=2
+                )
+                actual_duration = len(left) / self.sample_rate
+            else:
+                audio_numpy = wav[0, 0].cpu().numpy().astype(np.float32)
+                audio_b64 = self.audio_to_base64(audio_numpy, self.sample_rate)
+                actual_duration = len(audio_numpy) / self.sample_rate
 
             return {
                 "success": True,

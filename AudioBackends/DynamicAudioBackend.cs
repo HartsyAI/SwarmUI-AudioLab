@@ -889,6 +889,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 // Shared AudioCraft sampling (audiocraft_sampling flag)
                 if (input.TryGet(AudioLabParams.GuidanceScale, out double musicGuidance))
                     args["cfg_coef"] = musicGuidance;
+                if (input.TryGet(AudioLabParams.AudioCraftTemperature, out double musicTemp))
+                    args["temperature"] = musicTemp;
+                if (input.TryGet(AudioLabParams.AudioCraftTopK, out int musicTopK))
+                    args["top_k"] = musicTopK;
+                if (input.TryGet(AudioLabParams.AudioCraftTopP, out double musicTopP))
+                    args["top_p"] = musicTopP;
                 break;
 
             case AudioCategory.VoiceClone:
@@ -906,6 +912,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 // Shared AudioCraft sampling (audiocraft_sampling flag)
                 if (input.TryGet(AudioLabParams.GuidanceScale, out double sfxGuidance))
                     args["cfg_coef"] = sfxGuidance;
+                if (input.TryGet(AudioLabParams.AudioCraftTemperature, out double sfxTemp))
+                    args["temperature"] = sfxTemp;
+                if (input.TryGet(AudioLabParams.AudioCraftTopK, out int sfxTopK))
+                    args["top_k"] = sfxTopK;
+                if (input.TryGet(AudioLabParams.AudioCraftTopP, out double sfxTopP))
+                    args["top_p"] = sfxTopP;
                 break;
 
             default:
@@ -1039,6 +1051,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 string melodyRef = GetBase64Audio(input, AudioLabParams.MelodyAudio);
                 if (!string.IsNullOrEmpty(melodyRef))
                     args["reference_audio"] = melodyRef;
+                break;
+
+            case "whisper_stt":
+                args["task"] = input.TryGet(AudioLabParams.WhisperTask, out string whisperTask) ? whisperTask : "transcribe";
                 break;
 
             case "rvc_clone":

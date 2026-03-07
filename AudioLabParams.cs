@@ -83,11 +83,17 @@ public static class AudioLabParams
     public static T2IRegisteredParam<AudioFile> AudioInput;
     public static T2IRegisteredParam<string> Language;
 
+    // ===== STT — Whisper (flag: whisper_stt_params) =====
+    public static T2IRegisteredParam<string> WhisperTask;
+
     // ===== Music shared (flag: audiolab_music) =====
     public static T2IRegisteredParam<double> Duration;
 
     // ===== Music — AudioCraft shared (flag: audiocraft_sampling) =====
     public static T2IRegisteredParam<double> GuidanceScale;
+    public static T2IRegisteredParam<double> AudioCraftTemperature;
+    public static T2IRegisteredParam<int> AudioCraftTopK;
+    public static T2IRegisteredParam<double> AudioCraftTopP;
 
     // ===== Music — ACE-Step core (flag: acestep_music_params) =====
     public static T2IRegisteredParam<string> Lyrics;
@@ -438,6 +444,13 @@ public static class AudioLabParams
             ],
             OrderPriority: -9, Group: STTGroup, FeatureFlag: "audiolab_stt"));
 
+        // STT — Whisper
+        WhisperTask = T2IParamTypes.Register<string>(new("Whisper Task",
+            "Whisper task type.\nTranscribe = speech-to-text in original language.\nTranslate = speech-to-English translation.",
+            "transcribe",
+            GetValues: _ => ["transcribe///Transcribe", "translate///Translate to English"],
+            OrderPriority: -8, Group: STTGroup, FeatureFlag: "whisper_stt_params"));
+
         // ========================== Music ==========================
         Duration = T2IParamTypes.Register<double>(new("Duration",
             "Duration of generated music in seconds.\nLonger durations need more time and VRAM.",
@@ -451,6 +464,24 @@ public static class AudioLabParams
             "3.0",
             Min: 0.0, Max: 10.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
             OrderPriority: -8, Group: MusicGroup, FeatureFlag: "audiocraft_sampling"));
+
+        AudioCraftTemperature = T2IParamTypes.Register<double>(new("AudioCraft Temperature",
+            "Sampling temperature for audio generation.\nHigher = more varied/creative. Lower = more predictable.",
+            "1.0",
+            Min: 0.0, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -7, Group: MusicGroup, FeatureFlag: "audiocraft_sampling"));
+
+        AudioCraftTopK = T2IParamTypes.Register<int>(new("AudioCraft Top K",
+            "Top-K token sampling for audio generation.\nLimits sampling to the K most likely tokens. 250 is the AudioCraft default.",
+            "250",
+            Min: 0, Max: 1000, Step: 10, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -6, Group: MusicGroup, FeatureFlag: "audiocraft_sampling"));
+
+        AudioCraftTopP = T2IParamTypes.Register<double>(new("AudioCraft Top P",
+            "Nucleus sampling for audio generation.\n0.0 = disabled (use Top K instead). Values > 0 enable nucleus sampling.",
+            "0.0",
+            Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -5, Group: MusicGroup, FeatureFlag: "audiocraft_sampling"));
 
         // Music — ACE-Step core (acestep_music_params)
         Lyrics = T2IParamTypes.Register<string>(new("Lyrics",

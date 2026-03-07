@@ -46,6 +46,7 @@ class WhisperEngine(BaseAudioEngine):
         audio_data = kwargs.get("audio_data", "")
         language = kwargs.get("language", "en-US")
         model_name = kwargs.get("model_name", "base")
+        task = kwargs.get("task", "transcribe")
 
         if not audio_data:
             return {"success": False, "error": "No audio data provided"}
@@ -59,15 +60,29 @@ class WhisperEngine(BaseAudioEngine):
         try:
             self._ensure_loaded(model_name)
             lang_code = language.split("-")[0] if "-" in language else language
-            result = self.model.transcribe(temp_path, language=lang_code)
+            # Pass language=None for auto-detection
+            transcribe_kwargs = {"task": task}
+            if lang_code and lang_code != "auto":
+                transcribe_kwargs["language"] = lang_code
+            result = self.model.transcribe(temp_path, **transcribe_kwargs)
+            # Compute confidence from segment log probabilities
+            segments = result.get("segments", [])
+            if segments:
+                import math
+                avg_logprob = sum(s.get("avg_logprob", -1.0) for s in segments) / len(segments)
+                confidence = round(min(1.0, max(0.0, math.exp(avg_logprob))), 4)
+            else:
+                confidence = 0.0
+            detected_lang = result.get("language", lang_code)
             return {
                 "success": True,
                 "text": result["text"],
-                "confidence": 0.9,
+                "confidence": confidence,
                 "metadata": {
                     "engine": "whisper",
                     "model": model_name,
-                    "language": lang_code,
+                    "language": detected_lang,
+                    "task": task,
                 },
             }
         except Exception as e:

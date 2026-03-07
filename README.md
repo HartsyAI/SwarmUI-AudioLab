@@ -59,7 +59,7 @@ A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeypr
 
 | Engine | Notes |
 | --- | --- |
-| Whisper | OpenAI Whisper, highest accuracy, multi-language |
+| Whisper | OpenAI Whisper, 7 model sizes (tiny through turbo), transcribe + translate tasks, multi-language |
 | Distil-Whisper | Faster distilled variant |
 | Moonshine | Lightweight alternative |
 | RealtimeSTT | Real-time transcription (requires Docker on Windows) |
@@ -69,7 +69,7 @@ A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeypr
 | Engine | Notes |
 | --- | --- |
 | ACE-Step 1.5 | 6 DiT model variants (turbo/sft/base), 6 task types (text2music, cover, repaint, extract, lego, complete), lyrics alignment, 50 languages, optional LM planner, native Windows + Docker |
-| MusicGen | Text-to-music with optional melody conditioning |
+| MusicGen | 10 model variants (mono/stereo/melody), text-to-music with optional melody conditioning, sampling controls |
 
 ### Voice Cloning
 
