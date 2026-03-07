@@ -10,7 +10,7 @@ namespace Hartsy.Extensions.AudioLab.AudioModels;
 public static class AudioModelFactory
 {
     private static readonly Dictionary<string, T2IModelClass> _modelClasses = [];
-    private const string ExtensionRoot = "src/Extensions/SwarmUI-VoiceAssistant";
+    private const string ExtensionRoot = "src/Extensions/SwarmUI-AudioLab";
 
     /// <summary>Creates a T2IModel from an AudioModelDefinition and AudioProviderDefinition.</summary>
     public static T2IModel Create(AudioModelDefinition model, AudioProviderDefinition provider)

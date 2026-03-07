@@ -25,7 +25,7 @@ public class AudioLab : Extension
         {
             // Set extension directory for Python path resolution
             string projectRoot = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", ".."));
-            AudioConfiguration.ExtensionDirectory = Path.GetFullPath(Path.Combine(projectRoot, "Extensions", "SwarmUI-VoiceAssistant"));
+            AudioConfiguration.ExtensionDirectory = Path.GetFullPath(Path.Combine(projectRoot, "Extensions", "SwarmUI-AudioLab"));
             Logs.Info($"[AudioLab] Extension directory: {AudioConfiguration.ExtensionDirectory}");
 
             // Ensure centralized model storage directories exist

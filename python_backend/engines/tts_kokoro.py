@@ -42,7 +42,7 @@ class KokoroEngine(BaseAudioEngine):
             return True
         except Exception as e:
             logger.error("Kokoro init failed: %s", e)
-            return False
+            raise RuntimeError(f"Kokoro init failed: {e}") from e
 
     def process(self, **kwargs) -> dict:
         text = kwargs.get("text", "")

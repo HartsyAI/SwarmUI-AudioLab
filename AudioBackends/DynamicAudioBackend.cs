@@ -990,16 +990,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
             case "cosyvoice_tts":
                 if (input.TryGet(AudioLabParams.CosyVoiceVoice, out string cvv))
                     args["voice"] = cvv;
-                string cosyRef = GetBase64Audio(input, AudioLabParams.CosyVoiceReferenceAudio);
-                if (!string.IsNullOrEmpty(cosyRef))
-                    args["reference_audio"] = cosyRef;
-                if (input.TryGet(AudioLabParams.CosyVoiceReferenceText, out string cvrt) && !string.IsNullOrEmpty(cvrt))
-                    args["reference_text"] = cvrt;
-                break;
-
-            case "neutts_tts":
-                args["reference_audio"] = GetBase64Audio(input, AudioLabParams.NeuTTSReferenceAudio);
-                args["reference_text"] = input.TryGet(AudioLabParams.NeuTTSReferenceText, out string nrt) ? nrt : "";
                 break;
 
             case "acestep_music":

@@ -31,11 +31,13 @@ public sealed class KokoroProvider : IAudioProviderSource
         new() { Name = "kokoro", InstallName = "kokoro", ImportName = "kokoro", Category = "tts", CustomInstallArgs = "--no-deps" },
         // Explicit kokoro runtime dependencies
         new() { Name = "misaki", InstallName = "misaki", ImportName = "misaki", Category = "tts", CustomInstallArgs = "--no-deps" },
+        new() { Name = "addict", InstallName = "addict", ImportName = "addict", Category = "tts" },
         new() { Name = "regex", InstallName = "regex", ImportName = "regex", Category = "tts" },
         new() { Name = "loguru", InstallName = "loguru", ImportName = "loguru", Category = "tts" },
         new() { Name = "scipy", InstallName = "scipy", ImportName = "scipy", Category = "tts" },
         new() { Name = "num2words", InstallName = "num2words", ImportName = "num2words", Category = "tts" },
         new() { Name = "phonemizer", InstallName = "phonemizer", ImportName = "phonemizer", Category = "tts" },
+        new() { Name = "espeakng-loader", InstallName = "espeakng-loader", ImportName = "espeakng_loader", Category = "tts" },
         new() { Name = "spacy", InstallName = "spacy", ImportName = "spacy", Category = "tts" },
         new() { Name = "transformers>=4.40.0", InstallName = "transformers>=4.40.0", ImportName = "transformers", Category = "tts" },
         new() { Name = "huggingface_hub", InstallName = "huggingface_hub", ImportName = "huggingface_hub", Category = "tts" }

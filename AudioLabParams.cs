@@ -72,12 +72,6 @@ public static class AudioLabParams
 
     // ===== TTS — CosyVoice (flag: cosyvoice_tts_params) =====
     public static T2IRegisteredParam<string> CosyVoiceVoice;
-    public static T2IRegisteredParam<AudioFile> CosyVoiceReferenceAudio;
-    public static T2IRegisteredParam<string> CosyVoiceReferenceText;
-
-    // ===== TTS — NeuTTS (flag: neutts_tts_params) =====
-    public static T2IRegisteredParam<AudioFile> NeuTTSReferenceAudio;
-    public static T2IRegisteredParam<string> NeuTTSReferenceText;
 
     // ===== STT shared (flag: audiolab_stt) =====
     public static T2IRegisteredParam<AudioFile> AudioInput;
@@ -405,27 +399,6 @@ public static class AudioLabParams
             ],
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "cosyvoice_tts_params"));
 
-        CosyVoiceReferenceAudio = T2IParamTypes.Register<AudioFile>(new("CosyVoice Reference Audio",
-            "Reference audio for zero-shot voice cloning.\nOverrides the built-in voice when provided.",
-            null,
-            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "cosyvoice_tts_params"));
-
-        CosyVoiceReferenceText = T2IParamTypes.Register<string>(new("CosyVoice Reference Text",
-            "Transcript of the reference audio.\nImproves quality for zero-shot cloning.",
-            "",
-            OrderPriority: -3, Group: TTSGroup, FeatureFlag: "cosyvoice_tts_params"));
-
-        // ========================== TTS — NeuTTS ==========================
-        NeuTTSReferenceAudio = T2IParamTypes.Register<AudioFile>(new("NeuTTS Reference Audio",
-            "Reference audio for instant voice cloning.\nRequired — the generated speech will match this voice.",
-            null,
-            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "neutts_tts_params"));
-
-        NeuTTSReferenceText = T2IParamTypes.Register<string>(new("NeuTTS Reference Text",
-            "Transcript of the reference audio.\nRequired for accurate voice cloning.",
-            "",
-            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "neutts_tts_params"));
-
         // ========================== STT ==========================
         AudioInput = T2IParamTypes.Register<AudioFile>(new("Audio Input",
             "Audio file to transcribe.\nSupports WAV, MP3, and other common formats.",
@@ -686,12 +659,12 @@ public static class AudioLabParams
             ],
             OrderPriority: -10, Group: MusicGroup, FeatureFlag: "acestep_task_params"));
 
-        ACESourceAudio = T2IParamTypes.Register<AudioFile>(new("Source Audio",
+        ACESourceAudio = T2IParamTypes.Register<AudioFile>(new("ACE Source Audio",
             "Source audio for cover, repaint, extract, lego, and complete tasks.\nRequired for all tasks except text2music.",
             null,
             OrderPriority: -9, Group: MusicGroup, FeatureFlag: "acestep_task_params"));
 
-        ACEReferenceAudio = T2IParamTypes.Register<AudioFile>(new("Reference Audio",
+        ACEReferenceAudio = T2IParamTypes.Register<AudioFile>(new("Style Reference Audio",
             "Optional style/timbre reference audio.\nThe generated music will match the style of this reference.",
             null,
             OrderPriority: -8, Group: MusicGroup, FeatureFlag: "acestep_task_params"));
