@@ -48,6 +48,7 @@ public class AudioLab : Extension
             ScriptFiles.Add("Assets/audio-player.js");
             ScriptFiles.Add("Assets/audio-api.js");
             ScriptFiles.Add("Assets/audio-core.js");
+            ScriptFiles.Add("Assets/audio-editor.js");
             ScriptFiles.Add("Assets/audio-integration.js");
             StyleSheetFiles.Add("Assets/audio-lab.css");
         }

@@ -36,7 +36,7 @@ public sealed class KokoroProvider : IAudioProviderSource
         new() { Name = "loguru", InstallName = "loguru", ImportName = "loguru", Category = "tts" },
         new() { Name = "scipy", InstallName = "scipy", ImportName = "scipy", Category = "tts" },
         new() { Name = "num2words", InstallName = "num2words", ImportName = "num2words", Category = "tts" },
-        new() { Name = "phonemizer", InstallName = "phonemizer", ImportName = "phonemizer", Category = "tts" },
+        new() { Name = "phonemizer-fork", InstallName = "phonemizer-fork", ImportName = "phonemizer", Category = "tts" },
         new() { Name = "espeakng-loader", InstallName = "espeakng-loader", ImportName = "espeakng_loader", Category = "tts" },
         new() { Name = "spacy", InstallName = "spacy", ImportName = "spacy", Category = "tts" },
         new() { Name = "transformers>=4.40.0", InstallName = "transformers>=4.40.0", ImportName = "transformers", Category = "tts" },

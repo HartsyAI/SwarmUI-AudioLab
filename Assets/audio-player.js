@@ -117,15 +117,15 @@ const AudioLabPlayer = (() => {
 
     function buildControlsHTML(opts) {
         const parts = [];
-        // Play/pause button
-        parts.push('<button class="alp-btn alp-play" title="Play/Pause"><i class="fas fa-play"></i></button>');
-        parts.push('<button class="alp-btn alp-stop" title="Stop"><i class="fas fa-stop"></i></button>');
+        // Play/pause button (Unicode: ▶ play, ⏸ pause, ■ stop)
+        parts.push('<button class="alp-btn alp-play" title="Play/Pause"><span>&#x25B6;</span></button>');
+        parts.push('<button class="alp-btn alp-stop" title="Stop"><span>&#x25A0;</span></button>');
         // Time display
         parts.push('<span class="alp-time"><span class="alp-current">0:00</span> / <span class="alp-duration">0:00</span></span>');
         // Volume
         if (opts.showVolume) {
             parts.push('<div class="alp-volume-group">');
-            parts.push('<button class="alp-btn alp-mute" title="Mute"><i class="fas fa-volume-up"></i></button>');
+            parts.push('<button class="alp-btn alp-mute" title="Mute"><span>&#x266B;</span></button>');
             parts.push('<input type="range" class="alp-volume" min="0" max="1" step="0.05" value="0.8">');
             parts.push('</div>');
         }
@@ -143,13 +143,13 @@ const AudioLabPlayer = (() => {
         // Editing controls (when regions enabled)
         if (opts.enableRegions) {
             parts.push('<span class="alp-separator"></span>');
-            parts.push('<button class="alp-btn alp-select-region" title="Select region for trim"><i class="fas fa-crop-alt"></i></button>');
-            parts.push('<button class="alp-btn alp-trim" title="Trim to selection" disabled><i class="fas fa-cut"></i></button>');
-            parts.push('<button class="alp-btn alp-split" title="Split at cursor"><i class="fas fa-columns"></i></button>');
+            parts.push('<button class="alp-btn alp-select-region" title="Select region for trim"><span>&#x2194;</span></button>');
+            parts.push('<button class="alp-btn alp-trim" title="Trim to selection" disabled><span>&#x2702;</span></button>');
+            parts.push('<button class="alp-btn alp-split" title="Split at cursor"><span>&#x2502;&#x2502;</span></button>');
         }
         // Download
         if (opts.showDownload) {
-            parts.push('<button class="alp-btn alp-download" title="Download"><i class="fas fa-download"></i></button>');
+            parts.push('<button class="alp-btn alp-download" title="Download"><span>&#x2913;</span></button>');
         }
         return parts.join('');
     }
@@ -175,14 +175,14 @@ const AudioLabPlayer = (() => {
             muteBtn.addEventListener('click', () => {
                 const muted = !ws.getMuted();
                 ws.setMuted(muted);
-                muteBtn.querySelector('i').className = muted ? 'fas fa-volume-mute' : 'fas fa-volume-up';
+                muteBtn.querySelector('span').textContent = muted ? '\u266A' : '\u266B';
             });
         }
         if (volumeSlider) {
             volumeSlider.addEventListener('input', (e) => {
                 ws.setVolume(parseFloat(e.target.value));
                 ws.setMuted(false);
-                if (muteBtn) muteBtn.querySelector('i').className = 'fas fa-volume-up';
+                if (muteBtn) muteBtn.querySelector('span').textContent = '\u266B';
             });
         }
         if (speedSelect) {
@@ -246,18 +246,18 @@ const AudioLabPlayer = (() => {
         const el = state.controlsEl;
 
         ws.on('play', () => {
-            const btn = el?.querySelector('.alp-play i');
-            if (btn) btn.className = 'fas fa-pause';
+            const span = el?.querySelector('.alp-play span');
+            if (span) span.textContent = '\u23F8';
             fire(state, 'play');
         });
         ws.on('pause', () => {
-            const btn = el?.querySelector('.alp-play i');
-            if (btn) btn.className = 'fas fa-play';
+            const span = el?.querySelector('.alp-play span');
+            if (span) span.textContent = '\u25B6';
             fire(state, 'pause');
         });
         ws.on('finish', () => {
-            const btn = el?.querySelector('.alp-play i');
-            if (btn) btn.className = 'fas fa-play';
+            const span = el?.querySelector('.alp-play span');
+            if (span) span.textContent = '\u25B6';
             fire(state, 'finish');
         });
         ws.on('timeupdate', (currentTime) => {
@@ -311,7 +311,7 @@ const AudioLabPlayer = (() => {
                 return state.ws.load(url);
             },
 
-            /** Load from a Blob */
+            /** Load from a Blob (creates object URL for state tracking, uses ws.loadBlob for direct decode) */
             loadBlob(blob) {
                 const url = URL.createObjectURL(blob);
                 state.currentUrl = url;

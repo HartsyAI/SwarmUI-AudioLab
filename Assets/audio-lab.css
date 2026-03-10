@@ -203,3 +203,51 @@
 .audiolab-engine-card.incompatible {
     opacity: 0.5;
 }
+
+/* ===== AUDIO EDITOR MODAL ===== */
+#audiolab_editor_modal .modal-dialog { max-width: 800px; }
+#audiolab_editor_modal .modal-body { padding: 1rem; }
+
+.audiolab-editor-waveform {
+    border: 1px solid var(--shadow);
+    border-radius: 0.375rem;
+    overflow: hidden;
+    background: var(--background);
+    margin-bottom: 0.75rem;
+}
+
+.audiolab-editor-waveform .audiolab-player-controls { padding: 0.5rem 0.75rem; }
+.audiolab-editor-waveform .alp-btn { font-size: 1rem; padding: 0.3rem 0.5rem; }
+
+.audiolab-editor-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    padding: 0.5rem 0;
+}
+
+.audiolab-editor-toolbar .basic-button {
+    padding: 0.3rem 0.7rem;
+    font-size: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.audiolab-editor-toolbar .basic-button:disabled { opacity: 0.4; pointer-events: none; }
+
+.audiolab-editor-toolbar .ale-separator {
+    width: 1px;
+    height: 20px;
+    background: var(--shadow);
+    flex-shrink: 0;
+}
+
+.audiolab-editor-status {
+    font-size: 0.8rem;
+    color: var(--text-soft);
+    margin-left: auto;
+    white-space: nowrap;
+}
+

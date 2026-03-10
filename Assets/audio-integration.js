@@ -561,6 +561,38 @@ function audioLabRefreshEngineManager() {
     });
 }
 
+// ============================================================
+// Add "Edit Audio" button via SwarmUI's buttonsForImage system
+// ============================================================
+
+/**
+ * Extends buttonsForImage() to add audio-specific buttons for audio results.
+ * These appear in the "More" popover (or main bar if user adds them to settings).
+ * Same wrapping pattern used for handler.doGenerate and handler.internalHandleData above.
+ *
+ * TODO: PR to SwarmUI to add a buttonsForImageCallbacks array in outputhistory.js
+ * so extensions can register buttons without wrapping. Also: make "Edit Image"
+ * media-type-aware so extensions can replace it for non-image media types.
+ */
+setTimeout(() => {
+    if (typeof buttonsForImage !== 'function') {
+        console.warn('[audiolab] buttonsForImage not found, Edit Audio button not registered');
+        return;
+    }
+    let origButtonsForImage = buttonsForImage;
+    buttonsForImage = function(fullsrc, src, metadata) {
+        let buttons = origButtonsForImage(fullsrc, src, metadata);
+        if (isAudioExt(src)) {
+            buttons.push({
+                label: 'Edit Audio',
+                title: 'Open the audio editor with waveform visualization and editing tools',
+                onclick: () => AudioLabEditor.open(src)
+            });
+        }
+        return buttons;
+    };
+}, 100);
+
 /** Hook into backendsRevisedCallbacks to inject engine manager into Audio Backend cards. */
 backendsRevisedCallbacks.push(() => {
     // Find Audio Backend cards by checking backend type
