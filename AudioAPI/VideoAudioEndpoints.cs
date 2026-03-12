@@ -12,7 +12,10 @@ namespace Hartsy.Extensions.AudioLab.AudioAPI;
 [API.APIClass("AudioLab Video+Audio combining endpoints")]
 public static class VideoAudioEndpoints
 {
+    /// <summary>Maximum allowed video file size in megabytes.</summary>
     private const long MaxVideoSizeMB = 200;
+
+    /// <summary>Maximum allowed audio file size in megabytes.</summary>
     private const long MaxAudioSizeMB = 50;
 
     /// <summary>Registers all video+audio API endpoints.</summary>

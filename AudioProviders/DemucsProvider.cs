@@ -6,8 +6,10 @@ namespace Hartsy.Extensions.AudioLab.AudioProviders;
 /// <summary>Demucs provider — Meta's audio source separation (vocals, drums, bass, other).</summary>
 public sealed class DemucsProvider : IAudioProviderSource
 {
+    /// <summary>Singleton instance of the Demucs provider.</summary>
     public static DemucsProvider Instance { get; } = new();
 
+    /// <summary>Builds and returns the Demucs separation provider definition.</summary>
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("demucs_fx")
         .WithName("Demucs Separation")
@@ -21,6 +23,8 @@ public sealed class DemucsProvider : IAudioProviderSource
         .WithEngineGroup("main")
         .Build();
 
+    #region Dependencies
+
     private static PackageDefinition[] Dependencies =>
     [
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
@@ -30,10 +34,16 @@ public sealed class DemucsProvider : IAudioProviderSource
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
     ];
 
+    #endregion
+
+    #region Models
+
     private static AudioModelDefinition[] Models =>
     [
         new() { Id = "htdemucs", Name = "HTDemucs", Description = "Hybrid Transformer Demucs — best quality 4-stem separation", SourceUrl = "https://github.com/facebookresearch/demucs", License = "MIT", EstimatedSize = "~80MB", EstimatedVram = "~2GB", EngineConfig = new() { ["model_name"] = "htdemucs" } },
         new() { Id = "htdemucs_ft", Name = "HTDemucs Fine-tuned", Description = "Fine-tuned variant, highest quality separation", SourceUrl = "https://github.com/facebookresearch/demucs", License = "MIT", EstimatedSize = "~80MB", EstimatedVram = "~2GB", EngineConfig = new() { ["model_name"] = "htdemucs_ft" } },
         new() { Id = "htdemucs_6s", Name = "HTDemucs 6-Stem", Description = "6-stem separation (vocals, drums, bass, guitar, piano, other)", SourceUrl = "https://github.com/facebookresearch/demucs", License = "MIT", EstimatedSize = "~80MB", EstimatedVram = "~2GB", EngineConfig = new() { ["model_name"] = "htdemucs_6s" } }
     ];
+
+    #endregion
 }

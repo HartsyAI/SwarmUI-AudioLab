@@ -139,8 +139,6 @@ public class PythonAudioProcessor
         };
     }
 
-    // -- internal helpers -------------------------------------------------
-
     /// <summary>Runs the voice_processor.py script with arguments and returns JSON output.</summary>
     private async Task<string> RunPythonScriptAsync(string[] args, int timeoutMs = 30000)
     {

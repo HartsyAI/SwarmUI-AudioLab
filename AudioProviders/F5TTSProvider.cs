@@ -6,8 +6,10 @@ namespace Hartsy.Extensions.AudioLab.AudioProviders;
 /// <summary>F5-TTS provider — zero-shot voice cloning from 15-second reference audio.</summary>
 public sealed class F5TTSProvider : IAudioProviderSource
 {
+    /// <summary>Gets the singleton instance of the F5-TTS provider.</summary>
     public static F5TTSProvider Instance { get; } = new();
 
+    /// <summary>Builds and returns the F5-TTS provider definition.</summary>
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("f5_tts")
         .WithName("F5-TTS")
@@ -23,6 +25,8 @@ public sealed class F5TTSProvider : IAudioProviderSource
         .WithEngineGroup("main")
         .Build();
 
+    #region Dependencies
+
     private static PackageDefinition[] Dependencies =>
     [
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
@@ -33,8 +37,14 @@ public sealed class F5TTSProvider : IAudioProviderSource
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
     ];
 
+    #endregion
+
+    #region Models
+
     private static AudioModelDefinition[] Models =>
     [
         new() { Id = "default", Name = "F5-TTS Default", Description = "Zero-shot voice cloning from 15s reference audio", SourceUrl = "https://huggingface.co/SWivid/F5-TTS", License = "CC-BY-NC-4.0", EstimatedSize = "~2.5GB", EstimatedVram = "~4GB", EngineConfig = new() { ["model_name"] = "SWivid/F5-TTS" } }
     ];
+
+    #endregion
 }

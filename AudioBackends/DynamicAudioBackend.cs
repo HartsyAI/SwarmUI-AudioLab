@@ -106,6 +106,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// <summary>Path to the installed engines config file.</summary>
     private static string InstalledEnginesConfigPath => Path.Combine(Program.DataDir, "AudioLabInstalledEngines.json");
 
+    /// <summary>Initializes the backend with default settings and LOADING status.</summary>
     public DynamicAudioBackend()
     {
         SettingsRaw = new DynamicAudioSettings();
@@ -592,7 +593,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// <summary>Gets all currently enabled provider metadata (for API status endpoints).</summary>
     public IReadOnlyDictionary<string, AudioProviderMetadata> GetProviders() => _providers;
 
-    // -- Install / uninstall engine management -----------------------------
+    #region Engine Installation and Management
 
     /// <summary>Installs an engine: creates venv, installs deps, starts server,
     /// registers models, and persists the installed state.</summary>
@@ -785,7 +786,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
     }
 
-    // -- Installed engines config persistence --------------------------------
+    #endregion
+
+    #region Configuration Persistence
 
     /// <summary>Loads the installed engines set from the JSON config file.</summary>
     private void LoadInstalledEnginesConfig()
@@ -837,7 +840,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
     }
 
-    // -- private helpers --------------------------------------------------
+    #endregion
+
+    #region Private Helpers
 
     /// <summary>Determines the provider ID from a model name by matching prefixes.</summary>
     private string GetProviderIdFromModel(string modelName)
@@ -1012,6 +1017,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["speaking_rate"] = input.TryGet(AudioLabParams.SpeakingRate, out double sr) ? sr : 15.0;
                 break;
 
+            case "fishspeech_tts":
+                args["max_new_tokens"] = input.TryGet(AudioLabParams.FishSpeechMaxTokens, out int fsMaxTok) ? fsMaxTok : 1024;
+                args["chunk_length"] = input.TryGet(AudioLabParams.FishSpeechChunkLength, out int fsChunk) ? fsChunk : 200;
+                args["normalize"] = input.TryGet(AudioLabParams.FishSpeechNormalize, out string fsNorm) ? fsNorm == "true" : true;
+                break;
+
             case "cosyvoice_tts":
                 if (input.TryGet(AudioLabParams.CosyVoiceVoice, out string cvv))
                     args["voice"] = cvv;
@@ -1103,7 +1114,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
         return args;
     }
 
-    // -- Chunk splitting + WAV helpers for streaming ----------------------
+    #endregion
+
+    #region Chunk Splitting and WAV Helpers
 
     /// <summary>Common abbreviations whose trailing period should NOT be treated as a sentence boundary.</summary>
     private static readonly HashSet<string> Abbreviations = new(StringComparer.OrdinalIgnoreCase)
@@ -1367,4 +1380,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
         return ms.ToArray();
     }
+
+    #endregion
 }

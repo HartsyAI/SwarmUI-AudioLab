@@ -6,8 +6,10 @@ namespace Hartsy.Extensions.AudioLab.AudioProviders;
 /// <summary>OpenAI Whisper STT provider — robust speech recognition across languages.</summary>
 public sealed class WhisperProvider : IAudioProviderSource
 {
+    /// <summary>Singleton instance of the Whisper provider.</summary>
     public static WhisperProvider Instance { get; } = new();
 
+    /// <summary>Builds and returns the Whisper STT provider definition.</summary>
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("whisper_stt")
         .WithName("Whisper STT")
@@ -21,6 +23,8 @@ public sealed class WhisperProvider : IAudioProviderSource
         .WithEngineGroup("main")
         .Build();
 
+    #region Dependencies
+
     private static PackageDefinition[] Dependencies =>
     [
         new() { Name = "numpy<2.0.0", InstallName = "numpy<2.0.0", ImportName = "numpy", Category = "core" },
@@ -29,6 +33,10 @@ public sealed class WhisperProvider : IAudioProviderSource
         new() { Name = "openai-whisper", InstallName = "openai-whisper", ImportName = "whisper", Category = "stt", EstimatedInstallTimeMinutes = 5 },
         new() { Name = "ffmpeg-python", InstallName = "ffmpeg-python", ImportName = "ffmpeg", Category = "stt" }
     ];
+
+    #endregion
+
+    #region Models
 
     private static AudioModelDefinition[] Models =>
     [
@@ -40,4 +48,6 @@ public sealed class WhisperProvider : IAudioProviderSource
         new() { Id = "large-v3", Name = "Whisper Large V3", Description = "Latest large model, improved accuracy (1.5B params)", SourceUrl = "https://huggingface.co/openai/whisper-large-v3", License = "MIT", EstimatedSize = "~3GB", EstimatedVram = "~10GB", EngineConfig = new() { ["model_name"] = "large-v3" } },
         new() { Id = "turbo", Name = "Whisper Turbo", Description = "Distilled large-v3, ~8x faster with near-large accuracy (809M params)", SourceUrl = "https://huggingface.co/openai/whisper-large-v3-turbo", License = "MIT", EstimatedSize = "~1.6GB", EstimatedVram = "~6GB", EngineConfig = new() { ["model_name"] = "turbo" } }
     ];
+
+    #endregion
 }

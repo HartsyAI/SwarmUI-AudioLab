@@ -77,6 +77,7 @@ public static class ProgressTracking
 /// <summary>Modern unified progress tracker with specialized data based on type.</summary>
 public class ProgressTracker(string id, ProgressTracker.TrackerType type)
 {
+    /// <summary>Defines the type of operation being tracked.</summary>
     public enum TrackerType { Installation, Job, HealthCheck }
 
     private readonly object _lock = new();
@@ -84,24 +85,55 @@ public class ProgressTracker(string id, ProgressTracker.TrackerType type)
     private volatile bool _isComplete = false;
     private volatile bool _hasError = false;
 
+    /// <summary>Unique identifier for this tracker instance.</summary>
     public string Id { get; } = id;
+
+    /// <summary>The type of operation this tracker monitors.</summary>
     public TrackerType Type { get; } = type;
+
+    /// <summary>Overall progress percentage (0-100).</summary>
     public int Progress => _progress;
+
+    /// <summary>Download progress percentage for the current package (0-100).</summary>
     public int DownloadProgress => Installation?.DownloadProgress ?? 0;
+
+    /// <summary>Description of the current processing step.</summary>
     public string CurrentStep { get; private set; } = "";
+
+    /// <summary>Name of the package currently being installed.</summary>
     public string CurrentPackage => Installation?.CurrentPackage ?? "";
+
+    /// <summary>Human-readable status message for display.</summary>
     public string StatusMessage { get; private set; } = "";
+
+    /// <summary>Whether this tracker has finished (successfully or with error).</summary>
     public bool IsComplete => _isComplete;
+
+    /// <summary>List of packages that have been successfully installed.</summary>
     public List<string> CompletedPackages => [.. Installation.CompletedPackages];
+
+    /// <summary>Whether an error occurred during the tracked operation.</summary>
     public bool HasError => _hasError;
+
+    /// <summary>Error message if <see cref="HasError"/> is true.</summary>
     public string ErrorMessage { get; private set; } = "";
+
+    /// <summary>When the tracked operation started.</summary>
     public DateTime StartTime { get; } = DateTime.UtcNow;
+
+    /// <summary>When the tracked operation ended, or null if still running.</summary>
     public DateTime? EndTime { get; private set; }
+
+    /// <summary>Elapsed time since the operation started.</summary>
     public TimeSpan Duration => (EndTime ?? DateTime.UtcNow) - StartTime;
 
-    // Specialized data - only populated for relevant tracker types
+    /// <summary>Installation-specific progress data. Null for non-installation trackers.</summary>
     public InstallationProgressResponse Installation { get; } = type == TrackerType.Installation ? new InstallationProgressResponse() : null;
+
+    /// <summary>Job-specific tracking data. Null for non-job trackers.</summary>
     public JobData Job { get; } = type == TrackerType.Job ? new JobData() : null;
+
+    /// <summary>Health check-specific data. Null for non-health-check trackers.</summary>
     public BackendHealthInfo HealthCheck { get; } = type == TrackerType.HealthCheck ? new BackendHealthInfo() : null;
 
     /// <summary>Updates progress with flexible parameters for all tracker types.</summary>

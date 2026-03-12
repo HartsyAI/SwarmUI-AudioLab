@@ -18,9 +18,16 @@ namespace Hartsy.Extensions.AudioLab.AudioAPI;
 /// <summary>Permission definitions for the AudioLab API endpoints.</summary>
 public static class AudioLabPermissions
 {
+    /// <summary>Permission group for all AudioLab API operations.</summary>
     public static readonly PermInfoGroup AudioLabPermGroup = new("AudioLab", "Permissions related to AudioLab functionality for API calls and voice processing.");
+
+    /// <summary>Permission for processing audio through any provider.</summary>
     public static readonly PermInfo PermProcessAudio = Permissions.Register(new("audio_process", "Process Audio", "Allows processing of audio through any audio provider.", PermissionDefault.POWERUSERS, AudioLabPermGroup));
+
+    /// <summary>Permission for managing audio backend providers.</summary>
     public static readonly PermInfo PermManageBackends = Permissions.Register(new("audio_manage_backends", "Manage Audio Backends", "Allows managing audio backend providers.", PermissionDefault.POWERUSERS, AudioLabPermGroup));
+
+    /// <summary>Permission for checking audio provider status.</summary>
     public static readonly PermInfo PermCheckStatus = Permissions.Register(new("audio_check_status", "Check Audio Status", "Allows checking the status of audio providers.", PermissionDefault.POWERUSERS, AudioLabPermGroup));
 }
 

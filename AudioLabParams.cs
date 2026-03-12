@@ -8,164 +8,360 @@ namespace Hartsy.Extensions.AudioLab;
 /// Provider-specific params use provider flags (kokoro_tts_params, etc.) for visibility.</summary>
 public static class AudioLabParams
 {
-    // ===== Groups =====
+    #region Groups
+
+    /// <summary>Text-to-speech parameter group.</summary>
     public static T2IParamGroup TTSGroup;
+    /// <summary>Speech-to-text parameter group.</summary>
     public static T2IParamGroup STTGroup;
+    /// <summary>Music generation parameter group.</summary>
     public static T2IParamGroup MusicGroup;
+    /// <summary>Voice reference parameter group for TTS voice cloning.</summary>
     public static T2IParamGroup VoiceRefGroup;
+    /// <summary>Voice cloning parameter group.</summary>
     public static T2IParamGroup CloneGroup;
+    /// <summary>Audio effects parameter group.</summary>
     public static T2IParamGroup FXGroup;
+    /// <summary>Sound effects parameter group.</summary>
     public static T2IParamGroup SFXGroup;
 
-    // ===== TTS shared (flag: audiolab_tts) =====
+    #endregion
+
+    #region TTS Shared (flag: audiolab_tts)
+
+    /// <summary>Output volume multiplier. Feature flag: <c>audiolab_tts</c>.</summary>
     public static T2IRegisteredParam<double> Volume;
+    /// <summary>Text chunking strategy for streaming TTS. Feature flag: <c>audiolab_tts</c>.</summary>
     public static T2IRegisteredParam<string> StreamChunkSize;
 
-    // ===== TTS shared sampling (flag: tts_sampling) =====
+    #endregion
+
+    #region TTS Shared Sampling (flag: tts_sampling)
+
+    /// <summary>Sampling temperature for TTS generation. Feature flag: <c>tts_sampling</c>.</summary>
     public static T2IRegisteredParam<double> Temperature;
+    /// <summary>Nucleus sampling threshold for TTS. Feature flag: <c>tts_sampling</c>.</summary>
     public static T2IRegisteredParam<double> TopP;
+    /// <summary>Repetition penalty for TTS token sampling. Feature flag: <c>tts_sampling</c>.</summary>
     public static T2IRegisteredParam<double> RepetitionPenalty;
+    /// <summary>Top-K token sampling limit for TTS. Feature flag: <c>tts_sampling</c>.</summary>
     public static T2IRegisteredParam<int> TopK;
+    /// <summary>Minimum probability threshold for TTS sampling. Feature flag: <c>tts_sampling</c>.</summary>
     public static T2IRegisteredParam<double> MinP;
 
-    // ===== Voice Reference shared (flag: tts_voice_ref) =====
+    #endregion
+
+    #region Voice Reference Shared (flag: tts_voice_ref)
+
+    /// <summary>Reference audio clip for voice cloning. Feature flag: <c>tts_voice_ref</c>.</summary>
     public static T2IRegisteredParam<AudioFile> ReferenceAudio;
+    /// <summary>Transcript of the reference audio. Feature flag: <c>tts_voice_ref</c>.</summary>
     public static T2IRegisteredParam<string> ReferenceText;
 
-    // ===== TTS — Bark (flag: bark_tts_params) =====
+    #endregion
+
+    #region TTS — Bark (flag: bark_tts_params)
+
+    /// <summary>Voice preset for Bark TTS. Feature flag: <c>bark_tts_params</c>.</summary>
     public static T2IRegisteredParam<string> BarkVoice;
+    /// <summary>Text token generation temperature for Bark. Feature flag: <c>bark_tts_params</c>.</summary>
     public static T2IRegisteredParam<double> TextTemp;
+    /// <summary>Audio waveform generation temperature for Bark. Feature flag: <c>bark_tts_params</c>.</summary>
     public static T2IRegisteredParam<double> WaveformTemp;
 
-    // ===== TTS — Chatterbox (flag: chatterbox_tts_params) =====
+    #endregion
+
+    #region TTS — Chatterbox (flag: chatterbox_tts_params)
+
+    /// <summary>Voice expressiveness level for Chatterbox. Feature flag: <c>chatterbox_tts_params</c>.</summary>
     public static T2IRegisteredParam<double> Exaggeration;
+    /// <summary>Classifier-free guidance weight for Chatterbox. Feature flag: <c>chatterbox_tts_params</c>.</summary>
     public static T2IRegisteredParam<double> CFGWeight;
 
-    // ===== TTS — Kokoro (flag: kokoro_tts_params) =====
+    #endregion
+
+    #region TTS — Kokoro (flag: kokoro_tts_params)
+
+    /// <summary>Voice preset for Kokoro TTS. Feature flag: <c>kokoro_tts_params</c>.</summary>
     public static T2IRegisteredParam<string> KokoroVoice;
+    /// <summary>Speech speed multiplier for Kokoro. Feature flag: <c>kokoro_tts_params</c>.</summary>
     public static T2IRegisteredParam<double> KokoroSpeed;
 
-    // ===== TTS — Piper (flag: piper_tts_params) =====
+    #endregion
+
+    #region TTS — Piper (flag: piper_tts_params)
+
+    /// <summary>Voice model for Piper TTS. Feature flag: <c>piper_tts_params</c>.</summary>
     public static T2IRegisteredParam<string> PiperVoice;
+    /// <summary>Speech speed multiplier for Piper. Feature flag: <c>piper_tts_params</c>.</summary>
     public static T2IRegisteredParam<double> PiperSpeed;
 
-    // ===== TTS — Orpheus (flag: orpheus_tts_params) =====
+    #endregion
+
+    #region TTS — Orpheus (flag: orpheus_tts_params)
+
+    /// <summary>Voice preset for Orpheus TTS. Feature flag: <c>orpheus_tts_params</c>.</summary>
     public static T2IRegisteredParam<string> OrpheusVoice;
 
-    // ===== TTS — CSM (flag: csm_tts_params) =====
+    #endregion
+
+    #region TTS — CSM (flag: csm_tts_params)
+
+    /// <summary>Speaker ID for CSM multi-speaker TTS. Feature flag: <c>csm_tts_params</c>.</summary>
     public static T2IRegisteredParam<string> Speaker;
 
-    // ===== TTS — VibeVoice (flag: vibevoice_tts_params) =====
+    #endregion
+
+    #region TTS — VibeVoice (flag: vibevoice_tts_params)
+
+    /// <summary>DDPM denoising step count for VibeVoice. Feature flag: <c>vibevoice_tts_params</c>.</summary>
     public static T2IRegisteredParam<int> DiffusionSteps;
 
-    // ===== TTS — Dia (flag: dia_tts_params) =====
+    #endregion
+
+    #region TTS — Dia (flag: dia_tts_params)
+
+    /// <summary>Top-K filtering for Dia CFG guidance. Feature flag: <c>dia_tts_params</c>.</summary>
     public static T2IRegisteredParam<int> CFGFilterTopK;
 
-    // ===== TTS — F5-TTS (flag: f5_tts_params) =====
+    #endregion
+
+    #region TTS — F5-TTS (flag: f5_tts_params)
+
+    /// <summary>Flow-matching function evaluation step count for F5-TTS. Feature flag: <c>f5_tts_params</c>.</summary>
     public static T2IRegisteredParam<int> NFEStep;
+    /// <summary>Speech speed multiplier for F5-TTS. Feature flag: <c>f5_tts_params</c>.</summary>
     public static T2IRegisteredParam<double> F5Speed;
 
-    // ===== TTS — Zonos (flag: zonos_tts_params) =====
+    #endregion
+
+    #region TTS — Zonos (flag: zonos_tts_params)
+
+    /// <summary>Language selection for Zonos TTS. Feature flag: <c>zonos_tts_params</c>.</summary>
     public static T2IRegisteredParam<string> ZonosLanguage;
+    /// <summary>Emotional tone for Zonos TTS. Feature flag: <c>zonos_tts_params</c>.</summary>
     public static T2IRegisteredParam<string> ZonosEmotion;
+    /// <summary>Speaking rate for Zonos TTS. Feature flag: <c>zonos_tts_params</c>.</summary>
     public static T2IRegisteredParam<double> SpeakingRate;
 
-    // ===== TTS — CosyVoice (flag: cosyvoice_tts_params) =====
+    #endregion
+
+    #region TTS — Fish Speech (flag: fishspeech_tts_params)
+
+    /// <summary>Maximum new tokens to generate for Fish Speech. Feature flag: <c>fishspeech_tts_params</c>.</summary>
+    public static T2IRegisteredParam<int> FishSpeechMaxTokens;
+    /// <summary>Text chunk size in bytes for Fish Speech batched generation. Feature flag: <c>fishspeech_tts_params</c>.</summary>
+    public static T2IRegisteredParam<int> FishSpeechChunkLength;
+    /// <summary>Text normalization toggle for Fish Speech. Feature flag: <c>fishspeech_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> FishSpeechNormalize;
+
+    #endregion
+
+    #region TTS — CosyVoice (flag: cosyvoice_tts_params)
+
+    /// <summary>Built-in voice preset for CosyVoice TTS. Feature flag: <c>cosyvoice_tts_params</c>.</summary>
     public static T2IRegisteredParam<string> CosyVoiceVoice;
 
-    // ===== STT shared (flag: audiolab_stt) =====
+    #endregion
+
+    #region STT Shared (flag: audiolab_stt)
+
+    /// <summary>Audio file input for speech-to-text. Feature flag: <c>audiolab_stt</c>.</summary>
     public static T2IRegisteredParam<AudioFile> AudioInput;
+    /// <summary>Language hint for STT transcription. Feature flag: <c>audiolab_stt</c>.</summary>
     public static T2IRegisteredParam<string> Language;
 
-    // ===== STT — Whisper (flag: whisper_stt_params) =====
+    #endregion
+
+    #region STT — Whisper (flag: whisper_stt_params)
+
+    /// <summary>Whisper task type (transcribe or translate). Feature flag: <c>whisper_stt_params</c>.</summary>
     public static T2IRegisteredParam<string> WhisperTask;
 
-    // ===== Music shared (flag: audiolab_music) =====
+    #endregion
+
+    #region Music Shared (flag: audiolab_music)
+
+    /// <summary>Duration of generated music in seconds. Feature flag: <c>audiolab_music</c>.</summary>
     public static T2IRegisteredParam<double> Duration;
 
-    // ===== Music — AudioCraft shared (flag: audiocraft_sampling) =====
+    #endregion
+
+    #region Music — AudioCraft Shared (flag: audiocraft_sampling)
+
+    /// <summary>Classifier-free guidance scale for AudioCraft. Feature flag: <c>audiocraft_sampling</c>.</summary>
     public static T2IRegisteredParam<double> GuidanceScale;
+    /// <summary>Sampling temperature for AudioCraft generation. Feature flag: <c>audiocraft_sampling</c>.</summary>
     public static T2IRegisteredParam<double> AudioCraftTemperature;
+    /// <summary>Top-K token sampling for AudioCraft. Feature flag: <c>audiocraft_sampling</c>.</summary>
     public static T2IRegisteredParam<int> AudioCraftTopK;
+    /// <summary>Nucleus sampling for AudioCraft. Feature flag: <c>audiocraft_sampling</c>.</summary>
     public static T2IRegisteredParam<double> AudioCraftTopP;
 
-    // ===== Music — ACE-Step core (flag: acestep_music_params) =====
+    #endregion
+
+    #region Music — ACE-Step Core (flag: acestep_music_params)
+
+    /// <summary>Song lyrics for ACE-Step generation. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<string> Lyrics;
+    /// <summary>Random seed for reproducible ACE-Step generation. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<int> AudioSeed;
+    /// <summary>Diffusion inference step count for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<int> InferStep;
+    /// <summary>Classifier-free guidance strength for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<double> ACEGuidanceScale;
+    /// <summary>Instrumental-only toggle for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<string> Instrumental;
+    /// <summary>Beats per minute for ACE-Step music. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<int> BPM;
+    /// <summary>Musical key and scale for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<string> KeyScale;
+    /// <summary>Musical time signature for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<string> TimeSignature;
+    /// <summary>Vocal language for ACE-Step music. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<string> VocalLanguage;
+    /// <summary>Noise schedule shift factor for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<double> ACEShift;
+    /// <summary>ODE solver method for ACE-Step diffusion. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<string> InferMethod;
+    /// <summary>Adaptive Diffusion Guidance toggle for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<string> UseADG;
+    /// <summary>CFG application interval start for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<double> CFGIntervalStart;
+    /// <summary>CFG application interval end for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<double> CFGIntervalEnd;
+    /// <summary>Output audio normalization toggle for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<string> EnableNormalization;
+    /// <summary>Target loudness in dBFS for ACE-Step normalization. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<double> NormalizationDB;
 
-    // ===== Music — ACE-Step LM (flag: acestep_lm_params) — TODO: integrate with SwarmUI AbstractLLMBackend =====
+    #endregion
+
+    #region Music — ACE-Step LM Planner (flag: acestep_lm_params)
+
+    /// <summary>Language Model planner selection for ACE-Step. Feature flag: <c>acestep_lm_params</c>.
+    /// <para>TODO: Integrate with SwarmUI <c>AbstractLLMBackend</c> when LLMAPI.cs is complete.</para></summary>
     public static T2IRegisteredParam<string> ACELMModel;
+    /// <summary>Chain-of-thought reasoning toggle for ACE-Step LM. Feature flag: <c>acestep_lm_params</c>.</summary>
     public static T2IRegisteredParam<string> Thinking;
+    /// <summary>Sampling temperature for ACE-Step LM planner. Feature flag: <c>acestep_lm_params</c>.</summary>
     public static T2IRegisteredParam<double> LMTemperature;
+    /// <summary>Classifier-free guidance scale for ACE-Step LM. Feature flag: <c>acestep_lm_params</c>.</summary>
     public static T2IRegisteredParam<double> LMCFGScale;
+    /// <summary>Top-K sampling for ACE-Step LM planner. Feature flag: <c>acestep_lm_params</c>.</summary>
     public static T2IRegisteredParam<int> LMTopK;
+    /// <summary>Nucleus sampling threshold for ACE-Step LM. Feature flag: <c>acestep_lm_params</c>.</summary>
     public static T2IRegisteredParam<double> LMTopP;
+    /// <summary>Negative prompt for ACE-Step LM planner. Feature flag: <c>acestep_lm_params</c>.</summary>
     public static T2IRegisteredParam<string> LMNegativePrompt;
+    /// <summary>Meta tag inclusion in ACE-Step chain-of-thought. Feature flag: <c>acestep_lm_params</c>.</summary>
     public static T2IRegisteredParam<string> UseCotMetas;
+    /// <summary>Music caption inclusion in ACE-Step chain-of-thought. Feature flag: <c>acestep_lm_params</c>.</summary>
     public static T2IRegisteredParam<string> UseCotCaption;
+    /// <summary>Language detection inclusion in ACE-Step chain-of-thought. Feature flag: <c>acestep_lm_params</c>.</summary>
     public static T2IRegisteredParam<string> UseCotLanguage;
 
-    // ===== Music — ACE-Step tasks (flag: acestep_task_params) =====
+    #endregion
+
+    #region Music — ACE-Step Tasks (flag: acestep_task_params)
+
+    /// <summary>ACE-Step generation task type. Feature flag: <c>acestep_task_params</c>.</summary>
     public static T2IRegisteredParam<string> ACETaskType;
+    /// <summary>Source audio for ACE-Step cover/repaint/extract/lego/complete tasks. Feature flag: <c>acestep_task_params</c>.</summary>
     public static T2IRegisteredParam<AudioFile> ACESourceAudio;
+    /// <summary>Style/timbre reference audio for ACE-Step. Feature flag: <c>acestep_task_params</c>.</summary>
     public static T2IRegisteredParam<AudioFile> ACEReferenceAudio;
+    /// <summary>Repaint start time in seconds for ACE-Step. Feature flag: <c>acestep_task_params</c>.</summary>
     public static T2IRegisteredParam<double> RepaintStart;
+    /// <summary>Repaint end time in seconds for ACE-Step. Feature flag: <c>acestep_task_params</c>.</summary>
     public static T2IRegisteredParam<double> RepaintEnd;
+    /// <summary>Style transfer strength for ACE-Step cover task. Feature flag: <c>acestep_task_params</c>.</summary>
     public static T2IRegisteredParam<double> CoverStrength;
+    /// <summary>Noise injection strength for ACE-Step cover task. Feature flag: <c>acestep_task_params</c>.</summary>
     public static T2IRegisteredParam<double> CoverNoiseStrength;
 
-    // ===== Music — MusicGen (flag: musicgen_music_params) =====
+    #endregion
+
+    #region Music — MusicGen (flag: musicgen_music_params)
+
+    /// <summary>Reference melody audio for MusicGen melody conditioning. Feature flag: <c>musicgen_music_params</c>.</summary>
     public static T2IRegisteredParam<AudioFile> MelodyAudio;
 
-    // ===== Clone shared (flag: audiolab_clone) =====
+    #endregion
+
+    #region Clone Shared (flag: audiolab_clone)
+
+    /// <summary>Source audio for voice cloning or conversion. Feature flag: <c>audiolab_clone</c>.</summary>
     public static T2IRegisteredParam<AudioFile> SourceAudio;
+    /// <summary>Target voice reference for tone conversion. Feature flag: <c>audiolab_clone</c>.</summary>
     public static T2IRegisteredParam<AudioFile> TargetVoice;
 
-    // ===== Clone — RVC (flag: rvc_clone_params) =====
+    #endregion
+
+    #region Clone — RVC (flag: rvc_clone_params)
+
+    /// <summary>Semitone pitch shift for RVC voice conversion. Feature flag: <c>rvc_clone_params</c>.</summary>
     public static T2IRegisteredParam<int> PitchShift;
+    /// <summary>Pitch extraction algorithm for RVC. Feature flag: <c>rvc_clone_params</c>.</summary>
     public static T2IRegisteredParam<string> F0Method;
+    /// <summary>RVC feature index influence rate. Feature flag: <c>rvc_clone_params</c>.</summary>
     public static T2IRegisteredParam<double> IndexRate;
+    /// <summary>Volume envelope mixing ratio for RVC. Feature flag: <c>rvc_clone_params</c>.</summary>
     public static T2IRegisteredParam<double> RMSMixRate;
+    /// <summary>Voiceless consonant protection for RVC. Feature flag: <c>rvc_clone_params</c>.</summary>
     public static T2IRegisteredParam<double> Protect;
 
-    // ===== Clone — GPT-SoVITS (flag: gptsovits_clone_params) =====
+    #endregion
+
+    #region Clone — GPT-SoVITS (flag: gptsovits_clone_params)
+
+    /// <summary>Reference audio transcript for GPT-SoVITS. Feature flag: <c>gptsovits_clone_params</c>.</summary>
     public static T2IRegisteredParam<string> ClonePromptText;
+    /// <summary>Language selection for GPT-SoVITS cloning. Feature flag: <c>gptsovits_clone_params</c>.</summary>
     public static T2IRegisteredParam<string> CloneLanguage;
 
-    // ===== FX shared (flag: audiolab_fx) =====
+    #endregion
+
+    #region FX Shared (flag: audiolab_fx)
+
+    /// <summary>Audio file input for effects processing. Feature flag: <c>audiolab_fx</c>.</summary>
     public static T2IRegisteredParam<AudioFile> FXInput;
 
-    // ===== FX — Demucs (flag: demucs_fx_params) =====
+    #endregion
+
+    #region FX — Demucs (flag: demucs_fx_params)
+
+    /// <summary>Processing chunk overlap for Demucs separation. Feature flag: <c>demucs_fx_params</c>.</summary>
     public static T2IRegisteredParam<double> Overlap;
+    /// <summary>Random shift count for Demucs equivariant stabilization. Feature flag: <c>demucs_fx_params</c>.</summary>
     public static T2IRegisteredParam<int> Shifts;
 
-    // ===== FX — Resemble Enhance (flag: resemble_enhance_fx_params) =====
+    #endregion
+
+    #region FX — Resemble Enhance (flag: resemble_enhance_fx_params)
+
+    /// <summary>Function evaluation step count for Resemble Enhance. Feature flag: <c>resemble_enhance_fx_params</c>.</summary>
     public static T2IRegisteredParam<int> EnhanceNFE;
+    /// <summary>ODE solver method for Resemble Enhance. Feature flag: <c>resemble_enhance_fx_params</c>.</summary>
     public static T2IRegisteredParam<string> EnhanceSolver;
+    /// <summary>Prior temperature for Resemble Enhance. Feature flag: <c>resemble_enhance_fx_params</c>.</summary>
     public static T2IRegisteredParam<double> EnhanceLambda;
+    /// <summary>CFM posterior temperature for Resemble Enhance. Feature flag: <c>resemble_enhance_fx_params</c>.</summary>
     public static T2IRegisteredParam<double> EnhanceTau;
 
-    // ===== SFX shared (flag: audiolab_sfx) =====
+    #endregion
+
+    #region SFX Shared (flag: audiolab_sfx)
+
+    /// <summary>Duration of generated sound effect in seconds. Feature flag: <c>audiolab_sfx</c>.</summary>
     public static T2IRegisteredParam<double> SFXDuration;
 
-    /// <summary>Registers all AudioLab parameters. Called from AudioLab.OnInit().</summary>
+    #endregion
+
+    /// <summary>Registers all AudioLab parameters. Called from <see cref="AudioLab.OnInit"/>.</summary>
     public static void RegisterAll()
     {
-        // ========================== Groups ==========================
+        // ── Groups ──────────────────────────────────────────────────────
         TTSGroup = new("TTS", Open: true, OrderPriority: -28, Toggles: false,
             Description: "Text-to-speech parameters. Enter text in the Prompt box above.");
         VoiceRefGroup = new("Voice Reference", Open: true, OrderPriority: -27, Toggles: false,
@@ -181,7 +377,7 @@ public static class AudioLabParams
         SFXGroup = new("Sound FX", Open: true, OrderPriority: -22, Toggles: false,
             Description: "Sound effects generation. Describe the sound in the Prompt box above.");
 
-        // ========================== TTS Shared ==========================
+        // ── TTS Shared ─────────────────────────────────────────────────
         Volume = T2IParamTypes.Register<double>(new("Volume",
             "Output volume multiplier.\n1.0 = full volume, 0.5 = half volume.",
             "0.8",
@@ -200,7 +396,7 @@ public static class AudioLabParams
             ],
             OrderPriority: -9, Group: TTSGroup, FeatureFlag: "audiolab_tts"));
 
-        // ========================== TTS Shared Sampling ==========================
+        // ── TTS Shared Sampling ────────────────────────────────────────
         Temperature = T2IParamTypes.Register<double>(new("Temperature",
             "Sampling temperature.\nHigher = more varied/creative speech. Lower = more consistent.",
             "0.8",
@@ -231,7 +427,7 @@ public static class AudioLabParams
             Min: 0.0, Max: 1.0, Step: 0.01, ViewType: ParamViewType.SLIDER,
             OrderPriority: -4, Group: TTSGroup, FeatureFlag: "tts_sampling"));
 
-        // ========================== Voice Reference Shared ==========================
+        // ── Voice Reference Shared ─────────────────────────────────────
         ReferenceAudio = T2IParamTypes.Register<AudioFile>(new("Reference Audio",
             "Reference audio clip for voice cloning.\nOptional — uses default voice when not provided.",
             null,
@@ -242,7 +438,7 @@ public static class AudioLabParams
             "",
             OrderPriority: -9, Group: VoiceRefGroup, FeatureFlag: "tts_voice_ref"));
 
-        // ========================== TTS — Bark ==========================
+        // ── TTS — Bark ─────────────────────────────────────────────────
         BarkVoice = T2IParamTypes.Register<string>(new("Bark Voice",
             "Voice preset for Bark TTS.\nSelect a speaker voice. 'Random' generates a random voice.",
             "v2/en_speaker_6",
@@ -271,7 +467,7 @@ public static class AudioLabParams
             Min: 0.0, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
             OrderPriority: -7, Group: TTSGroup, FeatureFlag: "bark_tts_params"));
 
-        // ========================== TTS — Chatterbox ==========================
+        // ── TTS — Chatterbox ───────────────────────────────────────────
         Exaggeration = T2IParamTypes.Register<double>(new("Exaggeration",
             "Voice expressiveness level.\nHigher values produce more animated, expressive speech.",
             "0.5",
@@ -284,7 +480,7 @@ public static class AudioLabParams
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
             OrderPriority: -4, Group: TTSGroup, FeatureFlag: "chatterbox_tts_params"));
 
-        // ========================== TTS — Kokoro ==========================
+        // ── TTS — Kokoro ───────────────────────────────────────────────
         KokoroVoice = T2IParamTypes.Register<string>(new("Kokoro Voice",
             "Voice preset for Kokoro TTS.",
             "af_heart",
@@ -304,7 +500,7 @@ public static class AudioLabParams
             Min: 0.25, Max: 4.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -4, Group: TTSGroup, FeatureFlag: "kokoro_tts_params"));
 
-        // ========================== TTS — Piper ==========================
+        // ── TTS — Piper ────────────────────────────────────────────────
         PiperVoice = T2IParamTypes.Register<string>(new("Piper Voice",
             "Piper voice model. CPU-only ONNX voices, auto-downloaded on first use.",
             "en_US-amy-medium",
@@ -321,7 +517,7 @@ public static class AudioLabParams
             Min: 0.25, Max: 4.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -4, Group: TTSGroup, FeatureFlag: "piper_tts_params"));
 
-        // ========================== TTS — Orpheus ==========================
+        // ── TTS — Orpheus ──────────────────────────────────────────────
         OrpheusVoice = T2IParamTypes.Register<string>(new("Orpheus Voice",
             "Voice preset for Orpheus TTS.\nSupports emotion tags: <laugh>, <chuckle>, <sigh>, <cough>, <sniffle>, <groan>, <yawn>, <gasp>",
             "tara",
@@ -332,27 +528,27 @@ public static class AudioLabParams
             ],
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "orpheus_tts_params"));
 
-        // ========================== TTS — CSM ==========================
+        // ── TTS — CSM ──────────────────────────────────────────────────
         Speaker = T2IParamTypes.Register<string>(new("Speaker",
             "Speaker ID for multi-speaker conversation.\n0 = primary speaker.",
             "0",
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "csm_tts_params"));
 
-        // ========================== TTS — VibeVoice ==========================
+        // ── TTS — VibeVoice ────────────────────────────────────────────
         DiffusionSteps = T2IParamTypes.Register<int>(new("Diffusion Steps",
             "Number of DDPM denoising steps.\nMore steps = higher quality but slower. 20 is a good balance.",
             "20",
             Min: 5, Max: 100, Step: 1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "vibevoice_tts_params"));
 
-        // ========================== TTS — Dia ==========================
+        // ── TTS — Dia ──────────────────────────────────────────────────
         CFGFilterTopK = T2IParamTypes.Register<int>(new("CFG Filter Top K",
             "Top-K filtering for classifier-free guidance.\nLimits CFG to top K tokens. Higher = less filtering.",
             "35",
             Min: 0, Max: 500, Step: 5, ViewType: ParamViewType.SLIDER,
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "dia_tts_params"));
 
-        // ========================== TTS — F5-TTS ==========================
+        // ── TTS — F5-TTS ───────────────────────────────────────────────
         NFEStep = T2IParamTypes.Register<int>(new("NFE Steps",
             "Number of function evaluation steps for flow matching.\nMore steps = higher quality but slower.",
             "32",
@@ -365,7 +561,7 @@ public static class AudioLabParams
             Min: 0.25, Max: 4.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -4, Group: TTSGroup, FeatureFlag: "f5_tts_params"));
 
-        // ========================== TTS — Zonos ==========================
+        // ── TTS — Zonos ────────────────────────────────────────────────
         ZonosLanguage = T2IParamTypes.Register<string>(new("Zonos Language",
             "Language for Zonos TTS synthesis.",
             "en-us",
@@ -393,7 +589,26 @@ public static class AudioLabParams
             Min: 5.0, Max: 30.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
             OrderPriority: -3, Group: TTSGroup, FeatureFlag: "zonos_tts_params"));
 
-        // ========================== TTS — CosyVoice ==========================
+        // ── TTS — Fish Speech ──────────────────────────────────────────
+        FishSpeechMaxTokens = T2IParamTypes.Register<int>(new("FishSpeech Max Tokens",
+            "Maximum new tokens to generate.\nHigher values allow longer audio output but take more time.",
+            "1024",
+            Min: 256, Max: 4096, Step: 64, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "fishspeech_tts_params"));
+
+        FishSpeechChunkLength = T2IParamTypes.Register<int>(new("FishSpeech Chunk Length",
+            "Text chunk size in bytes for batched generation.\nSmaller = faster first audio, larger = better coherence.",
+            "200",
+            Min: 100, Max: 300, Step: 10, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "fishspeech_tts_params"));
+
+        FishSpeechNormalize = T2IParamTypes.Register<string>(new("FishSpeech Normalize",
+            "Normalize text before synthesis.\nImproves handling of numbers, abbreviations, and special characters.",
+            "true",
+            GetValues: _ => ["true///Yes (Recommended)", "false///No"],
+            OrderPriority: -3, Group: TTSGroup, FeatureFlag: "fishspeech_tts_params"));
+
+        // ── TTS — CosyVoice ───────────────────────────────────────────
         CosyVoiceVoice = T2IParamTypes.Register<string>(new("CosyVoice Voice",
             "Built-in voice for CosyVoice TTS.\nUsed when no reference audio is provided.",
             "中文女",
@@ -405,7 +620,7 @@ public static class AudioLabParams
             ],
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "cosyvoice_tts_params"));
 
-        // ========================== STT ==========================
+        // ── STT Shared ─────────────────────────────────────────────────
         AudioInput = T2IParamTypes.Register<AudioFile>(new("Audio Input",
             "Audio file to transcribe.\nSupports WAV, MP3, and other common formats.",
             null,
@@ -423,21 +638,21 @@ public static class AudioLabParams
             ],
             OrderPriority: -9, Group: STTGroup, FeatureFlag: "audiolab_stt"));
 
-        // STT — Whisper
+        // ── STT — Whisper ──────────────────────────────────────────────
         WhisperTask = T2IParamTypes.Register<string>(new("Whisper Task",
             "Whisper task type.\nTranscribe = speech-to-text in original language.\nTranslate = speech-to-English translation.",
             "transcribe",
             GetValues: _ => ["transcribe///Transcribe", "translate///Translate to English"],
             OrderPriority: -8, Group: STTGroup, FeatureFlag: "whisper_stt_params"));
 
-        // ========================== Music ==========================
+        // ── Music Shared ───────────────────────────────────────────────
         Duration = T2IParamTypes.Register<double>(new("Duration",
             "Duration of generated music in seconds.\nLonger durations need more time and VRAM.",
             "30",
             Min: 1, Max: 300, Step: 1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -10, Group: MusicGroup, FeatureFlag: "audiolab_music"));
 
-        // Music — AudioCraft shared
+        // ── Music — AudioCraft Shared ──────────────────────────────────
         GuidanceScale = T2IParamTypes.Register<double>(new("Guidance Scale",
             "Classifier-free guidance for music/sound generation.\nHigher values increase prompt adherence.",
             "3.0",
@@ -462,7 +677,7 @@ public static class AudioLabParams
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
             OrderPriority: -5, Group: MusicGroup, FeatureFlag: "audiocraft_sampling"));
 
-        // Music — ACE-Step core (acestep_music_params)
+        // ── Music — ACE-Step Core ──────────────────────────────────────
         Lyrics = T2IParamTypes.Register<string>(new("Lyrics",
             "Song lyrics for ACE-Step generation.\nUse [Instrumental] for instrumental-only tracks.\nSupports section tags like [Verse], [Chorus], [Bridge].",
             "[Instrumental]",
@@ -588,7 +803,7 @@ public static class AudioLabParams
             Min: -30.0, Max: 0.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
             OrderPriority: 6, Group: MusicGroup, FeatureFlag: "acestep_music_params"));
 
-        // Music — ACE-Step LM planner (acestep_lm_params)
+        // ── Music — ACE-Step LM Planner ────────────────────────────────
         // TODO: Integrate with SwarmUI's AbstractLLMBackend when LLMAPI.cs is complete.
         // These params are registered and wired through BuildEngineArgs but the actual
         // LM inference is stubbed in music_acestep.py until SwarmUI LLM integration is ready.
@@ -654,7 +869,7 @@ public static class AudioLabParams
             GetValues: _ => ["true///Yes", "false///No"],
             OrderPriority: -1, Group: MusicGroup, FeatureFlag: "acestep_lm_params"));
 
-        // Music — ACE-Step task types (acestep_task_params)
+        // ── Music — ACE-Step Tasks ─────────────────────────────────────
         ACETaskType = T2IParamTypes.Register<string>(new("Task Type",
             "ACE-Step generation task type.\ntext2music = generate from prompt. cover = style transfer.\nrepaint = regenerate a section. extract = extract elements.\nlego = combine elements. complete = extend/continue.",
             "text2music",
@@ -699,13 +914,13 @@ public static class AudioLabParams
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
             OrderPriority: -4, Group: MusicGroup, FeatureFlag: "acestep_task_params"));
 
-        // Music — MusicGen
+        // ── Music — MusicGen ───────────────────────────────────────────
         MelodyAudio = T2IParamTypes.Register<AudioFile>(new("Melody Audio",
             "Reference melody for MusicGen melody conditioning.\nOnly used with the melody model variant.",
             null,
             OrderPriority: -5, Group: MusicGroup, FeatureFlag: "musicgen_music_params"));
 
-        // ========================== Voice Clone ==========================
+        // ── Voice Clone Shared ─────────────────────────────────────────
         SourceAudio = T2IParamTypes.Register<AudioFile>(new("Source Audio",
             "Audio with the voice to clone or the audio to convert.\nProvide a clean recording.",
             null,
@@ -716,7 +931,7 @@ public static class AudioLabParams
             null,
             OrderPriority: -9, Group: CloneGroup, FeatureFlag: "audiolab_clone"));
 
-        // Clone — RVC
+        // ── Clone — RVC ────────────────────────────────────────────────
         PitchShift = T2IParamTypes.Register<int>(new("Pitch Shift",
             "Semitone pitch shift for RVC voice conversion.\n0 = no shift, +12 = octave up, -12 = octave down.",
             "0",
@@ -750,7 +965,7 @@ public static class AudioLabParams
             Min: 0.0, Max: 0.5, Step: 0.01, ViewType: ParamViewType.SLIDER,
             OrderPriority: -1, Group: CloneGroup, FeatureFlag: "rvc_clone_params"));
 
-        // Clone — GPT-SoVITS
+        // ── Clone — GPT-SoVITS ─────────────────────────────────────────
         ClonePromptText = T2IParamTypes.Register<string>(new("Clone Prompt Text",
             "Transcript of the reference audio for GPT-SoVITS.\nImproves cloning accuracy when provided.",
             "",
@@ -765,13 +980,13 @@ public static class AudioLabParams
             ],
             OrderPriority: -4, Group: CloneGroup, FeatureFlag: "gptsovits_clone_params"));
 
-        // ========================== Audio FX ==========================
+        // ── Audio FX Shared ────────────────────────────────────────────
         FXInput = T2IParamTypes.Register<AudioFile>(new("FX Input",
             "Audio file to process.\nUpload audio for separation, enhancement, or denoising.",
             null,
             OrderPriority: -10, Group: FXGroup, FeatureFlag: "audiolab_fx"));
 
-        // FX — Demucs
+        // ── FX — Demucs ────────────────────────────────────────────────
         Overlap = T2IParamTypes.Register<double>(new("Overlap",
             "Overlap between processing chunks.\nHigher values improve quality at boundaries but take longer.",
             "0.25",
@@ -784,7 +999,7 @@ public static class AudioLabParams
             Min: 0, Max: 10, Step: 1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -4, Group: FXGroup, FeatureFlag: "demucs_fx_params"));
 
-        // FX — Resemble Enhance
+        // ── FX — Resemble Enhance ──────────────────────────────────────
         EnhanceNFE = T2IParamTypes.Register<int>(new("Enhancement Steps",
             "Number of function evaluations for audio enhancement.\nMore steps = higher quality but slower.",
             "64",
@@ -811,7 +1026,7 @@ public static class AudioLabParams
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
             OrderPriority: -2, Group: FXGroup, FeatureFlag: "resemble_enhance_fx_params"));
 
-        // ========================== Sound FX ==========================
+        // ── Sound FX Shared ────────────────────────────────────────────
         SFXDuration = T2IParamTypes.Register<double>(new("SFX Duration",
             "Duration of generated sound effect in seconds.",
             "10",

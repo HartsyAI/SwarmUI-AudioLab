@@ -3,11 +3,13 @@ using Hartsy.Extensions.AudioLab.WebAPI.Models;
 
 namespace Hartsy.Extensions.AudioLab.AudioProviders;
 
-/// <summary>Zonos TTS provider — multilingual TTS trained on 200k+ hours with zero-shot cloning.</summary>
+/// <summary>Zonos TTS provider -- multilingual TTS trained on 200k+ hours with zero-shot cloning.</summary>
 public sealed class ZonosProvider : IAudioProviderSource
 {
+    /// <summary>Singleton instance of the Zonos provider.</summary>
     public static ZonosProvider Instance { get; } = new();
 
+    /// <summary>Builds and returns the Zonos provider definition with dependencies and models.</summary>
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("zonos_tts")
         .WithName("Zonos TTS")
@@ -24,6 +26,8 @@ public sealed class ZonosProvider : IAudioProviderSource
         .WithEngineGroup("main")
         .Build();
 
+    #region Dependencies
+
     private static PackageDefinition[] Dependencies =>
     [
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
@@ -33,9 +37,15 @@ public sealed class ZonosProvider : IAudioProviderSource
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
     ];
 
+    #endregion
+
+    #region Models
+
     private static AudioModelDefinition[] Models =>
     [
         new() { Id = "transformer", Name = "Zonos Transformer", Description = "Transformer-based, multilingual (EN/JP/CN/FR/DE)", SourceUrl = "https://huggingface.co/Zyphra/Zonos-v0.1-transformer", License = "Apache 2.0", EstimatedSize = "~2GB", EstimatedVram = "~4GB", EngineConfig = new() { ["model_name"] = "Zyphra/Zonos-v0.1-transformer" } },
         new() { Id = "hybrid", Name = "Zonos Hybrid", Description = "Hybrid architecture, best quality with zero-shot cloning", SourceUrl = "https://huggingface.co/Zyphra/Zonos-v0.1-hybrid", License = "Apache 2.0", EstimatedSize = "~2GB", EstimatedVram = "~4GB", EngineConfig = new() { ["model_name"] = "Zyphra/Zonos-v0.1-hybrid" } }
     ];
+
+    #endregion
 }

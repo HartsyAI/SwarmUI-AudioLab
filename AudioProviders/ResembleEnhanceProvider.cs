@@ -6,8 +6,10 @@ namespace Hartsy.Extensions.AudioLab.AudioProviders;
 /// <summary>Resemble Enhance provider — AI-powered speech denoising and super-resolution to 44.1kHz.</summary>
 public sealed class ResembleEnhanceProvider : IAudioProviderSource
 {
+    /// <summary>Singleton instance of the Resemble Enhance provider.</summary>
     public static ResembleEnhanceProvider Instance { get; } = new();
 
+    /// <summary>Builds and returns the Resemble Enhance provider definition.</summary>
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("resemble_enhance_fx")
         .WithName("Resemble Enhance")
@@ -22,6 +24,8 @@ public sealed class ResembleEnhanceProvider : IAudioProviderSource
         .WithRequiresDocker()
         .Build();
 
+    #region Dependencies
+
     private static PackageDefinition[] Dependencies =>
     [
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
@@ -31,9 +35,15 @@ public sealed class ResembleEnhanceProvider : IAudioProviderSource
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
     ];
 
+    #endregion
+
+    #region Models
+
     private static AudioModelDefinition[] Models =>
     [
         new() { Id = "denoise", Name = "Resemble Denoise", Description = "Speech denoising — removes background noise from audio", SourceUrl = "https://github.com/resemble-ai/resemble-enhance", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~2GB", EngineConfig = new() { ["mode"] = "denoise" } },
         new() { Id = "enhance", Name = "Resemble Enhance", Description = "Full enhancement — denoise + super-resolution to 44.1kHz", SourceUrl = "https://github.com/resemble-ai/resemble-enhance", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~2GB", EngineConfig = new() { ["mode"] = "enhance" } }
     ];
+
+    #endregion
 }

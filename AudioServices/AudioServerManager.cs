@@ -155,7 +155,7 @@ public class AudioServerManager : IDisposable
                 }
                 else
                 {
-                    var user = Program.Sessions.GetUser(SessionHandler.LocalUserID);
+                    User user = Program.Sessions.GetUser(SessionHandler.LocalUserID);
                     if (user == null)
                     {
                         Logs.Debug($"[AudioLab] GetUser('{SessionHandler.LocalUserID}') returned null");
@@ -572,8 +572,6 @@ public class AudioServerManager : IDisposable
         _httpClient.Dispose();
     }
 
-    // -- Helpers ---------------------------------------------------------------
-
     /// <summary>Installs the minimum packages needed for audio_server.py to start.
     /// Currently just numpy (imported at top level by base_engine.py).
     /// Uses pip install which is idempotent — skips quickly if already installed.</summary>
@@ -644,7 +642,7 @@ public class AudioServerManager : IDisposable
     {
         try
         {
-            var user = Program.Sessions?.GetUser(SessionHandler.LocalUserID);
+            User user = Program.Sessions?.GetUser(SessionHandler.LocalUserID);
             return user?.GetGenericData("huggingface_api", "key") ?? "";
         }
         catch

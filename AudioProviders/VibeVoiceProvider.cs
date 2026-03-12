@@ -7,8 +7,10 @@ namespace Hartsy.Extensions.AudioLab.AudioProviders;
 /// Community-maintained fork after Microsoft removed the original repo.</summary>
 public sealed class VibeVoiceProvider : IAudioProviderSource
 {
+    /// <summary>Gets the singleton instance of the VibeVoice TTS provider.</summary>
     public static VibeVoiceProvider Instance { get; } = new();
 
+    /// <summary>Builds and returns the VibeVoice TTS provider definition.</summary>
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("vibevoice_tts")
         .WithName("VibeVoice TTS")
@@ -25,6 +27,8 @@ public sealed class VibeVoiceProvider : IAudioProviderSource
         .WithEngineGroup("main")
         .Build();
 
+    #region Dependencies
+
     private static PackageDefinition[] Dependencies =>
     [
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
@@ -35,10 +39,16 @@ public sealed class VibeVoiceProvider : IAudioProviderSource
         new() { Name = "vibevoice", InstallName = "git+https://github.com/vibevoice-community/VibeVoice.git", ImportName = "vibevoice", Category = "tts", IsGitPackage = true, EstimatedInstallTimeMinutes = 15 }
     ];
 
+    #endregion
+
+    #region Models
+
     private static AudioModelDefinition[] Models =>
     [
         new() { Id = "realtime-0.5b", Name = "VibeVoice Realtime 0.5B", Description = "Real-time streaming TTS, single speaker, low latency", SourceUrl = "https://huggingface.co/vibevoice/VibeVoice-Realtime-0.5B", License = "MIT", EstimatedSize = "~2GB", EstimatedVram = "~3GB", EngineConfig = new() { ["model_name"] = "vibevoice/VibeVoice-Realtime-0.5B" } },
         new() { Id = "1.5b", Name = "VibeVoice 1.5B", Description = "Long-form multi-speaker TTS, up to 90 min, 4 speakers", SourceUrl = "https://huggingface.co/vibevoice/VibeVoice-1.5B", License = "MIT", EstimatedSize = "~5GB", EstimatedVram = "~7GB", EngineConfig = new() { ["model_name"] = "vibevoice/VibeVoice-1.5B" } },
         new() { Id = "large", Name = "VibeVoice Large 7B", Description = "Highest quality TTS, best non-English stability, 4 speakers", SourceUrl = "https://huggingface.co/vibevoice/VibeVoice-7B", License = "MIT", EstimatedSize = "~17GB", EstimatedVram = "~16GB", EngineConfig = new() { ["model_name"] = "vibevoice/VibeVoice-7B" } }
     ];
+
+    #endregion
 }

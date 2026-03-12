@@ -6,8 +6,10 @@ namespace Hartsy.Extensions.AudioLab.AudioProviders;
 /// <summary>OpenVoice v2 provider — zero-shot voice cloning with granular tone/style control.</summary>
 public sealed class OpenVoiceProvider : IAudioProviderSource
 {
+    /// <summary>Singleton instance of the OpenVoice provider.</summary>
     public static OpenVoiceProvider Instance { get; } = new();
 
+    /// <summary>Builds and returns the OpenVoice V2 provider definition.</summary>
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("openvoice_clone")
         .WithName("OpenVoice V2")
@@ -21,6 +23,8 @@ public sealed class OpenVoiceProvider : IAudioProviderSource
         .WithEngineGroup("main")
         .Build();
 
+    #region Dependencies
+
     private static PackageDefinition[] Dependencies =>
     [
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
@@ -29,8 +33,14 @@ public sealed class OpenVoiceProvider : IAudioProviderSource
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
     ];
 
+    #endregion
+
+    #region Models
+
     private static AudioModelDefinition[] Models =>
     [
         new() { Id = "v2", Name = "OpenVoice V2", Description = "Zero-shot voice cloning with tone/style transfer", SourceUrl = "https://github.com/myshell-ai/OpenVoice", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~2GB", EngineConfig = new() { ["model_version"] = "v2" } }
     ];
+
+    #endregion
 }

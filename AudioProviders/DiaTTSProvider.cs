@@ -6,8 +6,10 @@ namespace Hartsy.Extensions.AudioLab.AudioProviders;
 /// <summary>Dia TTS provider — ultra-realistic dialogue generation with nonverbal sounds.</summary>
 public sealed class DiaTTSProvider : IAudioProviderSource
 {
+    /// <summary>Gets the singleton instance of the Dia TTS provider.</summary>
     public static DiaTTSProvider Instance { get; } = new();
 
+    /// <summary>Builds and returns the Dia TTS provider definition.</summary>
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("dia_tts")
         .WithName("Dia TTS")
@@ -23,6 +25,8 @@ public sealed class DiaTTSProvider : IAudioProviderSource
         .WithEngineGroup("main")
         .Build();
 
+    #region Dependencies
+
     private static PackageDefinition[] Dependencies =>
     [
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
@@ -32,8 +36,14 @@ public sealed class DiaTTSProvider : IAudioProviderSource
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
     ];
 
+    #endregion
+
+    #region Models
+
     private static AudioModelDefinition[] Models =>
     [
         new() { Id = "1.6b", Name = "Dia 1.6B", Description = "Ultra-realistic dialogue, 2 speakers in one pass, nonverbal sounds", SourceUrl = "https://huggingface.co/nari-labs/Dia-1.6B-0626", License = "Apache 2.0", EstimatedSize = "~3.5GB", EstimatedVram = "~10GB", EngineConfig = new() { ["model_name"] = "nari-labs/Dia-1.6B-0626" } }
     ];
+
+    #endregion
 }
