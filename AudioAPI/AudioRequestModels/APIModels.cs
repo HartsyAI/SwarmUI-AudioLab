@@ -451,13 +451,16 @@ public class BackendHealthInfo
     /// <summary>Backend type being checked</summary>
     public string BackendType { get; set; } = string.Empty;
 
+    /// <summary>Maximum number of health check attempts before giving up.</summary>
     public int MaxAttempts { get; set; }
 
+    /// <summary>Number of health check attempts performed so far.</summary>
     public int AttemptCount { get; set; } = 0;
 
     /// <summary>Status of individual services</summary>
     public Dictionary<string, bool> Services { get; set; } = [];
 
+    /// <summary>Resets all health info fields to their defaults and returns a fresh instance.</summary>
     public BackendHealthInfo Reset()
     {
         return new BackendHealthInfo
@@ -473,6 +476,7 @@ public class BackendHealthInfo
         };
     }
 
+    /// <summary>Converts health info to a JObject for API serialization.</summary>
     public JObject ToJObject()
     {
         return new JObject
@@ -529,6 +533,7 @@ public class InstallationStatusResponse : BaseResponse
 /// <summary>Response for installation progress tracking.</summary>
 public class InstallationProgressResponse : BaseResponse
 {
+    /// <summary>Serialized version info for installed packages.</summary>
     public string PackageVersions { get; set; }
 
     /// <summary>Whether installation is currently running</summary>
@@ -537,6 +542,7 @@ public class InstallationProgressResponse : BaseResponse
     /// <summary>Overall progress percentage (0-100)</summary>
     public int Progress { get; set; } = 0;
 
+    /// <summary>Download progress percentage for the current package (0-100).</summary>
     public int DownloadProgress { get; set; } = 0;
 
     /// <summary>Current installation step</summary>
@@ -554,13 +560,16 @@ public class InstallationProgressResponse : BaseResponse
     /// <summary>Whether an error occurred</summary>
     public bool HasError { get; set; } = false;
 
+    /// <summary>Comma-separated list of packages that failed to install.</summary>
     public string FailedPackages { get; set; }
 
     /// <summary>Error message if an error occurred</summary>
     public string ErrorMessage { get; set; } = string.Empty;
 
+    /// <summary>Human-readable status message for display.</summary>
     public string StatusMessage { get; set; } = string.Empty;
 
+    /// <summary>Resets all installation progress fields to their defaults.</summary>
     public InstallationProgressResponse Reset()
     {
         return new InstallationProgressResponse
@@ -693,30 +702,65 @@ public class PackageStatus
 /// <summary>Response for long-running voice processing job progress.</summary>
 public class JobProgressResponse : BaseResponse
 {
+    /// <summary>Unique identifier for the processing job.</summary>
     public string JobId { get; set; } = string.Empty;
-    public string JobType { get; set; } = string.Empty; // "tts_large", "stt_batch", "workflow"
-    public int Progress { get; set; } = 0; // 0-100%
+
+    /// <summary>Type of job (tts_large, stt_batch, workflow).</summary>
+    public string JobType { get; set; } = string.Empty;
+
+    /// <summary>Overall progress percentage (0-100).</summary>
+    public int Progress { get; set; } = 0;
+
+    /// <summary>Description of the current processing step.</summary>
     public string CurrentStep { get; set; } = string.Empty;
+
+    /// <summary>Index of the chunk currently being processed.</summary>
     public int CurrentChunk { get; set; } = 0;
+
+    /// <summary>Total number of chunks to process.</summary>
     public int TotalChunks { get; set; } = 0;
-    public long ProcessedSize { get; set; } = 0; // Bytes or characters processed
-    public long TotalSize { get; set; } = 0; // Total bytes or characters
+
+    /// <summary>Bytes or characters processed so far.</summary>
+    public long ProcessedSize { get; set; } = 0;
+
+    /// <summary>Total bytes or characters to process.</summary>
+    public long TotalSize { get; set; } = 0;
+
+    /// <summary>Estimated time until the job completes.</summary>
     public TimeSpan EstimatedTimeRemaining { get; set; } = TimeSpan.Zero;
+
+    /// <summary>Whether partial results are available for completed chunks.</summary>
     public bool HasPartialResults { get; set; } = false;
-    public Dictionary<string, object> PartialResults { get; set; } = []; // Completed chunks
+
+    /// <summary>Results from completed chunks, keyed by chunk identifier.</summary>
+    public Dictionary<string, object> PartialResults { get; set; } = [];
 }
 
 /// <summary>Internal job state tracking data.</summary>
 public class JobData
 {
+    /// <summary>Unique identifier for the job.</summary>
     public string JobId { get; set; } = string.Empty;
+
+    /// <summary>Type of job being tracked.</summary>
     public string JobType { get; set; } = string.Empty;
-    public string Operation { get; set; } = string.Empty; // "TTS", "STT", "Workflow"
+
+    /// <summary>Operation being performed (TTS, STT, Workflow).</summary>
+    public string Operation { get; set; } = string.Empty;
+
+    /// <summary>Index of the chunk currently being processed.</summary>
     public int CurrentChunk { get; set; } = 0;
+
+    /// <summary>Total number of chunks to process.</summary>
     public int TotalChunks { get; set; } = 0;
+
+    /// <summary>Results from successfully completed chunks.</summary>
     public Dictionary<string, object> CompletedChunks { get; set; } = [];
+
+    /// <summary>Identifiers of chunks that failed processing.</summary>
     public List<string> FailedChunks { get; set; } = [];
 
+    /// <summary>Resets all job tracking fields to their defaults.</summary>
     public void Reset()
     {
         CurrentChunk = 0;

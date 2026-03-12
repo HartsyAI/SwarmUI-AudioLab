@@ -21,6 +21,7 @@ const AudioLabConfig = {
         f5_tts: { category: 'audiolab_tts', providerFlag: 'f5_tts_params' },
         neutts_tts: { category: 'audiolab_tts', providerFlag: 'neutts_tts_params' },
         cosyvoice_tts: { category: 'audiolab_tts', providerFlag: 'cosyvoice_tts_params' },
+        fishspeech_tts: { category: 'audiolab_tts', providerFlag: 'fishspeech_tts_params' },
         // STT providers
         whisper_stt: { category: 'audiolab_stt', providerFlag: 'whisper_stt_params' },
         distilwhisper_stt: { category: 'audiolab_stt', providerFlag: 'distilwhisper_stt_params' },
@@ -588,7 +589,7 @@ function audioLabRefreshEngineManager() {
 }
 
 // ============================================================
-// Add "Edit Audio" button via SwarmUI's buttonsForImage system
+// Add "Audio Lab" button via SwarmUI's buttonsForImage system
 // ============================================================
 
 /**
@@ -602,7 +603,7 @@ function audioLabRefreshEngineManager() {
  */
 setTimeout(() => {
     if (typeof buttonsForImage !== 'function') {
-        console.warn('[audiolab] buttonsForImage not found, Edit Audio button not registered');
+        console.warn('[audiolab] buttonsForImage not found, Audio Lab button not registered');
         return;
     }
     let origButtonsForImage = buttonsForImage;
@@ -610,9 +611,9 @@ setTimeout(() => {
         let buttons = origButtonsForImage(fullsrc, src, metadata);
         if (isAudioExt(src)) {
             buttons.push({
-                label: 'Edit Audio',
-                title: 'Open the audio editor with waveform visualization and editing tools',
-                onclick: () => AudioLabEditor.open(src)
+                label: 'Audio Lab',
+                title: 'Open Audio Lab for editing, voice cloning setup, and export',
+                onclick: () => AudioLab.open(src)
             });
         }
         return buttons;

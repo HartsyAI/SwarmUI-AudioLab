@@ -16,6 +16,7 @@ namespace Hartsy.Extensions.AudioLab;
 /// through a provider-based architecture integrated into SwarmUI's Generate tab.</summary>
 public class AudioLab : Extension
 {
+    /// <summary>Current extension version.</summary>
     public static new readonly string Version = "4.0.0";
 
     /// <summary>Pre-initialization — registers providers and web assets before SwarmUI core is ready.</summary>

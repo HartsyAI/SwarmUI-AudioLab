@@ -8,40 +8,80 @@ namespace Hartsy.Extensions.AudioLab.AudioServices;
 /// in favor of provider-based routing through DynamicAudioBackend.</summary>
 public static class AudioConfiguration
 {
-    // Process Configuration
+    #region Process Configuration
+
+    /// <summary>Maximum time to wait for a Python server process to start.</summary>
     public static readonly TimeSpan ProcessStartupTimeout = TimeSpan.FromMinutes(5);
+
+    /// <summary>Maximum time to wait for a Python server process to shut down.</summary>
     public static readonly TimeSpan ProcessShutdownTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>Maximum time to wait for a health check response.</summary>
     public static readonly TimeSpan HealthCheckTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>Maximum number of health check attempts before declaring failure.</summary>
     public static readonly int MaxHealthCheckAttempts = 30;
 
-    // Installation Configuration
+    #endregion
+
+    #region Installation Configuration
+
+    /// <summary>Maximum time to wait for full dependency installation.</summary>
     public static readonly TimeSpan InstallationTimeout = TimeSpan.FromMinutes(30);
+
+    /// <summary>Maximum time to wait for a single pip package install.</summary>
     public static readonly TimeSpan PackageInstallTimeout = TimeSpan.FromMinutes(30);
+
+    /// <summary>Maximum number of retries for failed package installations.</summary>
     public static readonly int MaxInstallationRetries = 3;
 
-    // API Configuration
+    #endregion
+
+    #region API Configuration
+
+    /// <summary>Default timeout for API calls to Python servers.</summary>
     public static readonly TimeSpan ApiCallTimeout = TimeSpan.FromSeconds(45);
+
+    /// <summary>User-Agent header for outgoing HTTP requests.</summary>
     public static readonly string UserAgent = "SwarmUI-AudioLab/3.0";
 
-    // Audio Configuration
+    #endregion
+
+    #region Audio Defaults
+
+    /// <summary>Maximum audio file size in megabytes.</summary>
     public static readonly int MaxAudioSizeMB = 50;
+
+    /// <summary>Maximum text length for TTS input.</summary>
     public static readonly int MaxTextLength = 1000;
+
+    /// <summary>Default volume level for generated audio.</summary>
     public static readonly float DefaultVolume = 0.8f;
+
+    /// <summary>Default language code for audio processing.</summary>
     public static readonly string DefaultLanguage = "en-US";
+
+    /// <summary>Default voice identifier for TTS.</summary>
     public static readonly string DefaultVoice = "default";
 
-    // Supported Languages
+    /// <summary>Supported language codes for audio processing.</summary>
     public static readonly string[] SupportedLanguages =
     [
         "en-US", "en-GB", "es-ES", "fr-FR", "de-DE", "it-IT",
         "pt-BR", "ru-RU", "ja-JP", "ko-KR", "zh-CN"
     ];
 
-    // Paths
+    #endregion
+
+    #region Paths
+
+    /// <summary>Root directory of the AudioLab extension.</summary>
     public static string ExtensionDirectory { get; set; } = "";
+
+    /// <summary>Directory containing the Python backend scripts.</summary>
     public static string PythonBackendDirectory => Path.Combine(ExtensionDirectory, "python_backend");
 
-    // Model Storage — centralized under Models/audio/ instead of ~/.cache/huggingface/
+    /// <summary>Root directory for audio model storage, centralized under Models/audio/.</summary>
     public static string ModelRoot { get; set; } = "Models/audio";
 
     /// <summary>Path for HuggingFace model cache (redirected from ~/.cache/huggingface/).</summary>
@@ -54,11 +94,17 @@ public static class AudioConfiguration
     /// Delegates to VenvManager.VenvRoot which uses a short path on Windows.</summary>
     public static string VenvRoot => VenvManager.VenvRoot;
 
-    // Docker — optional for Linux-only engines
+    #endregion
+
+    #region Runtime Settings
+
+    /// <summary>Whether to use Docker for Linux-only engines.</summary>
     public static bool UseDocker { get; set; } = false;
 
-    // Request timeout — configurable from backend settings
+    /// <summary>Request timeout in seconds, configurable from backend settings.</summary>
     public static int TimeoutSeconds { get; set; } = 300;
+
+    #endregion
 
     /// <summary>Validates the current configuration and logs any issues.</summary>
     public static bool ValidateConfiguration()

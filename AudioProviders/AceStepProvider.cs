@@ -6,8 +6,10 @@ namespace Hartsy.Extensions.AudioLab.AudioProviders;
 /// <summary>ACE-Step 1.5 provider — SOTA music generation with lyrics alignment, 6 DiT variants, and optional LM planner.</summary>
 public sealed class AceStepProvider : IAudioProviderSource
 {
+    /// <summary>Singleton instance of the ACE-Step provider.</summary>
     public static AceStepProvider Instance { get; } = new();
 
+    /// <summary>Builds and returns the ACE-Step music generation provider definition.</summary>
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("acestep_music")
         .WithName("ACE-Step Music")
@@ -22,6 +24,8 @@ public sealed class AceStepProvider : IAudioProviderSource
         .AddModels(Models)
         .WithEngineGroup("acestep")
         .Build();
+
+    #region Dependencies
 
     private static PackageDefinition[] Dependencies =>
     [
@@ -43,6 +47,10 @@ public sealed class AceStepProvider : IAudioProviderSource
         new() { Name = "loguru>=0.7.3", InstallName = "loguru>=0.7.3", ImportName = "loguru", Category = "music" }
     ];
 
+    #endregion
+
+    #region Models
+
     private static AudioModelDefinition[] Models =>
     [
         new() { Id = "turbo", Name = "ACE-Step 1.5 Turbo", Description = "Fast turbo model, 8 steps. Supports text2music, cover, repaint.", SourceUrl = "https://github.com/ace-step/ACE-Step-1.5", License = "MIT", EstimatedSize = "~4GB", EstimatedVram = "~8GB", EngineConfig = new() { ["dit_model"] = "acestep-v15-turbo" } },
@@ -52,4 +60,6 @@ public sealed class AceStepProvider : IAudioProviderSource
         new() { Id = "sft", Name = "ACE-Step 1.5 SFT", Description = "SFT model with CFG support, 50 steps. Supports text2music, cover, repaint, extract.", SourceUrl = "https://github.com/ace-step/ACE-Step-1.5", License = "MIT", EstimatedSize = "~4GB", EstimatedVram = "~8GB", EngineConfig = new() { ["dit_model"] = "acestep-v15-sft" } },
         new() { Id = "base", Name = "ACE-Step 1.5 Base", Description = "Full base model with CFG, 50 steps. Supports all 6 task types.", SourceUrl = "https://github.com/ace-step/ACE-Step-1.5", License = "MIT", EstimatedSize = "~4GB", EstimatedVram = "~10GB", EngineConfig = new() { ["dit_model"] = "acestep-v15-base" } }
     ];
+
+    #endregion
 }

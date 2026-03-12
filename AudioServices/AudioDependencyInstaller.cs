@@ -19,6 +19,7 @@ public class AudioDependencyInstaller
     private Dictionary<string, string> _cachedInstalledPackages;
     private string _cachedInstalledPackagesKey;
 
+    /// <summary>Whether a dependency installation is currently in progress.</summary>
     public bool IsInstalling => _isInstalling;
 
     /// <summary>Detects the Python environment for the "main" venv group.
@@ -289,8 +290,6 @@ public class AudioDependencyInstaller
         }
         return results;
     }
-
-    // -- Existing install infrastructure (kept from DependencyInstaller) ----
 
     private void InvalidatePackageCache()
     {

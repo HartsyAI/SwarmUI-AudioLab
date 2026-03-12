@@ -25,6 +25,7 @@ const AudioLabPlayer = (() => {
         showSpeed: true,
         showVolume: true,
         enableRegions: false,
+        editorMode: false,
         compact: false
     };
 
@@ -98,6 +99,7 @@ const AudioLabPlayer = (() => {
             playerEl,
             opts,
             currentUrl: null,
+            currentBlob: null,
             activeRegion: null,
             callbacks: {}
         };
@@ -140,8 +142,8 @@ const AudioLabPlayer = (() => {
             parts.push('<option value="2">2x</option>');
             parts.push('</select>');
         }
-        // Editing controls (when regions enabled)
-        if (opts.enableRegions) {
+        // Editing controls (when regions enabled and NOT in editorMode — editor has its own toolbar)
+        if (opts.enableRegions && !opts.editorMode) {
             parts.push('<span class="alp-separator"></span>');
             parts.push('<button class="alp-btn alp-select-region" title="Select region for trim"><span>&#x2194;</span></button>');
             parts.push('<button class="alp-btn alp-trim" title="Trim to selection" disabled><span>&#x2702;</span></button>');
@@ -296,26 +298,36 @@ const AudioLabPlayer = (() => {
         return {
             id: state.id,
 
-            /** Load audio from a URL */
-            load(url) {
-                state.currentUrl = url;
-                return state.ws.load(url);
+            /** Load audio from a URL (fetches as blob first — ws.load(url) hangs in SwarmUI) */
+            async load(url) {
+                const resp = await fetch(url);
+                const blob = await resp.blob();
+                return this.loadBlob(blob);
             },
 
             /** Load from base64 audio data */
             loadBase64(base64, mimeType = 'audio/wav') {
                 const data = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
                 const blob = new Blob([data], { type: mimeType });
-                const url = URL.createObjectURL(blob);
-                state.currentUrl = url;
-                return state.ws.load(url);
+                return this.loadBlob(blob);
             },
 
-            /** Load from a Blob (creates object URL for state tracking, uses ws.loadBlob for direct decode) */
+            /** Load from a Blob — the only safe load path (direct decode, no <audio> element) */
             loadBlob(blob) {
+                if (state.currentUrl?.startsWith('blob:')) URL.revokeObjectURL(state.currentUrl);
                 const url = URL.createObjectURL(blob);
                 state.currentUrl = url;
+                state.currentBlob = blob;
                 return state.ws.loadBlob(blob);
+            },
+
+            /** Reload from a blob after an edit operation */
+            async reloadFromBlob(blob) {
+                if (state.currentUrl?.startsWith('blob:')) URL.revokeObjectURL(state.currentUrl);
+                const url = URL.createObjectURL(blob);
+                state.currentUrl = url;
+                state.currentBlob = blob;
+                await state.ws.loadBlob(blob);
             },
 
             play() { return state.ws.play(); },
@@ -369,12 +381,10 @@ const AudioLabPlayer = (() => {
             /** Trim to the currently selected region and reload */
             async trimToRegion() {
                 const region = this.getRegion();
-                if (!region || !state.currentUrl) return null;
-                const blob = await AudioLabCore.trimAudio(state.currentUrl, region.start, region.end);
-                const url = URL.createObjectURL(blob);
-                if (state.currentUrl?.startsWith('blob:')) URL.revokeObjectURL(state.currentUrl);
-                state.currentUrl = url;
-                await state.ws.load(url);
+                const source = state.currentBlob || state.currentUrl;
+                if (!region || !source) return null;
+                const blob = await AudioLabCore.trimAudio(source, region.start, region.end);
+                await this.reloadFromBlob(blob);
                 this.clearRegions();
                 fire(state, 'edit', 'trim');
                 return blob;
@@ -382,40 +392,36 @@ const AudioLabPlayer = (() => {
 
             /** Split audio at current cursor position, returns {before, after} Blobs */
             async splitAtCursor() {
-                if (!state.currentUrl) return null;
+                const source = state.currentBlob || state.currentUrl;
+                if (!source) return null;
                 const time = state.ws.getCurrentTime();
                 if (time <= 0) return null;
-                const parts = await AudioLabCore.splitAudio(state.currentUrl, time);
-                fire(state, 'edit', 'split');
-                return parts;
+                return await AudioLabCore.splitAudio(source, time);
             },
 
             /** Append another audio source (Blob or URL) to current audio */
             async appendAudio(source) {
-                if (!state.currentUrl) return null;
-                const blob = await AudioLabCore.concatAudio([state.currentUrl, source]);
-                const url = URL.createObjectURL(blob);
-                if (state.currentUrl?.startsWith('blob:')) URL.revokeObjectURL(state.currentUrl);
-                state.currentUrl = url;
-                await state.ws.load(url);
+                const current = state.currentBlob || state.currentUrl;
+                if (!current) return null;
+                const blob = await AudioLabCore.concatAudio([current, source]);
+                await this.reloadFromBlob(blob);
                 fire(state, 'edit', 'concat');
                 return blob;
             },
 
             /** Mix/overlay another audio source with current audio */
-            async overlayAudio(source) {
-                if (!state.currentUrl) return null;
-                const blob = await AudioLabCore.mixAudio([state.currentUrl, source]);
-                const url = URL.createObjectURL(blob);
-                if (state.currentUrl?.startsWith('blob:')) URL.revokeObjectURL(state.currentUrl);
-                state.currentUrl = url;
-                await state.ws.load(url);
+            async overlayAudio(source, options = {}) {
+                const current = state.currentBlob || state.currentUrl;
+                if (!current) return null;
+                const blob = await AudioLabCore.mixAudio([current, source], options);
+                await this.reloadFromBlob(blob);
                 fire(state, 'edit', 'mix');
                 return blob;
             },
 
             /** Export current audio as a WAV Blob */
             async exportBlob() {
+                if (state.currentBlob) return state.currentBlob;
                 if (!state.currentUrl) return null;
                 const resp = await fetch(state.currentUrl);
                 return resp.blob();
@@ -423,6 +429,9 @@ const AudioLabPlayer = (() => {
 
             /** Get the WaveSurfer instance for advanced usage */
             getWaveSurfer() { return state.ws; },
+
+            /** Get the Regions plugin instance */
+            getRegionsPlugin() { return state.regionsPlugin; },
 
             /** Get the current audio URL */
             getUrl() { return state.currentUrl; },
@@ -436,6 +445,7 @@ const AudioLabPlayer = (() => {
                 if (state.currentUrl?.startsWith('blob:')) {
                     URL.revokeObjectURL(state.currentUrl);
                 }
+                state.currentBlob = null;
                 instances.delete(state.id);
             }
         };
@@ -560,6 +570,7 @@ const AudioLabPlayer = (() => {
             if (state.currentUrl?.startsWith('blob:')) {
                 URL.revokeObjectURL(state.currentUrl);
             }
+            state.currentBlob = null;
         });
         instances.clear();
     }

@@ -3,11 +3,13 @@ using Hartsy.Extensions.AudioLab.WebAPI.Models;
 
 namespace Hartsy.Extensions.AudioLab.AudioProviders;
 
-/// <summary>CosyVoice provider — Alibaba's streaming multilingual TTS with ultra-low latency.</summary>
+/// <summary>CosyVoice provider -- Alibaba's streaming multilingual TTS with ultra-low latency.</summary>
 public sealed class CosyVoiceProvider : IAudioProviderSource
 {
+    /// <summary>Singleton instance of the CosyVoice provider.</summary>
     public static CosyVoiceProvider Instance { get; } = new();
 
+    /// <summary>Builds and returns the CosyVoice provider definition with dependencies and models.</summary>
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("cosyvoice_tts")
         .WithName("CosyVoice TTS")
@@ -23,6 +25,8 @@ public sealed class CosyVoiceProvider : IAudioProviderSource
         .WithRequiresDocker()
         .Build();
 
+    #region Dependencies
+
     private static PackageDefinition[] Dependencies =>
     [
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
@@ -32,8 +36,14 @@ public sealed class CosyVoiceProvider : IAudioProviderSource
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
     ];
 
+    #endregion
+
+    #region Models
+
     private static AudioModelDefinition[] Models =>
     [
         new() { Id = "2-0.5b", Name = "CosyVoice2 0.5B", Description = "Streaming TTS with ultra-low latency, multilingual", SourceUrl = "https://huggingface.co/FunAudioLLM/CosyVoice2-0.5B", License = "Apache 2.0", EstimatedSize = "~2GB", EstimatedVram = "~8GB", EngineConfig = new() { ["model_name"] = "FunAudioLLM/CosyVoice2-0.5B" } }
     ];
+
+    #endregion
 }

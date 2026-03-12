@@ -3,11 +3,13 @@ using Hartsy.Extensions.AudioLab.WebAPI.Models;
 
 namespace Hartsy.Extensions.AudioLab.AudioProviders;
 
-/// <summary>Piper TTS provider — CPU-only ONNX runtime TTS with dozens of pre-trained voices.</summary>
+/// <summary>Piper TTS provider -- CPU-only ONNX runtime TTS with dozens of pre-trained voices.</summary>
 public sealed class PiperProvider : IAudioProviderSource
 {
+    /// <summary>Singleton instance of the Piper provider.</summary>
     public static PiperProvider Instance { get; } = new();
 
+    /// <summary>Builds and returns the Piper provider definition with dependencies and models.</summary>
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("piper_tts")
         .WithName("Piper TTS")
@@ -21,6 +23,8 @@ public sealed class PiperProvider : IAudioProviderSource
         .WithEngineGroup("main")
         .Build();
 
+    #region Dependencies
+
     private static PackageDefinition[] Dependencies =>
     [
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
@@ -29,8 +33,14 @@ public sealed class PiperProvider : IAudioProviderSource
         new() { Name = "huggingface_hub", InstallName = "huggingface_hub", ImportName = "huggingface_hub", Category = "tts" }
     ];
 
+    #endregion
+
+    #region Models
+
     private static AudioModelDefinition[] Models =>
     [
         new() { Id = "default", Name = "Piper TTS", Description = "CPU-only ONNX runtime TTS with dozens of pre-trained voices", SourceUrl = "https://github.com/rhasspy/piper", License = "MIT", EstimatedSize = "~100MB", EstimatedVram = "CPU only" }
     ];
+
+    #endregion
 }

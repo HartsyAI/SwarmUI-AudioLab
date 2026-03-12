@@ -6,8 +6,10 @@ namespace Hartsy.Extensions.AudioLab.AudioProviders;
 /// <summary>RealtimeSTT provider — real-time streaming speech-to-text with wake word detection.</summary>
 public sealed class RealtimeSTTProvider : IAudioProviderSource
 {
+    /// <summary>Singleton instance of the RealtimeSTT provider.</summary>
     public static RealtimeSTTProvider Instance { get; } = new();
 
+    /// <summary>Builds and returns the RealtimeSTT provider definition.</summary>
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("realtimestt_stt")
         .WithName("RealtimeSTT")
@@ -21,6 +23,8 @@ public sealed class RealtimeSTTProvider : IAudioProviderSource
         .WithEngineGroup("linux_docker")
         .WithRequiresDocker()
         .Build();
+
+    #region Dependencies
 
     private static PackageDefinition[] Dependencies =>
     [
@@ -38,8 +42,14 @@ public sealed class RealtimeSTTProvider : IAudioProviderSource
         new() { Name = "halo==0.0.31", InstallName = "halo==0.0.31", ImportName = "halo", Category = "stt", EstimatedInstallTimeMinutes = 8 }
     ];
 
+    #endregion
+
+    #region Models
+
     private static AudioModelDefinition[] Models =>
     [
         new() { Id = "default", Name = "RealtimeSTT Default", Description = "Real-time streaming transcription with wake word detection", SourceUrl = "https://github.com/KoljaB/RealtimeSTT", License = "MIT", EstimatedSize = "~1GB", EstimatedVram = "~2GB" }
     ];
+
+    #endregion
 }

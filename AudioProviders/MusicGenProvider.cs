@@ -6,8 +6,10 @@ namespace Hartsy.Extensions.AudioLab.AudioProviders;
 /// <summary>Meta MusicGen provider — text-to-music with optional melody conditioning (AudioCraft).</summary>
 public sealed class MusicGenProvider : IAudioProviderSource
 {
+    /// <summary>Singleton instance of the MusicGen provider.</summary>
     public static MusicGenProvider Instance { get; } = new();
 
+    /// <summary>Builds and returns the MusicGen provider definition.</summary>
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("musicgen_music")
         .WithName("MusicGen")
@@ -21,6 +23,8 @@ public sealed class MusicGenProvider : IAudioProviderSource
         .AddModels(Models)
         .WithEngineGroup("audiocraft")
         .Build();
+
+    #region Dependencies
 
     private static PackageDefinition[] Dependencies =>
     [
@@ -45,6 +49,10 @@ public sealed class MusicGenProvider : IAudioProviderSource
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
     ];
 
+    #endregion
+
+    #region Models
+
     private static AudioModelDefinition[] Models =>
     [
         new() { Id = "small", Name = "MusicGen Small", Description = "300M params, fast mono generation", SourceUrl = "https://huggingface.co/facebook/musicgen-small", License = "CC-BY-NC-4.0", EstimatedSize = "~1.2GB", EstimatedVram = "~4GB", EngineConfig = new() { ["model_name"] = "facebook/musicgen-small" } },
@@ -58,4 +66,6 @@ public sealed class MusicGenProvider : IAudioProviderSource
         new() { Id = "stereo-melody", Name = "MusicGen Stereo Melody", Description = "1.5B params, stereo + melody conditioning", SourceUrl = "https://huggingface.co/facebook/musicgen-stereo-melody", License = "CC-BY-NC-4.0", EstimatedSize = "~3.3GB", EstimatedVram = "~6GB", EngineConfig = new() { ["model_name"] = "facebook/musicgen-stereo-melody" } },
         new() { Id = "stereo-melody-large", Name = "MusicGen Stereo Melody Large", Description = "3.3B params, best stereo + melody quality", SourceUrl = "https://huggingface.co/facebook/musicgen-stereo-melody-large", License = "CC-BY-NC-4.0", EstimatedSize = "~7GB", EstimatedVram = "~10GB", EngineConfig = new() { ["model_name"] = "facebook/musicgen-stereo-melody-large" } }
     ];
+
+    #endregion
 }

@@ -19,28 +19,53 @@ public sealed class AudioProviderDefinitionBuilder
     private string _engineGroup = "default";
     private bool _requiresDocker = false;
 
+    /// <summary>Sets the unique provider identifier.</summary>
     public AudioProviderDefinitionBuilder WithId(string id) { _id = id; return this; }
+
+    /// <summary>Sets the display name of the provider.</summary>
     public AudioProviderDefinitionBuilder WithName(string name) { _name = name; return this; }
+
+    /// <summary>Sets the audio processing category.</summary>
     public AudioProviderDefinitionBuilder WithCategory(AudioCategory category) { _category = category; return this; }
+
+    /// <summary>Sets the Python engine module and class name.</summary>
     public AudioProviderDefinitionBuilder WithPythonEngine(string module, string className)
     {
         _pythonModule = module;
         _pythonEngineClass = className;
         return this;
     }
+
+    /// <summary>Sets the model name prefix used for routing.</summary>
     public AudioProviderDefinitionBuilder WithModelPrefix(string prefix) { _modelPrefix = prefix; return this; }
+
+    /// <summary>Sets the model class ID and display name for SwarmUI categorization.</summary>
     public AudioProviderDefinitionBuilder WithModelClass(string id, string name)
     {
         _modelClassId = id;
         _modelClassName = name;
         return this;
     }
+
+    /// <summary>Adds a feature flag for parameter visibility control.</summary>
     public AudioProviderDefinitionBuilder AddFeatureFlag(string flag) { _featureFlags.Add(flag); return this; }
+
+    /// <summary>Adds a single package dependency.</summary>
     public AudioProviderDefinitionBuilder AddDependency(PackageDefinition dep) { _dependencies.Add(dep); return this; }
+
+    /// <summary>Adds multiple package dependencies.</summary>
     public AudioProviderDefinitionBuilder AddDependencies(IEnumerable<PackageDefinition> deps) { _dependencies.AddRange(deps); return this; }
+
+    /// <summary>Adds a single model definition.</summary>
     public AudioProviderDefinitionBuilder AddModel(AudioModelDefinition model) { _models.Add(model); return this; }
+
+    /// <summary>Adds multiple model definitions.</summary>
     public AudioProviderDefinitionBuilder AddModels(IEnumerable<AudioModelDefinition> models) { _models.AddRange(models); return this; }
+
+    /// <summary>Sets the engine group for venv/Docker isolation.</summary>
     public AudioProviderDefinitionBuilder WithEngineGroup(string group) { _engineGroup = group; return this; }
+
+    /// <summary>Marks this provider as requiring Docker to run.</summary>
     public AudioProviderDefinitionBuilder WithRequiresDocker() { _requiresDocker = true; return this; }
 
     public AudioProviderDefinition Build()

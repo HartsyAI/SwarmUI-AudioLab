@@ -197,14 +197,41 @@ const AudioLabCore = (() => {
         return crunker.export(merged, 'audio/wav').blob;
     }
 
+    /** Apply a gain (volume) multiplier to an AudioBuffer.
+     *  @param {AudioBuffer} buffer - source buffer
+     *  @param {number} gain - gain multiplier (1.0 = unchanged)
+     *  @param {BaseAudioContext} ctx - AudioContext for creating new buffer
+     *  @returns {AudioBuffer} new buffer with gain applied */
+    function applyGain(buffer, gain, ctx) {
+        const newBuffer = ctx.createBuffer(buffer.numberOfChannels, buffer.length, buffer.sampleRate);
+        for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+            const input = buffer.getChannelData(ch);
+            const output = newBuffer.getChannelData(ch);
+            for (let i = 0; i < input.length; i++) output[i] = input[i] * gain;
+        }
+        return newBuffer;
+    }
+
     /** Mix/overlay multiple audio sources together.
      *  @param {Array<Blob|string>} sources - array of Blobs or URLs
+     *  @param {Object} [options] - optional mix settings
+     *  @param {number} [options.offset] - start offset in seconds for the overlay source
+     *  @param {number} [options.gain] - volume multiplier for the overlay source (1.0 = unchanged)
      *  @returns {Promise<Blob>} mixed audio as WAV Blob */
-    async function mixAudio(sources) {
+    async function mixAudio(sources, options = {}) {
         const crunker = getCrunker();
         if (!crunker) throw new Error('Crunker not available');
         const buffers = await crunker.fetchAudio(...sources);
-        const mixed = crunker.mergeAudio(buffers);
+        let [base, overlay] = buffers;
+        if (overlay) {
+            if (options.gain !== undefined && options.gain !== 1.0) {
+                overlay = applyGain(overlay, options.gain, crunker.context);
+            }
+            if (options.offset && options.offset > 0) {
+                overlay = crunker.padAudio(overlay, 0, options.offset);
+            }
+        }
+        const mixed = crunker.mergeAudio(overlay ? [base, overlay] : buffers);
         return crunker.export(mixed, 'audio/wav').blob;
     }
 
@@ -232,6 +259,7 @@ const AudioLabCore = (() => {
         splitAudio,
         concatAudio,
         mixAudio,
+        applyGain,
         blobToBase64Export,
         getStatus: () => ({
             capabilities,

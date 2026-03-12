@@ -6,8 +6,10 @@ namespace Hartsy.Extensions.AudioLab.AudioProviders;
 /// <summary>GPT-SoVITS provider — few-shot voice cloning (1 min reference), strong multilingual/CJK support.</summary>
 public sealed class GPTSoVITSProvider : IAudioProviderSource
 {
+    /// <summary>Singleton instance of the GPT-SoVITS provider.</summary>
     public static GPTSoVITSProvider Instance { get; } = new();
 
+    /// <summary>Builds and returns the GPT-SoVITS provider definition.</summary>
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("gptsovits_clone")
         .WithName("GPT-SoVITS")
@@ -22,6 +24,8 @@ public sealed class GPTSoVITSProvider : IAudioProviderSource
         .WithRequiresDocker()
         .Build();
 
+    #region Dependencies
+
     private static PackageDefinition[] Dependencies =>
     [
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
@@ -32,8 +36,14 @@ public sealed class GPTSoVITSProvider : IAudioProviderSource
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
     ];
 
+    #endregion
+
+    #region Models
+
     private static AudioModelDefinition[] Models =>
     [
         new() { Id = "default", Name = "GPT-SoVITS Default", Description = "Few-shot voice cloning from 1 min reference, CJK + English", SourceUrl = "https://github.com/RVC-Boss/GPT-SoVITS", License = "MIT", EstimatedSize = "~2GB", EstimatedVram = "~4GB" }
     ];
+
+    #endregion
 }

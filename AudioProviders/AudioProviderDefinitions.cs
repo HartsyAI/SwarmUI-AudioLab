@@ -20,6 +20,7 @@ public static class AudioProviderDefinitions
         ZonosProvider.Instance,
         CosyVoiceProvider.Instance,
         NeuTTSProvider.Instance,
+        FishSpeechProvider.Instance,
         PiperProvider.Instance,
         // STT providers
         WhisperProvider.Instance,
