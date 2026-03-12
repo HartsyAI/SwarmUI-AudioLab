@@ -204,22 +204,36 @@
     opacity: 0.5;
 }
 
-/* ===== AUDIO EDITOR MODAL ===== */
-#audiolab_editor_modal .modal-dialog { max-width: 800px; }
-#audiolab_editor_modal .modal-body { padding: 1rem; }
+/* ===== AUDIO LAB MODAL ===== */
+#audiolab_modal .modal-dialog { max-width: 850px; }
+#audiolab_modal .modal-body { padding: 1rem; }
 
-.audiolab-editor-waveform {
+/* Main waveform container */
+.ale-waveform {
     border: 1px solid var(--shadow);
     border-radius: 0.375rem;
     overflow: hidden;
     background: var(--background);
     margin-bottom: 0.75rem;
+    position: relative;
 }
 
-.audiolab-editor-waveform .audiolab-player-controls { padding: 0.5rem 0.75rem; }
-.audiolab-editor-waveform .alp-btn { font-size: 1rem; padding: 0.3rem 0.5rem; }
+.ale-waveform .audiolab-player-controls { padding: 0.5rem 0.75rem; }
+.ale-waveform .alp-btn { font-size: 1rem; padding: 0.3rem 0.5rem; }
 
-.audiolab-editor-toolbar {
+/* Dim overlays for trim visualization */
+.ale-dim-overlay {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.35);
+    pointer-events: none;
+    z-index: 3;
+    transition: width 0.15s, left 0.15s;
+}
+
+/* Toolbar */
+.ale-toolbar {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -227,7 +241,7 @@
     padding: 0.5rem 0;
 }
 
-.audiolab-editor-toolbar .basic-button {
+.ale-toolbar .basic-button {
     padding: 0.3rem 0.7rem;
     font-size: 0.85rem;
     display: inline-flex;
@@ -235,19 +249,204 @@
     gap: 0.35rem;
 }
 
-.audiolab-editor-toolbar .basic-button:disabled { opacity: 0.4; pointer-events: none; }
+.ale-toolbar .basic-button:disabled { opacity: 0.4; pointer-events: none; }
 
-.audiolab-editor-toolbar .ale-separator {
+.ale-separator {
     width: 1px;
     height: 20px;
     background: var(--shadow);
     flex-shrink: 0;
 }
 
-.audiolab-editor-status {
+.ale-status {
     font-size: 0.8rem;
     color: var(--text-soft);
     margin-left: auto;
     white-space: nowrap;
+}
+
+/* Split preview panel */
+.ale-split-panel {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 0.375rem;
+    background: var(--background-soft);
+    margin-bottom: 0.75rem;
+}
+
+.ale-split-part {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.ale-split-part-label {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--text);
+}
+
+.ale-split-waveform {
+    min-height: 50px;
+    border: 1px solid var(--shadow);
+    border-radius: 0.25rem;
+    overflow: hidden;
+}
+
+.ale-split-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    padding-top: 0.25rem;
+}
+
+/* Overlay options panel */
+.ale-overlay-panel {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 0.375rem;
+    background: var(--background-soft);
+    margin-bottom: 0.75rem;
+}
+
+.ale-overlay-panel label {
+    font-size: 0.85rem;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.ale-overlay-panel input[type="number"] {
+    width: 5rem;
+    padding: 0.2rem 0.4rem;
+    border: 1px solid var(--shadow);
+    border-radius: 0.25rem;
+    background: var(--background);
+    color: var(--text);
+    font-size: 0.85rem;
+}
+
+.ale-overlay-panel input[type="range"] {
+    width: 100px;
+    accent-color: var(--emphasis);
+    cursor: pointer;
+}
+
+.ale-overlay-panel .ale-gain-value {
+    font-size: 0.8rem;
+    color: var(--text-soft);
+    min-width: 2.5rem;
+}
+
+.ale-overlay-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-left: auto;
+}
+
+/* Comparison / original view */
+.ale-comparison {
+    border: 1px solid var(--border-color);
+    border-radius: 0.375rem;
+    background: var(--background-soft);
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+}
+
+.ale-comparison-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.4rem 0.75rem;
+    cursor: pointer;
+    user-select: none;
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--emphasis);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.ale-comparison-header:hover { background: var(--background); }
+
+.ale-comparison.collapsed .ale-comparison-header { border-bottom: none; }
+.ale-comparison.collapsed .ale-comparison-body { display: none; }
+
+.ale-comparison-body {
+    padding: 0.5rem;
+}
+
+.ale-comparison-waveform {
+    min-height: 50px;
+    border: 1px solid var(--shadow);
+    border-radius: 0.25rem;
+    overflow: hidden;
+}
+
+/* Apply to Model section */
+.ale-apply-section {
+    border: 1px solid var(--border-color);
+    border-radius: 0.375rem;
+    background: var(--background-soft);
+    padding: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.ale-apply-header {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--emphasis);
+    margin-bottom: 0.5rem;
+}
+
+.ale-apply-ref-text {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.ale-apply-ref-text label {
+    font-size: 0.85rem;
+    color: var(--text);
+    white-space: nowrap;
+}
+
+.ale-apply-ref-text input {
+    flex: 1;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--shadow);
+    border-radius: 0.25rem;
+    background: var(--background);
+    color: var(--text);
+    font-size: 0.85rem;
+}
+
+.ale-apply-duration {
+    font-size: 0.8rem;
+    color: var(--text-soft);
+    margin-bottom: 0.5rem;
+}
+
+.ale-apply-duration.good { color: var(--green, #5a5); }
+.ale-apply-duration.warn { color: var(--yellow, #a85); }
+
+.ale-apply-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.ale-apply-buttons .basic-button {
+    padding: 0.3rem 0.7rem;
+    font-size: 0.85rem;
 }
 

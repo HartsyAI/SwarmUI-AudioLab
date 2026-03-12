@@ -1,119 +1,189 @@
 /**
- * AudioLab Editor — Modal-based audio editor with WaveSurfer waveform visualization.
- * Uses AudioLabPlayer (trim/split/concat/overlay/export) and AudioLabCore (Crunker ops).
- * Designed for extensibility: audio editing now, video/lip-sync later.
+ * AudioLab — Professional audio editor modal with voice cloning integration.
+ * Combines WaveSurfer waveform editing with context-aware model parameter setup.
+ * Uses AudioLabPlayer (waveform + edit ops) and AudioLabCore (Crunker DSP).
  */
-const AudioLabEditor = (() => {
+const AudioLab = (() => {
     'use strict';
 
-    const MODAL_ID = 'audiolab_editor_modal';
+    const MODAL_ID = 'audiolab_modal';
 
+    // ===== State =====
     let player = null;
     let modalEl = null;
-    let undoStack = [];
     let statusEl = null;
+    let undoStack = [];
+    let originalBlob = null;
+    let originalPlayer = null;
+    let comparisonVisible = false;
+    let dragSelectionUnsub = null;
+    let splitParts = null;
+    let splitPlayerA = null;
+    let splitPlayerB = null;
+    let pendingOverlayFile = null;
+    let applySectionEl = null;
+    let refTextInput = null;
 
-    /**
-     * Open the editor with an audio source.
-     * @param {string} audioSrc - URL of audio to edit
-     */
+    // ===== Public API =====
+
     function open(audioSrc) {
-        if (!modalEl) {
-            buildModal();
-        }
+        if (!modalEl) buildModal();
         undoStack = [];
+        originalBlob = null;
+        splitParts = null;
+        pendingOverlayFile = null;
+        comparisonVisible = false;
         updateUndoButton();
+        hideSplitPanel();
+        hideOverlayPanel();
+        hideComparison();
         updateStatus('Loading...');
         $(modalEl).modal('show');
-        // SwarmUI modals appear instantly (no fade animation),
-        // but allow a frame for layout before creating WaveSurfer
-        setTimeout(() => createPlayer(audioSrc), 100);
+        setTimeout(() => initPlayer(audioSrc), 100);
     }
 
-    /** Create the WaveSurfer player after the modal is visible. */
-    async function createPlayer(audioSrc) {
-        if (player) {
-            player.destroy();
-            player = null;
+    function close() {
+        if (modalEl) $(modalEl).modal('hide');
+        destroyAllPlayers();
+        undoStack = [];
+        originalBlob = null;
+        splitParts = null;
+        pendingOverlayFile = null;
+        if (dragSelectionUnsub) { dragSelectionUnsub(); dragSelectionUnsub = null; }
+    }
+
+    function getDuration() {
+        return player ? player.getDuration() : 0;
+    }
+
+    // ===== Audio Loading =====
+
+    async function fetchAudioAsBlob(audioSrc) {
+        if (audioSrc.startsWith('data:')) {
+            let mimeType = audioSrc.substring(audioSrc.indexOf(':') + 1, audioSrc.indexOf(';'));
+            let base64 = audioSrc.split(',')[1];
+            let data = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+            return new Blob([data], { type: mimeType });
         }
-        let waveformContainer = document.getElementById('audiolab_editor_waveform');
-        if (!waveformContainer) {
-            updateStatus('Editor container not found');
-            return;
-        }
-        waveformContainer.innerHTML = '';
-        player = AudioLabPlayer.create(waveformContainer, {
+        let response = await fetch(audioSrc);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.blob();
+    }
+
+    async function initPlayer(audioSrc) {
+        destroyAllPlayers();
+        let container = document.getElementById('ale_waveform');
+        if (!container) { updateStatus('Editor container not found'); return; }
+        container.innerHTML = '';
+        player = AudioLabPlayer.create(container, {
             height: 128,
             enableRegions: true,
+            editorMode: true,
             showControls: true,
             showDownload: false,
             showSpeed: true,
             showVolume: true
         });
-        if (!player) {
-            updateStatus('Failed to create player');
-            return;
-        }
+        if (!player) { updateStatus('Failed to create player'); return; }
         player.on('ready', (duration) => {
             updateStatus(`Duration: ${AudioLabPlayer.formatTime(duration)}`);
+            refreshApplySection();
         });
         player.on('edit', (type) => {
             let dur = player.getDuration();
             updateStatus(`${type} applied \u2014 Duration: ${AudioLabPlayer.formatTime(dur)}`);
+            if (!comparisonVisible && originalBlob) showComparison();
+            refreshApplySection();
         });
-        // Convert audio src to a blob, then load via WaveSurfer.
-        // The src can be a file path (Output/audio/...) or data URI (data:audio/wav;base64,...).
-        // We always convert to a blob first because WaveSurfer's ws.load() can hang
-        // if the internal <audio> element's loadedmetadata event never fires.
+        enableDragSelection();
         try {
-            let blob;
-            console.log('[AudioLabEditor] src type:', audioSrc.startsWith('data:') ? 'data URI' : 'URL', audioSrc.substring(0, 80));
-            if (audioSrc.startsWith('data:')) {
-                let mimeType = audioSrc.substring(audioSrc.indexOf(':') + 1, audioSrc.indexOf(';'));
-                let base64 = audioSrc.split(',')[1];
-                let data = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-                blob = new Blob([data], { type: mimeType });
-            } else {
-                let response = await fetch(audioSrc);
-                console.log('[AudioLabEditor] fetch:', response.status, response.headers.get('content-type'));
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                blob = await response.blob();
-            }
-            console.log('[AudioLabEditor] blob:', blob.size, 'bytes, type:', blob.type);
-            // loadBlob calls ws.loadBlob(blob) which decodes directly — no extra fetch
+            let blob = await fetchAudioAsBlob(audioSrc);
+            originalBlob = blob;
             let loadPromise = player.loadBlob(blob);
-            let timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Load timed out — WaveSurfer decode may have failed')), 15000)
+            let timeout = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Load timed out')), 15000)
             );
-            await Promise.race([loadPromise, timeoutPromise]);
+            await Promise.race([loadPromise, timeout]);
         } catch (err) {
-            console.error('[AudioLabEditor] Audio load failed:', err, 'src:', audioSrc.substring(0, 120));
+            console.error('[AudioLab] Load failed:', err);
             updateStatus('Load failed: ' + err.message);
         }
     }
 
-    /** Close the editor and clean up. */
-    function close() {
-        if (modalEl) {
-            $(modalEl).modal('hide');
-        }
-        if (player) {
-            player.destroy();
-            player = null;
-        }
-        undoStack = [];
+    function destroyAllPlayers() {
+        if (player) { player.destroy(); player = null; }
+        if (originalPlayer) { originalPlayer.destroy(); originalPlayer = null; }
+        if (splitPlayerA) { splitPlayerA.destroy(); splitPlayerA = null; }
+        if (splitPlayerB) { splitPlayerB.destroy(); splitPlayerB = null; }
+        if (dragSelectionUnsub) { dragSelectionUnsub(); dragSelectionUnsub = null; }
     }
 
-    /** Build the Bootstrap modal DOM (once). */
+    // ===== Drag-to-Select Regions =====
+
+    function enableDragSelection() {
+        if (!player) return;
+        let regionsPlugin = player.getRegionsPlugin();
+        if (!regionsPlugin) return;
+        dragSelectionUnsub = regionsPlugin.enableDragSelection({
+            color: 'rgba(100, 140, 210, 0.3)',
+            drag: true,
+            resize: true
+        });
+        regionsPlugin.on('region-created', (region) => {
+            // Enforce single region — remove any others
+            regionsPlugin.getRegions().forEach(r => {
+                if (r.id !== region.id) r.remove();
+            });
+            let trimBtn = document.getElementById('ale_trim');
+            if (trimBtn) trimBtn.disabled = false;
+            updateTrimIndicators(region);
+        });
+        regionsPlugin.on('region-updated', (region) => {
+            updateTrimIndicators(region);
+        });
+    }
+
+    function updateTrimIndicators(region) {
+        let waveformEl = document.getElementById('ale_waveform');
+        if (!waveformEl || !player) return;
+        let duration = player.getDuration();
+        if (duration <= 0) return;
+        // Remove existing dim overlays
+        waveformEl.querySelectorAll('.ale-dim-overlay').forEach(el => el.remove());
+        let leftPct = (region.start / duration) * 100;
+        let rightPct = ((duration - region.end) / duration) * 100;
+        if (leftPct > 0.5) {
+            let dimLeft = document.createElement('div');
+            dimLeft.className = 'ale-dim-overlay';
+            dimLeft.style.left = '0';
+            dimLeft.style.width = leftPct + '%';
+            waveformEl.appendChild(dimLeft);
+        }
+        if (rightPct > 0.5) {
+            let dimRight = document.createElement('div');
+            dimRight.className = 'ale-dim-overlay';
+            dimRight.style.right = '0';
+            dimRight.style.width = rightPct + '%';
+            waveformEl.appendChild(dimRight);
+        }
+    }
+
+    function clearTrimIndicators() {
+        let waveformEl = document.getElementById('ale_waveform');
+        if (waveformEl) waveformEl.querySelectorAll('.ale-dim-overlay').forEach(el => el.remove());
+    }
+
+    // ===== Modal Builder =====
+
     function buildModal() {
         let existing = document.getElementById(MODAL_ID);
         if (existing) existing.remove();
 
         let bodyHtml = `
         <div class="modal-body">
-            <div class="audiolab-editor-waveform" id="audiolab_editor_waveform"></div>
-            <div class="audiolab-editor-toolbar">
-                <button class="basic-button" id="ale_select_range" title="Select a time range on the waveform for trimming">
+            <div class="ale-waveform" id="ale_waveform"></div>
+            <div class="ale-toolbar" id="ale_toolbar">
+                <button class="basic-button" id="ale_select_range" title="Select a time range on the waveform for trimming (or drag directly on waveform)">
                     &#x2194; Select Range
                 </button>
                 <button class="basic-button" id="ale_trim" title="Trim audio to selected range" disabled>
@@ -130,11 +200,46 @@ const AudioLabEditor = (() => {
                     &#x229E; Overlay
                 </button>
                 <div class="ale-separator"></div>
-                <button class="basic-button" id="ale_undo" title="Undo last edit" disabled>
+                <button class="basic-button" id="ale_undo" title="Undo last edit (Ctrl+Z)" disabled>
                     &#x21B6; Undo
                 </button>
-                <span class="audiolab-editor-status" id="ale_status"></span>
+                <span class="ale-status" id="ale_status"></span>
             </div>
+            <div class="ale-split-panel" id="ale_split_panel" style="display:none">
+                <div class="ale-split-part">
+                    <span class="ale-split-part-label">Part A</span>
+                    <div class="ale-split-waveform" id="ale_split_a"></div>
+                </div>
+                <div class="ale-split-part">
+                    <span class="ale-split-part-label">Part B</span>
+                    <div class="ale-split-waveform" id="ale_split_b"></div>
+                </div>
+                <div class="ale-split-actions">
+                    <button class="basic-button" id="ale_keep_a">&#x2713; Keep Part A</button>
+                    <button class="basic-button" id="ale_keep_b">&#x2713; Keep Part B</button>
+                    <button class="basic-button" id="ale_cancel_split">Cancel</button>
+                </div>
+            </div>
+            <div class="ale-overlay-panel" id="ale_overlay_panel" style="display:none">
+                <label>Offset: <input type="number" id="ale_overlay_offset" value="0" min="0" step="0.1"> sec</label>
+                <label>Volume: <input type="range" id="ale_overlay_gain" min="0" max="2" step="0.05" value="1.0">
+                    <span class="ale-gain-value" id="ale_gain_label">100%</span>
+                </label>
+                <div class="ale-overlay-actions">
+                    <button class="basic-button" id="ale_apply_overlay">&#x2713; Apply Overlay</button>
+                    <button class="basic-button" id="ale_cancel_overlay">Cancel</button>
+                </div>
+            </div>
+            <div class="ale-comparison collapsed" id="ale_comparison" style="display:none">
+                <div class="ale-comparison-header" id="ale_comparison_toggle">
+                    <span>&#x25B6; Original</span>
+                    <button class="alp-btn" id="ale_hide_comparison" title="Hide">&#x2715;</button>
+                </div>
+                <div class="ale-comparison-body">
+                    <div class="ale-comparison-waveform" id="ale_comparison_waveform"></div>
+                </div>
+            </div>
+            <div class="ale-apply-section" id="ale_apply_section" style="display:none"></div>
         </div>`;
 
         let footerHtml = `
@@ -142,35 +247,69 @@ const AudioLabEditor = (() => {
             <button class="btn btn-primary basic-button" id="ale_export">
                 &#x2913; Export WAV
             </button>
-            <button class="btn btn-primary basic-button" id="ale_use_as_input">
-                &#x21B3; Use as Input
-            </button>
             <button class="btn btn-secondary basic-button" id="ale_close">Close</button>
         </div>`;
 
-        let html = modalHeader(MODAL_ID, 'Audio Editor') + bodyHtml + footerHtml + modalFooter();
+        let html = modalHeader(MODAL_ID, 'Audio Lab') + bodyHtml + footerHtml + modalFooter();
         let wrapper = document.createElement('div');
         wrapper.innerHTML = html;
         document.body.appendChild(wrapper.firstElementChild);
 
         modalEl = document.getElementById(MODAL_ID);
         statusEl = document.getElementById('ale_status');
+        applySectionEl = document.getElementById('ale_apply_section');
 
-        // Wire toolbar buttons
+        // Toolbar
         document.getElementById('ale_select_range').addEventListener('click', doSelectRange);
         document.getElementById('ale_trim').addEventListener('click', doTrim);
         document.getElementById('ale_split').addEventListener('click', doSplit);
         document.getElementById('ale_append').addEventListener('click', () => pickFile(doAppend));
-        document.getElementById('ale_overlay').addEventListener('click', () => pickFile(doOverlay));
+        document.getElementById('ale_overlay').addEventListener('click', () => pickFile(doOverlayStart));
         document.getElementById('ale_undo').addEventListener('click', doUndo);
         document.getElementById('ale_export').addEventListener('click', doExport);
-        document.getElementById('ale_use_as_input').addEventListener('click', doUseAsInput);
         document.getElementById('ale_close').addEventListener('click', close);
+
+        // Split panel
+        document.getElementById('ale_keep_a').addEventListener('click', () => doKeepSplitPart('before'));
+        document.getElementById('ale_keep_b').addEventListener('click', () => doKeepSplitPart('after'));
+        document.getElementById('ale_cancel_split').addEventListener('click', doCancelSplit);
+
+        // Overlay panel
+        document.getElementById('ale_overlay_gain').addEventListener('input', (e) => {
+            document.getElementById('ale_gain_label').textContent = Math.round(e.target.value * 100) + '%';
+        });
+        document.getElementById('ale_apply_overlay').addEventListener('click', doApplyOverlay);
+        document.getElementById('ale_cancel_overlay').addEventListener('click', () => {
+            pendingOverlayFile = null;
+            hideOverlayPanel();
+        });
+
+        // Comparison
+        document.getElementById('ale_comparison_toggle').addEventListener('click', toggleComparison);
+        document.getElementById('ale_hide_comparison').addEventListener('click', (e) => {
+            e.stopPropagation();
+            hideComparison();
+        });
+
+        // Keyboard shortcuts (on modal)
+        modalEl.addEventListener('keydown', handleKeyboard);
+    }
+
+    // ===== Keyboard Shortcuts =====
+
+    function handleKeyboard(e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        let key = e.key.toLowerCase();
+        if (key === ' ') { e.preventDefault(); if (player) player.playPause(); }
+        else if (key === 'z' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doUndo(); }
+        else if (key === 's' && !e.ctrlKey) { doSelectRange(); }
+        else if (key === 't') { doTrim(); }
+        else if (key === 'x') { doSplit(); }
+        else if (key === 'escape') { doCancelSplit(); hideOverlayPanel(); }
     }
 
     // ===== Edit Operations =====
 
-    /** Save current audio state to undo stack before an edit. */
     async function pushUndo() {
         if (!player) return;
         let blob = await player.exportBlob();
@@ -186,66 +325,68 @@ const AudioLabEditor = (() => {
         let duration = player.getDuration();
         if (duration <= 0) return;
         player.setRegion(duration * 0.25, duration * 0.75);
-        document.getElementById('ale_trim').disabled = false;
+        let trimBtn = document.getElementById('ale_trim');
+        if (trimBtn) trimBtn.disabled = false;
+        let region = player.getRegion();
+        if (region) updateTrimIndicators({ start: region.start, end: region.end });
     }
 
     async function doTrim() {
         if (!player) return;
         let region = player.getRegion();
-        if (!region) {
-            updateStatus('Select a range first');
-            return;
-        }
+        if (!region) { updateStatus('Select a range first'); return; }
         await pushUndo();
         await player.trimToRegion();
-        document.getElementById('ale_trim').disabled = true;
+        clearTrimIndicators();
+        let trimBtn = document.getElementById('ale_trim');
+        if (trimBtn) trimBtn.disabled = true;
     }
 
     async function doSplit() {
         if (!player) return;
         let time = player.getCurrentTime();
-        if (time <= 0) {
-            updateStatus('Move the cursor to a split point');
-            return;
-        }
+        if (time <= 0) { updateStatus('Move the cursor to a split point'); return; }
         await pushUndo();
         let parts = await player.splitAtCursor();
         if (!parts) return;
-        // Let user choose which part to keep
-        let keepFirst = confirm(
-            `Split at ${AudioLabPlayer.formatTime(time)}.\n\nOK = keep first part\nCancel = keep second part`
-        );
-        let keepBlob = keepFirst ? parts.before : parts.after;
-        let url = URL.createObjectURL(keepBlob);
-        await player.load(url);
-        updateStatus(`Kept ${keepFirst ? 'first' : 'second'} part`);
+        splitParts = parts;
+        showSplitPanel(parts, time);
     }
 
     async function doAppend(file) {
         if (!player) return;
         await pushUndo();
-        let url = URL.createObjectURL(file);
-        await player.appendAudio(url);
-        URL.revokeObjectURL(url);
+        await player.appendAudio(file);
         updateStatus(`Appended: ${file.name}`);
     }
 
-    async function doOverlay(file) {
-        if (!player) return;
+    function doOverlayStart(file) {
+        pendingOverlayFile = file;
+        document.getElementById('ale_overlay_offset').value = '0';
+        document.getElementById('ale_overlay_gain').value = '1';
+        document.getElementById('ale_gain_label').textContent = '100%';
+        showOverlayPanel();
+    }
+
+    async function doApplyOverlay() {
+        if (!player || !pendingOverlayFile) return;
+        let offset = parseFloat(document.getElementById('ale_overlay_offset').value) || 0;
+        let gain = parseFloat(document.getElementById('ale_overlay_gain').value) || 1.0;
         await pushUndo();
-        let url = URL.createObjectURL(file);
-        await player.overlayAudio(url);
-        URL.revokeObjectURL(url);
-        updateStatus(`Overlayed: ${file.name}`);
+        await player.overlayAudio(pendingOverlayFile, { offset, gain });
+        pendingOverlayFile = null;
+        hideOverlayPanel();
+        updateStatus(`Overlay applied (offset: ${offset}s, vol: ${Math.round(gain * 100)}%)`);
     }
 
     async function doUndo() {
         if (!player || undoStack.length === 0) return;
         let blob = undoStack.pop();
-        let url = URL.createObjectURL(blob);
-        await player.load(url);
+        await player.reloadFromBlob(blob);
         updateUndoButton();
+        clearTrimIndicators();
         updateStatus('Undone');
+        refreshApplySection();
     }
 
     async function doExport() {
@@ -260,48 +401,213 @@ const AudioLabEditor = (() => {
         updateStatus('Exported');
     }
 
-    async function doUseAsInput() {
+    // ===== Split Panel =====
+
+    function showSplitPanel(parts, splitTime) {
+        let panel = document.getElementById('ale_split_panel');
+        if (!panel) return;
+        panel.style.display = '';
+        setToolbarEnabled(false);
+        // Create mini-players for each part
+        let containerA = document.getElementById('ale_split_a');
+        let containerB = document.getElementById('ale_split_b');
+        containerA.innerHTML = '';
+        containerB.innerHTML = '';
+        splitPlayerA = AudioLabPlayer.createMini(containerA, { showDownload: false });
+        splitPlayerB = AudioLabPlayer.createMini(containerB, { showDownload: false });
+        if (splitPlayerA) splitPlayerA.loadBlob(parts.before);
+        if (splitPlayerB) splitPlayerB.loadBlob(parts.after);
+        let labelA = panel.querySelector('.ale-split-part:first-child .ale-split-part-label');
+        let labelB = panel.querySelector('.ale-split-part:last-child .ale-split-part-label');
+        if (labelA) labelA.textContent = `Part A (0:00 \u2013 ${AudioLabPlayer.formatTime(splitTime)})`;
+        if (labelB) labelB.textContent = `Part B (${AudioLabPlayer.formatTime(splitTime)} \u2013 end)`;
+    }
+
+    async function doKeepSplitPart(which) {
+        if (!player || !splitParts) return;
+        let blob = which === 'before' ? splitParts.before : splitParts.after;
+        await player.reloadFromBlob(blob);
+        hideSplitPanel();
+        updateStatus(`Kept ${which === 'before' ? 'Part A' : 'Part B'}`);
+        refreshApplySection();
+    }
+
+    async function doCancelSplit() {
+        if (!splitParts) return;
+        hideSplitPanel();
+        await doUndo();
+    }
+
+    function hideSplitPanel() {
+        let panel = document.getElementById('ale_split_panel');
+        if (panel) panel.style.display = 'none';
+        if (splitPlayerA) { splitPlayerA.destroy(); splitPlayerA = null; }
+        if (splitPlayerB) { splitPlayerB.destroy(); splitPlayerB = null; }
+        splitParts = null;
+        setToolbarEnabled(true);
+    }
+
+    // ===== Overlay Panel =====
+
+    function showOverlayPanel() {
+        let panel = document.getElementById('ale_overlay_panel');
+        if (panel) panel.style.display = '';
+    }
+
+    function hideOverlayPanel() {
+        let panel = document.getElementById('ale_overlay_panel');
+        if (panel) panel.style.display = 'none';
+        pendingOverlayFile = null;
+    }
+
+    // ===== Comparison View =====
+
+    function showComparison() {
+        if (!originalBlob) return;
+        let container = document.getElementById('ale_comparison');
+        if (!container) return;
+        container.style.display = '';
+        container.classList.remove('collapsed');
+        comparisonVisible = true;
+        let waveformEl = document.getElementById('ale_comparison_waveform');
+        if (waveformEl && !originalPlayer) {
+            waveformEl.innerHTML = '';
+            originalPlayer = AudioLabPlayer.createMini(waveformEl, { showDownload: false });
+            if (originalPlayer) originalPlayer.loadBlob(originalBlob);
+        }
+    }
+
+    function hideComparison() {
+        let container = document.getElementById('ale_comparison');
+        if (container) container.style.display = 'none';
+        if (originalPlayer) { originalPlayer.destroy(); originalPlayer = null; }
+        comparisonVisible = false;
+    }
+
+    function toggleComparison() {
+        let container = document.getElementById('ale_comparison');
+        if (!container) return;
+        let collapsed = container.classList.toggle('collapsed');
+        let arrow = container.querySelector('.ale-comparison-header span');
+        if (arrow) arrow.innerHTML = collapsed ? '&#x25B6; Original' : '&#x25BC; Original';
+    }
+
+    // ===== Apply Section — Context-Aware Voice Cloning =====
+
+    function isParamActive(paramId) {
+        let el = document.getElementById(`input_${paramId}`);
+        if (!el) return false;
+        let wrapper = el.closest('.auto-input');
+        if (!wrapper) return true;
+        return wrapper.style.display !== 'none';
+    }
+
+    function refreshApplySection() {
+        if (!applySectionEl) return;
+        let params = [
+            { id: 'referenceaudio', label: 'Set as Reference Audio', icon: '&#x266B;' },
+            { id: 'sourceaudio', label: 'Set as Source Audio', icon: '&#x266A;' },
+            { id: 'targetvoice', label: 'Set as Target Voice', icon: '&#x2699;' },
+            { id: 'acesourceaudio', label: 'Set as ACE Source Audio', icon: '&#x266A;' },
+            { id: 'acereferenceaudio', label: 'Set as ACE Reference Audio', icon: '&#x266B;' }
+        ];
+        let activeParams = params.filter(p => isParamActive(p.id));
+        if (activeParams.length === 0) {
+            applySectionEl.style.display = 'none';
+            return;
+        }
+        let duration = player ? player.getDuration() : 0;
+        let hasRefText = isParamActive('referencetext');
+        let refTextValue = '';
+        if (hasRefText) {
+            let refTextEl = document.getElementById('input_referencetext');
+            if (refTextEl) refTextValue = refTextEl.value || '';
+        }
+        // Duration recommendation
+        let durationText = `Duration: ${AudioLabPlayer.formatTime(duration)}`;
+        let durationClass = '';
+        let recommendation = '';
+        if (isParamActive('referenceaudio')) {
+            if (duration >= 10 && duration <= 15) { durationClass = 'good'; recommendation = ' \u2014 Good length for voice cloning (10-15s)'; }
+            else if (duration >= 5 && duration <= 30) { durationClass = ''; recommendation = ' \u2014 Acceptable (best: 10-15s of clean speech)'; }
+            else if (duration > 0) { durationClass = 'warn'; recommendation = ' \u2014 Try trimming to 10-15s of clean speech for best results'; }
+        } else if (isParamActive('sourceaudio')) {
+            recommendation = ' \u2014 Source audio for voice conversion';
+        }
+
+        let html = '<div class="ale-apply-header">Apply to Model</div>';
+        if (hasRefText) {
+            html += `<div class="ale-apply-ref-text">
+                <label>Reference Text:</label>
+                <input type="text" id="ale_ref_text" value="${escapeAttr(refTextValue)}" placeholder="Enter text spoken in the reference audio...">
+            </div>`;
+        }
+        html += `<div class="ale-apply-duration ${durationClass}">${durationText}${recommendation}</div>`;
+        html += '<div class="ale-apply-buttons">';
+        for (let p of activeParams) {
+            html += `<button class="basic-button" data-param="${p.id}" title="${p.label}">${p.icon} ${p.label}</button>`;
+        }
+        html += '</div>';
+
+        applySectionEl.innerHTML = html;
+        applySectionEl.style.display = '';
+        refTextInput = document.getElementById('ale_ref_text');
+        // Wire apply buttons
+        applySectionEl.querySelectorAll('.ale-apply-buttons .basic-button').forEach(btn => {
+            btn.addEventListener('click', () => {
+                doSetAsParam(btn.dataset.param, btn.title);
+            });
+        });
+    }
+
+    async function doSetAsParam(paramId, label) {
         if (!player) return;
         let blob = await player.exportBlob();
         if (!blob) return;
-        // Set as reference audio param if available
-        let refInput = document.getElementById('input_referenceaudio');
-        if (refInput) {
-            let file = new File([blob], 'edited-audio.wav', { type: 'audio/wav' });
-            let dt = new DataTransfer();
-            dt.items.add(file);
-            refInput.files = dt.files;
-            triggerChangeFor(refInput);
-            updateStatus('Set as Reference Audio input');
-        } else {
-            // Fallback: try source audio param
-            let srcInput = document.getElementById('input_acesourceaudio') || document.getElementById('input_sourceaudio');
-            if (srcInput) {
-                let file = new File([blob], 'edited-audio.wav', { type: 'audio/wav' });
-                let dt = new DataTransfer();
-                dt.items.add(file);
-                srcInput.files = dt.files;
-                triggerChangeFor(srcInput);
-                updateStatus('Set as Source Audio input');
-            } else {
-                updateStatus('No audio input param found \u2014 use Export instead');
+        let input = document.getElementById(`input_${paramId}`);
+        if (!input) { updateStatus('Parameter not found'); return; }
+        let file = new File([blob], 'audiolab-audio.wav', { type: 'audio/wav' });
+        let dt = new DataTransfer();
+        dt.items.add(file);
+        input.files = dt.files;
+        triggerChangeFor(input);
+        // Sync reference text if applicable
+        if (refTextInput && refTextInput.value && paramId.includes('reference')) {
+            let refTextEl = document.getElementById('input_referencetext');
+            if (refTextEl) {
+                refTextEl.value = refTextInput.value;
+                triggerChangeFor(refTextEl);
             }
+        }
+        close();
+        if (typeof doNoticePopover === 'function') {
+            doNoticePopover(`Audio set as ${label}`, 'notice-pop-green');
         }
     }
 
     // ===== Helpers =====
 
-    /** Prompt user to pick an audio file, then call callback with it. */
     function pickFile(callback) {
         let input = document.createElement('input');
         input.type = 'file';
         input.accept = 'audio/*';
-        input.onchange = () => {
-            if (input.files.length > 0) {
-                callback(input.files[0]);
-            }
-        };
+        input.onchange = () => { if (input.files.length > 0) callback(input.files[0]); };
         input.click();
+    }
+
+    function setToolbarEnabled(enabled) {
+        let toolbar = document.getElementById('ale_toolbar');
+        if (!toolbar) return;
+        toolbar.querySelectorAll('.basic-button').forEach(btn => {
+            if (enabled) {
+                btn.removeAttribute('data-ale-was-disabled');
+                btn.disabled = false;
+            } else {
+                btn.dataset.aleWasDisabled = btn.disabled ? '1' : '';
+                btn.disabled = true;
+            }
+        });
+        if (enabled) updateUndoButton();
     }
 
     function updateUndoButton() {
@@ -313,5 +619,9 @@ const AudioLabEditor = (() => {
         if (statusEl) statusEl.textContent = text;
     }
 
-    return { open, close };
+    function escapeAttr(str) {
+        return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    return { open, close, isParamActive, getDuration };
 })();
