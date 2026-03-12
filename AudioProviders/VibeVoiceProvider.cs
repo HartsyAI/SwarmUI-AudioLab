@@ -17,8 +17,6 @@ public sealed class VibeVoiceProvider : IAudioProviderSource
         .WithModelPrefix("VibeVoice")
         .WithModelClass("vibevoice_tts", "VibeVoice TTS")
         .AddFeatureFlag("vibevoice_tts_params")
-        .AddFeatureFlag("tts_sampling")
-        .AddFeatureFlag("tts_cfg")
         .AddFeatureFlag("tts_voice_ref")
         .AddDependencies(Dependencies)
         .AddModels(Models)

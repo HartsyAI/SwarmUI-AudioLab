@@ -121,6 +121,7 @@ class VibeVoiceEngine(BaseAudioEngine):
         1. VibeVoiceConfig.get_text_config returns self instead of decoder_config,
            so transformers can't find num_hidden_layers for cache setup.
         2. _prepare_cache_for_generation dropped the `device` parameter.
+        3. DynamicCache replaced key_cache/value_cache lists with layers[].keys/values.
         """
         import inspect
         from vibevoice.modular.configuration_vibevoice import VibeVoiceConfig
@@ -143,6 +144,13 @@ class VibeVoiceEngine(BaseAudioEngine):
 
             type(self.model)._prepare_cache_for_generation = _compat
             logger.info("Patched _prepare_cache_for_generation for transformers compat")
+
+        # Fix DynamicCache: restore key_cache/value_cache properties removed in 4.57+
+        from transformers import DynamicCache
+        if not hasattr(DynamicCache, "key_cache"):
+            DynamicCache.key_cache = property(lambda self: [l.keys for l in self.layers])
+            DynamicCache.value_cache = property(lambda self: [l.values for l in self.layers])
+            logger.info("Patched DynamicCache key_cache/value_cache for compat")
 
     def _decode_reference_audio(self, audio_b64: str) -> np.ndarray:
         """Decode base64 audio to numpy array for voice cloning."""

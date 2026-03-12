@@ -992,7 +992,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "vibevoice_tts":
-                args["diffusion_steps"] = input.TryGet(AudioLabParams.DiffusionSteps, out int diffSteps) ? diffSteps : 20;
+                args["diffusion_steps"] = input.TryGet(AudioLabParams.DiffusionSteps, out int diffSteps) ? diffSteps : 10;
+                args["cfg_scale"] = input.TryGet(AudioLabParams.VibeVoiceCFG, out double vvCfg) ? vvCfg : 1.3;
                 break;
 
             case "dia_tts":

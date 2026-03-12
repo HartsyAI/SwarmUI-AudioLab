@@ -57,6 +57,7 @@ public static class AudioLabParams
 
     // ===== TTS — VibeVoice (flag: vibevoice_tts_params) =====
     public static T2IRegisteredParam<int> DiffusionSteps;
+    public static T2IRegisteredParam<double> VibeVoiceCFG;
 
     // ===== TTS — Dia (flag: dia_tts_params) =====
     public static T2IRegisteredParam<int> CFGFilterTopK;
@@ -340,10 +341,16 @@ public static class AudioLabParams
 
         // ========================== TTS — VibeVoice ==========================
         DiffusionSteps = T2IParamTypes.Register<int>(new("Diffusion Steps",
-            "Number of DDPM denoising steps.\nMore steps = higher quality but slower. 20 is a good balance.",
-            "20",
+            "Number of DDPM denoising steps.\nMore steps = higher quality but slower. 10 is recommended.",
+            "10",
             Min: 5, Max: 100, Step: 1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "vibevoice_tts_params"));
+
+        VibeVoiceCFG = T2IParamTypes.Register<double>(new("CFG Scale",
+            "Classifier-free guidance scale for speech diffusion.\n1.3 is recommended for standard models, 1.5 for streaming.",
+            "1.3",
+            Min: 0.0, Max: 5.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "vibevoice_tts_params"));
 
         // ========================== TTS — Dia ==========================
         CFGFilterTopK = T2IParamTypes.Register<int>(new("CFG Filter Top K",

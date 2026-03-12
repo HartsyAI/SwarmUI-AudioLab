@@ -3,7 +3,7 @@ using Hartsy.Extensions.AudioLab.WebAPI.Models;
 
 namespace Hartsy.Extensions.AudioLab.AudioProviders;
 
-/// <summary>F5-TTS provider — zero-shot voice cloning from 15-second reference audio.</summary>
+/// <summary>F5-TTS provider — zero-shot voice cloning via flow matching from short reference audio.</summary>
 public sealed class F5TTSProvider : IAudioProviderSource
 {
     public static F5TTSProvider Instance { get; } = new();
@@ -28,13 +28,13 @@ public sealed class F5TTSProvider : IAudioProviderSource
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
         new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        new() { Name = "f5-tts", InstallName = "git+https://github.com/SWivid/F5-TTS.git", ImportName = "f5_tts", Category = "tts", IsGitPackage = true, EstimatedInstallTimeMinutes = 10 },
+        new() { Name = "f5-tts>=1.1.0", InstallName = "f5-tts>=1.1.0", ImportName = "f5_tts", Category = "tts", EstimatedInstallTimeMinutes = 8 },
         new() { Name = "transformers>=4.40.0", InstallName = "transformers>=4.40.0", ImportName = "transformers", Category = "tts" },
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
     ];
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "default", Name = "F5-TTS Default", Description = "Zero-shot voice cloning from 15s reference audio", SourceUrl = "https://huggingface.co/SWivid/F5-TTS", License = "CC-BY-NC-4.0", EstimatedSize = "~2.5GB", EstimatedVram = "~4GB", EngineConfig = new() { ["model_name"] = "SWivid/F5-TTS" } }
+        new() { Id = "v1-base", Name = "F5-TTS v1 Base", Description = "Zero-shot voice cloning from ~10s reference audio, flow matching DiT", SourceUrl = "https://huggingface.co/SWivid/F5-TTS", License = "CC-BY-NC-4.0", EstimatedSize = "~1.3GB", EstimatedVram = "~4GB", EngineConfig = new() { ["model_name"] = "SWivid/F5-TTS" } }
     ];
 }
