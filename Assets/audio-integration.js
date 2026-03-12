@@ -309,12 +309,26 @@ const ENGINE_CATEGORIES = [
 /** Cached engine data from the API */
 let audioLabEngineData = null;
 
-/** Loads engine list from the API and caches it. */
+/** Pending retry timer ID for engine list reload */
+let audioLabRetryTimer = null;
+
+/** Loads engine list from the API and caches it.
+ *  If the backend is still loading, schedules a retry to refresh once it's ready. */
 function audioLabLoadEngines(callback) {
     genericRequest('AudioLabListEngines', {}, data => {
         if (data.success) {
             audioLabEngineData = data.engines;
             if (callback) callback(data.engines);
+            // If backend is still loading, schedule a refresh to pick up correct state
+            if (data.backend_status && data.backend_status !== 'RUNNING') {
+                if (!audioLabRetryTimer) {
+                    console.log(`[audiolab] Backend status: ${data.backend_status}, will retry in 3s`);
+                    audioLabRetryTimer = setTimeout(() => {
+                        audioLabRetryTimer = null;
+                        audioLabRefreshEngineManager();
+                    }, 3000);
+                }
+            }
         } else {
             console.error('[audiolab] Failed to load engines:', data);
         }
@@ -436,7 +450,8 @@ function audioLabShowInstallModal(engine) {
     let existingModal = document.getElementById('audiolab_install_modal');
     if (existingModal) existingModal.remove();
 
-    let firstModel = engine.models && engine.models.length > 0 ? engine.models[0] : {};
+    let models = engine.models || [];
+    let firstModel = models.length > 0 ? models[0] : {};
 
     // Build dependency list
     let depNames = engine.dependencies ? engine.dependencies.map(d => d.name) : [];
@@ -444,20 +459,31 @@ function audioLabShowInstallModal(engine) {
         ? `<ul style="margin:0.5em 0;padding-left:1.5em">${depNames.map(d => `<li style="font-size:0.9em">${escapeHtml(d)}</li>`).join('')}</ul>`
         : '<em>None</em>';
 
-    let sourceLink = firstModel.source_url
-        ? `<a href="${escapeHtml(firstModel.source_url)}" target="_blank" rel="noopener">${escapeHtml(firstModel.source_url)}</a>`
-        : 'N/A';
+    // Build models list showing all models that will be downloaded
+    let modelsListHtml = '';
+    if (models.length > 0) {
+        let modelRows = models.map(m => {
+            let sourceLink = m.source_url
+                ? `<a href="${escapeHtml(m.source_url)}" target="_blank" rel="noopener" style="font-size:0.85em">${escapeHtml(m.name)}</a>`
+                : escapeHtml(m.name);
+            let details = [];
+            if (m.estimated_size) details.push(m.estimated_size);
+            if (m.estimated_vram) details.push(m.estimated_vram + ' VRAM');
+            if (m.license) details.push(m.license);
+            return `<tr>
+                <td style="padding:3px 8px 3px 0">${sourceLink}</td>
+                <td style="padding:3px 0;color:var(--text-soft);font-size:0.85em">${escapeHtml(details.join(' | '))}</td>
+            </tr>`;
+        }).join('');
+        modelsListHtml = `<table style="width:100%;margin:0.3em 0">${modelRows}</table>`;
+    }
 
     let bodyHtml = `
         <div class="modal-body">
             <p><b>${escapeHtml(engine.name)}</b></p>
             <p>${escapeHtml(firstModel.description || '')}</p>
-            <table style="width:100%;margin:0.5em 0">
-                <tr><td style="padding:2px 8px 2px 0;color:var(--text-soft)">Source:</td><td>${sourceLink}</td></tr>
-                <tr><td style="padding:2px 8px 2px 0;color:var(--text-soft)">License:</td><td>${escapeHtml(firstModel.license || 'Unknown')}</td></tr>
-                <tr><td style="padding:2px 8px 2px 0;color:var(--text-soft)">Download Size:</td><td>${escapeHtml(firstModel.estimated_size || 'Unknown')}</td></tr>
-                <tr><td style="padding:2px 8px 2px 0;color:var(--text-soft)">VRAM Required:</td><td>${escapeHtml(firstModel.estimated_vram || 'Unknown')}</td></tr>
-            </table>
+            <p style="color:var(--text-soft);margin-top:0.5em"><b>Models to download (${models.length}):</b></p>
+            ${modelsListHtml}
             <p style="color:var(--text-soft);margin-top:0.5em"><b>Dependencies:</b></p>
             ${depListHtml}
             <div id="audiolab_install_progress" style="display:none;margin-top:1em">

@@ -19,7 +19,7 @@ public static class AudioLabParams
 
     // ===== TTS shared (flag: audiolab_tts) =====
     public static T2IRegisteredParam<double> Volume;
-    public static T2IRegisteredParam<int> StreamChunkSize;
+    public static T2IRegisteredParam<string> StreamChunkSize;
 
     // ===== TTS shared sampling (flag: tts_sampling) =====
     public static T2IRegisteredParam<double> Temperature;
@@ -188,10 +188,16 @@ public static class AudioLabParams
             Min: 0.1, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
             OrderPriority: -10, Group: TTSGroup, FeatureFlag: "audiolab_tts"));
 
-        StreamChunkSize = T2IParamTypes.Register<int>(new("Stream Chunk Size",
-            "Words per audio chunk when streaming. 0 = Off (full text at once).\n1 = Per word, 10 = Short phrases, 25+ = Sentences.\nSmaller chunks = faster first audio but lower quality per chunk.\nEach chunk plays immediately while the next generates.",
-            "0", IgnoreIf: "0",
-            Min: 0, Max: 50, Step: 1, ViewType: ParamViewType.SLIDER,
+        StreamChunkSize = T2IParamTypes.Register<string>(new("Stream Chunk Size",
+            "How to split text for streaming audio generation.\nSmaller chunks = faster first audio. Larger chunks = better quality per chunk.\nPer Sentence is recommended for most models.\nEach chunk plays immediately while the next generates.",
+            "off", IgnoreIf: "off",
+            GetValues: _ => [
+                "off///Off (Full Text)",
+                "word///Per Word",
+                "phrase///Short Phrases (~5 words)",
+                "sentence///Per Sentence",
+                "paragraph///Per Paragraph"
+            ],
             OrderPriority: -9, Group: TTSGroup, FeatureFlag: "audiolab_tts"));
 
         // ========================== TTS Shared Sampling ==========================

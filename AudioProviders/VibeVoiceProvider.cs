@@ -3,7 +3,8 @@ using Hartsy.Extensions.AudioLab.WebAPI.Models;
 
 namespace Hartsy.Extensions.AudioLab.AudioProviders;
 
-/// <summary>Microsoft VibeVoice TTS provider — long-form multi-speaker synthesis (up to 90 min, 4 speakers).</summary>
+/// <summary>VibeVoice TTS provider — long-form multi-speaker synthesis (up to 90 min, 4 speakers).
+/// Community-maintained fork after Microsoft removed the original repo.</summary>
 public sealed class VibeVoiceProvider : IAudioProviderSource
 {
     public static VibeVoiceProvider Instance { get; } = new();
@@ -31,13 +32,13 @@ public sealed class VibeVoiceProvider : IAudioProviderSource
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "transformers>=4.40.0", InstallName = "transformers>=4.40.0", ImportName = "transformers", Category = "tts" },
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" },
-        new() { Name = "vibevoice", InstallName = "git+https://github.com/microsoft/VibeVoice.git", ImportName = "vibevoice", Category = "tts", IsGitPackage = true, EstimatedInstallTimeMinutes = 15 }
+        new() { Name = "vibevoice", InstallName = "git+https://github.com/vibevoice-community/VibeVoice.git", ImportName = "vibevoice", Category = "tts", IsGitPackage = true, EstimatedInstallTimeMinutes = 15 }
     ];
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "realtime-0.5b", Name = "VibeVoice Realtime 0.5B", Description = "Real-time streaming TTS, single speaker, low latency", SourceUrl = "https://huggingface.co/microsoft/VibeVoice-Realtime-0.5B", License = "MIT", EstimatedSize = "~1GB", EstimatedVram = "~3GB", EngineConfig = new() { ["model_name"] = "microsoft/VibeVoice-Realtime-0.5B" } },
-        new() { Id = "1.5b", Name = "VibeVoice 1.5B", Description = "Long-form multi-speaker TTS, up to 90 min, 4 speakers", SourceUrl = "https://huggingface.co/microsoft/VibeVoice-1.5B", License = "MIT", EstimatedSize = "~3GB", EstimatedVram = "~7GB", EngineConfig = new() { ["model_name"] = "microsoft/VibeVoice-1.5B" } },
-        new() { Id = "large", Name = "VibeVoice Large 7B", Description = "Highest quality TTS, best non-English stability, 4 speakers", SourceUrl = "https://huggingface.co/microsoft/VibeVoice-7B-hf", License = "MIT", EstimatedSize = "~14GB", EstimatedVram = "~16GB", EngineConfig = new() { ["model_name"] = "microsoft/VibeVoice-7B-hf" } }
+        new() { Id = "realtime-0.5b", Name = "VibeVoice Realtime 0.5B", Description = "Real-time streaming TTS, single speaker, low latency", SourceUrl = "https://huggingface.co/vibevoice/VibeVoice-Realtime-0.5B", License = "MIT", EstimatedSize = "~2GB", EstimatedVram = "~3GB", EngineConfig = new() { ["model_name"] = "vibevoice/VibeVoice-Realtime-0.5B" } },
+        new() { Id = "1.5b", Name = "VibeVoice 1.5B", Description = "Long-form multi-speaker TTS, up to 90 min, 4 speakers", SourceUrl = "https://huggingface.co/vibevoice/VibeVoice-1.5B", License = "MIT", EstimatedSize = "~5GB", EstimatedVram = "~7GB", EngineConfig = new() { ["model_name"] = "vibevoice/VibeVoice-1.5B" } },
+        new() { Id = "large", Name = "VibeVoice Large 7B", Description = "Highest quality TTS, best non-English stability, 4 speakers", SourceUrl = "https://huggingface.co/vibevoice/VibeVoice-7B", License = "MIT", EstimatedSize = "~17GB", EstimatedVram = "~16GB", EngineConfig = new() { ["model_name"] = "vibevoice/VibeVoice-7B" } }
     ];
 }

@@ -411,7 +411,8 @@ except Exception as e:
     {
         try
         {
-            string arguments = $"-m pip install \"{package.InstallName}\" --no-warn-script-location --progress-bar=on -vvv --prefer-binary";
+            string noCacheFlag = package.IsGitPackage ? " --no-cache-dir" : "";
+            string arguments = $"-m pip install \"{package.InstallName}\" --no-warn-script-location --progress-bar=on -vvv --prefer-binary{noCacheFlag}";
             if (!string.IsNullOrEmpty(package.CustomInstallArgs))
                 arguments += $" {package.CustomInstallArgs}";
             await RunPipInstallAsync(pythonInfo, arguments, [package.Name], tracker, package.EstimatedInstallTimeMinutes);

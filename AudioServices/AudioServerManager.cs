@@ -276,7 +276,8 @@ public class AudioServerManager : IDisposable
         {
             ["module"] = provider.PythonModule,
             ["engine_class"] = provider.PythonEngineClass,
-            ["kwargs"] = JObject.FromObject(args)
+            ["kwargs"] = JObject.FromObject(args),
+            ["hf_token"] = GetHuggingFaceToken()
         };
 
         int timeoutMs = GetTimeoutMs(provider.Category);
@@ -528,7 +529,8 @@ public class AudioServerManager : IDisposable
         {
             ["module"] = provider.PythonModule,
             ["engine_class"] = provider.PythonEngineClass,
-            ["kwargs"] = JObject.FromObject(args)
+            ["kwargs"] = JObject.FromObject(args),
+            ["hf_token"] = GetHuggingFaceToken()
         };
 
         int timeoutMs = GetTimeoutMs(provider.Category);
@@ -635,6 +637,67 @@ public class AudioServerManager : IDisposable
     }
 
     private static int GetTimeoutMs(AudioCategory _) => AudioConfiguration.TimeoutSeconds * 1000;
+
+    /// <summary>Retrieves the current HuggingFace API token from user settings.
+    /// Called per-request so token changes take effect without restarting the server.</summary>
+    private static string GetHuggingFaceToken()
+    {
+        try
+        {
+            var user = Program.Sessions?.GetUser(SessionHandler.LocalUserID);
+            return user?.GetGenericData("huggingface_api", "key") ?? "";
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    /// <summary>Downloads a model via the Python server's /download endpoint.
+    /// Uses the 30-minute InstallationTimeout instead of the short request timeout.
+    /// Called during engine installation so models are ready before registration.</summary>
+    public async Task<JObject> DownloadModelAsync(string group, string modelName, string category)
+    {
+        bool started = await EnsureGroupRunningAsync(group);
+        if (!started)
+        {
+            return CreateErrorResponse($"Audio server for group '{group}' failed to start.");
+        }
+
+        int port = GetGroupPort(group);
+
+        JObject payload = new()
+        {
+            ["model_name"] = modelName,
+            ["category"] = category,
+            ["hf_token"] = GetHuggingFaceToken()
+        };
+
+        try
+        {
+            int timeoutMs = (int)AudioConfiguration.InstallationTimeout.TotalMilliseconds;
+            using CancellationTokenSource cts = new(timeoutMs);
+            StringContent content = new(payload.ToString(), Encoding.UTF8, "application/json");
+            HttpResponseMessage response = await _httpClient.PostAsync(
+                $"http://127.0.0.1:{port}/download", content, cts.Token);
+            string body = await response.Content.ReadAsStringAsync();
+
+            if (string.IsNullOrEmpty(body) || !body.StartsWith("{"))
+            {
+                return CreateErrorResponse($"Server returned invalid response: {body}");
+            }
+
+            return JObject.Parse(body);
+        }
+        catch (TaskCanceledException)
+        {
+            return CreateErrorResponse($"Model download timed out after {AudioConfiguration.InstallationTimeout.TotalMinutes:F0} minutes. The model may be too large or the connection too slow.");
+        }
+        catch (Exception ex)
+        {
+            return CreateErrorResponse($"Model download failed: {ex.Message}");
+        }
+    }
 
     private static void EnsureModelDirectories(string root)
     {

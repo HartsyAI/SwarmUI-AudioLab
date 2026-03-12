@@ -338,12 +338,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
         AudioProviderDefinition provider = meta.Definition;
         AudioModelDefinition modelDef = GetModelDefinition(modelName, provider);
 
-        // Check streaming conditions: TTS + StreamChunkSize > 0 + 2+ chunks
+        // Check streaming conditions: TTS + StreamChunkSize != "off" + 2+ chunks
         if (provider.Category == AudioCategory.TTS
-            && user_input.TryGet(AudioLabParams.StreamChunkSize, out int chunkSize) && chunkSize > 0)
+            && user_input.TryGet(AudioLabParams.StreamChunkSize, out string chunkMode) && chunkMode != "off")
         {
             string text = user_input.Get(T2IParamTypes.Prompt, "");
-            List<string> chunks = SplitIntoChunks(text, chunkSize);
+            List<string> chunks = SplitIntoChunks(text, chunkMode);
             if (chunks != null)
             {
                 await GenerateLiveStreaming(user_input, batchId, takeOutput, meta, provider, modelDef, chunks);
@@ -654,6 +654,31 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 }
                 onProgress?.Invoke("Starting Docker container...");
                 await AudioServerManager.Instance.StartDockerAsync();
+            }
+
+            // 3.5. Download model weights for engines with known HuggingFace model IDs
+            foreach (AudioModelDefinition modelDef in definition.Models)
+            {
+                if (modelDef.EngineConfig.TryGetValue("model_name", out object modelNameObj)
+                    && modelNameObj is string modelName && !string.IsNullOrEmpty(modelName))
+                {
+                    string category = definition.Category.ToString().ToLower();
+                    onProgress?.Invoke($"Downloading {modelDef.Name} ({modelDef.EstimatedSize})...");
+                    Logs.Info($"[AudioLab] Downloading model '{modelName}' for {definition.Name}...");
+
+                    JObject downloadResult = await AudioServerManager.Instance.DownloadModelAsync(
+                        definition.EngineGroup, modelName, category);
+
+                    if (downloadResult["success"]?.Value<bool>() != true)
+                    {
+                        string error = downloadResult["error"]?.ToString() ?? "Unknown download error";
+                        Logs.Error($"[AudioLab] Model download failed for {definition.Name}: {error}");
+                        onProgress?.Invoke($"Error: Failed to download {modelDef.Name}: {error}");
+                        return false;
+                    }
+
+                    Logs.Info($"[AudioLab] Model '{modelName}' downloaded successfully.");
+                }
             }
 
             // 4. Register models
@@ -1106,23 +1131,55 @@ public class DynamicAudioBackend : AbstractT2IBackend
         return false;
     }
 
-    /// <summary>Splits text into chunks of approximately <paramref name="wordsPerChunk"/> words,
-    /// snapping to the nearest punctuation boundary within ±2 words of the target.
-    /// Returns null if fewer than 2 chunks (caller should use the normal non-streaming path).</summary>
-    private static List<string> SplitIntoChunks(string text, int wordsPerChunk)
+    /// <summary>Check whether a word ends with a sentence-terminal punctuation mark (. ! ?)
+    /// while respecting abbreviations. Used by sentence-level splitting.</summary>
+    private static bool EndsWithSentencePunctuation(string word)
     {
-        if (string.IsNullOrWhiteSpace(text) || wordsPerChunk < 1) return null;
+        if (string.IsNullOrEmpty(word)) return false;
+        char last = word[^1];
+        if (last == '!' || last == '?') return true;
+        if (last == '.')
+        {
+            string baseName = word.TrimEnd('.');
+            if (Abbreviations.Contains(baseName)) return false;
+            if (baseName.Length == 1 && char.IsUpper(baseName[0])) return false;
+            return true;
+        }
+        return false;
+    }
 
+    /// <summary>Splits text into chunks using the given semantic mode.
+    /// Returns null if fewer than 2 chunks (caller should use the normal non-streaming path).</summary>
+    private static List<string> SplitIntoChunks(string text, string mode)
+    {
+        if (string.IsNullOrWhiteSpace(text) || mode == "off") return null;
+
+        List<string> chunks = mode switch
+        {
+            "word" => SplitPerWord(text),
+            "phrase" => SplitByPhrases(text),
+            "sentence" => SplitBySentences(text),
+            "paragraph" => SplitByParagraphs(text),
+            _ => null
+        };
+
+        // Only stream if we got 2+ chunks
+        return chunks is { Count: >= 2 } ? chunks : null;
+    }
+
+    /// <summary>Each word becomes its own chunk.</summary>
+    private static List<string> SplitPerWord(string text)
+    {
+        string[] words = text.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
+        return words.Length >= 2 ? new List<string>(words) : null;
+    }
+
+    /// <summary>Splits into short phrases of ~5 words, snapping to nearby punctuation.</summary>
+    private static List<string> SplitByPhrases(string text)
+    {
+        const int wordsPerChunk = 5;
         string[] words = text.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
         if (words.Length < 2) return null;
-
-        // Per-word mode: each word is its own chunk (no boundary snapping)
-        if (wordsPerChunk == 1)
-        {
-            List<string> perWord = new(words.Length);
-            foreach (string w in words) perWord.Add(w);
-            return perWord.Count >= 2 ? perWord : null;
-        }
 
         List<string> chunks = [];
         int pos = 0;
@@ -1130,48 +1187,100 @@ public class DynamicAudioBackend : AbstractT2IBackend
         while (pos < words.Length)
         {
             int remaining = words.Length - pos;
-            // If the remainder fits in one chunk, take it all
             if (remaining <= wordsPerChunk + 2)
             {
                 chunks.Add(string.Join(' ', words, pos, remaining));
                 break;
             }
 
-            int target = pos + wordsPerChunk; // ideal break index (exclusive)
-
-            // Look for the best punctuation boundary in [target-2 .. target+2]
+            int target = pos + wordsPerChunk;
             int bestBreak = -1;
             for (int probe = Math.Max(pos + 1, target - 2); probe <= Math.Min(words.Length - 1, target + 2); probe++)
             {
-                // probe is inclusive — we'd take words[pos..probe]
                 if (EndsWithBreakPunctuation(words[probe]))
                 {
-                    bestBreak = probe + 1; // exclusive end
-                    break; // take the first (closest-to-target) punctuation hit
+                    bestBreak = probe + 1;
+                    break;
                 }
             }
 
-            int end = bestBreak > 0 ? bestBreak : target; // fall back to exact count
+            int end = bestBreak > 0 ? bestBreak : target;
             end = Math.Min(end, words.Length);
-
             chunks.Add(string.Join(' ', words, pos, end - pos));
             pos = end;
         }
 
-        // Merge a tiny trailing chunk into the previous one
-        int minTrailing = Math.Max(2, wordsPerChunk / 3);
+        // Merge tiny trailing chunk
         if (chunks.Count >= 2)
         {
             string lastChunk = chunks[^1];
             int lastWordCount = lastChunk.Split((char[])null, StringSplitOptions.RemoveEmptyEntries).Length;
-            if (lastWordCount < minTrailing)
+            if (lastWordCount < 2)
             {
                 chunks[^2] = chunks[^2] + " " + lastChunk;
                 chunks.RemoveAt(chunks.Count - 1);
             }
         }
 
-        return chunks.Count >= 2 ? chunks : null;
+        return chunks;
+    }
+
+    /// <summary>Splits on sentence boundaries (. ! ?) while respecting abbreviations.</summary>
+    private static List<string> SplitBySentences(string text)
+    {
+        string[] words = text.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length < 2) return null;
+
+        List<string> chunks = [];
+        int sentenceStart = 0;
+
+        for (int i = 0; i < words.Length; i++)
+        {
+            if (EndsWithSentencePunctuation(words[i]) || i == words.Length - 1)
+            {
+                int count = i - sentenceStart + 1;
+                chunks.Add(string.Join(' ', words, sentenceStart, count));
+                sentenceStart = i + 1;
+            }
+        }
+
+        // Merge a very short trailing chunk (1-2 words) into the previous sentence
+        if (chunks.Count >= 2)
+        {
+            string lastChunk = chunks[^1];
+            int lastWordCount = lastChunk.Split((char[])null, StringSplitOptions.RemoveEmptyEntries).Length;
+            if (lastWordCount <= 2)
+            {
+                chunks[^2] = chunks[^2] + " " + lastChunk;
+                chunks.RemoveAt(chunks.Count - 1);
+            }
+        }
+
+        return chunks;
+    }
+
+    /// <summary>Splits on paragraph boundaries (double newlines).</summary>
+    private static List<string> SplitByParagraphs(string text)
+    {
+        // Split on double newlines (handles \r\n and \n)
+        string[] paragraphs = text.Split(["\r\n\r\n", "\n\n"], StringSplitOptions.RemoveEmptyEntries);
+        List<string> chunks = [];
+        foreach (string p in paragraphs)
+        {
+            string trimmed = p.Trim();
+            if (!string.IsNullOrEmpty(trimmed))
+            {
+                chunks.Add(trimmed);
+            }
+        }
+
+        // If text has no paragraph breaks, fall back to sentence splitting
+        if (chunks.Count < 2)
+        {
+            return SplitBySentences(text);
+        }
+
+        return chunks;
     }
 
     /// <summary>Reads WAV format info (sample rate, channels, bits per sample) from a WAV byte array.</summary>

@@ -41,10 +41,14 @@ class AudioRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Not found"}, 404)
 
     def do_POST(self):
-        """Handle POST requests (process, unload, shutdown)."""
+        """Handle POST requests (process, download, unload, shutdown)."""
         if self.path == "/process":
             body = json.loads(self._read_body())
             result = self._process_request(body)
+            self._send_json(result)
+        elif self.path == "/download":
+            body = json.loads(self._read_body())
+            result = self._download_model(body)
             self._send_json(result)
         elif self.path == "/unload":
             body = json.loads(self._read_body())
@@ -65,6 +69,11 @@ class AudioRequestHandler(BaseHTTPRequestHandler):
         module = body.get("module", "")
         engine_class = body.get("engine_class", "")
         kwargs = body.get("kwargs", {})
+
+        # Update HF_TOKEN per-request so token changes take effect without restart
+        hf_token = body.get("hf_token", "")
+        if hf_token:
+            os.environ["HF_TOKEN"] = hf_token
 
         try:
             # Redirect stdout to stderr during processing to keep stdout clean
@@ -87,6 +96,37 @@ class AudioRequestHandler(BaseHTTPRequestHandler):
                 "error": str(e),
                 "traceback": traceback.format_exc(),
                 "processing_time": time.time() - start,
+            }
+
+    def _download_model(self, body):
+        """Download a HuggingFace model to local storage during install."""
+        model_name = body.get("model_name", "")
+        category = body.get("category", "")
+        hf_token = body.get("hf_token", "")
+
+        if not model_name:
+            return {"success": False, "error": "model_name is required"}
+
+        if hf_token:
+            os.environ["HF_TOKEN"] = hf_token
+
+        try:
+            from engines.base_engine import BaseAudioEngine
+
+            # Redirect stdout to stderr to keep stdout clean for health checks
+            old_stdout = sys.stdout
+            sys.stdout = sys.stderr
+            try:
+                local_path = BaseAudioEngine.ensure_model_local(model_name, category)
+            finally:
+                sys.stdout = old_stdout
+
+            return {"success": True, "local_path": local_path}
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc(),
             }
 
     def _read_body(self):

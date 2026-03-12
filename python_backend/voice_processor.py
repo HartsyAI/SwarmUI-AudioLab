@@ -24,7 +24,7 @@ def force_exit_handler():
 atexit.register(force_exit_handler)
 
 """
-SwarmUI Voice Assistant - Audio Processing Interface
+SwarmUI AudioLab - Audio Processing Interface
 
 Supports two modes:
   1. Legacy commands (init, stt, tts, status, cleanup) — backward compatible

@@ -3,7 +3,7 @@
 
 Uses the dia package API:
   - from dia.model import Dia
-  - Dia.from_pretrained("nari-labs/Dia-1.6B-0626")
+  - Dia.from_local(config, checkpoint, device=...) or Dia.from_pretrained(...)
   - model.generate(text) -> numpy array at 44100 Hz
   - Supports [S1]/[S2] speaker tags and nonverbal tokens like (laughs), (sighs)
 """
@@ -12,6 +12,7 @@ import logging
 import os
 
 import numpy as np
+import torch
 
 from .base_engine import BaseAudioEngine
 
@@ -47,22 +48,28 @@ class DiaEngine(BaseAudioEngine):
         from dia.model import Dia
 
         local_path = self.ensure_model_local(model_name, "tts")
-        # Use from_local() instead of from_pretrained() because the HF model
-        # is sharded (model-00001-of-00002.safetensors) and PyTorchModelHubMixin
-        # doesn't handle sharded safetensors from local directories correctly.
         config_path = os.path.join(local_path, "config.json")
         checkpoint_path = os.path.join(local_path, "dia-v1.pth")
-        self.model = Dia.from_local(config_path, checkpoint_path, compute_dtype="float16")
-        logger.info("Dia model loaded: %s", model_name)
+        target_device = torch.device(self.device)
+        # Use float16 on CUDA for ~4.4GB VRAM, float32 on CPU
+        compute_dtype = "float16" if self.device == "cuda" else "float32"
+        self.model = Dia.from_local(
+            config_path,
+            checkpoint_path,
+            compute_dtype=compute_dtype,
+            device=target_device,
+        )
+        logger.info("Dia model loaded on %s (dtype=%s): %s", self.device, compute_dtype, model_name)
 
     def process(self, **kwargs) -> dict:
         text = kwargs.get("text", "")
         volume = float(kwargs.get("volume", 0.8))
         model_name = kwargs.get("model_name", "nari-labs/Dia-1.6B-0626")
-        temperature = float(kwargs.get("temperature", 1.3))
+        temperature = float(kwargs.get("temperature", 1.2))
         top_p = float(kwargs.get("top_p", 0.95))
         cfg_scale = float(kwargs.get("cfg_scale", 3.0))
-        cfg_filter_top_k = int(kwargs.get("cfg_filter_top_k", 35))
+        cfg_filter_top_k = int(kwargs.get("cfg_filter_top_k", 45))
+        max_tokens = int(kwargs.get("max_tokens", 3072))
 
         if not text.strip():
             return {"success": False, "error": "No text provided"}
@@ -78,6 +85,7 @@ class DiaEngine(BaseAudioEngine):
             # Generate speech — returns numpy array at 44100 Hz
             audio_data = self.model.generate(
                 text,
+                max_tokens=max_tokens,
                 temperature=temperature,
                 top_p=top_p,
                 cfg_scale=cfg_scale,
@@ -107,6 +115,7 @@ class DiaEngine(BaseAudioEngine):
                     "engine": "dia",
                     "sample_rate": sr,
                     "model": model_name,
+                    "device": self.device,
                 },
             }
         except Exception as e:
@@ -114,4 +123,8 @@ class DiaEngine(BaseAudioEngine):
             return {"success": False, "error": str(e)}
 
     def cleanup(self):
-        self.model = None
+        if self.model is not None:
+            del self.model
+            self.model = None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()

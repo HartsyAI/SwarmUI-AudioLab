@@ -452,12 +452,16 @@ public static class AudioLabAPI
 
     #region Engine Management
 
-    /// <summary>Lists all available audio engines with their install status, metadata, and dependencies.</summary>
+    /// <summary>Lists all available audio engines with their install status, metadata, and dependencies.
+    /// Uses AllBackends instead of RunningBackendsOfType so installed engines are visible
+    /// even while the backend is still starting (LOADING state).</summary>
     public static async Task<JObject> AudioLabListEngines(Session session, JObject input)
     {
         try
         {
-            DynamicAudioBackend backend = Program.Backends.RunningBackendsOfType<DynamicAudioBackend>().FirstOrDefault();
+            DynamicAudioBackend backend = Program.Backends.AllBackends.Values
+                .Select(b => b.AbstractBackend as DynamicAudioBackend)
+                .FirstOrDefault(b => b is not null);
             IReadOnlySet<string> installedIds = backend?.GetInstalledEngineIds() ?? new HashSet<string>();
             bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
             bool dockerEnabled = AudioConfiguration.UseDocker;
@@ -519,7 +523,8 @@ public static class AudioLabAPI
             return new JObject
             {
                 ["success"] = true,
-                ["engines"] = engines
+                ["engines"] = engines,
+                ["backend_status"] = backend?.Status.ToString() ?? "NOT_FOUND"
             };
         }
         catch (Exception ex)
