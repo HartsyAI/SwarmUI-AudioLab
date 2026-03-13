@@ -8,7 +8,6 @@ const AudioLab = (() => {
 
     const MODAL_ID = 'audiolab_modal';
 
-    // ===== State =====
     let player = null;
     let modalEl = null;
     let statusEl = null;
@@ -23,8 +22,6 @@ const AudioLab = (() => {
     let pendingOverlayFile = null;
     let applySectionEl = null;
     let refTextInput = null;
-
-    // ===== Public API =====
 
     function open(audioSrc) {
         if (!modalEl) buildModal();
@@ -56,23 +53,20 @@ const AudioLab = (() => {
         return player ? player.getDuration() : 0;
     }
 
-    // ===== Audio Loading =====
-
     async function fetchAudioAsBlob(audioSrc) {
         if (audioSrc.startsWith('data:')) {
-            let mimeType = audioSrc.substring(audioSrc.indexOf(':') + 1, audioSrc.indexOf(';'));
-            let base64 = audioSrc.split(',')[1];
-            let data = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-            return new Blob([data], { type: mimeType });
+            const mimeType = audioSrc.substring(audioSrc.indexOf(':') + 1, audioSrc.indexOf(';'));
+            const base64 = audioSrc.split(',')[1];
+            return AudioLabCore.base64ToBlob(base64, mimeType);
         }
-        let response = await fetch(audioSrc);
+        const response = await fetch(audioSrc);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.blob();
     }
 
     async function initPlayer(audioSrc) {
         destroyAllPlayers();
-        let container = document.getElementById('ale_waveform');
+        const container = document.getElementById('ale_waveform');
         if (!container) { updateStatus('Editor container not found'); return; }
         container.innerHTML = '';
         player = AudioLabPlayer.create(container, {
@@ -90,17 +84,17 @@ const AudioLab = (() => {
             refreshApplySection();
         });
         player.on('edit', (type) => {
-            let dur = player.getDuration();
+            const dur = player.getDuration();
             updateStatus(`${type} applied \u2014 Duration: ${AudioLabPlayer.formatTime(dur)}`);
             if (!comparisonVisible && originalBlob) showComparison();
             refreshApplySection();
         });
         enableDragSelection();
         try {
-            let blob = await fetchAudioAsBlob(audioSrc);
+            const blob = await fetchAudioAsBlob(audioSrc);
             originalBlob = blob;
-            let loadPromise = player.loadBlob(blob);
-            let timeout = new Promise((_, reject) =>
+            const loadPromise = player.loadBlob(blob);
+            const timeout = new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('Load timed out')), 15000)
             );
             await Promise.race([loadPromise, timeout]);
@@ -118,11 +112,9 @@ const AudioLab = (() => {
         if (dragSelectionUnsub) { dragSelectionUnsub(); dragSelectionUnsub = null; }
     }
 
-    // ===== Drag-to-Select Regions =====
-
     function enableDragSelection() {
         if (!player) return;
-        let regionsPlugin = player.getRegionsPlugin();
+        const regionsPlugin = player.getRegionsPlugin();
         if (!regionsPlugin) return;
         dragSelectionUnsub = regionsPlugin.enableDragSelection({
             color: 'rgba(100, 140, 210, 0.3)',
@@ -130,11 +122,10 @@ const AudioLab = (() => {
             resize: true
         });
         regionsPlugin.on('region-created', (region) => {
-            // Enforce single region — remove any others
             regionsPlugin.getRegions().forEach(r => {
                 if (r.id !== region.id) r.remove();
             });
-            let trimBtn = document.getElementById('ale_trim');
+            const trimBtn = document.getElementById('ale_trim');
             if (trimBtn) trimBtn.disabled = false;
             updateTrimIndicators(region);
         });
@@ -144,23 +135,22 @@ const AudioLab = (() => {
     }
 
     function updateTrimIndicators(region) {
-        let waveformEl = document.getElementById('ale_waveform');
+        const waveformEl = document.getElementById('ale_waveform');
         if (!waveformEl || !player) return;
-        let duration = player.getDuration();
+        const duration = player.getDuration();
         if (duration <= 0) return;
-        // Remove existing dim overlays
         waveformEl.querySelectorAll('.ale-dim-overlay').forEach(el => el.remove());
-        let leftPct = (region.start / duration) * 100;
-        let rightPct = ((duration - region.end) / duration) * 100;
+        const leftPct = (region.start / duration) * 100;
+        const rightPct = ((duration - region.end) / duration) * 100;
         if (leftPct > 0.5) {
-            let dimLeft = document.createElement('div');
+            const dimLeft = document.createElement('div');
             dimLeft.className = 'ale-dim-overlay';
             dimLeft.style.left = '0';
             dimLeft.style.width = leftPct + '%';
             waveformEl.appendChild(dimLeft);
         }
         if (rightPct > 0.5) {
-            let dimRight = document.createElement('div');
+            const dimRight = document.createElement('div');
             dimRight.className = 'ale-dim-overlay';
             dimRight.style.right = '0';
             dimRight.style.width = rightPct + '%';
@@ -169,17 +159,15 @@ const AudioLab = (() => {
     }
 
     function clearTrimIndicators() {
-        let waveformEl = document.getElementById('ale_waveform');
+        const waveformEl = document.getElementById('ale_waveform');
         if (waveformEl) waveformEl.querySelectorAll('.ale-dim-overlay').forEach(el => el.remove());
     }
 
-    // ===== Modal Builder =====
-
     function buildModal() {
-        let existing = document.getElementById(MODAL_ID);
+        const existing = document.getElementById(MODAL_ID);
         if (existing) existing.remove();
 
-        let bodyHtml = `
+        const bodyHtml = `
         <div class="modal-body">
             <div class="ale-waveform" id="ale_waveform"></div>
             <div class="ale-toolbar" id="ale_toolbar">
@@ -242,7 +230,7 @@ const AudioLab = (() => {
             <div class="ale-apply-section" id="ale_apply_section" style="display:none"></div>
         </div>`;
 
-        let footerHtml = `
+        const footerHtml = `
         <div class="modal-footer">
             <button class="btn btn-primary basic-button" id="ale_export">
                 &#x2913; Export WAV
@@ -250,8 +238,8 @@ const AudioLab = (() => {
             <button class="btn btn-secondary basic-button" id="ale_close">Close</button>
         </div>`;
 
-        let html = modalHeader(MODAL_ID, 'Audio Lab') + bodyHtml + footerHtml + modalFooter();
-        let wrapper = document.createElement('div');
+        const html = modalHeader(MODAL_ID, 'Audio Lab') + bodyHtml + footerHtml + modalFooter();
+        const wrapper = document.createElement('div');
         wrapper.innerHTML = html;
         document.body.appendChild(wrapper.firstElementChild);
 
@@ -259,7 +247,6 @@ const AudioLab = (() => {
         statusEl = document.getElementById('ale_status');
         applySectionEl = document.getElementById('ale_apply_section');
 
-        // Toolbar
         document.getElementById('ale_select_range').addEventListener('click', doSelectRange);
         document.getElementById('ale_trim').addEventListener('click', doTrim);
         document.getElementById('ale_split').addEventListener('click', doSplit);
@@ -269,12 +256,10 @@ const AudioLab = (() => {
         document.getElementById('ale_export').addEventListener('click', doExport);
         document.getElementById('ale_close').addEventListener('click', close);
 
-        // Split panel
         document.getElementById('ale_keep_a').addEventListener('click', () => doKeepSplitPart('before'));
         document.getElementById('ale_keep_b').addEventListener('click', () => doKeepSplitPart('after'));
         document.getElementById('ale_cancel_split').addEventListener('click', doCancelSplit);
 
-        // Overlay panel
         document.getElementById('ale_overlay_gain').addEventListener('input', (e) => {
             document.getElementById('ale_gain_label').textContent = Math.round(e.target.value * 100) + '%';
         });
@@ -284,22 +269,18 @@ const AudioLab = (() => {
             hideOverlayPanel();
         });
 
-        // Comparison
         document.getElementById('ale_comparison_toggle').addEventListener('click', toggleComparison);
         document.getElementById('ale_hide_comparison').addEventListener('click', (e) => {
             e.stopPropagation();
             hideComparison();
         });
 
-        // Keyboard shortcuts (on modal)
         modalEl.addEventListener('keydown', handleKeyboard);
     }
 
-    // ===== Keyboard Shortcuts =====
-
     function handleKeyboard(e) {
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
-        let key = e.key.toLowerCase();
+        const key = e.key.toLowerCase();
         if (key === ' ') { e.preventDefault(); if (player) player.playPause(); }
         else if (key === 'z' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doUndo(); }
         else if (key === 's' && !e.ctrlKey) { doSelectRange(); }
@@ -308,11 +289,9 @@ const AudioLab = (() => {
         else if (key === 'escape') { doCancelSplit(); hideOverlayPanel(); }
     }
 
-    // ===== Edit Operations =====
-
     async function pushUndo() {
         if (!player) return;
-        let blob = await player.exportBlob();
+        const blob = await player.exportBlob();
         if (blob) {
             undoStack.push(blob);
             if (undoStack.length > 20) undoStack.shift();
@@ -322,32 +301,32 @@ const AudioLab = (() => {
 
     function doSelectRange() {
         if (!player) return;
-        let duration = player.getDuration();
+        const duration = player.getDuration();
         if (duration <= 0) return;
         player.setRegion(duration * 0.25, duration * 0.75);
-        let trimBtn = document.getElementById('ale_trim');
+        const trimBtn = document.getElementById('ale_trim');
         if (trimBtn) trimBtn.disabled = false;
-        let region = player.getRegion();
+        const region = player.getRegion();
         if (region) updateTrimIndicators({ start: region.start, end: region.end });
     }
 
     async function doTrim() {
         if (!player) return;
-        let region = player.getRegion();
+        const region = player.getRegion();
         if (!region) { updateStatus('Select a range first'); return; }
         await pushUndo();
         await player.trimToRegion();
         clearTrimIndicators();
-        let trimBtn = document.getElementById('ale_trim');
+        const trimBtn = document.getElementById('ale_trim');
         if (trimBtn) trimBtn.disabled = true;
     }
 
     async function doSplit() {
         if (!player) return;
-        let time = player.getCurrentTime();
+        const time = player.getCurrentTime();
         if (time <= 0) { updateStatus('Move the cursor to a split point'); return; }
         await pushUndo();
-        let parts = await player.splitAtCursor();
+        const parts = await player.splitAtCursor();
         if (!parts) return;
         splitParts = parts;
         showSplitPanel(parts, time);
@@ -370,8 +349,8 @@ const AudioLab = (() => {
 
     async function doApplyOverlay() {
         if (!player || !pendingOverlayFile) return;
-        let offset = parseFloat(document.getElementById('ale_overlay_offset').value) || 0;
-        let gain = parseFloat(document.getElementById('ale_overlay_gain').value) || 1.0;
+        const offset = parseFloat(document.getElementById('ale_overlay_offset').value) || 0;
+        const gain = parseFloat(document.getElementById('ale_overlay_gain').value) || 1.0;
         await pushUndo();
         await player.overlayAudio(pendingOverlayFile, { offset, gain });
         pendingOverlayFile = null;
@@ -381,7 +360,7 @@ const AudioLab = (() => {
 
     async function doUndo() {
         if (!player || undoStack.length === 0) return;
-        let blob = undoStack.pop();
+        const blob = undoStack.pop();
         await player.reloadFromBlob(blob);
         updateUndoButton();
         clearTrimIndicators();
@@ -391,9 +370,9 @@ const AudioLab = (() => {
 
     async function doExport() {
         if (!player) return;
-        let blob = await player.exportBlob();
+        const blob = await player.exportBlob();
         if (!blob) return;
-        let a = document.createElement('a');
+        const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = `audiolab-edit-${Date.now()}.wav`;
         a.click();
@@ -401,31 +380,28 @@ const AudioLab = (() => {
         updateStatus('Exported');
     }
 
-    // ===== Split Panel =====
-
     function showSplitPanel(parts, splitTime) {
-        let panel = document.getElementById('ale_split_panel');
+        const panel = document.getElementById('ale_split_panel');
         if (!panel) return;
         panel.style.display = '';
         setToolbarEnabled(false);
-        // Create mini-players for each part
-        let containerA = document.getElementById('ale_split_a');
-        let containerB = document.getElementById('ale_split_b');
+        const containerA = document.getElementById('ale_split_a');
+        const containerB = document.getElementById('ale_split_b');
         containerA.innerHTML = '';
         containerB.innerHTML = '';
         splitPlayerA = AudioLabPlayer.createMini(containerA, { showDownload: false });
         splitPlayerB = AudioLabPlayer.createMini(containerB, { showDownload: false });
         if (splitPlayerA) splitPlayerA.loadBlob(parts.before);
         if (splitPlayerB) splitPlayerB.loadBlob(parts.after);
-        let labelA = panel.querySelector('.ale-split-part:first-child .ale-split-part-label');
-        let labelB = panel.querySelector('.ale-split-part:last-child .ale-split-part-label');
+        const labelA = panel.querySelector('.ale-split-part:first-child .ale-split-part-label');
+        const labelB = panel.querySelector('.ale-split-part:last-child .ale-split-part-label');
         if (labelA) labelA.textContent = `Part A (0:00 \u2013 ${AudioLabPlayer.formatTime(splitTime)})`;
         if (labelB) labelB.textContent = `Part B (${AudioLabPlayer.formatTime(splitTime)} \u2013 end)`;
     }
 
     async function doKeepSplitPart(which) {
         if (!player || !splitParts) return;
-        let blob = which === 'before' ? splitParts.before : splitParts.after;
+        const blob = which === 'before' ? splitParts.before : splitParts.after;
         await player.reloadFromBlob(blob);
         hideSplitPanel();
         updateStatus(`Kept ${which === 'before' ? 'Part A' : 'Part B'}`);
@@ -439,7 +415,7 @@ const AudioLab = (() => {
     }
 
     function hideSplitPanel() {
-        let panel = document.getElementById('ale_split_panel');
+        const panel = document.getElementById('ale_split_panel');
         if (panel) panel.style.display = 'none';
         if (splitPlayerA) { splitPlayerA.destroy(); splitPlayerA = null; }
         if (splitPlayerB) { splitPlayerB.destroy(); splitPlayerB = null; }
@@ -447,29 +423,25 @@ const AudioLab = (() => {
         setToolbarEnabled(true);
     }
 
-    // ===== Overlay Panel =====
-
     function showOverlayPanel() {
-        let panel = document.getElementById('ale_overlay_panel');
+        const panel = document.getElementById('ale_overlay_panel');
         if (panel) panel.style.display = '';
     }
 
     function hideOverlayPanel() {
-        let panel = document.getElementById('ale_overlay_panel');
+        const panel = document.getElementById('ale_overlay_panel');
         if (panel) panel.style.display = 'none';
         pendingOverlayFile = null;
     }
 
-    // ===== Comparison View =====
-
     function showComparison() {
         if (!originalBlob) return;
-        let container = document.getElementById('ale_comparison');
+        const container = document.getElementById('ale_comparison');
         if (!container) return;
         container.style.display = '';
         container.classList.remove('collapsed');
         comparisonVisible = true;
-        let waveformEl = document.getElementById('ale_comparison_waveform');
+        const waveformEl = document.getElementById('ale_comparison_waveform');
         if (waveformEl && !originalPlayer) {
             waveformEl.innerHTML = '';
             originalPlayer = AudioLabPlayer.createMini(waveformEl, { showDownload: false });
@@ -478,53 +450,50 @@ const AudioLab = (() => {
     }
 
     function hideComparison() {
-        let container = document.getElementById('ale_comparison');
+        const container = document.getElementById('ale_comparison');
         if (container) container.style.display = 'none';
         if (originalPlayer) { originalPlayer.destroy(); originalPlayer = null; }
         comparisonVisible = false;
     }
 
     function toggleComparison() {
-        let container = document.getElementById('ale_comparison');
+        const container = document.getElementById('ale_comparison');
         if (!container) return;
-        let collapsed = container.classList.toggle('collapsed');
-        let arrow = container.querySelector('.ale-comparison-header span');
+        const collapsed = container.classList.toggle('collapsed');
+        const arrow = container.querySelector('.ale-comparison-header span');
         if (arrow) arrow.innerHTML = collapsed ? '&#x25B6; Original' : '&#x25BC; Original';
     }
 
-    // ===== Apply Section — Context-Aware Voice Cloning =====
-
     function isParamActive(paramId) {
-        let el = document.getElementById(`input_${paramId}`);
+        const el = document.getElementById(`input_${paramId}`);
         if (!el) return false;
-        let wrapper = el.closest('.auto-input');
+        const wrapper = el.closest('.auto-input');
         if (!wrapper) return true;
         return wrapper.style.display !== 'none';
     }
 
     function refreshApplySection() {
         if (!applySectionEl) return;
-        let params = [
+        const params = [
             { id: 'referenceaudio', label: 'Set as Reference Audio', icon: '&#x266B;' },
             { id: 'sourceaudio', label: 'Set as Source Audio', icon: '&#x266A;' },
             { id: 'targetvoice', label: 'Set as Target Voice', icon: '&#x2699;' },
             { id: 'acesourceaudio', label: 'Set as ACE Source Audio', icon: '&#x266A;' },
             { id: 'acereferenceaudio', label: 'Set as ACE Reference Audio', icon: '&#x266B;' }
         ];
-        let activeParams = params.filter(p => isParamActive(p.id));
+        const activeParams = params.filter(p => isParamActive(p.id));
         if (activeParams.length === 0) {
             applySectionEl.style.display = 'none';
             return;
         }
-        let duration = player ? player.getDuration() : 0;
-        let hasRefText = isParamActive('referencetext');
+        const duration = player ? player.getDuration() : 0;
+        const hasRefText = isParamActive('referencetext');
         let refTextValue = '';
         if (hasRefText) {
-            let refTextEl = document.getElementById('input_referencetext');
+            const refTextEl = document.getElementById('input_referencetext');
             if (refTextEl) refTextValue = refTextEl.value || '';
         }
-        // Duration recommendation
-        let durationText = `Duration: ${AudioLabPlayer.formatTime(duration)}`;
+        const durationText = `Duration: ${AudioLabPlayer.formatTime(duration)}`;
         let durationClass = '';
         let recommendation = '';
         if (isParamActive('referenceaudio')) {
@@ -552,7 +521,6 @@ const AudioLab = (() => {
         applySectionEl.innerHTML = html;
         applySectionEl.style.display = '';
         refTextInput = document.getElementById('ale_ref_text');
-        // Wire apply buttons
         applySectionEl.querySelectorAll('.ale-apply-buttons .basic-button').forEach(btn => {
             btn.addEventListener('click', () => {
                 doSetAsParam(btn.dataset.param, btn.title);
@@ -562,18 +530,17 @@ const AudioLab = (() => {
 
     async function doSetAsParam(paramId, label) {
         if (!player) return;
-        let blob = await player.exportBlob();
+        const blob = await player.exportBlob();
         if (!blob) return;
-        let input = document.getElementById(`input_${paramId}`);
+        const input = document.getElementById(`input_${paramId}`);
         if (!input) { updateStatus('Parameter not found'); return; }
-        let file = new File([blob], 'audiolab-audio.wav', { type: 'audio/wav' });
-        let dt = new DataTransfer();
+        const file = new File([blob], 'audiolab-audio.wav', { type: 'audio/wav' });
+        const dt = new DataTransfer();
         dt.items.add(file);
         input.files = dt.files;
         triggerChangeFor(input);
-        // Sync reference text if applicable
         if (refTextInput && refTextInput.value && paramId.includes('reference')) {
-            let refTextEl = document.getElementById('input_referencetext');
+            const refTextEl = document.getElementById('input_referencetext');
             if (refTextEl) {
                 refTextEl.value = refTextInput.value;
                 triggerChangeFor(refTextEl);
@@ -585,10 +552,8 @@ const AudioLab = (() => {
         }
     }
 
-    // ===== Helpers =====
-
     function pickFile(callback) {
-        let input = document.createElement('input');
+        const input = document.createElement('input');
         input.type = 'file';
         input.accept = 'audio/*';
         input.onchange = () => { if (input.files.length > 0) callback(input.files[0]); };
@@ -596,7 +561,7 @@ const AudioLab = (() => {
     }
 
     function setToolbarEnabled(enabled) {
-        let toolbar = document.getElementById('ale_toolbar');
+        const toolbar = document.getElementById('ale_toolbar');
         if (!toolbar) return;
         toolbar.querySelectorAll('.basic-button').forEach(btn => {
             if (enabled) {
@@ -611,7 +576,7 @@ const AudioLab = (() => {
     }
 
     function updateUndoButton() {
-        let btn = document.getElementById('ale_undo');
+        const btn = document.getElementById('ale_undo');
         if (btn) btn.disabled = undoStack.length === 0;
     }
 

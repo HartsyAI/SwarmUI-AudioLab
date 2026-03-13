@@ -21,101 +21,100 @@ const AudioLabAPI = (() => {
         });
     }
 
-    // ===== PROVIDER STATUS =====
-
-    /** Get status of all registered providers.
-     *  Maps to C# endpoint: GetAllProvidersStatus */
+    /** @returns {Promise<Object>} Status of all registered providers. */
     async function getAllProvidersStatus() {
         return await callAPI('GetAllProvidersStatus');
     }
 
-    /** Get installation status for all providers (checks which deps are installed).
-     *  Maps to C# endpoint: GetInstallationStatus */
+    /** @returns {Promise<Object>} Installation status for all providers. */
     async function getInstallationStatus() {
         return await callAPI('GetInstallationStatus');
     }
 
-    // ===== INSTALLATION =====
-
-    /** Install dependencies for a specific provider.
-     *  Maps to C# endpoint: InstallProviderDependencies
-     *  @param {string} providerId - e.g. "chatterbox_tts", "whisper_stt" */
+    /**
+     * Install dependencies for a specific provider.
+     * @param {string} providerId - e.g. "chatterbox_tts", "whisper_stt"
+     */
     async function installProviderDependencies(providerId) {
         return await callAPI('InstallProviderDependencies', { provider_id: providerId });
     }
 
-    /** Get real-time installation progress.
-     *  Maps to C# endpoint: GetInstallationProgress */
+    /** @returns {Promise<Object>} Real-time installation progress. */
     async function getInstallationProgress() {
         return await callAPI('GetInstallationProgress');
     }
 
-    // ===== AUDIO PROCESSING =====
-
-    /** Process audio through a specific provider (generic).
-     *  Maps to C# endpoint: ProcessAudio
-     *  @param {string} providerId
-     *  @param {Object} args */
+    /**
+     * Process audio through a specific provider.
+     * @param {string} providerId
+     * @param {Object} args
+     */
     async function processAudio(providerId, args = {}) {
         return await callAPI('ProcessAudio', { provider_id: providerId, args });
     }
 
-    /** Process Speech-to-Text.
-     *  Maps to C# endpoint: ProcessSTT
-     *  @param {string} audioData - base64
-     *  @param {Object} options - { language, providerId } */
+    /**
+     * Process Speech-to-Text. Defaults handled by C# backend.
+     * @param {string} audioData - base64 encoded audio
+     * @param {Object} [options]
+     * @param {string} [options.language]
+     * @param {string} [options.providerId]
+     */
     async function processSTT(audioData, options = {}) {
-        const payload = {
-            audio_data: audioData,
-            language: options.language || 'en-US',
-            options: {
-                return_confidence: options.returnConfidence !== false,
-                return_alternatives: options.returnAlternatives || false,
-                model_preference: options.modelPreference || 'accuracy'
-            }
-        };
+        const payload = { audio_data: audioData };
+        if (options.language) payload.language = options.language;
         if (options.providerId) payload.provider_id = options.providerId;
         return await callAPI('ProcessSTT', payload);
     }
 
-    /** Process Text-to-Speech.
-     *  Maps to C# endpoint: ProcessTTS
-     *  @param {string} text
-     *  @param {Object} options - { voice, language, volume, speed, pitch, format, providerId } */
+    /**
+     * Process Text-to-Speech. Defaults handled by C# backend.
+     * @param {string} text
+     * @param {Object} [options]
+     * @param {string} [options.voice]
+     * @param {string} [options.language]
+     * @param {number} [options.volume]
+     * @param {number} [options.speed]
+     * @param {number} [options.pitch]
+     * @param {string} [options.format]
+     * @param {string} [options.providerId]
+     */
     async function processTTS(text, options = {}) {
-        const payload = {
-            text: text,
-            voice: options.voice || 'default',
-            language: options.language || 'en-US',
-            volume: options.volume ?? 0.8,
-            options: {
-                speed: options.speed ?? 1.0,
-                pitch: options.pitch ?? 1.0,
-                format: options.format || 'wav'
-            }
-        };
+        const payload = { text };
+        if (options.voice) payload.voice = options.voice;
+        if (options.language) payload.language = options.language;
+        if (options.volume !== undefined) payload.volume = options.volume;
+        if (options.speed !== undefined || options.pitch !== undefined || options.format) {
+            payload.options = {};
+            if (options.speed !== undefined) payload.options.speed = options.speed;
+            if (options.pitch !== undefined) payload.options.pitch = options.pitch;
+            if (options.format) payload.options.format = options.format;
+        }
         if (options.providerId) payload.provider_id = options.providerId;
         return await callAPI('ProcessTTS', payload);
     }
 
-    /** Process a chained workflow (STT -> TTS pipeline).
-     *  Maps to C# endpoint: ProcessWorkflow */
+    /**
+     * Process a chained workflow (e.g. STT → TTS pipeline).
+     * @param {string} inputData
+     * @param {string} inputType
+     * @param {Array} steps
+     */
     async function processWorkflow(inputData, inputType, steps) {
         return await callAPI('ProcessWorkflow', {
             input_data: inputData,
             input_type: inputType,
             workflow_type: 'custom',
-            steps: steps
+            steps
         });
     }
 
-    // ===== VIDEO + AUDIO =====
-
-    /** Combine video with audio track.
-     *  Maps to C# endpoint: CombineVideoAudio
-     *  @param {string} videoData - base64 encoded video
-     *  @param {string} audioData - base64 encoded audio
-     *  @param {string} mode - "replace" or "mix" */
+    /**
+     * Combine video with an audio track via ffmpeg.
+     * @param {string} videoData - base64 encoded video
+     * @param {string} audioData - base64 encoded audio
+     * @param {string} [mode='replace'] - "replace" or "mix"
+     */
     async function combineVideoAudio(videoData, audioData, mode = 'replace') {
         return await callAPI('CombineVideoAudio', {
             video_data: videoData,
@@ -124,15 +123,19 @@ const AudioLabAPI = (() => {
         });
     }
 
-    /** Extract audio track from a video file.
-     *  Maps to C# endpoint: ExtractAudioFromVideo
-     *  @param {string} videoData - base64 encoded video */
+    /**
+     * Extract audio track from a video file.
+     * @param {string} videoData - base64 encoded video
+     */
     async function extractAudioFromVideo(videoData) {
         return await callAPI('ExtractAudioFromVideo', { video_data: videoData });
     }
 
-    // ===== VALIDATION =====
-
+    /**
+     * Client-side size guard to prevent sending oversized payloads.
+     * @param {string} audioData - base64 encoded audio
+     * @throws {Error} If data is invalid or exceeds 50MB
+     */
     function validateAudioData(audioData) {
         if (!audioData || typeof audioData !== 'string') {
             throw new Error('Audio data must be a non-empty string');
@@ -143,32 +146,17 @@ const AudioLabAPI = (() => {
         }
     }
 
-    function validateText(text) {
-        if (!text || typeof text !== 'string' || text.trim().length === 0) {
-            throw new Error('Text cannot be empty');
-        }
-        if (text.trim().length > 1000) {
-            throw new Error('Text too long: maximum 1000 characters');
-        }
-    }
-
     return {
-        // Provider Status
         getAllProvidersStatus,
         getInstallationStatus,
-        // Installation
         installProviderDependencies,
         getInstallationProgress,
-        // Audio Processing
         processAudio,
         processSTT,
         processTTS,
         processWorkflow,
-        // Video + Audio
         combineVideoAudio,
         extractAudioFromVideo,
-        // Validation
-        validateAudioData,
-        validateText
+        validateAudioData
     };
 })();

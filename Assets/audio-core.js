@@ -41,22 +41,20 @@ const AudioLabCore = (() => {
         return 'audio/wav';
     }
 
-    async function blobToBase64(blob) {
+    /** Read a Blob or File as a base64 string (without data URI prefix). */
+    function readAsBase64(source) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onloadend = () => resolve(reader.result.split(',')[1]);
             reader.onerror = reject;
-            reader.readAsDataURL(blob);
+            reader.readAsDataURL(source);
         });
     }
 
-    async function fileToBase64(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result.split(',')[1]);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-        });
+    /** Convert a base64 string to a Blob. */
+    function base64ToBlob(base64, mimeType = 'audio/wav') {
+        const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+        return new Blob([bytes], { type: mimeType });
     }
 
     async function startRecording() {
@@ -84,7 +82,7 @@ const AudioLabCore = (() => {
             mediaRecorder.onstop = async () => {
                 try {
                     const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || getBestMimeType() });
-                    const b64 = await blobToBase64(blob);
+                    const b64 = await readAsBase64(blob);
                     AudioLabAPI.validateAudioData(b64);
                     await cleanup();
                     resolve(b64);
@@ -112,8 +110,7 @@ const AudioLabCore = (() => {
 
     async function playAudio(base64Audio) {
         await stopAudio();
-        const data = Uint8Array.from(atob(base64Audio), c => c.charCodeAt(0));
-        const blob = new Blob([data], { type: 'audio/wav' });
+        const blob = base64ToBlob(base64Audio);
         const url = URL.createObjectURL(blob);
         currentAudio = new Audio(url);
 
@@ -124,11 +121,9 @@ const AudioLabCore = (() => {
         });
     }
 
-    /** Create an object URL from base64 audio data for use with <audio> controls */
+    /** Create an object URL from base64 audio data for use with <audio> controls. */
     function createAudioURL(base64Audio) {
-        const data = Uint8Array.from(atob(base64Audio), c => c.charCodeAt(0));
-        const blob = new Blob([data], { type: 'audio/wav' });
-        return URL.createObjectURL(blob);
+        return URL.createObjectURL(base64ToBlob(base64Audio));
     }
 
     async function stopAudio() {
@@ -143,8 +138,6 @@ const AudioLabCore = (() => {
         await cleanup();
         await stopAudio();
     }
-
-    // ===== AUDIO EDITING (Crunker.js + Web Audio API) =====
 
     let crunkerInstance = null;
 
@@ -235,13 +228,6 @@ const AudioLabCore = (() => {
         return crunker.export(mixed, 'audio/wav').blob;
     }
 
-    /** Export an AudioBuffer or Blob to base64 WAV string.
-     *  @param {Blob} blob - audio Blob
-     *  @returns {Promise<string>} base64 string */
-    async function blobToBase64Export(blob) {
-        return blobToBase64(blob);
-    }
-
     return {
         isRecordingSupported,
         startRecording,
@@ -251,16 +237,15 @@ const AudioLabCore = (() => {
         createAudioURL,
         stopAudio,
         isPlaying,
-        fileToBase64,
+        readAsBase64,
+        base64ToBlob,
         emergencyStop,
         cleanup,
-        // Audio editing
         trimAudio,
         splitAudio,
         concatAudio,
         mixAudio,
         applyGain,
-        blobToBase64Export,
         getStatus: () => ({
             capabilities,
             isRecording: isRecording(),
