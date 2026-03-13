@@ -27,7 +27,7 @@ public sealed class WhisperProvider : IAudioProviderSource
 
     private static PackageDefinition[] Dependencies =>
     [
-        new() { Name = "numpy<2.0.0", InstallName = "numpy<2.0.0", ImportName = "numpy", Category = "core" },
+        new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
         new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "openai-whisper", InstallName = "openai-whisper", ImportName = "whisper", Category = "stt", EstimatedInstallTimeMinutes = 5 },

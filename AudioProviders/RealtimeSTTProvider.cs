@@ -30,7 +30,7 @@ public sealed class RealtimeSTTProvider : IAudioProviderSource
     [
         new() { Name = "scipy==1.14.1", InstallName = "scipy==1.14.1", ImportName = "scipy", Category = "core" },
         new() { Name = "soundfile==0.13.1", InstallName = "soundfile==0.13.1", ImportName = "soundfile", Category = "core" },
-        new() { Name = "numpy<2.0.0", InstallName = "numpy<2.0.0", ImportName = "numpy", Category = "core" },
+        new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
         new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "RealtimeSTT", InstallName = "RealtimeSTT", ImportName = "RealtimeSTT", Category = "stt" },
