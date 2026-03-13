@@ -32,7 +32,7 @@ public sealed class AceStepProvider : IAudioProviderSource
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
         new() { Name = "torch==2.7.1+cu128", InstallName = "torch==2.7.1+cu128", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu128" },
         new() { Name = "torchaudio==2.7.1+cu128", InstallName = "torchaudio==2.7.1+cu128", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu128" },
-        new() { Name = "ace-step", InstallName = "ace-step", ImportName = "acestep", Category = "music", EstimatedInstallTimeMinutes = 15 },
+        new() { Name = "ace-step", InstallName = "git+https://github.com/ace-step/ACE-Step.git", ImportName = "acestep", Category = "music", IsGitPackage = true, EstimatedInstallTimeMinutes = 15, CustomInstallArgs = "--no-deps" },
         new() { Name = "transformers>=4.51.0,<4.58.0", InstallName = "transformers>=4.51.0,<4.58.0", ImportName = "transformers", Category = "music" },
         new() { Name = "diffusers", InstallName = "diffusers", ImportName = "diffusers", Category = "music" },
         new() { Name = "einops>=0.8.1", InstallName = "einops>=0.8.1", ImportName = "einops", Category = "music" },

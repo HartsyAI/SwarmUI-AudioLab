@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""ACE-Step 1.5 engine — full-song music generation with lyrics alignment.
+"""ACE-Step engine — full-song music generation with lyrics alignment.
 
-Supports 6 DiT model variants, 6 task types (text2music, cover, repaint,
-extract, lego, complete), and optional LM planner (stubbed for future
-integration with SwarmUI's AbstractLLMBackend).
+Uses ACEStepPipeline from ace-step v0.2.0+. Supports multiple DiT model
+variants, task types (text2music, cover, repaint, edit, extend, retake),
+and configurable generation parameters.
 
-Requires: ace-step >= 1.5 (pip install ace-step)
+Requires: ace-step (git+https://github.com/ace-step/ACE-Step.git)
 """
 
 import base64
@@ -20,50 +20,66 @@ from .base_engine import BaseAudioEngine
 
 logger = logging.getLogger("Music.ACEStep")
 
+# Map SwarmUI model config names to HuggingFace repo IDs
+_DIT_REPO_MAP = {
+    "acestep-v15-turbo": "ACE-Step/ACE-Step-v1-3.5B",
+    "acestep-v15-turbo-shift1": "ACE-Step/ACE-Step-v1-3.5B",
+    "acestep-v15-turbo-shift3": "ACE-Step/ACE-Step-v1-3.5B",
+    "acestep-v15-turbo-continuous": "ACE-Step/ACE-Step-v1-3.5B",
+    "acestep-v15-sft": "ACE-Step/ACE-Step-v1-3.5B",
+    "acestep-v15-base": "ACE-Step/ACE-Step-v1-3.5B",
+}
+
+# Map scheduler types to ACE-Step scheduler names
+_SCHEDULER_MAP = {
+    "ode": "euler",
+    "euler": "euler",
+    "heun": "heun",
+    "pingpong": "pingpong",
+}
+
 
 class AceStepEngine(BaseAudioEngine):
-    """ACE-Step 1.5 music generation engine with lazy model loading."""
+    """ACE-Step music generation engine with lazy model loading."""
 
     name = "acestep"
     category = "musicgen"
 
     def __init__(self):
-        self.handler = None
+        self.pipeline = None
         self.current_dit_model = None
         self.sample_rate = 48000
 
     def initialize(self) -> bool:
         try:
-            from acestep.handler import AceStepHandler  # noqa: F401
-            logger.info("ACE-Step 1.5 ready (model loaded on first request)")
+            from acestep.pipeline_ace_step import ACEStepPipeline  # noqa: F401
+            logger.info("ACE-Step ready (model loaded on first request)")
             return True
-        except ImportError:
-            logger.error(
-                "ace-step package not found. Install with: pip install ace-step"
-            )
+        except ImportError as e:
+            logger.error("ace-step package not found: %s", e)
             return False
 
     def _ensure_loaded(self, dit_model: str):
-        """Load or swap the DiT model if needed."""
-        if self.handler is not None and self.current_dit_model == dit_model:
+        """Load or swap the pipeline if needed."""
+        if self.pipeline is not None and self.current_dit_model == dit_model:
             return
 
-        # Unload previous model if switching
-        if self.handler is not None:
+        if self.pipeline is not None:
             logger.info("Switching DiT model: %s -> %s", self.current_dit_model, dit_model)
             self.cleanup()
 
         import torch
-        from acestep.handler import AceStepHandler
+        from acestep.pipeline_ace_step import ACEStepPipeline
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.handler = AceStepHandler(dit_model=dit_model, device=device)
+        device_id = 0 if torch.cuda.is_available() else -1
+        self.pipeline = ACEStepPipeline(device_id=device_id)
+        self.pipeline.load_checkpoint()
         self.current_dit_model = dit_model
-        logger.info("ACE-Step 1.5 loaded: %s on %s", dit_model, device)
+        logger.info("ACE-Step loaded: %s on %s", dit_model,
+                     "cuda" if torch.cuda.is_available() else "cpu")
 
     def _decode_audio_to_tempfile(self, audio_b64: str, prefix: str = "ace_") -> str:
-        """Decode base64 audio data and write to a temporary WAV file.
-        Returns the path to the temp file."""
+        """Decode base64 audio data and write to a temporary WAV file."""
         audio_bytes = base64.b64decode(audio_b64)
         fd, path = tempfile.mkstemp(prefix=prefix, suffix=".wav")
         try:
@@ -79,7 +95,6 @@ class AceStepEngine(BaseAudioEngine):
         seed = int(kwargs.get("seed", -1))
         dit_model = kwargs.get("dit_model", "acestep-v15-turbo")
 
-        # Core DiT params
         infer_step = int(kwargs.get("infer_step", 8))
         guidance_scale = float(kwargs.get("guidance_scale", 7.0))
         instrumental = kwargs.get("instrumental", "false") == "true"
@@ -94,170 +109,113 @@ class AceStepEngine(BaseAudioEngine):
         cfg_interval_end = float(kwargs.get("cfg_interval_end", 1.0))
         enable_normalization = kwargs.get("enable_normalization", "true") == "true"
         normalization_db = float(kwargs.get("normalization_db", -14.0))
-
-        # Task params
         task_type = kwargs.get("task_type", "text2music")
-
-        # LM params (stubbed — wired through but not processed)
-        # TODO: Integrate with SwarmUI's AbstractLLMBackend when LLMAPI.cs is complete.
-        # The LM planner (Qwen3-based, 0.6B/1.7B/4B) generates structured music metadata
-        # (tags, caption, lyrics) from a text prompt. Currently these params are accepted
-        # but llm_handler=None is passed to generate_music().
-        lm_model = kwargs.get("lm_model", "none")
-        # lm_temperature = float(kwargs.get("lm_temperature", 0.85))
-        # lm_cfg_scale = float(kwargs.get("lm_cfg_scale", 2.0))
-        # lm_top_k = int(kwargs.get("lm_top_k", 0))
-        # lm_top_p = float(kwargs.get("lm_top_p", 0.9))
-        # thinking = kwargs.get("thinking", "true") == "true"
-        # lm_negative_prompt = kwargs.get("lm_negative_prompt", "")
-        # use_cot_metas = kwargs.get("use_cot_metas", "true") == "true"
-        # use_cot_caption = kwargs.get("use_cot_caption", "true") == "true"
-        # use_cot_language = kwargs.get("use_cot_language", "true") == "true"
 
         if not prompt.strip():
             return {"success": False, "error": "No prompt provided"}
 
-        # Validate task type
-        valid_tasks = {"text2music", "cover", "repaint", "extract", "lego", "complete"}
+        valid_tasks = {"text2music", "cover", "repaint", "edit", "extend", "retake"}
         if task_type not in valid_tasks:
             return {"success": False, "error": f"Invalid task_type '{task_type}'. Must be one of: {', '.join(sorted(valid_tasks))}"}
 
         temp_files = []
         save_dir = None
         try:
-            import torch
             import torchaudio
 
             self._ensure_loaded(dit_model)
 
-            # Build generation kwargs
+            # Build lyrics with metadata tags
+            if instrumental:
+                lyrics = "[Instrumental]"
+
+            full_prompt = prompt
+            tags = []
+            if bpm > 0:
+                tags.append(f"bpm: {bpm}")
+            if time_signature:
+                tags.append(f"time_signature: {time_signature}/4")
+            if key_scale:
+                tags.append(f"key: {key_scale}")
+            if tags:
+                full_prompt = f"{prompt} [{', '.join(tags)}]"
+
+            # Map scheduler
+            scheduler_type = _SCHEDULER_MAP.get(infer_method, "euler")
+
+            # Build __call__ kwargs
             gen_kwargs = {
-                "prompt": prompt,
+                "prompt": full_prompt,
                 "lyrics": lyrics,
-                "task_type": task_type,
+                "task": task_type,
                 "audio_duration": duration,
                 "infer_step": infer_step,
                 "guidance_scale": guidance_scale,
-                "instrumental": instrumental,
-                "bpm": bpm,
-                "time_signature": time_signature,
-                "vocal_language": vocal_language,
-                "shift": shift,
-                "infer_method": infer_method,
-                "use_adg": use_adg,
-                "cfg_interval_start": cfg_interval_start,
-                "cfg_interval_end": cfg_interval_end,
-                "enable_normalization": enable_normalization,
-                "normalization_db": normalization_db,
+                "scheduler_type": scheduler_type,
+                "cfg_type": "apg" if use_adg else "cfg",
+                "guidance_interval": cfg_interval_end - cfg_interval_start,
+                "batch_size": 1,
             }
 
-            # Only pass key_scale if explicitly set
-            if key_scale:
-                gen_kwargs["key_scale"] = key_scale
-
-            # Seed handling
             if seed >= 0:
                 gen_kwargs["manual_seeds"] = [seed]
 
-            # Handle source audio for cover/repaint/extract/lego/complete tasks
+            # Source audio for cover/repaint/edit/extend tasks
             src_audio_b64 = kwargs.get("src_audio", "")
             if src_audio_b64:
                 src_path = self._decode_audio_to_tempfile(src_audio_b64, "ace_src_")
                 temp_files.append(src_path)
                 gen_kwargs["src_audio_path"] = src_path
 
-            # Handle reference audio (style/timbre reference)
+            # Reference audio for audio2audio
             ref_audio_b64 = kwargs.get("reference_audio", "")
             if ref_audio_b64:
                 ref_path = self._decode_audio_to_tempfile(ref_audio_b64, "ace_ref_")
                 temp_files.append(ref_path)
-                gen_kwargs["reference_audio_path"] = ref_path
+                gen_kwargs["ref_audio_input"] = ref_path
+                gen_kwargs["audio2audio_enable"] = True
+                gen_kwargs["ref_audio_strength"] = float(kwargs.get("cover_strength", 0.5))
 
             # Task-specific params
-            if task_type in ("repaint",):
-                gen_kwargs["repaint_start"] = float(kwargs.get("repaint_start", 0.0))
+            if task_type == "repaint":
+                gen_kwargs["repaint_start"] = int(float(kwargs.get("repaint_start", 0.0)))
                 repaint_end = float(kwargs.get("repaint_end", -1.0))
                 if repaint_end >= 0:
-                    gen_kwargs["repaint_end"] = repaint_end
+                    gen_kwargs["repaint_end"] = int(repaint_end)
 
-            if task_type in ("cover",):
-                gen_kwargs["cover_strength"] = float(kwargs.get("cover_strength", 1.0))
-                gen_kwargs["cover_noise_strength"] = float(kwargs.get("cover_noise_strength", 0.0))
+            if task_type == "cover":
+                gen_kwargs["ref_audio_strength"] = float(kwargs.get("cover_strength", 1.0))
 
-            # TODO: When SwarmUI LLM integration is complete, pass llm_handler here
-            # instead of None. The LM planner would pre-process the prompt to generate
-            # structured metadata (tags, caption, lyrics) before DiT generation.
-            if lm_model != "none":
-                logger.warning(
-                    "LM model '%s' selected but LM integration is not yet available. "
-                    "Proceeding without LM planner. See TODO in AceStepEngine.",
-                    lm_model,
-                )
-
-            # Create temp dir for output files
+            # Output directory
             save_dir = tempfile.mkdtemp(prefix="acestep_")
             gen_kwargs["save_path"] = save_dir
 
-            # Generate music via the handler
-            result = self.handler.generate_music(**gen_kwargs)
+            # Generate
+            result = self.pipeline(**gen_kwargs)
 
-            # Extract audio from result
-            # v1.5 API returns a result object — try multiple access patterns
-            audio_tensor = None
+            # Extract audio — result is [output_path, ..., params_json_dict]
             audio_path = None
+            if isinstance(result, (list, tuple)):
+                for item in result:
+                    if isinstance(item, str) and os.path.isfile(item):
+                        audio_path = item
+                        break
 
-            if result is None:
-                return {"success": False, "error": "ACE-Step returned no output"}
-
-            # Pattern 1: Result is a list [output_path, ..., params_dict] (v1 compat)
-            if isinstance(result, (list, tuple)) and len(result) >= 1:
-                first = result[0]
-                if isinstance(first, str) and os.path.exists(first):
-                    audio_path = first
-                elif hasattr(first, "cpu"):  # torch.Tensor
-                    audio_tensor = first
-
-            # Pattern 2: Result has .audios attribute (v1.5 GenerationResult)
-            elif hasattr(result, "audios") and result.audios:
-                audio_item = result.audios[0]
-                if isinstance(audio_item, dict):
-                    if "tensor" in audio_item:
-                        audio_tensor = audio_item["tensor"]
-                    elif "path" in audio_item and os.path.exists(audio_item["path"]):
-                        audio_path = audio_item["path"]
-                elif hasattr(audio_item, "cpu"):  # torch.Tensor directly
-                    audio_tensor = audio_item
-
-            # Pattern 3: Result is a dict with audio_data or path
-            elif isinstance(result, dict):
-                if "audio" in result and hasattr(result["audio"], "cpu"):
-                    audio_tensor = result["audio"]
-                elif "path" in result and os.path.exists(result["path"]):
-                    audio_path = result["path"]
-
-            # Pattern 4: Check save_dir for output files
-            if audio_tensor is None and audio_path is None:
+            # Fallback: scan save_dir
+            if audio_path is None and save_dir:
                 for f in sorted(os.listdir(save_dir)):
                     if f.endswith((".wav", ".mp3", ".flac")):
                         audio_path = os.path.join(save_dir, f)
                         break
 
-            if audio_tensor is None and audio_path is None:
-                return {"success": False, "error": "Could not extract audio from ACE-Step result"}
+            if audio_path is None:
+                return {"success": False, "error": "ACE-Step produced no output audio"}
 
-            # Load audio to numpy
-            if audio_tensor is not None:
-                if hasattr(audio_tensor, "cpu"):
-                    audio_numpy = audio_tensor.cpu().numpy().astype(np.float32)
-                else:
-                    audio_numpy = np.array(audio_tensor, dtype=np.float32)
-                sr = self.sample_rate
-            else:
-                waveform, sr = torchaudio.load(audio_path)
-                audio_numpy = waveform.cpu().numpy().astype(np.float32)
-                self.sample_rate = sr
+            waveform, sr = torchaudio.load(audio_path)
+            audio_numpy = waveform.cpu().numpy().astype(np.float32)
+            self.sample_rate = sr
 
-            # Mix to mono if stereo [channels, samples]
+            # Mix to mono if stereo
             if len(audio_numpy.shape) > 1:
                 audio_numpy = np.mean(audio_numpy, axis=0)
 
@@ -270,7 +228,6 @@ class AceStepEngine(BaseAudioEngine):
                 "duration": actual_duration,
                 "metadata": {
                     "engine": "acestep",
-                    "version": "1.5",
                     "dit_model": dit_model,
                     "task_type": task_type,
                     "sample_rate": self.sample_rate,
@@ -283,7 +240,6 @@ class AceStepEngine(BaseAudioEngine):
             logger.error("ACE-Step process failed: %s", e, exc_info=True)
             return {"success": False, "error": str(e)}
         finally:
-            # Cleanup temp files
             for f in temp_files:
                 try:
                     if os.path.exists(f):
@@ -297,15 +253,15 @@ class AceStepEngine(BaseAudioEngine):
                     pass
 
     def cleanup(self):
-        if self.handler is not None:
-            # Release GPU memory
+        if self.pipeline is not None:
             try:
                 import torch
-                del self.handler
-                self.handler = None
+                self.pipeline.cleanup_memory()
+                del self.pipeline
+                self.pipeline = None
                 self.current_dit_model = None
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
             except Exception:
-                self.handler = None
+                self.pipeline = None
                 self.current_dit_model = None

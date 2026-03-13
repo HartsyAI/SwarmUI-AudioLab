@@ -425,6 +425,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 string error = result["error"]?.ToString() ?? "Unknown error";
                 Logs.Error($"[AudioLab] Provider {provider.Name} failed: {error}");
                 meta.LastError = error;
+                throw new SwarmReadableErrorException($"[AudioLab] {provider.Name}: {error}");
             }
         }
         catch (Exception ex)
@@ -451,6 +452,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
         bool formatRead = false;
         double totalDuration = 0;
         int consecutiveFailures = 0;
+        string firstError = null;
 
         for (int i = 0; i < chunks.Count; i++)
         {
@@ -500,6 +502,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 else
                 {
                     string error = result["error"]?.ToString() ?? "Unknown error";
+                    firstError ??= error;
                     Logs.Warning($"[AudioLab] Chunk {i + 1} failed: {error}");
                     // Abort early on missing dependencies — all subsequent chunks will fail identically
                     if (error.Contains("No module named") || error.Contains("ModuleNotFoundError"))
@@ -539,8 +542,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
         else
         {
-            Logs.Error($"[AudioLab] Streaming TTS produced no audio via {provider.Name}");
-            meta.LastError ??= "Streaming generation produced no audio";
+            string errorMsg = firstError ?? meta.LastError ?? "Streaming generation produced no audio";
+            Logs.Error($"[AudioLab] Streaming TTS produced no audio via {provider.Name}: {errorMsg}");
+            meta.LastError ??= errorMsg;
+            throw new SwarmReadableErrorException($"[AudioLab] {provider.Name}: {errorMsg}");
         }
 
         takeOutput(new JObject
