@@ -19,11 +19,44 @@ import threading
 import time
 import traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 
 # Add current directory to path for engine imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import engine_registry
+
+
+# ── Per-request cancellation registry ────────────────────────────────────────
+# Maps request_id → threading.Event.  Set by /cancel endpoint, checked by
+# engines via BaseAudioEngine.is_cancelled().
+
+_cancel_events: dict[str, threading.Event] = {}
+_cancel_lock = threading.Lock()
+
+
+def register_cancel_event(request_id: str) -> threading.Event:
+    """Create and register a cancellation Event for a request."""
+    event = threading.Event()
+    with _cancel_lock:
+        _cancel_events[request_id] = event
+    return event
+
+
+def trigger_cancel(request_id: str) -> bool:
+    """Set the cancellation event for a request.  Returns True if found."""
+    with _cancel_lock:
+        event = _cancel_events.get(request_id)
+    if event:
+        event.set()
+        return True
+    return False
+
+
+def remove_cancel_event(request_id: str):
+    """Remove a cancellation event after request completes."""
+    with _cancel_lock:
+        _cancel_events.pop(request_id, None)
 
 
 class AudioRequestHandler(BaseHTTPRequestHandler):
@@ -41,11 +74,15 @@ class AudioRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Not found"}, 404)
 
     def do_POST(self):
-        """Handle POST requests (process, download, unload, shutdown)."""
+        """Handle POST requests (process, cancel, download, unload, shutdown)."""
         if self.path == "/process":
             body = json.loads(self._read_body())
             result = self._process_request(body)
             self._send_json(result)
+        elif self.path.startswith("/cancel/"):
+            request_id = self.path.split("/cancel/", 1)[1]
+            found = trigger_cancel(request_id)
+            self._send_json({"success": found, "request_id": request_id})
         elif self.path == "/download":
             body = json.loads(self._read_body())
             result = self._download_model(body)
@@ -69,11 +106,15 @@ class AudioRequestHandler(BaseHTTPRequestHandler):
         module = body.get("module", "")
         engine_class = body.get("engine_class", "")
         kwargs = body.get("kwargs", {})
+        request_id = body.get("request_id", "")
 
         # Update HF_TOKEN per-request so token changes take effect without restart
         hf_token = body.get("hf_token", "")
         if hf_token:
             os.environ["HF_TOKEN"] = hf_token
+
+        # Register cancellation event if request has an ID
+        cancel_event = register_cancel_event(request_id) if request_id else None
 
         try:
             # Redirect stdout to stderr during processing to keep stdout clean
@@ -81,9 +122,21 @@ class AudioRequestHandler(BaseHTTPRequestHandler):
             sys.stdout = sys.stderr
             try:
                 engine = engine_registry.get_engine(module, engine_class)
+                # Inject cancel event so engine.is_cancelled() works
+                engine._cancel_event = cancel_event
                 result = engine.process(**kwargs)
             finally:
                 sys.stdout = old_stdout
+                engine._cancel_event = None
+
+            # If cancelled during processing, override the result
+            if cancel_event and cancel_event.is_set():
+                return {
+                    "success": False,
+                    "error": "cancelled",
+                    "cancelled": True,
+                    "processing_time": time.time() - start,
+                }
 
             result["processing_time"] = time.time() - start
             result["engine_module"] = module
@@ -97,6 +150,9 @@ class AudioRequestHandler(BaseHTTPRequestHandler):
                 "traceback": traceback.format_exc(),
                 "processing_time": time.time() - start,
             }
+        finally:
+            if request_id:
+                remove_cancel_event(request_id)
 
     def _download_model(self, body):
         """Download a HuggingFace model to local storage during install."""
@@ -148,6 +204,14 @@ class AudioRequestHandler(BaseHTTPRequestHandler):
         print(f"[AudioServer] {fmt % args}", file=sys.stderr, flush=True)
 
 
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """HTTPServer that handles each request in a new thread.
+
+    Required so /cancel requests can arrive while /process is running.
+    """
+    daemon_threads = True
+
+
 def main():
     parser = argparse.ArgumentParser(description="AudioLab persistent engine server")
     parser.add_argument("--port", type=int, required=True, help="Port to listen on")
@@ -179,7 +243,7 @@ def main():
         signal.signal(signal.SIGINT, shutdown_handler)
 
     # Start server
-    server = HTTPServer(("127.0.0.1", args.port), AudioRequestHandler)
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), AudioRequestHandler)
     server.start_time = time.time()
 
     print(f"[AudioServer] Listening on 127.0.0.1:{args.port}", file=sys.stderr, flush=True)

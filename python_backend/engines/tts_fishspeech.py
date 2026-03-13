@@ -172,6 +172,9 @@ class FishSpeechEngine(BaseAudioEngine):
                 # Run inference and collect all audio segments
                 audio_segments = []
                 for result in self.engine.inference(request):
+                    if self.is_cancelled():
+                        logger.info("Fish Speech generation cancelled")
+                        return self.cancelled_response()
                     if result.code == "error":
                         return {
                             "success": False,

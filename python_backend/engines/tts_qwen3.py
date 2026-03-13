@@ -93,6 +93,8 @@ class Qwen3TTSEngine(BaseAudioEngine):
         try:
             self._ensure_loaded(model_name)
 
+            if self.is_cancelled():
+                return self.cancelled_response()
             if mode == "voice_clone":
                 wavs, sr = self._generate_voice_clone(text, language, reference_audio, ref_text)
             elif mode == "custom_voice":

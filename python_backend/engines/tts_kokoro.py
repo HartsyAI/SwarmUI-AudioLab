@@ -58,6 +58,9 @@ class KokoroEngine(BaseAudioEngine):
             for _graphemes, _phonemes, audio in self.pipeline(
                 text, voice=voice, speed=speed
             ):
+                if self.is_cancelled():
+                    logger.info("Kokoro generation cancelled")
+                    return self.cancelled_response()
                 if audio is not None:
                     chunks.append(audio)
 

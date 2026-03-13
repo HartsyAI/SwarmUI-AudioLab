@@ -100,17 +100,23 @@ class ZonosEngine(BaseAudioEngine):
                     emotion=emotion,
                     speaking_rate=speaking_rate,
                 )
+                if self.is_cancelled():
+                    return self.cancelled_response()
                 conditioning = self.model.prepare_conditioning(cond_dict)
 
                 sampling_params = {}
                 if min_p > 0:
                     sampling_params["min_p"] = min_p
 
+                if self.is_cancelled():
+                    return self.cancelled_response()
                 codes = self.model.generate(
                     conditioning,
                     cfg_scale=cfg_scale,
                     sampling_params=sampling_params if sampling_params else None,
                 )
+                if self.is_cancelled():
+                    return self.cancelled_response()
                 wavs = self.model.autoencoder.decode(codes).cpu()
 
                 audio_numpy = wavs[0].numpy().astype(np.float32)
