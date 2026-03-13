@@ -361,7 +361,7 @@ const AudioLab = (() => {
     async function doUndo() {
         if (!player || undoStack.length === 0) return;
         const blob = undoStack.pop();
-        await player.reloadFromBlob(blob);
+        await player.loadBlob(blob);
         updateUndoButton();
         clearTrimIndicators();
         updateStatus('Undone');
@@ -402,7 +402,7 @@ const AudioLab = (() => {
     async function doKeepSplitPart(which) {
         if (!player || !splitParts) return;
         const blob = which === 'before' ? splitParts.before : splitParts.after;
-        await player.reloadFromBlob(blob);
+        await player.loadBlob(blob);
         hideSplitPanel();
         updateStatus(`Kept ${which === 'before' ? 'Part A' : 'Part B'}`);
         refreshApplySection();

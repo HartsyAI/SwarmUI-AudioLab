@@ -5,10 +5,8 @@
  */
 
 const AudioLabConfig = {
-    // Maps model class IDs (curArch) to their category flag and provider-specific flag
-    // Category flags control which param groups appear; provider flags control provider-specific params
+    /** Maps model class IDs (curArch) to their category flag and provider-specific flag. */
     archToCategory: {
-        // TTS providers
         kokoro_tts: { category: 'audiolab_tts', providerFlag: 'kokoro_tts_params' },
         chatterbox_tts: { category: 'audiolab_tts', providerFlag: 'chatterbox_tts_params' },
         bark_tts: { category: 'audiolab_tts', providerFlag: 'bark_tts_params' },
@@ -22,29 +20,23 @@ const AudioLabConfig = {
         neutts_tts: { category: 'audiolab_tts', providerFlag: 'neutts_tts_params' },
         cosyvoice_tts: { category: 'audiolab_tts', providerFlag: 'cosyvoice_tts_params' },
         fishspeech_tts: { category: 'audiolab_tts', providerFlag: 'fishspeech_tts_params' },
-        // STT providers
         whisper_stt: { category: 'audiolab_stt', providerFlag: 'whisper_stt_params' },
         distilwhisper_stt: { category: 'audiolab_stt', providerFlag: 'distilwhisper_stt_params' },
         moonshine_stt: { category: 'audiolab_stt', providerFlag: 'moonshine_stt_params' },
         realtimestt_stt: { category: 'audiolab_stt', providerFlag: 'realtimestt_params' },
-        // Music providers
         musicgen_music: { category: 'audiolab_music', providerFlag: 'musicgen_music_params' },
         acestep_music: { category: 'audiolab_music', providerFlag: 'acestep_music_params' },
-        // Voice Clone providers
         openvoice_clone: { category: 'audiolab_clone', providerFlag: 'openvoice_clone_params' },
         rvc_clone: { category: 'audiolab_clone', providerFlag: 'rvc_clone_params' },
         gptsovits_clone: { category: 'audiolab_clone', providerFlag: 'gptsovits_clone_params' },
-        // Audio FX providers
         demucs_fx: { category: 'audiolab_fx', providerFlag: 'demucs_fx_params' },
         resemble_enhance_fx: { category: 'audiolab_fx', providerFlag: 'resemble_enhance_fx_params' },
-        // Sound FX providers
         audiogen_sfx: { category: 'audiolab_sfx', providerFlag: 'audiogen_sfx_params' }
     },
 
-    // All category-level flags
     categoryFlags: ['audiolab_tts', 'audiolab_stt', 'audiolab_music', 'audiolab_clone', 'audiolab_fx', 'audiolab_sfx'],
 
-    // All core image params to hide when an audio model is selected
+    /** Core image params to hide when an audio model is selected. */
     coreParamsToHide: [
         'steps', 'cfgscale', 'width', 'height', 'sidelength', 'aspectratio',
         'seed', 'batchsize', 'initimage', 'initimagecreativity', 'initimageresettonorm',
@@ -56,7 +48,7 @@ const AudioLabConfig = {
         'modelspecificenhancements'
     ],
 
-    // Core parameter groups that are image-only and should be hidden for all audio models
+    /** Core parameter groups that are image-only. */
     coreGroupsToHide: [
         'resolution',
         'refineupscale',
@@ -79,7 +71,7 @@ const AudioLabConfig = {
         'variation'
     ],
 
-    // Image-only feature flags incompatible with audio models
+    /** Image-only feature flags incompatible with audio models. */
     incompatibleFlags: [
         'sampling', 'zero_negative', 'refiners', 'controlnet', 'variation_seed',
         'video', 'autowebui', 'comfyui', 'frameinterps', 'ipadapter', 'sdxl',
@@ -104,7 +96,7 @@ const AudioLabConfig = {
     }
 };
 
-// Feature set changer - controls parameter visibility for audio models
+/** Controls parameter visibility for audio models via SwarmUI's feature flag system. */
 featureSetChangers.push(() => {
     if (!gen_param_types) {
         return [[], []];
@@ -113,9 +105,7 @@ featureSetChangers.push(() => {
     const curArch = currentModelHelper.curArch;
     const isAudioModel = AudioLabConfig.isAudioModel(curArch);
 
-    // Handle core param visibility for audio models
-    for (let param of gen_param_types) {
-        // Hide individual core params that don't apply to audio models
+    for (const param of gen_param_types) {
         if (AudioLabConfig.coreParamsToHide.includes(param.id)) {
             if (isAudioModel) {
                 if (!param.hasOwnProperty('original_feature_flag_audiolab')) {
@@ -127,7 +117,6 @@ featureSetChangers.push(() => {
                 delete param.original_feature_flag_audiolab;
             }
         }
-        // Hide params belonging to image-only groups
         let inHiddenGroup = false;
         let currentGroup = param.group;
         while (currentGroup) {
@@ -150,38 +139,28 @@ featureSetChangers.push(() => {
         }
     }
 
-    // Not using an audio model - remove all audio-specific flags
     if (!isAudioModel) {
         return [[], AudioLabConfig.allAudioFlags];
     }
 
-    // Audio model selected - determine which flags to add/remove
     const config = AudioLabConfig.archToCategory[curArch];
     const activeCategory = config.category;
     const activeProviderFlag = config.providerFlag;
 
-    // Remove: incompatible image flags + other audio category/provider flags
     const otherAudioFlags = AudioLabConfig.allAudioFlags.filter(f => f !== activeCategory && f !== activeProviderFlag);
-    const removeFlags = [
-        ...AudioLabConfig.incompatibleFlags,
-        ...otherAudioFlags
-    ];
-
-    // Add: prompt (for text input), active category flag, active provider flag
+    const removeFlags = [...AudioLabConfig.incompatibleFlags, ...otherAudioFlags];
     const addFlags = ['prompt', activeCategory, activeProviderFlag];
 
     return [addFlags, removeFlags];
 });
 
-// ============================================================
-// AudioStreamPlayer — auto-play queue for streaming TTS chunks
-// ============================================================
+/** Auto-play queue for streaming TTS chunks. */
 const AudioStreamPlayer = {
-    /** @type {string[]} Queue of audio data URLs waiting to play */
+    /** @type {string[]} */
     queue: [],
-    /** @type {HTMLAudioElement|null} Currently playing audio element */
+    /** @type {HTMLAudioElement|null} */
     current: null,
-    /** @type {boolean} Whether streaming playback is active */
+    /** @type {boolean} */
     active: false,
 
     /** Reset state and prepare for a new streaming session. */
@@ -191,7 +170,7 @@ const AudioStreamPlayer = {
         console.log('[audiolab] Stream playback started');
     },
 
-    /** Add a chunk data URL to the play queue; begin playback if idle. */
+    /** Add a chunk to the queue; begin playback if idle. */
     enqueue(dataUrl) {
         if (!this.active) return;
         this.queue.push(dataUrl);
@@ -200,14 +179,14 @@ const AudioStreamPlayer = {
         }
     },
 
-    /** Play the next chunk from the queue. Chains via the 'ended' event. */
+    /** Play the next chunk. Chains via the 'ended' event. */
     playNext() {
         if (!this.active || this.queue.length === 0) {
             this.current = null;
             return;
         }
-        let src = this.queue.shift();
-        let audio = new Audio(src);
+        const src = this.queue.shift();
+        const audio = new Audio(src);
         this.current = audio;
         audio.addEventListener('ended', () => {
             this.current = null;
@@ -225,7 +204,7 @@ const AudioStreamPlayer = {
         });
     },
 
-    /** Stop playback, clear queue, reset state. */
+    /** Stop playback and clear queue. */
     stop() {
         this.active = false;
         if (this.current) {
@@ -236,27 +215,22 @@ const AudioStreamPlayer = {
     }
 };
 
-// ============================================================
-// Hook into doGenerate + internalHandleData for streaming
-// ============================================================
+/** Hook into doGenerate + internalHandleData for streaming audio playback. */
 setTimeout(() => {
-    // Find the main GenerateHandler instance (genHandler or mainGenHandler)
-    let handler = typeof mainGenHandler !== 'undefined' ? mainGenHandler
-                : typeof genHandler !== 'undefined' ? genHandler : null;
+    const handler = typeof mainGenHandler !== 'undefined' ? mainGenHandler
+                  : typeof genHandler !== 'undefined' ? genHandler : null;
     if (!handler) {
         console.warn('[audiolab] No generate handler found, streaming hooks not installed');
         return;
     }
 
-    // Wrap doGenerate to start AudioStreamPlayer when streaming TTS is active
-    let origDoGenerate = handler.doGenerate.bind(handler);
+    const origDoGenerate = handler.doGenerate.bind(handler);
     handler.doGenerate = function(input_overrides = {}, input_preoverrides = {}, postCollectRun = null) {
-        let curArch = currentModelHelper.curArch;
+        const curArch = currentModelHelper.curArch;
         if (AudioLabConfig.isAudioModel(curArch)) {
-            let config = AudioLabConfig.archToCategory[curArch];
+            const config = AudioLabConfig.archToCategory[curArch];
             if (config.category === 'audiolab_tts') {
-                // Check if Stream Chunk Size slider is set above 0
-                let streamParam = document.getElementById('input_streamchunksize');
+                const streamParam = document.getElementById('input_streamchunksize');
                 if (streamParam && parseInt(streamParam.value) > 0) {
                     AudioStreamPlayer.start();
                 }
@@ -265,39 +239,29 @@ setTimeout(() => {
         return origDoGenerate(input_overrides, input_preoverrides, postCollectRun);
     };
 
-    // Wrap internalHandleData to enqueue streaming chunks and stop on close
-    let origHandleData = handler.internalHandleData.bind(handler);
+    const origHandleData = handler.internalHandleData.bind(handler);
     handler.internalHandleData = function(data, images, discardable, timeLastGenHit, actualInput, socketId, socket, isPreview, batch_id) {
-        // Detect streaming chunk: negative batch_index + audio data URL
         if (data.image && AudioStreamPlayer.active) {
-            let batchIdx = parseInt(data.batch_index);
+            const batchIdx = parseInt(data.batch_index);
             if (batchIdx < 0 && isAudioExt(data.image)) {
                 AudioStreamPlayer.enqueue(data.image);
             }
         }
-        // Detect session close
         if (data.socket_intention === 'close') {
             AudioStreamPlayer.stop();
         }
-        // Always call original handler
         return origHandleData(data, images, discardable, timeLastGenHit, actualInput, socketId, socket, isPreview, batch_id);
     };
 
     console.log('[audiolab] Streaming audio hooks installed');
 }, 600);
 
-// Initial setup
 setTimeout(() => {
-    console.log('[audiolab] Initial parameter setup starting');
     reviseBackendFeatureSet();
     hideUnsupportableParams();
 }, 500);
 
-// ============================================================
-// Engine Manager — injected into Audio Backend card body
-// ============================================================
-
-/** Category display order and labels */
+/** Category display order and labels for the engine manager UI. */
 const ENGINE_CATEGORIES = [
     { key: 'TTS', label: 'Text-to-Speech' },
     { key: 'STT', label: 'Speech-to-Text' },
@@ -307,20 +271,15 @@ const ENGINE_CATEGORIES = [
     { key: 'SoundFX', label: 'Sound Effects' }
 ];
 
-/** Cached engine data from the API */
 let audioLabEngineData = null;
-
-/** Pending retry timer ID for engine list reload */
 let audioLabRetryTimer = null;
 
-/** Loads engine list from the API and caches it.
- *  If the backend is still loading, schedules a retry to refresh once it's ready. */
+/** Loads engine list from the API and caches it. Retries if backend isn't ready. */
 function audioLabLoadEngines(callback) {
     genericRequest('AudioLabListEngines', {}, data => {
         if (data.success) {
             audioLabEngineData = data.engines;
             if (callback) callback(data.engines);
-            // If backend is still loading, schedule a refresh to pick up correct state
             if (data.backend_status && data.backend_status !== 'RUNNING') {
                 if (!audioLabRetryTimer) {
                     console.log(`[audiolab] Backend status: ${data.backend_status}, will retry in 3s`);
@@ -343,25 +302,22 @@ function audioLabRenderEngineManager(container, engines) {
     header.innerHTML = '<b>Available Engines</b>';
     container.appendChild(header);
 
-    for (let cat of ENGINE_CATEGORIES) {
-        let catEngines = engines.filter(e => e.category === cat.key);
+    for (const cat of ENGINE_CATEGORIES) {
+        const catEngines = engines.filter(e => e.category === cat.key);
         if (catEngines.length === 0) continue;
 
-        // Count installed in this category
-        let installedCount = catEngines.filter(e => e.installed).length;
-        let countLabel = installedCount > 0 ? ` (${installedCount}/${catEngines.length} installed)` : ` (${catEngines.length})`;
-
-        // Collapsible group
-        let catGroup = createDiv(null, 'audiolab-cat-group');
-        let catHeader = createDiv(null, 'audiolab-cat-header');
-        let arrow = document.createElement('span');
+        const installedCount = catEngines.filter(e => e.installed).length;
+        const countLabel = installedCount > 0 ? ` (${installedCount}/${catEngines.length} installed)` : ` (${catEngines.length})`;
+        const catGroup = createDiv(null, 'audiolab-cat-group');
+        const catHeader = createDiv(null, 'audiolab-cat-header');
+        const arrow = document.createElement('span');
         arrow.className = 'audiolab-cat-arrow';
         arrow.innerHTML = '&#x2B9F;';
         catHeader.appendChild(arrow);
-        let label = document.createElement('span');
+        const label = document.createElement('span');
         label.innerText = cat.label;
         catHeader.appendChild(label);
-        let count = document.createElement('span');
+        const count = document.createElement('span');
         count.style.cssText = 'color:var(--text-soft);font-weight:normal;font-size:0.85em';
         count.innerText = countLabel;
         catHeader.appendChild(count);
@@ -371,8 +327,8 @@ function audioLabRenderEngineManager(container, engines) {
         catGroup.appendChild(catHeader);
 
         // Card grid body
-        let catBody = createDiv(null, 'audiolab-cat-body');
-        for (let engine of catEngines) {
+        const catBody = createDiv(null, 'audiolab-cat-body');
+        for (const engine of catEngines) {
             catBody.appendChild(audioLabBuildEngineCard(engine));
         }
         catGroup.appendChild(catBody);
@@ -382,12 +338,11 @@ function audioLabRenderEngineManager(container, engines) {
 
 /** Builds a single engine card element. */
 function audioLabBuildEngineCard(engine) {
-    let card = createDiv(null, 'audiolab-engine-card');
+    const card = createDiv(null, 'audiolab-engine-card');
     if (!engine.platform_compatible) card.classList.add('incompatible');
 
-    // Header: status dot + name
-    let cardHeader = createDiv(null, 'audiolab-engine-card-header');
-    let status = createDiv(null, 'audiolab-engine-status-dot');
+    const cardHeader = createDiv(null, 'audiolab-engine-card-header');
+    const status = createDiv(null, 'audiolab-engine-status-dot');
     if (engine.installed) {
         status.style.backgroundColor = 'var(--backend-running)';
         status.title = 'Installed';
@@ -396,17 +351,16 @@ function audioLabBuildEngineCard(engine) {
         status.title = engine.platform_note || 'Not compatible';
     }
     cardHeader.appendChild(status);
-    let nameSpan = document.createElement('span');
+    const nameSpan = document.createElement('span');
     nameSpan.className = 'audiolab-engine-name';
     nameSpan.innerText = engine.name;
     cardHeader.appendChild(nameSpan);
     card.appendChild(cardHeader);
 
-    // Metadata line: VRAM | License | Size
-    let firstModel = engine.models && engine.models.length > 0 ? engine.models[0] : null;
+    const firstModel = engine.models && engine.models.length > 0 ? engine.models[0] : null;
     if (firstModel) {
-        let meta = createDiv(null, 'audiolab-engine-meta');
-        let parts = [];
+        const meta = createDiv(null, 'audiolab-engine-meta');
+        const parts = [];
         if (firstModel.estimated_vram) parts.push(firstModel.estimated_vram + ' VRAM');
         if (firstModel.license) parts.push(firstModel.license);
         if (firstModel.estimated_size) parts.push(firstModel.estimated_size);
@@ -414,28 +368,26 @@ function audioLabBuildEngineCard(engine) {
         card.appendChild(meta);
     }
 
-    // Description
     if (firstModel && firstModel.description) {
-        let desc = createDiv(null, 'audiolab-engine-desc');
+        const desc = createDiv(null, 'audiolab-engine-desc');
         desc.innerText = firstModel.description;
         card.appendChild(desc);
     }
 
-    // Footer with action button
-    let footer = createDiv(null, 'audiolab-engine-card-footer');
+    const footer = createDiv(null, 'audiolab-engine-card-footer');
     if (!engine.platform_compatible) {
-        let note = document.createElement('span');
+        const note = document.createElement('span');
         note.style.cssText = 'color:var(--text-soft);font-size:0.8em';
         note.innerText = 'Requires Docker';
         footer.appendChild(note);
     } else if (engine.installed) {
-        let btn = document.createElement('button');
+        const btn = document.createElement('button');
         btn.className = 'basic-button';
         btn.innerText = 'Remove';
         btn.addEventListener('click', (e) => { e.stopPropagation(); audioLabConfirmUninstall(engine); });
         footer.appendChild(btn);
     } else {
-        let btn = document.createElement('button');
+        const btn = document.createElement('button');
         btn.className = 'basic-button btn-primary';
         btn.innerText = 'Install';
         btn.addEventListener('click', (e) => { e.stopPropagation(); audioLabShowInstallModal(engine); });
@@ -448,26 +400,23 @@ function audioLabBuildEngineCard(engine) {
 
 /** Shows the install confirmation modal for an engine. */
 function audioLabShowInstallModal(engine) {
-    let existingModal = document.getElementById('audiolab_install_modal');
+    const existingModal = document.getElementById('audiolab_install_modal');
     if (existingModal) existingModal.remove();
 
-    let models = engine.models || [];
-    let firstModel = models.length > 0 ? models[0] : {};
-
-    // Build dependency list
-    let depNames = engine.dependencies ? engine.dependencies.map(d => d.name) : [];
-    let depListHtml = depNames.length > 0
+    const models = engine.models || [];
+    const firstModel = models.length > 0 ? models[0] : {};
+    const depNames = engine.dependencies ? engine.dependencies.map(d => d.name) : [];
+    const depListHtml = depNames.length > 0
         ? `<ul style="margin:0.5em 0;padding-left:1.5em">${depNames.map(d => `<li style="font-size:0.9em">${escapeHtml(d)}</li>`).join('')}</ul>`
         : '<em>None</em>';
 
-    // Build models list showing all models that will be downloaded
     let modelsListHtml = '';
     if (models.length > 0) {
-        let modelRows = models.map(m => {
-            let sourceLink = m.source_url
+        const modelRows = models.map(m => {
+            const sourceLink = m.source_url
                 ? `<a href="${escapeHtml(m.source_url)}" target="_blank" rel="noopener" style="font-size:0.85em">${escapeHtml(m.name)}</a>`
                 : escapeHtml(m.name);
-            let details = [];
+            const details = [];
             if (m.estimated_size) details.push(m.estimated_size);
             if (m.estimated_vram) details.push(m.estimated_vram + ' VRAM');
             if (m.license) details.push(m.license);
@@ -479,7 +428,7 @@ function audioLabShowInstallModal(engine) {
         modelsListHtml = `<table style="width:100%;margin:0.3em 0">${modelRows}</table>`;
     }
 
-    let bodyHtml = `
+    const bodyHtml = `
         <div class="modal-body">
             <p><b>${escapeHtml(engine.name)}</b></p>
             <p>${escapeHtml(firstModel.description || '')}</p>
@@ -493,22 +442,22 @@ function audioLabShowInstallModal(engine) {
             </div>
         </div>`;
 
-    let footerHtml = `
+    const footerHtml = `
         <div class="modal-footer">
             <button class="btn btn-primary basic-button" id="audiolab_install_confirm_btn">Install</button>
             <button class="btn btn-secondary basic-button" id="audiolab_install_cancel_btn">Cancel</button>
         </div>`;
 
-    let html = modalHeader('audiolab_install_modal', `Install ${escapeHtml(engine.name)}`)
+    const html = modalHeader('audiolab_install_modal', `Install ${escapeHtml(engine.name)}`)
         + bodyHtml + footerHtml + modalFooter();
 
-    let wrapper = document.createElement('div');
+    const wrapper = document.createElement('div');
     wrapper.innerHTML = html;
     document.body.appendChild(wrapper.firstElementChild);
 
-    let modal = document.getElementById('audiolab_install_modal');
-    let confirmBtn = document.getElementById('audiolab_install_confirm_btn');
-    let cancelBtn = document.getElementById('audiolab_install_cancel_btn');
+    const modal = document.getElementById('audiolab_install_modal');
+    const confirmBtn = document.getElementById('audiolab_install_confirm_btn');
+    const cancelBtn = document.getElementById('audiolab_install_cancel_btn');
 
     confirmBtn.addEventListener('click', () => audioLabDoInstall(engine, modal));
     cancelBtn.addEventListener('click', () => {
@@ -521,10 +470,10 @@ function audioLabShowInstallModal(engine) {
 
 /** Executes the install flow for an engine via WebSocket with streaming progress. */
 function audioLabDoInstall(engine, modal) {
-    let confirmBtn = document.getElementById('audiolab_install_confirm_btn');
-    let cancelBtn = document.getElementById('audiolab_install_cancel_btn');
-    let progressArea = document.getElementById('audiolab_install_progress');
-    let progressText = document.getElementById('audiolab_install_progress_text');
+    const confirmBtn = document.getElementById('audiolab_install_confirm_btn');
+    const cancelBtn = document.getElementById('audiolab_install_cancel_btn');
+    const progressArea = document.getElementById('audiolab_install_progress');
+    const progressText = document.getElementById('audiolab_install_progress_text');
 
     confirmBtn.disabled = true;
     confirmBtn.innerText = 'Installing...';
@@ -534,7 +483,6 @@ function audioLabDoInstall(engine, modal) {
 
     makeWSRequest('AudioLabInstallEngine', { provider_id: engine.id }, data => {
         if (data.info) {
-            // Streaming progress message
             progressText.innerText += data.info + '\n';
             progressText.scrollTop = progressText.scrollHeight;
         }
@@ -581,34 +529,23 @@ function audioLabConfirmUninstall(engine) {
 /** Refreshes the engine manager UI by reloading data from the API. */
 function audioLabRefreshEngineManager() {
     audioLabLoadEngines(engines => {
-        let container = document.getElementById('audiolab_engine_manager');
+        const container = document.getElementById('audiolab_engine_manager');
         if (container) {
             audioLabRenderEngineManager(container, engines);
         }
     });
 }
 
-// ============================================================
-// Add "Audio Lab" button via SwarmUI's buttonsForImage system
-// ============================================================
-
-/**
- * Extends buttonsForImage() to add audio-specific buttons for audio results.
- * These appear in the "More" popover (or main bar if user adds them to settings).
- * Same wrapping pattern used for handler.doGenerate and handler.internalHandleData above.
- *
- * TODO: PR to SwarmUI to add a buttonsForImageCallbacks array in outputhistory.js
- * so extensions can register buttons without wrapping. Also: make "Edit Image"
- * media-type-aware so extensions can replace it for non-image media types.
- */
+// TODO: PR to SwarmUI to add a buttonsForImageCallbacks array in outputhistory.js
+// so extensions can register buttons without wrapping.
 setTimeout(() => {
     if (typeof buttonsForImage !== 'function') {
         console.warn('[audiolab] buttonsForImage not found, Audio Lab button not registered');
         return;
     }
-    let origButtonsForImage = buttonsForImage;
+    const origButtonsForImage = buttonsForImage;
     buttonsForImage = function(fullsrc, src, metadata) {
-        let buttons = origButtonsForImage(fullsrc, src, metadata);
+        const buttons = origButtonsForImage(fullsrc, src, metadata);
         if (isAudioExt(src)) {
             buttons.push({
                 label: 'Audio Lab',
@@ -620,31 +557,28 @@ setTimeout(() => {
     };
 }, 100);
 
-/** Hook into backendsRevisedCallbacks to inject engine manager into Audio Backend cards. */
+/** Injects engine manager UI into Audio Backend cards via backendsRevisedCallbacks. */
 backendsRevisedCallbacks.push(() => {
-    // Find Audio Backend cards by checking backend type
-    for (let [id, backend] of Object.entries(backends_loaded)) {
+    for (const [id, backend] of Object.entries(backends_loaded)) {
         if (backend.type !== 'audio-backend') continue;
 
-        let card = document.getElementById(`backend-card-${id}`);
+        const card = document.getElementById(`backend-card-${id}`);
         if (!card) continue;
 
-        let cardBody = card.querySelector('.card-body');
+        const cardBody = card.querySelector('.card-body');
         if (!cardBody) continue;
 
-        // Don't re-inject if already present
         if (document.getElementById('audiolab_engine_manager')) continue;
 
-        let separator = document.createElement('hr');
+        const separator = document.createElement('hr');
         separator.style.borderColor = 'var(--border-color)';
         separator.style.margin = '1em 0';
         cardBody.appendChild(separator);
 
-        let container = createDiv('audiolab_engine_manager', 'audiolab-engine-manager');
+        const container = createDiv('audiolab_engine_manager', 'audiolab-engine-manager');
         container.innerHTML = '<em style="color:var(--text-soft)">Loading engines...</em>';
         cardBody.appendChild(container);
 
-        // Load and render engines
         audioLabLoadEngines(engines => {
             audioLabRenderEngineManager(container, engines);
         });

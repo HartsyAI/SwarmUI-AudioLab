@@ -45,17 +45,14 @@ const AudioLabPlayer = (() => {
         const id = `alp-${++idCounter}`;
         const opts = Object.assign({}, DEFAULTS, options);
 
-        // Build player DOM
         const playerEl = document.createElement('div');
         playerEl.className = `audiolab-player${opts.compact ? ' audiolab-player-compact' : ''}`;
         playerEl.id = id;
 
-        // Waveform container
         const waveformEl = document.createElement('div');
         waveformEl.className = 'audiolab-player-waveform';
         playerEl.appendChild(waveformEl);
 
-        // Controls bar
         let controlsEl = null;
         if (opts.showControls) {
             controlsEl = document.createElement('div');
@@ -67,7 +64,6 @@ const AudioLabPlayer = (() => {
         el.innerHTML = '';
         el.appendChild(playerEl);
 
-        // Create WaveSurfer instance
         const ws = WaveSurfer.create({
             container: waveformEl,
             height: opts.height,
@@ -84,7 +80,6 @@ const AudioLabPlayer = (() => {
             interact: true
         });
 
-        // Optional Regions plugin
         let regionsPlugin = null;
         if (opts.enableRegions && WaveSurfer.Regions) {
             regionsPlugin = WaveSurfer.Regions.create();
@@ -104,12 +99,7 @@ const AudioLabPlayer = (() => {
             callbacks: {}
         };
 
-        // Wire up controls
-        if (controlsEl) {
-            wireControls(state);
-        }
-
-        // Wire up WaveSurfer events
+        if (controlsEl) wireControls(state);
         wireWaveSurferEvents(state);
 
         instances.set(id, state);
@@ -119,19 +109,15 @@ const AudioLabPlayer = (() => {
 
     function buildControlsHTML(opts) {
         const parts = [];
-        // Play/pause button (Unicode: ▶ play, ⏸ pause, ■ stop)
         parts.push('<button class="alp-btn alp-play" title="Play/Pause"><span>&#x25B6;</span></button>');
         parts.push('<button class="alp-btn alp-stop" title="Stop"><span>&#x25A0;</span></button>');
-        // Time display
         parts.push('<span class="alp-time"><span class="alp-current">0:00</span> / <span class="alp-duration">0:00</span></span>');
-        // Volume
         if (opts.showVolume) {
             parts.push('<div class="alp-volume-group">');
             parts.push('<button class="alp-btn alp-mute" title="Mute"><span>&#x266B;</span></button>');
             parts.push('<input type="range" class="alp-volume" min="0" max="1" step="0.05" value="0.8">');
             parts.push('</div>');
         }
-        // Speed
         if (opts.showSpeed) {
             parts.push('<select class="alp-speed" title="Playback speed">');
             parts.push('<option value="0.5">0.5x</option>');
@@ -142,14 +128,12 @@ const AudioLabPlayer = (() => {
             parts.push('<option value="2">2x</option>');
             parts.push('</select>');
         }
-        // Editing controls (when regions enabled and NOT in editorMode — editor has its own toolbar)
         if (opts.enableRegions && !opts.editorMode) {
             parts.push('<span class="alp-separator"></span>');
             parts.push('<button class="alp-btn alp-select-region" title="Select region for trim"><span>&#x2194;</span></button>');
             parts.push('<button class="alp-btn alp-trim" title="Trim to selection" disabled><span>&#x2702;</span></button>');
             parts.push('<button class="alp-btn alp-split" title="Split at cursor"><span>&#x2502;&#x2502;</span></button>');
         }
-        // Download
         if (opts.showDownload) {
             parts.push('<button class="alp-btn alp-download" title="Download"><span>&#x2913;</span></button>');
         }
@@ -203,7 +187,6 @@ const AudioLabPlayer = (() => {
             });
         }
 
-        // Editing controls
         const selectRegionBtn = el.querySelector('.alp-select-region');
         const trimBtn = el.querySelector('.alp-trim');
         const splitBtn = el.querySelector('.alp-split');
@@ -212,7 +195,6 @@ const AudioLabPlayer = (() => {
             selectRegionBtn.addEventListener('click', () => {
                 const duration = state.ws.getDuration();
                 if (duration <= 0) return;
-                // Default: select middle 50%
                 const start = duration * 0.25;
                 const end = duration * 0.75;
                 if (state.activeRegion) state.activeRegion.remove();
@@ -305,29 +287,17 @@ const AudioLabPlayer = (() => {
                 return this.loadBlob(blob);
             },
 
-            /** Load from base64 audio data */
+            /** Load from base64 audio data. */
             loadBase64(base64, mimeType = 'audio/wav') {
-                const data = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-                const blob = new Blob([data], { type: mimeType });
-                return this.loadBlob(blob);
+                return this.loadBlob(AudioLabCore.base64ToBlob(base64, mimeType));
             },
 
-            /** Load from a Blob — the only safe load path (direct decode, no <audio> element) */
+            /** Load from a Blob — the only safe load path (direct decode, no <audio> element). */
             loadBlob(blob) {
                 if (state.currentUrl?.startsWith('blob:')) URL.revokeObjectURL(state.currentUrl);
-                const url = URL.createObjectURL(blob);
-                state.currentUrl = url;
+                state.currentUrl = URL.createObjectURL(blob);
                 state.currentBlob = blob;
                 return state.ws.loadBlob(blob);
-            },
-
-            /** Reload from a blob after an edit operation */
-            async reloadFromBlob(blob) {
-                if (state.currentUrl?.startsWith('blob:')) URL.revokeObjectURL(state.currentUrl);
-                const url = URL.createObjectURL(blob);
-                state.currentUrl = url;
-                state.currentBlob = blob;
-                await state.ws.loadBlob(blob);
             },
 
             play() { return state.ws.play(); },
@@ -384,7 +354,7 @@ const AudioLabPlayer = (() => {
                 const source = state.currentBlob || state.currentUrl;
                 if (!region || !source) return null;
                 const blob = await AudioLabCore.trimAudio(source, region.start, region.end);
-                await this.reloadFromBlob(blob);
+                await this.loadBlob(blob);
                 this.clearRegions();
                 fire(state, 'edit', 'trim');
                 return blob;
@@ -404,7 +374,7 @@ const AudioLabPlayer = (() => {
                 const current = state.currentBlob || state.currentUrl;
                 if (!current) return null;
                 const blob = await AudioLabCore.concatAudio([current, source]);
-                await this.reloadFromBlob(blob);
+                await this.loadBlob(blob);
                 fire(state, 'edit', 'concat');
                 return blob;
             },
@@ -414,7 +384,7 @@ const AudioLabPlayer = (() => {
                 const current = state.currentBlob || state.currentUrl;
                 if (!current) return null;
                 const blob = await AudioLabCore.mixAudio([current, source], options);
-                await this.reloadFromBlob(blob);
+                await this.loadBlob(blob);
                 fire(state, 'edit', 'mix');
                 return blob;
             },
