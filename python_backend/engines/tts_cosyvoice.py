@@ -81,12 +81,18 @@ class CosyVoiceEngine(BaseAudioEngine):
                         for chunk in self.model.inference_zero_shot(
                             text, reference_text, prompt_wav_path
                         ):
+                            if self.is_cancelled():
+                                logger.info("CosyVoice generation cancelled")
+                                return self.cancelled_response()
                             chunks.append(chunk["tts_speech"])
                     else:
                         # Cross-lingual: clone voice without transcript
                         for chunk in self.model.inference_cross_lingual(
                             text, prompt_wav_path
                         ):
+                            if self.is_cancelled():
+                                logger.info("CosyVoice generation cancelled")
+                                return self.cancelled_response()
                             chunks.append(chunk["tts_speech"])
                 finally:
                     if os.path.exists(prompt_wav_path):
@@ -96,6 +102,9 @@ class CosyVoiceEngine(BaseAudioEngine):
             elif hasattr(self.model, "inference_sft"):
                 try:
                     for chunk in self.model.inference_sft(text, voice):
+                        if self.is_cancelled():
+                            logger.info("CosyVoice generation cancelled")
+                            return self.cancelled_response()
                         chunks.append(chunk["tts_speech"])
                 except Exception as sft_err:
                     logger.warning("SFT inference failed: %s", sft_err)

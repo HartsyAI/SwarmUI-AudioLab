@@ -5,6 +5,7 @@ import base64
 import io
 import os
 import struct
+import threading
 
 import numpy as np
 from abc import ABC, abstractmethod
@@ -22,6 +23,22 @@ class BaseAudioEngine(ABC):
 
     name: str = "base"
     category: str = "unknown"  # "tts", "stt", "musicgen", etc.
+
+    # Set by audio_server.py before process() is called; cleared after.
+    _cancel_event: threading.Event | None = None
+
+    def is_cancelled(self) -> bool:
+        """Check if the current request has been cancelled.
+
+        Engines with iterative processing loops should call this periodically
+        and return early when it returns ``True``.  Engines that don't check
+        this will simply run to completion — the server layer handles the rest.
+        """
+        return self._cancel_event is not None and self._cancel_event.is_set()
+
+    def cancelled_response(self) -> Dict[str, Any]:
+        """Standard response dict for cancelled requests."""
+        return {"success": False, "error": "cancelled", "cancelled": True}
 
     @abstractmethod
     def initialize(self) -> bool:

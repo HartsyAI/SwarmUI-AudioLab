@@ -386,7 +386,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
         try
         {
-            JObject result = await AudioServerManager.Instance.ProcessAsync(provider, args);
+            JObject result = await AudioServerManager.Instance.ProcessAsync(provider, args, user_input.InterruptToken);
+
+            if (result["cancelled"]?.Value<bool>() == true)
+            {
+                Logs.Info($"[AudioLab] Generation cancelled for {provider.Name}");
+                return;
+            }
 
             if (result["success"]?.Value<bool>() == true)
             {
@@ -456,6 +462,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
         for (int i = 0; i < chunks.Count; i++)
         {
+            if (user_input.InterruptToken.IsCancellationRequested)
+            {
+                Logs.Info($"[AudioLab] Streaming cancelled after {i}/{chunks.Count} chunks for {provider.Name}");
+                break;
+            }
+
             double overallPercent = (double)i / chunks.Count * 100;
             takeOutput(new JObject
             {
@@ -473,7 +485,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
             try
             {
-                JObject result = await AudioServerManager.Instance.ProcessAsync(provider, args);
+                JObject result = await AudioServerManager.Instance.ProcessAsync(provider, args, user_input.InterruptToken);
+
+                if (result["cancelled"]?.Value<bool>() == true)
+                {
+                    Logs.Info($"[AudioLab] Streaming chunk cancelled for {provider.Name}");
+                    break;
+                }
 
                 if (result["success"]?.Value<bool>() == true)
                 {

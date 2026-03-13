@@ -263,11 +263,11 @@ public class AudioServerManager : IDisposable
     #region Request Processing
 
     /// <summary>Routes a processing request to the appropriate group server (or Docker) via HTTP.</summary>
-    public async Task<JObject> ProcessAsync(AudioProviderDefinition provider, Dictionary<string, object> args)
+    public async Task<JObject> ProcessAsync(AudioProviderDefinition provider, Dictionary<string, object> args, CancellationToken cancelToken = default)
     {
         if (provider.RequiresDocker && AudioConfiguration.UseDocker)
         {
-            return await ProcessViaDockerAsync(provider, args);
+            return await ProcessViaDockerAsync(provider, args, cancelToken);
         }
 
         string group = provider.EngineGroup;
@@ -281,23 +281,30 @@ public class AudioServerManager : IDisposable
         }
 
         int port = GetGroupPort(group);
+        string requestId = cancelToken.CanBeCanceled ? Guid.NewGuid().ToString("N") : "";
 
         JObject payload = new()
         {
             ["module"] = provider.PythonModule,
             ["engine_class"] = provider.PythonEngineClass,
             ["kwargs"] = JObject.FromObject(args),
-            ["hf_token"] = GetHuggingFaceToken()
+            ["hf_token"] = GetHuggingFaceToken(),
+            ["request_id"] = requestId
         };
 
         int timeoutMs = GetTimeoutMs(provider.Category);
 
         try
         {
-            using CancellationTokenSource cts = new(timeoutMs);
+            using CancellationTokenSource timeoutCts = new(timeoutMs);
+            using CancellationTokenSource linkedCts = cancelToken.CanBeCanceled
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancelToken, timeoutCts.Token)
+                : null;
+            CancellationToken effectiveToken = linkedCts?.Token ?? timeoutCts.Token;
+
             StringContent content = new(payload.ToString(), Encoding.UTF8, "application/json");
             HttpResponseMessage response = await _httpClient.PostAsync(
-                $"http://127.0.0.1:{port}/process", content, cts.Token);
+                $"http://127.0.0.1:{port}/process", content, effectiveToken);
             string body = await response.Content.ReadAsStringAsync();
 
             if (string.IsNullOrEmpty(body) || !body.StartsWith("{"))
@@ -309,7 +316,14 @@ public class AudioServerManager : IDisposable
         }
         catch (TaskCanceledException)
         {
-            return CreateErrorResponse($"Request to {provider.Name} timed out after {timeoutMs / 1000}s");
+            if (cancelToken.IsCancellationRequested && !string.IsNullOrEmpty(requestId))
+            {
+                _ = SendCancelAsync(port, requestId);
+            }
+            string reason = cancelToken.IsCancellationRequested
+                ? "Generation cancelled by user"
+                : $"Request to {provider.Name} timed out after {timeoutMs / 1000}s";
+            return CreateErrorResponse(reason);
         }
         catch (HttpRequestException ex)
         {
@@ -324,6 +338,25 @@ public class AudioServerManager : IDisposable
         {
             Logs.Error($"[AudioLab] ProcessAsync error: {ex.Message}");
             return CreateErrorResponse($"Processing error: {ex.Message}");
+        }
+    }
+
+    /// <summary>Sends a fire-and-forget cancel request to the Python server.
+    /// Best-effort: if it fails, the Python side will complete naturally.</summary>
+    private async Task SendCancelAsync(int port, string requestId)
+    {
+        try
+        {
+            using CancellationTokenSource cts = new(5000);
+            await _httpClient.PostAsync(
+                $"http://127.0.0.1:{port}/cancel/{requestId}",
+                new StringContent("{}", Encoding.UTF8, "application/json"),
+                cts.Token);
+            Logs.Debug($"[AudioLab] Sent cancel for request {requestId}");
+        }
+        catch (Exception ex)
+        {
+            Logs.Debug($"[AudioLab] Cancel request failed (harmless): {ex.Message}");
         }
     }
 
@@ -530,7 +563,7 @@ public class AudioServerManager : IDisposable
     }
 
     /// <summary>Routes a request to the Docker container for Linux-only engines.</summary>
-    private async Task<JObject> ProcessViaDockerAsync(AudioProviderDefinition provider, Dictionary<string, object> args)
+    private async Task<JObject> ProcessViaDockerAsync(AudioProviderDefinition provider, Dictionary<string, object> args, CancellationToken cancelToken = default)
     {
         if (!_dockerRunning)
         {
@@ -541,22 +574,30 @@ public class AudioServerManager : IDisposable
             }
         }
 
+        string requestId = cancelToken.CanBeCanceled ? Guid.NewGuid().ToString("N") : "";
+
         JObject payload = new()
         {
             ["module"] = provider.PythonModule,
             ["engine_class"] = provider.PythonEngineClass,
             ["kwargs"] = JObject.FromObject(args),
-            ["hf_token"] = GetHuggingFaceToken()
+            ["hf_token"] = GetHuggingFaceToken(),
+            ["request_id"] = requestId
         };
 
         int timeoutMs = GetTimeoutMs(provider.Category);
 
         try
         {
-            using CancellationTokenSource cts = new(timeoutMs);
+            using CancellationTokenSource timeoutCts = new(timeoutMs);
+            using CancellationTokenSource linkedCts = cancelToken.CanBeCanceled
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancelToken, timeoutCts.Token)
+                : null;
+            CancellationToken effectiveToken = linkedCts?.Token ?? timeoutCts.Token;
+
             StringContent content = new(payload.ToString(), Encoding.UTF8, "application/json");
             HttpResponseMessage response = await _httpClient.PostAsync(
-                $"http://127.0.0.1:{_dockerPort}/process", content, cts.Token);
+                $"http://127.0.0.1:{_dockerPort}/process", content, effectiveToken);
             string body = await response.Content.ReadAsStringAsync();
 
             if (string.IsNullOrEmpty(body) || !body.StartsWith("{"))
@@ -568,7 +609,14 @@ public class AudioServerManager : IDisposable
         }
         catch (TaskCanceledException)
         {
-            return CreateErrorResponse($"Docker request to {provider.Name} timed out after {timeoutMs / 1000}s");
+            if (cancelToken.IsCancellationRequested && !string.IsNullOrEmpty(requestId))
+            {
+                _ = SendCancelAsync(_dockerPort, requestId);
+            }
+            string reason = cancelToken.IsCancellationRequested
+                ? "Generation cancelled by user"
+                : $"Docker request to {provider.Name} timed out after {timeoutMs / 1000}s";
+            return CreateErrorResponse(reason);
         }
         catch (HttpRequestException ex)
         {

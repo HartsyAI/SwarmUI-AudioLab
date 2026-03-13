@@ -124,6 +124,9 @@ class PiperEngine(BaseAudioEngine):
             )
             audio_chunks = []
             for chunk in voice.synthesize(text, syn_config=syn_config):
+                if self.is_cancelled():
+                    logger.info("Piper generation cancelled")
+                    return self.cancelled_response()
                 audio_chunks.append(chunk.audio_int16_bytes)
 
             if not audio_chunks:
