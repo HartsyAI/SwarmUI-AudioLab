@@ -77,15 +77,14 @@ public class PythonAudioProcessor
         string[] cmdArgs = ["process", provider.PythonModule, provider.PythonEngineClass, argsB64];
 
         // Model downloads + inference can take a long time on first run.
-        // Music/SFX generation and voice cloning are especially slow.
+        // Audio generation and voice conversion are especially slow.
         int timeoutMs = provider.Category switch
         {
-            AudioCategory.TTS => 180000,         // 3 min — model download + inference
-            AudioCategory.MusicGen => 300000,    // 5 min — large model download + generation
-            AudioCategory.SoundFX => 300000,     // 5 min — audiocraft models
-            AudioCategory.VoiceClone => 180000,  // 3 min — voice clone models
-            AudioCategory.AudioFX => 180000,     // 3 min — demucs/enhancement
-            _ => 120000                          // 2 min — default (STT, etc.)
+            AudioCategory.TTS => 180000,             // 3 min — model download + inference
+            AudioCategory.AudioGeneration => 300000, // 5 min — large model download + generation
+            AudioCategory.VoiceConversion => 180000, // 3 min — voice conversion models
+            AudioCategory.AudioProcessing => 180000, // 3 min — demucs/enhancement
+            _ => 120000                              // 2 min — default (STT, etc.)
         };
         string output = await RunPythonScriptAsync(cmdArgs, timeoutMs);
 

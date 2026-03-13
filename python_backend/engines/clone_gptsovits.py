@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""GPT-SoVITS engine — zero-shot text-to-speech with voice cloning."""
+"""GPT-SoVITS engine — text-to-speech with voice cloning (text in → audio out).
+
+Unlike RVC and OpenVoice which convert existing audio, GPT-SoVITS
+generates NEW speech from text in a cloned voice.  Requires ~1 min
+of reference audio to clone the voice.
+"""
 
 import base64
 import logging
@@ -13,7 +18,7 @@ logger = logging.getLogger("Clone.GPTSoVITS")
 
 
 class GPTSoVITSEngine(BaseAudioEngine):
-    """GPT-SoVITS zero-shot voice cloning TTS engine."""
+    """GPT-SoVITS TTS engine — generates new speech from text in a cloned voice."""
 
     name = "gptsovits"
     category = "voiceclone"

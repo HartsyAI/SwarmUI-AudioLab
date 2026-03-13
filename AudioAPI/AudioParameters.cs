@@ -16,17 +16,14 @@ public static class AudioParameters
     /// <summary>Parameter group for text-to-speech synthesis settings.</summary>
     public static readonly T2IParamGroup TTSGroup = new("Text to Speech", Toggles: true, Open: false, OrderPriority: 16);
 
-    /// <summary>Parameter group for music generation settings.</summary>
-    public static readonly T2IParamGroup MusicGenGroup = new("Music Generation", Toggles: true, Open: false, OrderPriority: 17);
+    /// <summary>Parameter group for audio generation settings (music + sound effects).</summary>
+    public static readonly T2IParamGroup AudioGenerationGroup = new("Audio Generation", Toggles: true, Open: false, OrderPriority: 17);
 
-    /// <summary>Parameter group for voice cloning settings.</summary>
-    public static readonly T2IParamGroup VoiceCloneGroup = new("Voice Cloning", Toggles: true, Open: false, OrderPriority: 18);
+    /// <summary>Parameter group for voice conversion settings.</summary>
+    public static readonly T2IParamGroup VoiceConversionGroup = new("Voice Conversion", Toggles: true, Open: false, OrderPriority: 18);
 
-    /// <summary>Parameter group for audio effects processing settings.</summary>
-    public static readonly T2IParamGroup AudioFXGroup = new("Audio Effects", Toggles: true, Open: false, OrderPriority: 19);
-
-    /// <summary>Parameter group for sound effects generation settings.</summary>
-    public static readonly T2IParamGroup SoundFXGroup = new("Sound Effects", Toggles: true, Open: false, OrderPriority: 20);
+    /// <summary>Parameter group for audio processing settings (stem separation, enhancement).</summary>
+    public static readonly T2IParamGroup AudioProcessingGroup = new("Audio Processing", Toggles: true, Open: false, OrderPriority: 19);
 
     /// <summary>Parameter group for advanced audio processing options.</summary>
     public static readonly T2IParamGroup AudioAdvancedGroup = new("Audio Advanced", Toggles: true, Open: false, OrderPriority: 21);
@@ -117,19 +114,19 @@ public static class AudioParameters
 
     #endregion
 
-    #region Music Generation Parameters
+    #region Audio Generation Parameters
 
     /// <summary>Text description of the music to generate.</summary>
     public static readonly T2IRegisteredParam<string> MusicPrompt = T2IParamTypes.Register<string>(new(
         "Music Prompt", "", "Text description of the music to generate",
-        Group: MusicGenGroup, OrderPriority: 1,
+        Group: AudioGenerationGroup, OrderPriority: 1,
         VisibleNormally: true, FeatureFlag: "musicgen_params"
     ));
 
     /// <summary>Duration of generated music in seconds (1 to 60).</summary>
     public static readonly T2IRegisteredParam<float> MusicDuration = T2IParamTypes.Register<float>(new(
         "Music Duration", "10", "Duration of generated music in seconds",
-        Group: MusicGenGroup, OrderPriority: 2, Min: 1.0, Max: 60.0, Step: 1.0,
+        Group: AudioGenerationGroup, OrderPriority: 2, Min: 1.0, Max: 60.0, Step: 1.0,
         VisibleNormally: true, FeatureFlag: "musicgen_params"
     ));
 

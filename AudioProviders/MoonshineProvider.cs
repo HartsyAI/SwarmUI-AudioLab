@@ -39,8 +39,8 @@ public sealed class MoonshineProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "base", Name = "Moonshine Base", Description = "Fast transcription, good accuracy", SourceUrl = "https://huggingface.co/UsefulSensors/moonshine-base", License = "MIT", EstimatedSize = "~400MB", EstimatedVram = "~1GB (or CPU)", EngineConfig = new() { ["model_name"] = "moonshine/base" } },
-        new() { Id = "tiny", Name = "Moonshine Tiny", Description = "Fastest transcription, lighter accuracy, CPU-capable", SourceUrl = "https://huggingface.co/UsefulSensors/moonshine-tiny", License = "MIT", EstimatedSize = "~200MB", EstimatedVram = "CPU only", EngineConfig = new() { ["model_name"] = "moonshine/tiny" } }
+        new() { Id = "base", Name = "Moonshine Base", Description = "Fast transcription, good accuracy", SourceUrl = "https://huggingface.co/UsefulSensors/moonshine-base", License = "MIT", EstimatedSize = "~400MB", EstimatedVram = "~1GB (or CPU)", SelfManaged = true, EngineConfig = new() { ["model_name"] = "moonshine/base" } },
+        new() { Id = "tiny", Name = "Moonshine Tiny", Description = "Fastest transcription, lighter accuracy, CPU-capable", SourceUrl = "https://huggingface.co/UsefulSensors/moonshine-tiny", License = "MIT", EstimatedSize = "~200MB", EstimatedVram = "CPU only", SelfManaged = true, EngineConfig = new() { ["model_name"] = "moonshine/tiny" } }
     ];
 
     #endregion

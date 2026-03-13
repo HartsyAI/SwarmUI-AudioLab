@@ -13,7 +13,7 @@ class AudioGenEngine(BaseAudioEngine):
     """AudioGen engine using Meta's audiocraft library."""
 
     name = "audiogen"
-    category = "soundfx"
+    category = "audiogeneration"
 
     def __init__(self):
         self.model = None

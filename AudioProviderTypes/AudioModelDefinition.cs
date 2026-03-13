@@ -33,4 +33,8 @@ public sealed class AudioModelDefinition
 
     /// <summary>Optional model class display name override. Used with <see cref="ModelClassId"/>.</summary>
     public string ModelClassName { get; init; }
+
+    /// <summary>When true, the model is downloaded by its Python library at runtime rather than
+    /// pre-downloaded from HuggingFace during installation (e.g. Whisper, Moonshine, Demucs).</summary>
+    public bool SelfManaged { get; init; }
 }

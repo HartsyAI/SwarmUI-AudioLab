@@ -13,7 +13,7 @@ public sealed class AudioGenProvider : IAudioProviderSource
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("audiogen_sfx")
         .WithName("AudioGen SFX")
-        .WithCategory(AudioCategory.SoundFX)
+        .WithCategory(AudioCategory.AudioGeneration)
         .WithPythonEngine("sfx_audiogen", "AudioGenEngine")
         .WithModelPrefix("AudioGen")
         .WithModelClass("audiogen_sfx", "AudioGen SFX")

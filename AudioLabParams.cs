@@ -14,16 +14,14 @@ public static class AudioLabParams
     public static T2IParamGroup TTSGroup;
     /// <summary>Speech-to-text parameter group.</summary>
     public static T2IParamGroup STTGroup;
-    /// <summary>Music generation parameter group.</summary>
-    public static T2IParamGroup MusicGroup;
+    /// <summary>Audio generation parameter group (music + sound effects).</summary>
+    public static T2IParamGroup AudioGenGroup;
     /// <summary>Voice reference parameter group for TTS voice cloning.</summary>
     public static T2IParamGroup VoiceRefGroup;
-    /// <summary>Voice cloning parameter group.</summary>
+    /// <summary>Voice conversion parameter group (RVC, OpenVoice, GPT-SoVITS).</summary>
     public static T2IParamGroup CloneGroup;
-    /// <summary>Audio effects parameter group.</summary>
-    public static T2IParamGroup FXGroup;
-    /// <summary>Sound effects parameter group.</summary>
-    public static T2IParamGroup SFXGroup;
+    /// <summary>Audio processing parameter group (stem separation, enhancement).</summary>
+    public static T2IParamGroup AudioProcGroup;
 
     #endregion
 
@@ -194,9 +192,9 @@ public static class AudioLabParams
 
     #endregion
 
-    #region Music Shared (flag: audiolab_music)
+    #region Audio Generation Shared (flag: audiolab_audiogen)
 
-    /// <summary>Duration of generated music in seconds. Feature flag: <c>audiolab_music</c>.</summary>
+    /// <summary>Duration of generated music in seconds. Feature flag: <c>audiolab_audiogen</c>.</summary>
     public static T2IRegisteredParam<double> Duration;
 
     #endregion
@@ -336,9 +334,9 @@ public static class AudioLabParams
 
     #endregion
 
-    #region FX Shared (flag: audiolab_fx)
+    #region Audio Processing Shared (flag: audiolab_audioproc)
 
-    /// <summary>Audio file input for effects processing. Feature flag: <c>audiolab_fx</c>.</summary>
+    /// <summary>Audio file input for effects processing. Feature flag: <c>audiolab_audioproc</c>.</summary>
     public static T2IRegisteredParam<AudioFile> FXInput;
 
     #endregion
@@ -365,9 +363,9 @@ public static class AudioLabParams
 
     #endregion
 
-    #region SFX Shared (flag: audiolab_sfx)
+    #region Audio Generation — SFX (flag: audiolab_audiogen)
 
-    /// <summary>Duration of generated sound effect in seconds. Feature flag: <c>audiolab_sfx</c>.</summary>
+    /// <summary>Duration of generated sound effect in seconds. Feature flag: <c>audiolab_audiogen</c>.</summary>
     public static T2IRegisteredParam<double> SFXDuration;
 
     #endregion
@@ -382,14 +380,12 @@ public static class AudioLabParams
             Description: "Reference audio for voice cloning in TTS. Upload a clean ~10 second recording to clone.");
         STTGroup = new("STT", Open: true, OrderPriority: -26, Toggles: false,
             Description: "Speech-to-text parameters. Upload audio to transcribe.");
-        MusicGroup = new("Music Generation", Open: true, OrderPriority: -25, Toggles: false,
-            Description: "Music generation parameters. Describe the music in the Prompt box above.");
-        CloneGroup = new("Voice Clone", Open: true, OrderPriority: -24, Toggles: false,
-            Description: "Voice cloning parameters. Provide source and target audio.");
-        FXGroup = new("Audio FX", Open: true, OrderPriority: -23, Toggles: false,
-            Description: "Audio effects parameters. Upload audio to process.");
-        SFXGroup = new("Sound FX", Open: true, OrderPriority: -22, Toggles: false,
-            Description: "Sound effects generation. Describe the sound in the Prompt box above.");
+        AudioGenGroup = new("Audio Generation", Open: true, OrderPriority: -25, Toggles: false,
+            Description: "Audio generation parameters for music and sound effects. Describe what you want in the Prompt box above.");
+        CloneGroup = new("Voice Conversion", Open: true, OrderPriority: -24, Toggles: false,
+            Description: "Voice conversion parameters. Provide source audio to convert and target voice reference.");
+        AudioProcGroup = new("Audio Processing", Open: true, OrderPriority: -23, Toggles: false,
+            Description: "Audio processing parameters. Upload audio to process (stem separation, denoising, enhancement).");
 
         #endregion
 
@@ -749,7 +745,7 @@ public static class AudioLabParams
             "Duration of generated music in seconds.\nLonger durations need more time and VRAM.",
             "30",
             Min: 1, Max: 300, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -10, Group: MusicGroup, FeatureFlag: "audiolab_music"));
+            OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "audiolab_audiogen"));
 
         #endregion
 
@@ -758,25 +754,25 @@ public static class AudioLabParams
             "Classifier-free guidance for music/sound generation.\nHigher values increase prompt adherence.",
             "3.0",
             Min: 0.0, Max: 10.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -8, Group: MusicGroup, FeatureFlag: "audiocraft_sampling"));
+            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "audiocraft_sampling"));
 
         AudioCraftTemperature = T2IParamTypes.Register<double>(new("AudioCraft Temperature",
             "Sampling temperature for audio generation.\nHigher = more varied/creative. Lower = more predictable.",
             "1.0",
             Min: 0.0, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -7, Group: MusicGroup, FeatureFlag: "audiocraft_sampling"));
+            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "audiocraft_sampling"));
 
         AudioCraftTopK = T2IParamTypes.Register<int>(new("AudioCraft Top K",
             "Top-K token sampling for audio generation.\nLimits sampling to the K most likely tokens. 250 is the AudioCraft default.",
             "250",
             Min: 0, Max: 1000, Step: 10, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -6, Group: MusicGroup, FeatureFlag: "audiocraft_sampling"));
+            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "audiocraft_sampling"));
 
         AudioCraftTopP = T2IParamTypes.Register<double>(new("AudioCraft Top P",
             "Nucleus sampling for audio generation.\n0.0 = disabled (use Top K instead). Values > 0 enable nucleus sampling.",
             "0.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -5, Group: MusicGroup, FeatureFlag: "audiocraft_sampling"));
+            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "audiocraft_sampling"));
 
         #endregion
 
@@ -784,37 +780,37 @@ public static class AudioLabParams
         Lyrics = T2IParamTypes.Register<string>(new("Lyrics",
             "Song lyrics for ACE-Step generation.\nUse [Instrumental] for instrumental-only tracks.\nSupports section tags like [Verse], [Chorus], [Bridge].",
             "[Instrumental]",
-            OrderPriority: -9, Group: MusicGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         AudioSeed = T2IParamTypes.Register<int>(new("Audio Seed",
             "Random seed for reproducible generation.\n-1 = random seed each time.",
             "-1",
             Min: -1, Max: 999999, Step: 1,
-            OrderPriority: -8, Group: MusicGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         InferStep = T2IParamTypes.Register<int>(new("Infer Steps",
             "Number of diffusion inference steps.\nTurbo models: 8. SFT/Base models: 50.",
             "8",
             Min: 1, Max: 200, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -7, Group: MusicGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         ACEGuidanceScale = T2IParamTypes.Register<double>(new("ACE Guidance",
             "Classifier-free guidance strength.\nOnly effective with SFT/Base models that support CFG.",
             "7.0",
             Min: 1.0, Max: 30.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -6, Group: MusicGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         Instrumental = T2IParamTypes.Register<string>(new("Instrumental",
             "Generate instrumental-only track without vocals.",
             "false",
             GetValues: _ => ["false///No", "true///Yes"],
-            OrderPriority: -5, Group: MusicGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         BPM = T2IParamTypes.Register<int>(new("BPM",
             "Beats per minute for the generated music.",
             "120",
             Min: 30, Max: 300, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -4, Group: MusicGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: -4, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         KeyScale = T2IParamTypes.Register<string>(new("Key / Scale",
             "Musical key and scale.\nLeave empty for auto-detection.",
@@ -834,7 +830,7 @@ public static class AudioLabParams
                 "Bb major///Bb Major", "Bb minor///Bb Minor",
                 "B major///B Major", "B minor///B Minor"
             ],
-            OrderPriority: -3, Group: MusicGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: -3, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         TimeSignature = T2IParamTypes.Register<string>(new("Time Signature",
             "Musical time signature (beats per measure).",
@@ -842,7 +838,7 @@ public static class AudioLabParams
             GetValues: _ => [
                 "4///4/4 (Common Time)", "3///3/4 (Waltz)", "2///2/4 (March)", "6///6/8 (Compound)"
             ],
-            OrderPriority: -2, Group: MusicGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: -2, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         VocalLanguage = T2IParamTypes.Register<string>(new("Vocal Language",
             "Language for vocal content in the generated music.",
@@ -862,49 +858,49 @@ public static class AudioLabParams
                 "is///Icelandic", "az///Azerbaijani", "kk///Kazakh", "uz///Uzbek",
                 "tg///Tajik", "mn///Mongolian"
             ],
-            OrderPriority: -1, Group: MusicGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: -1, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         ACEShift = T2IParamTypes.Register<double>(new("Shift",
             "Noise schedule shift factor.\nHigher values increase generation diversity.",
             "3.0",
             Min: 1.0, Max: 5.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: 0, Group: MusicGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: 0, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         InferMethod = T2IParamTypes.Register<string>(new("Infer Method",
             "ODE solver method for diffusion inference.\nODE = deterministic. SDE = stochastic (more varied).",
             "ode",
             GetValues: _ => ["ode///ODE (Default)", "sde///SDE (Stochastic)"],
-            OrderPriority: 1, Group: MusicGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: 1, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         UseADG = T2IParamTypes.Register<string>(new("Use ADG",
             "Enable Adaptive Diffusion Guidance.\nCan improve prompt adherence for some models.",
             "false",
             GetValues: _ => ["false///No", "true///Yes"],
-            OrderPriority: 2, Group: MusicGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: 2, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         CFGIntervalStart = T2IParamTypes.Register<double>(new("CFG Interval Start",
             "Start of the CFG application interval.\n0.0 = apply from beginning of denoising.",
             "0.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: 3, Group: MusicGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: 3, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         CFGIntervalEnd = T2IParamTypes.Register<double>(new("CFG Interval End",
             "End of the CFG application interval.\n1.0 = apply through end of denoising.",
             "1.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: 4, Group: MusicGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: 4, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         EnableNormalization = T2IParamTypes.Register<string>(new("Normalize Audio",
             "Normalize output audio to a target loudness level.",
             "true",
             GetValues: _ => ["true///Yes (Recommended)", "false///No"],
-            OrderPriority: 5, Group: MusicGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: 5, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         NormalizationDB = T2IParamTypes.Register<double>(new("Normalization dB",
             "Target loudness in dBFS when normalization is enabled.\n-14 dB is typical for streaming.",
             "-14.0",
             Min: -30.0, Max: 0.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
-            OrderPriority: 6, Group: MusicGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: 6, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         #endregion
 
@@ -919,60 +915,60 @@ public static class AudioLabParams
                 "none///None (Disabled)", "0.6B///Qwen3 0.6B (Fast)",
                 "1.7B///Qwen3 1.7B (Balanced)", "4B///Qwen3 4B (Best)"
             ],
-            OrderPriority: -10, Group: MusicGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
 
         Thinking = T2IParamTypes.Register<string>(new("LM Thinking",
             "Enable chain-of-thought reasoning in the LM planner.",
             "true",
             GetValues: _ => ["true///Yes", "false///No"],
-            OrderPriority: -9, Group: MusicGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
 
         LMTemperature = T2IParamTypes.Register<double>(new("LM Temperature",
             "Sampling temperature for the LM planner.\nHigher = more creative metadata generation.",
             "0.85",
             Min: 0.0, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -8, Group: MusicGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
 
         LMCFGScale = T2IParamTypes.Register<double>(new("LM CFG Scale",
             "Classifier-free guidance scale for the LM planner.",
             "2.0",
             Min: 1.0, Max: 5.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -7, Group: MusicGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
 
         LMTopK = T2IParamTypes.Register<int>(new("LM Top K",
             "Top-K sampling for the LM planner.\n0 = disabled.",
             "0",
             Min: 0, Max: 500, Step: 10, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -6, Group: MusicGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
 
         LMTopP = T2IParamTypes.Register<double>(new("LM Top P",
             "Nucleus sampling threshold for the LM planner.",
             "0.9",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -5, Group: MusicGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
 
         LMNegativePrompt = T2IParamTypes.Register<string>(new("LM Negative Prompt",
             "Negative prompt for the LM planner.\nDescribes unwanted characteristics to avoid.",
             "",
-            OrderPriority: -4, Group: MusicGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -4, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
 
         UseCotMetas = T2IParamTypes.Register<string>(new("CoT Metas",
             "Include meta tags (genre, mood, instruments) in chain-of-thought.",
             "true",
             GetValues: _ => ["true///Yes", "false///No"],
-            OrderPriority: -3, Group: MusicGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -3, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
 
         UseCotCaption = T2IParamTypes.Register<string>(new("CoT Caption",
             "Include music description caption in chain-of-thought.",
             "true",
             GetValues: _ => ["true///Yes", "false///No"],
-            OrderPriority: -2, Group: MusicGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -2, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
 
         UseCotLanguage = T2IParamTypes.Register<string>(new("CoT Language",
             "Include language detection in chain-of-thought.",
             "true",
             GetValues: _ => ["true///Yes", "false///No"],
-            OrderPriority: -1, Group: MusicGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -1, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
 
         #endregion
 
@@ -985,41 +981,41 @@ public static class AudioLabParams
                 "repaint///Repaint (Section Regen)", "extract///Extract Elements",
                 "lego///Lego (Combine)", "complete///Complete (Extend)"
             ],
-            OrderPriority: -10, Group: MusicGroup, FeatureFlag: "acestep_task_params"));
+            OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
 
         ACESourceAudio = T2IParamTypes.Register<AudioFile>(new("ACE Source Audio",
             "Source audio for cover, repaint, extract, lego, and complete tasks.\nRequired for all tasks except text2music.",
             null,
-            OrderPriority: -9, Group: MusicGroup, FeatureFlag: "acestep_task_params"));
+            OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
 
         ACEReferenceAudio = T2IParamTypes.Register<AudioFile>(new("Style Reference Audio",
             "Optional style/timbre reference audio.\nThe generated music will match the style of this reference.",
             null,
-            OrderPriority: -8, Group: MusicGroup, FeatureFlag: "acestep_task_params"));
+            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
 
         RepaintStart = T2IParamTypes.Register<double>(new("Repaint Start",
             "Start time in seconds for repaint task.\nThe section from this point will be regenerated.",
             "0.0",
             Min: 0.0, Max: 600.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -7, Group: MusicGroup, FeatureFlag: "acestep_task_params"));
+            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
 
         RepaintEnd = T2IParamTypes.Register<double>(new("Repaint End",
             "End time in seconds for repaint task.\n-1 = auto (repaint to end of audio).",
             "-1.0",
             Min: -1.0, Max: 600.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -6, Group: MusicGroup, FeatureFlag: "acestep_task_params"));
+            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
 
         CoverStrength = T2IParamTypes.Register<double>(new("Cover Strength",
             "Style transfer strength for cover task.\n1.0 = full transfer. Lower = more of original.",
             "1.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -5, Group: MusicGroup, FeatureFlag: "acestep_task_params"));
+            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
 
         CoverNoiseStrength = T2IParamTypes.Register<double>(new("Cover Noise",
             "Noise injection strength for cover task.\nAdds variation to the style transfer.",
             "0.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -4, Group: MusicGroup, FeatureFlag: "acestep_task_params"));
+            OrderPriority: -4, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
 
         #endregion
 
@@ -1027,7 +1023,7 @@ public static class AudioLabParams
         MelodyAudio = T2IParamTypes.Register<AudioFile>(new("Melody Audio",
             "Reference melody for MusicGen melody conditioning.\nOnly used with the melody model variant.",
             null,
-            OrderPriority: -5, Group: MusicGroup, FeatureFlag: "musicgen_music_params"));
+            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "musicgen_music_params"));
 
         #endregion
 
@@ -1101,7 +1097,7 @@ public static class AudioLabParams
         FXInput = T2IParamTypes.Register<AudioFile>(new("FX Input",
             "Audio file to process.\nUpload audio for separation, enhancement, or denoising.",
             null,
-            OrderPriority: -10, Group: FXGroup, FeatureFlag: "audiolab_fx"));
+            OrderPriority: -10, Group: AudioProcGroup, FeatureFlag: "audiolab_audioproc"));
 
         #endregion
 
@@ -1110,13 +1106,13 @@ public static class AudioLabParams
             "Overlap between processing chunks.\nHigher values improve quality at boundaries but take longer.",
             "0.25",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -5, Group: FXGroup, FeatureFlag: "demucs_fx_params"));
+            OrderPriority: -5, Group: AudioProcGroup, FeatureFlag: "demucs_fx_params"));
 
         Shifts = T2IParamTypes.Register<int>(new("Shifts",
             "Random shifts for equivariant stabilization.\nMore shifts improve quality but take longer. 0 = disabled.",
             "1",
             Min: 0, Max: 10, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -4, Group: FXGroup, FeatureFlag: "demucs_fx_params"));
+            OrderPriority: -4, Group: AudioProcGroup, FeatureFlag: "demucs_fx_params"));
 
         #endregion
 
@@ -1125,7 +1121,7 @@ public static class AudioLabParams
             "Number of function evaluations for audio enhancement.\nMore steps = higher quality but slower.",
             "64",
             Min: 1, Max: 128, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -5, Group: FXGroup, FeatureFlag: "resemble_enhance_fx_params"));
+            OrderPriority: -5, Group: AudioProcGroup, FeatureFlag: "resemble_enhance_fx_params"));
 
         EnhanceSolver = T2IParamTypes.Register<string>(new("Solver",
             "ODE solver method for enhancement.\nMidpoint is recommended for best quality/speed balance.",
@@ -1133,19 +1129,19 @@ public static class AudioLabParams
             GetValues: _ => [
                 "midpoint///Midpoint (Recommended)", "euler///Euler", "rk4///RK4"
             ],
-            OrderPriority: -4, Group: FXGroup, FeatureFlag: "resemble_enhance_fx_params"));
+            OrderPriority: -4, Group: AudioProcGroup, FeatureFlag: "resemble_enhance_fx_params"));
 
         EnhanceLambda = T2IParamTypes.Register<double>(new("Lambda",
             "Prior temperature.\nControls balance between denoising and super-resolution.",
             "0.1",
             Min: 0.0, Max: 1.0, Step: 0.01, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -3, Group: FXGroup, FeatureFlag: "resemble_enhance_fx_params"));
+            OrderPriority: -3, Group: AudioProcGroup, FeatureFlag: "resemble_enhance_fx_params"));
 
         EnhanceTau = T2IParamTypes.Register<double>(new("Tau",
             "CFM posterior temperature.\nControls the level of enhancement applied.",
             "0.5",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -2, Group: FXGroup, FeatureFlag: "resemble_enhance_fx_params"));
+            OrderPriority: -2, Group: AudioProcGroup, FeatureFlag: "resemble_enhance_fx_params"));
 
         #endregion
 
@@ -1154,7 +1150,7 @@ public static class AudioLabParams
             "Duration of generated sound effect in seconds.",
             "10",
             Min: 1, Max: 60, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -10, Group: SFXGroup, FeatureFlag: "audiolab_sfx"));
+            OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "audiolab_audiogen"));
 
         #endregion
     }

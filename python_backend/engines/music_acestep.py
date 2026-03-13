@@ -43,7 +43,7 @@ class AceStepEngine(BaseAudioEngine):
     """ACE-Step music generation engine with lazy model loading."""
 
     name = "acestep"
-    category = "musicgen"
+    category = "audiogeneration"
 
     def __init__(self):
         self.pipeline = None

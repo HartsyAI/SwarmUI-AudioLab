@@ -82,10 +82,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
     {
         [AudioCategory.TTS] = "audiolab_tts",
         [AudioCategory.STT] = "audiolab_stt",
-        [AudioCategory.MusicGen] = "audiolab_music",
-        [AudioCategory.VoiceClone] = "audiolab_clone",
-        [AudioCategory.AudioFX] = "audiolab_fx",
-        [AudioCategory.SoundFX] = "audiolab_sfx",
+        [AudioCategory.AudioGeneration] = "audiolab_audiogen",
+        [AudioCategory.VoiceConversion] = "audiolab_clone",
+        [AudioCategory.AudioProcessing] = "audiolab_audioproc",
     };
 
     /// <summary>Runtime state for initialized providers, keyed by provider ID.</summary>
@@ -692,6 +691,14 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 if (modelDef.EngineConfig.TryGetValue("model_name", out object modelNameObj)
                     && modelNameObj is string modelName && !string.IsNullOrEmpty(modelName))
                 {
+                    // Skip pre-download for self-managed models whose Python libraries handle
+                    // their own downloading at runtime (e.g. Whisper, Moonshine, Demucs).
+                    if (modelDef.SelfManaged)
+                    {
+                        Logs.Info($"[AudioLab] Skipping pre-download for '{modelName}' (library-managed model).");
+                        continue;
+                    }
+
                     string category = definition.Category.ToString().ToLower();
                     onProgress?.Invoke($"Downloading {modelDef.Name} ({modelDef.EstimatedSize})...");
                     Logs.Info($"[AudioLab] Downloading model '{modelName}' for {definition.Name}...");
@@ -935,41 +942,27 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["language"] = input.TryGet(AudioLabParams.Language, out string sttLang) ? sttLang : "en";
                 break;
 
-            case AudioCategory.MusicGen:
+            case AudioCategory.AudioGeneration:
                 args["prompt"] = input.Get(T2IParamTypes.Prompt, "");
-                args["duration"] = input.TryGet(AudioLabParams.Duration, out double musicDur) ? musicDur : 30.0;
+                args["duration"] = input.TryGet(AudioLabParams.Duration, out double genDur) ? genDur : 30.0;
                 // Shared AudioCraft sampling (audiocraft_sampling flag)
-                if (input.TryGet(AudioLabParams.GuidanceScale, out double musicGuidance))
-                    args["cfg_coef"] = musicGuidance;
-                if (input.TryGet(AudioLabParams.AudioCraftTemperature, out double musicTemp))
-                    args["temperature"] = musicTemp;
-                if (input.TryGet(AudioLabParams.AudioCraftTopK, out int musicTopK))
-                    args["top_k"] = musicTopK;
-                if (input.TryGet(AudioLabParams.AudioCraftTopP, out double musicTopP))
-                    args["top_p"] = musicTopP;
+                if (input.TryGet(AudioLabParams.GuidanceScale, out double genGuidance))
+                    args["cfg_coef"] = genGuidance;
+                if (input.TryGet(AudioLabParams.AudioCraftTemperature, out double genTemp))
+                    args["temperature"] = genTemp;
+                if (input.TryGet(AudioLabParams.AudioCraftTopK, out int genTopK))
+                    args["top_k"] = genTopK;
+                if (input.TryGet(AudioLabParams.AudioCraftTopP, out double genTopP))
+                    args["top_p"] = genTopP;
                 break;
 
-            case AudioCategory.VoiceClone:
+            case AudioCategory.VoiceConversion:
                 args["source_audio"] = GetBase64Audio(input, AudioLabParams.SourceAudio);
                 args["target_voice"] = GetBase64Audio(input, AudioLabParams.TargetVoice);
                 break;
 
-            case AudioCategory.AudioFX:
+            case AudioCategory.AudioProcessing:
                 args["audio_data"] = GetBase64Audio(input, AudioLabParams.FXInput);
-                break;
-
-            case AudioCategory.SoundFX:
-                args["prompt"] = input.Get(T2IParamTypes.Prompt, "");
-                args["duration"] = input.TryGet(AudioLabParams.SFXDuration, out double sfxDur) ? sfxDur : 10.0;
-                // Shared AudioCraft sampling (audiocraft_sampling flag)
-                if (input.TryGet(AudioLabParams.GuidanceScale, out double sfxGuidance))
-                    args["cfg_coef"] = sfxGuidance;
-                if (input.TryGet(AudioLabParams.AudioCraftTemperature, out double sfxTemp))
-                    args["temperature"] = sfxTemp;
-                if (input.TryGet(AudioLabParams.AudioCraftTopK, out int sfxTopK))
-                    args["top_k"] = sfxTopK;
-                if (input.TryGet(AudioLabParams.AudioCraftTopP, out double sfxTopP))
-                    args["top_p"] = sfxTopP;
                 break;
 
             default:

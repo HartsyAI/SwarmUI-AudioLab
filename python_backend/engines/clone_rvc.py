@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""RVC engine — retrieval-based voice conversion."""
+"""RVC engine — voice conversion (audio in → audio out).
+
+Takes existing audio + a trained voice model and re-voices it.
+Does NOT generate new speech from text — only converts the voice
+in existing audio to a different voice.
+"""
 
 import base64
 import logging
@@ -12,7 +17,7 @@ logger = logging.getLogger("Clone.RVC")
 
 
 class RVCEngine(BaseAudioEngine):
-    """RVC V2 voice conversion engine."""
+    """RVC V2 voice conversion engine (audio in → audio out, no text generation)."""
 
     name = "rvc"
     category = "voiceclone"

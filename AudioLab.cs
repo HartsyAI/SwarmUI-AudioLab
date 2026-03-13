@@ -85,7 +85,7 @@ public class AudioLab : Extension
     private static void RegisterFeatureFlags()
     {
         // Category-level flags (one per AudioCategory)
-        string[] categoryFlags = ["audiolab_tts", "audiolab_stt", "audiolab_music", "audiolab_clone", "audiolab_fx", "audiolab_sfx"];
+        string[] categoryFlags = ["audiolab_tts", "audiolab_stt", "audiolab_audiogen", "audiolab_clone", "audiolab_audioproc"];
 
         // Per-provider flags from each provider's FeatureFlags list
         string[] providerFlags = AudioProviderRegistry.All

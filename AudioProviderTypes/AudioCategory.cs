@@ -9,15 +9,12 @@ public enum AudioCategory
     /// <summary>Text-to-speech synthesis.</summary>
     TTS,
 
-    /// <summary>Music generation from text or other inputs.</summary>
-    MusicGen,
+    /// <summary>Audio generation from text — music (MusicGen, ACE-Step) and sound effects (AudioGen).</summary>
+    AudioGeneration,
 
-    /// <summary>Voice cloning and voice style transfer.</summary>
-    VoiceClone,
+    /// <summary>Voice conversion — transforms the voice in existing audio (RVC, OpenVoice) or generates speech in a cloned voice (GPT-SoVITS).</summary>
+    VoiceConversion,
 
-    /// <summary>Audio effects processing (reverb, pitch shift, etc.).</summary>
-    AudioFX,
-
-    /// <summary>Sound effects generation from text descriptions.</summary>
-    SoundFX
+    /// <summary>Audio processing — transforms existing audio (stem separation, denoising, enhancement).</summary>
+    AudioProcessing
 }

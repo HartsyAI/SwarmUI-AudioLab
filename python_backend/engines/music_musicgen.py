@@ -16,7 +16,7 @@ class MusicGenEngine(BaseAudioEngine):
     """MusicGen engine using Meta's audiocraft library."""
 
     name = "musicgen"
-    category = "musicgen"
+    category = "audiogeneration"
 
     def __init__(self):
         self.model = None

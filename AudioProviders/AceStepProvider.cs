@@ -13,7 +13,7 @@ public sealed class AceStepProvider : IAudioProviderSource
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("acestep_music")
         .WithName("ACE-Step Music")
-        .WithCategory(AudioCategory.MusicGen)
+        .WithCategory(AudioCategory.AudioGeneration)
         .WithPythonEngine("music_acestep", "AceStepEngine")
         .WithModelPrefix("AceStep")
         .WithModelClass("acestep_music", "ACE-Step Music")

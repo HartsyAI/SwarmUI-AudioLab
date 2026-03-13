@@ -16,7 +16,7 @@ class ResembleEnhanceEngine(BaseAudioEngine):
     """Resemble Enhance audio denoising/enhancement engine."""
 
     name = "resemble_enhance"
-    category = "audiofx"
+    category = "audioprocessing"
 
     def __init__(self):
         self.device = None

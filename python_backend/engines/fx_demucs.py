@@ -16,7 +16,7 @@ class DemucsEngine(BaseAudioEngine):
     """Demucs audio source separation engine."""
 
     name = "demucs"
-    category = "audiofx"
+    category = "audioprocessing"
 
     def __init__(self):
         self.model = None

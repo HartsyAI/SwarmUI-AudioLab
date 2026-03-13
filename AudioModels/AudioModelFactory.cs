@@ -98,10 +98,9 @@ public static class AudioModelFactory
     {
         AudioCategory.TTS => "TTS",
         AudioCategory.STT => "STT",
-        AudioCategory.MusicGen => "Music",
-        AudioCategory.VoiceClone => "Clone",
-        AudioCategory.AudioFX => "AudFX",
-        AudioCategory.SoundFX => "SndFX",
+        AudioCategory.AudioGeneration => "Gen",
+        AudioCategory.VoiceConversion => "Clone",
+        AudioCategory.AudioProcessing => "Proc",
         _ => "Audio"
     };
 

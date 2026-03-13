@@ -13,7 +13,7 @@ public sealed class MusicGenProvider : IAudioProviderSource
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("musicgen_music")
         .WithName("MusicGen")
-        .WithCategory(AudioCategory.MusicGen)
+        .WithCategory(AudioCategory.AudioGeneration)
         .WithPythonEngine("music_musicgen", "MusicGenEngine")
         .WithModelPrefix("MusicGen")
         .WithModelClass("musicgen_music", "MusicGen")

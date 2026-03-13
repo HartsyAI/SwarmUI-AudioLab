@@ -1,19 +1,19 @@
 # SwarmUI AudioLab Extension
 
-A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI) that adds text-to-speech, speech-to-text, music generation, voice cloning, audio effects, and sound effects — all through a provider-based architecture integrated directly into the Generate tab.
+A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI) that adds text-to-speech, speech-to-text, audio generation, voice conversion, and audio processing — all through a provider-based architecture integrated directly into the Generate tab.
 
 ## Features
 
-- **Text-to-Speech (TTS)** — 12 providers including Chatterbox, Kokoro, Bark, Orpheus, Piper, Dia, F5-TTS, Zonos, CSM, VibeVoice, CosyVoice, and NeuTTS
+- **Text-to-Speech (TTS)** — 14 providers: Chatterbox, Kokoro, Bark, Orpheus, Piper, Dia, F5-TTS, Fish Speech, Qwen3, Zonos, CSM, VibeVoice, CosyVoice, and NeuTTS
 - **Speech-to-Text (STT)** — 4 providers: Whisper, Distil-Whisper, Moonshine, and RealtimeSTT
-- **Music Generation** — ACE-Step 1.5 (6 DiT models, 6 task types, lyrics alignment, 50 languages) and MusicGen (text-to-music with melody conditioning)
-- **Voice Cloning** — OpenVoice, RVC, and GPT-SoVITS
-- **Audio Effects** — Demucs (stem separation) and Resemble Enhance (audio enhancement/denoising)
-- **Sound Effects** — AudioGen (text-to-sound-effect generation)
+- **Audio Generation** — ACE-Step 1.5 (6 DiT models, 6 task types, lyrics alignment, 50 languages), MusicGen (text-to-music with melody conditioning), and AudioGen (text-to-sound-effects)
+- **Voice Conversion** — RVC (re-voice existing audio), OpenVoice (tone/style transfer), GPT-SoVITS (TTS with cloned voice)
+- **Audio Processing** — Demucs (stem separation) and Resemble Enhance (audio enhancement/denoising)
 - **Video + Audio** — Combine audio with video or extract audio from video via ffmpeg
 - **Streaming TTS** — Chunked text-to-speech with auto-play for immediate playback while generating
+- **Generation Cancellation** — Stop Generation and Stop All Generations buttons work for all audio providers
 - **On-Demand Engine Installation** — Install only the engines you need, each in its own Python virtual environment
-- **Docker Support** — Linux-only engines (RVC, GPT-SoVITS, Resemble-Enhance, CosyVoice, RealtimeSTT) can run via Docker on Windows
+- **Docker Support** — Linux-only engines (RVC, GPT-SoVITS, Resemble Enhance, CosyVoice, RealtimeSTT) can run via Docker on Windows
 
 ## Requirements
 
@@ -38,75 +38,137 @@ A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeypr
 
 ## Supported Engines
 
-### Text-to-Speech
+### Text-to-Speech (14 Providers, 30+ Models)
 
-| Engine | Voice Cloning | Streaming | Notes |
+| Engine | Voice Reference | Streaming | VRAM | Notes |
+| --- | --- | --- | --- | --- |
+| Chatterbox | Optional | Yes | ~4 GB | Expressive with exaggeration/CFG controls |
+| Kokoro | No | Yes | ~1 GB | 96x real-time on GPU, CPU-capable, multiple built-in voices |
+| Piper | No | Yes | CPU only | CPU-only ONNX runtime, lightweight, auto-downloads voices |
+| Bark | No | Yes | ~5 GB | Multi-language, emotion/music/SFX support |
+| Orpheus | No | Yes | ~16 GB | 3B params, emotion tags (`<laugh>`, `<sigh>`, etc.) |
+| Dia | No | Yes | ~10 GB | 1.6B params, 2-speaker dialogue with nonverbal sounds |
+| F5-TTS | Required | Yes | ~4 GB | Flow-matching, zero-shot cloning from ~10s reference |
+| Fish Speech | Optional | Yes | 4–24 GB | 80+ languages, inline prosody tags (`[whisper]`, `[emphasis]`, etc.) |
+| Qwen3 TTS | Optional | Yes | 4–8 GB | 5 model variants: cloning, custom voices, voice design from descriptions |
+| CSM | No | Yes | ~4.5 GB | 1B params, multi-turn conversational speech |
+| VibeVoice | Optional | Yes | 3–16 GB | 3 sizes (0.5B–7B), multi-speaker, up to 90 min long-form |
+| Zonos | Optional | Yes | ~4 GB | Emotion control, transformer and hybrid variants (EN/JP/CN/FR/DE) |
+| CosyVoice | Optional | Yes | ~8 GB | Ultra-low latency streaming, multilingual (Docker required on Windows) |
+| NeuTTS | Required | Yes | ~2 GB | 0.5B params, instant voice cloning, CPU-capable |
+
+### Speech-to-Text (4 Providers, 12 Models)
+
+| Engine | Models | VRAM | Notes |
 | --- | --- | --- | --- |
-| Chatterbox | Reference audio | Yes | Expressive with exaggeration/CFG controls |
-| Kokoro | No | Yes | Fast, multiple built-in voices, speed control |
-| Piper | No | Yes | CPU-only ONNX, lightweight, auto-downloads voices |
-| Bark | No | Yes | Multi-language, emotion support |
-| Orpheus | No | Yes | Emotion tags (`<laugh>`, `<sigh>`, etc.) |
-| Dia | No | Yes | CFG-filtered generation |
-| F5-TTS | Reference audio | Yes | Flow-matching, speed control |
-| CSM | No | Yes | Multi-speaker conversations |
-| VibeVoice | Reference audio | Yes | Diffusion-based, high quality |
-| Zonos | Reference audio | Yes | Emotion control, multi-language |
-| CosyVoice | Reference audio | Yes | Zero-shot cloning, multi-language (requires Docker on Windows) |
-| NeuTTS | Reference audio (required) | Yes | Instant voice cloning |
+| Whisper | 7 sizes (tiny–turbo) | 1–10 GB | OpenAI Whisper, transcribe + translate, multi-language |
+| Distil-Whisper | large-v3, large-v3.5 | ~2 GB | 6x faster than Whisper large-v3 |
+| Moonshine | base, tiny | ~1 GB / CPU | Lightweight, CPU-capable |
+| RealtimeSTT | default | ~2 GB | Real-time streaming with wake word detection (Docker required on Windows) |
 
-### Speech-to-Text
+### Audio Generation (3 Providers, 17 Models)
 
-| Engine | Notes |
-| --- | --- |
-| Whisper | OpenAI Whisper, 7 model sizes (tiny through turbo), transcribe + translate tasks, multi-language |
-| Distil-Whisper | Faster distilled variant |
-| Moonshine | Lightweight alternative |
-| RealtimeSTT | Real-time transcription (requires Docker on Windows) |
+| Engine | Models | VRAM | Notes |
+| --- | --- | --- | --- |
+| ACE-Step 1.5 | 6 DiT variants (turbo/sft/base) | 8–10 GB | 6 task types (text2music, cover, repaint, extract, lego, complete), lyrics alignment, 50 languages, optional LM planner |
+| MusicGen | 10 variants (mono/stereo/melody) | 4–10 GB | Text-to-music with optional melody conditioning, sampling controls |
+| AudioGen | medium (1.5B) | ~4 GB | Text-to-sound-effect generation |
 
-### Music Generation
+### Voice Conversion (3 Providers)
 
-| Engine | Notes |
-| --- | --- |
-| ACE-Step 1.5 | 6 DiT model variants (turbo/sft/base), 6 task types (text2music, cover, repaint, extract, lego, complete), lyrics alignment, 50 languages, optional LM planner, native Windows + Docker |
-| MusicGen | 10 model variants (mono/stereo/melody), text-to-music with optional melody conditioning, sampling controls |
+These engines transform voice characteristics. **RVC and OpenVoice** are post-processing tools that take existing audio and change the voice (audio in → audio out). **GPT-SoVITS** is different — it generates new speech from text in a cloned voice (text in → audio out).
 
-### Voice Cloning
+> **Voice Conversion vs. TTS Voice Reference:** Many TTS engines above (F5, Fish Speech, Zonos, etc.) also support voice cloning via a reference audio clip, but they are TTS engines that generate speech from text. The engines below are specifically designed for voice transformation or voice-cloned speech synthesis.
 
-| Engine | Notes |
-| --- | --- |
-| OpenVoice | Voice style transfer |
-| RVC | Pitch shift, F0 extraction (RMVPE/PM/Harvest/CREPE) (requires Docker on Windows) |
-| GPT-SoVITS | Multi-language cloning (en/zh/ja/ko) (requires Docker on Windows) |
+| Engine | Type | VRAM | Notes |
+| --- | --- | --- | --- |
+| RVC V2 | Audio → Audio | ~4 GB | Re-voices existing audio using a trained .pth voice model. Pitch shift, F0 extraction (RMVPE/PM/Harvest/CREPE). Docker required on Windows. |
+| OpenVoice V2 | Audio → Audio | ~2 GB | Transfers the tone/style of a reference voice onto existing audio. Zero-shot (no model training, just a wav clip). |
+| GPT-SoVITS | Text → Audio | ~4 GB | Generates new speech from text in a cloned voice using ~1 min reference audio. CJK + English. Docker required on Windows. |
 
-### Audio Effects
+### Audio Processing (2 Providers, 5 Models)
 
-| Engine | Notes |
-| --- | --- |
-| Demucs | Source separation (vocals, drums, bass, other) |
-| Resemble Enhance | Audio enhancement and super-resolution (requires Docker on Windows) |
-
-### Sound Effects
-
-| Engine | Notes |
-| --- | --- |
-| AudioGen | Generate sound effects from text descriptions |
+| Engine | Models | VRAM | Notes |
+| --- | --- | --- | --- |
+| Demucs | htdemucs, htdemucs_ft, htdemucs_6s | ~2 GB | Source separation (vocals, drums, bass, other; 6-stem variant adds guitar + piano) |
+| Resemble Enhance | denoise, enhance | ~2 GB | Speech denoising and super-resolution to 44.1 kHz, Docker required on Windows |
 
 ## Usage
 
 1. **Add the Audio Backend** — Go to Server > Backends and add "Audio Backend". Configure Docker if needed.
-2. **Install an Engine** — In the Generate tab, browse the audio models and click Install for the engine you want. The extension creates a virtual environment and installs all dependencies automatically.
+2. **Install an Engine** — In the Generate tab, browse the audio models and click Install for the engine you want. The extension creates a virtual environment and installs all dependencies automatically. Progress streams in real time via WebSocket.
 3. **Select a Model** — Choose an installed audio model from the model selector.
-4. **Set Parameters** — The sidebar will show relevant parameter groups (TTS, STT, Music Generation, Voice Clone, Audio FX, Sound FX) based on the selected model.
+4. **Set Parameters** — The sidebar shows relevant parameter groups (TTS, STT, Audio Generation, Voice Conversion, Audio Processing) based on the selected model.
 5. **Generate** — Enter your prompt and click Generate. Audio output appears in the output area with a waveform player.
+6. **Cancel** — Click "Stop Generation" to cancel the current generation or "Stop All Generations" to cancel all active sessions. Works for all providers.
 
 ### Streaming TTS
 
-Set the **Stream Chunk Size** parameter to a value greater than 0 to enable streaming. Text is split into chunks that generate and play back immediately while the next chunk processes. The final output is a concatenated WAV file.
+Set the **Stream Chunk Size** parameter to control how text is split for streaming:
+
+| Mode | Behavior |
+| --- | --- |
+| `word` | Each word generates separately |
+| `phrase` | ~5 words per chunk, snaps to nearby punctuation |
+| `sentence` | Splits on `.` `!` `?` boundaries (respects abbreviations) |
+| `paragraph` | Splits on double newlines, falls back to sentences |
+
+Each chunk generates and plays back immediately while the next chunk processes. The final output is a concatenated WAV file saved to the output directory.
+
+### TTS Voice Reference (Voice Cloning in TTS)
+
+Many TTS engines accept a **reference audio** file (WAV) and optional **reference text** (transcript of the reference audio). Upload a short clip (~5–15 seconds) of the target voice. The model generates new speech from your text prompt that sounds like the reference voice.
+
+Supported by: F5-TTS, Fish Speech, Qwen3, Zonos, VibeVoice, Chatterbox, CosyVoice, NeuTTS.
+
+This is different from the **Voice Conversion** engines (RVC, OpenVoice) which take existing audio and change the voice without generating new speech.
 
 ### Video + Audio
 
-Use the API endpoints to combine generated audio with video files or extract audio tracks from video. Requires ffmpeg.
+Use the API endpoints or UI to combine generated audio with video files or extract audio tracks from video. Requires ffmpeg on PATH.
+
+- **Replace** mode swaps the video's audio track with your generated audio.
+- **Mix** mode blends the original and new audio tracks together.
+
+## API Endpoints
+
+All endpoints require authentication and use SwarmUI's permission system.
+
+### Audio Processing
+
+| Endpoint | Method | Description |
+| --- | --- | --- |
+| `ProcessAudio` | POST | Generic entry point — routes to any provider by `provider_id` |
+| `ProcessTTS` | POST | Text-to-speech with `text`, `voice`, `language`, `volume` params |
+| `ProcessSTT` | POST | Speech-to-text with `audio_data` (base64), `language` params |
+| `ProcessWorkflow` | POST | Chain multiple operations (e.g., STT then TTS) with ordered steps |
+
+### Engine Management
+
+| Endpoint | Method | Description |
+| --- | --- | --- |
+| `AudioLabListEngines` | GET | List all engines with install status, models, dependencies, and Docker requirements |
+| `AudioLabInstallEngine` | POST (WS) | Install engine with real-time WebSocket progress streaming |
+| `AudioLabUninstallEngine` | POST | Remove engine from registry (does not delete venv) |
+| `GetAllProvidersStatus` | GET | List all registered providers with metadata |
+| `GetInstallationStatus` | GET | Check Python availability and per-provider install status |
+| `GetInstallationProgress` | GET | Poll real-time installation progress (percentage, current package) |
+| `InstallProviderDependencies` | POST | Install pip dependencies for a provider |
+
+### Video + Audio
+
+| Endpoint | Method | Description |
+| --- | --- | --- |
+| `CombineVideoAudio` | POST | Merge audio track into video (replace or mix mode), 200 MB video / 50 MB audio limit |
+| `ExtractAudioFromVideo` | POST | Extract audio track as 16-bit PCM WAV at 44.1 kHz, 200 MB video limit |
+
+### Permissions
+
+| Permission | Level | Covers |
+| --- | --- | --- |
+| `audio_process` | Power Users | ProcessAudio, ProcessTTS, ProcessSTT, ProcessWorkflow, CombineVideoAudio, ExtractAudioFromVideo |
+| `audio_manage_backends` | Power Users | InstallProviderDependencies, AudioLabInstallEngine, AudioLabUninstallEngine |
+| `audio_check_status` | Power Users | GetAllProvidersStatus, GetInstallationStatus, GetInstallationProgress, AudioLabListEngines |
 
 ## Architecture
 
@@ -116,53 +178,79 @@ SwarmUI-AudioLab/
 ├── AudioLabParams.cs                    # T2I parameter registration
 ├── AudioAPI/
 │   ├── AudioLabAPI.cs                   # API endpoints (process, install, status)
-│   └── VideoAudioEndpoints.cs           # Video+audio combining via ffmpeg
+│   └── VideoAudioEndpoints.cs           # Video+audio combining/extraction via ffmpeg
 ├── AudioBackends/
-│   └── DynamicAudioBackend.cs           # Unified backend, model routing, streaming
+│   └── DynamicAudioBackend.cs           # Unified backend, model routing, streaming, cancellation
 ├── AudioProviders/
-│   ├── AudioProviderDefinitions.cs      # Provider registry
-│   ├── ChatterboxProvider.cs            # One file per engine
+│   ├── AudioProviderDefinitions.cs      # Provider registry (auto-discovers all IAudioProviderSource)
+│   ├── ChatterboxProvider.cs            # One file per engine (14 TTS + 4 STT + 2 MusicGen + ...)
 │   ├── KokoroProvider.cs
-│   └── ...
+│   ├── FishSpeechProvider.cs
+│   ├── Qwen3TTSProvider.cs
+│   └── ...                              # 26 provider files total
 ├── AudioProviderTypes/
-│   ├── AudioCategory.cs                 # TTS, STT, MusicGen, VoiceClone, AudioFX, SoundFX
+│   ├── AudioCategory.cs                 # TTS, STT, AudioGeneration, VoiceConversion, AudioProcessing
 │   ├── AudioProviderDefinition.cs       # Provider definition schema
+│   ├── AudioProviderDefinitionBuilder.cs # Fluent builder for provider definitions
 │   └── IAudioProviderSource.cs          # Provider interface
 ├── AudioServices/
-│   ├── AudioServerManager.cs            # Python server lifecycle
+│   ├── AudioServerManager.cs            # Python server lifecycle, HTTP client, cancel support
 │   ├── AudioDependencyInstaller.cs      # pip dependency management
 │   └── VenvManager.cs                   # Per-engine-group virtual environments
 ├── Assets/
-│   ├── audio-core.js                    # Frontend UI
+│   ├── audio-core.js                    # Frontend UI (engine browser, param groups)
 │   ├── audio-api.js                     # API client
-│   ├── audio-player.js                  # Waveform player (WaveSurfer)
-│   ├── audio-integration.js             # SwarmUI integration
+│   ├── audio-player.js                  # Waveform player (WaveSurfer.js)
+│   ├── audio-editor.js                  # Audio editor modal
+│   ├── audio-integration.js             # SwarmUI integration hooks
 │   ├── audio-lab.css                    # Styling
 │   └── lib/                             # WaveSurfer, Crunker
 ├── python_backend/
-│   ├── audio_server.py                  # HTTP server (stdlib http.server)
-│   ├── engine_registry.py               # Engine discovery
+│   ├── audio_server.py                  # Threaded HTTP server with /process, /cancel, /download endpoints
+│   ├── engine_registry.py               # Engine discovery and caching
 │   ├── engines/
-│   │   ├── base_engine.py               # Base engine class
+│   │   ├── base_engine.py               # Base class (model download, cancellation, audio encoding)
 │   │   ├── tts_chatterbox.py            # One file per engine
 │   │   ├── tts_kokoro.py
+│   │   ├── tts_fishspeech.py
+│   │   ├── tts_qwen3.py
 │   │   ├── stt_whisper.py
 │   │   ├── music_acestep.py
 │   │   ├── clone_rvc.py
 │   │   ├── fx_demucs.py
 │   │   ├── sfx_audiogen.py
-│   │   └── ...
+│   │   └── ...                          # 26 engine files total
 │   └── docker/
 │       ├── Dockerfile
 │       └── docker-compose.yml
 └── README.md
 ```
 
-The extension follows a provider-based architecture:
+The extension follows a three-layer architecture:
 
-- **C# layer** registers providers, manages the backend lifecycle, routes generation requests by model prefix, and handles parameter mapping.
-- **Python layer** runs a lightweight HTTP server (Python's built-in `http.server`) per engine group, keeping models loaded in GPU memory between requests. Each engine implements a common base class and is loaded on-demand.
-- **Frontend** adds audio parameter groups to the Generate tab sidebar and provides a waveform-based audio player via WaveSurfer.js.
+- **C# layer** registers providers with a fluent builder API, manages the backend lifecycle, routes generation requests by model prefix, handles parameter mapping, and manages cancellation tokens.
+- **Python layer** runs a threaded HTTP server (Python's built-in `http.server` with `ThreadingMixIn`) per engine group, keeping models loaded in GPU memory between requests. Each engine extends `BaseAudioEngine` and is loaded on-demand. The server supports concurrent request handling (allowing `/cancel` to arrive while `/process` is running).
+- **Frontend** adds audio parameter groups to the Generate tab sidebar, provides a waveform-based audio player via WaveSurfer.js, and integrates with SwarmUI's generation lifecycle (model selection, parameter visibility, streaming playback, cancellation).
+
+### Engine Groups
+
+Engines are organized into groups that share a Python virtual environment:
+
+| Group | Engines | Notes |
+| --- | --- | --- |
+| `main` | 17 providers (Kokoro, Piper, F5, Fish Speech, Qwen3, Bark, NeuTTS, Orpheus, Dia, CSM, VibeVoice, Zonos, Whisper, Distil-Whisper, Moonshine, Demucs, OpenVoice) | Shared venv, most engines |
+| `chatterbox` | Chatterbox | Isolated due to dependency conflicts |
+| `audiocraft` | MusicGen, AudioGen | Shared AudioCraft dependencies |
+| `acestep` | ACE-Step | Isolated venv |
+| `linux_docker` | CosyVoice, RealtimeSTT, RVC, GPT-SoVITS, Resemble Enhance | Docker containers on Windows, native venv on Linux |
+
+### Cancellation
+
+Cancellation is built into all 26 engines through a three-layer system:
+
+1. **Infrastructure** — When the user clicks Stop Generation, SwarmUI fires the session's `InterruptToken`. The C# layer detects this, cancels the HTTP request, and sends a `/cancel/{id}` request to the Python server. The server marks the result as cancelled.
+2. **Cooperative** — Engines with iterative processing loops (Fish Speech, Kokoro, Piper, CosyVoice, Zonos, Qwen3) call `self.is_cancelled()` periodically for fast mid-inference cancellation.
+3. **Session** — Both "Stop Generation" (current session) and "Stop All Generations" (all sessions) work automatically through the same token mechanism.
 
 ## Backend Settings
 
@@ -170,8 +258,8 @@ The extension follows a provider-based architecture:
 | --- | --- | --- |
 | Use Docker | `false` | Enable Docker for Linux-only engines on Windows |
 | Audio Model Root | `Models/audio` | Storage path for downloaded audio models |
-| Timeout Seconds | `300` | Max wait time for audio generation |
-| Debug Mode | `false` | Enable verbose logging |
+| Timeout Seconds | `300` | Max wait time per audio generation request |
+| Debug Mode | `false` | Enable verbose Python server logging |
 
 ## Troubleshooting
 
@@ -179,6 +267,11 @@ The extension follows a provider-based architecture:
 - Ensure Python 3.10+ is on your system PATH (`python --version` or `python3 --version`)
 - Check that you have a stable internet connection for downloading model weights
 - Check the SwarmUI server logs for detailed error output
+
+**Gated model access denied:**
+- Some models (e.g., certain Fish Speech or Qwen3 variants) require accepting a license agreement on HuggingFace
+- Go to the model's HuggingFace page, accept the agreement, then set your HuggingFace token in SwarmUI: Server > User Settings > API Keys
+- Get a token at https://huggingface.co/settings/tokens (needs "Read" permission)
 
 **Docker engines not available on Windows:**
 - Enable "Use Docker" in the Audio Backend settings
@@ -192,6 +285,10 @@ The extension follows a provider-based architecture:
 
 **Video+audio features not working:**
 - Install ffmpeg and ensure it is on your system PATH
+
+**Stop Generation not working:**
+- Ensure the Audio Backend is running and healthy (check Server > Backends)
+- For single-call engines (e.g., Bark), the GPU computation may finish before the cancel signal arrives — the result is still discarded
 
 ## License
 

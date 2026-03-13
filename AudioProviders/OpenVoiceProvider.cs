@@ -3,7 +3,7 @@ using Hartsy.Extensions.AudioLab.WebAPI.Models;
 
 namespace Hartsy.Extensions.AudioLab.AudioProviders;
 
-/// <summary>OpenVoice v2 provider — zero-shot voice cloning with granular tone/style control.</summary>
+/// <summary>OpenVoice v2 provider — transfers the tone/style of a reference voice onto existing audio. Audio in, audio out (no text generation).</summary>
 public sealed class OpenVoiceProvider : IAudioProviderSource
 {
     /// <summary>Singleton instance of the OpenVoice provider.</summary>
@@ -13,7 +13,7 @@ public sealed class OpenVoiceProvider : IAudioProviderSource
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("openvoice_clone")
         .WithName("OpenVoice V2")
-        .WithCategory(AudioCategory.VoiceClone)
+        .WithCategory(AudioCategory.VoiceConversion)
         .WithPythonEngine("clone_openvoice", "OpenVoiceEngine")
         .WithModelPrefix("OpenVoice")
         .WithModelClass("openvoice_clone", "OpenVoice V2")
@@ -39,7 +39,7 @@ public sealed class OpenVoiceProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "v2", Name = "OpenVoice V2", Description = "Zero-shot voice cloning with tone/style transfer", SourceUrl = "https://github.com/myshell-ai/OpenVoice", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~2GB", EngineConfig = new() { ["model_version"] = "v2" } }
+        new() { Id = "v2", Name = "OpenVoice V2", Description = "Voice tone transfer: takes existing audio + a reference voice clip, outputs the same speech with the reference voice's tone/style applied. Zero-shot, no model training needed.", SourceUrl = "https://github.com/myshell-ai/OpenVoice", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~2GB", EngineConfig = new() { ["model_version"] = "v2" } }
     ];
 
     #endregion

@@ -3,7 +3,7 @@ using Hartsy.Extensions.AudioLab.WebAPI.Models;
 
 namespace Hartsy.Extensions.AudioLab.AudioProviders;
 
-/// <summary>GPT-SoVITS provider — few-shot voice cloning (1 min reference), strong multilingual/CJK support.</summary>
+/// <summary>GPT-SoVITS provider — generates new speech from text in a cloned voice (TTS with voice cloning). Requires ~1 min reference audio. Strong multilingual/CJK support.</summary>
 public sealed class GPTSoVITSProvider : IAudioProviderSource
 {
     /// <summary>Singleton instance of the GPT-SoVITS provider.</summary>
@@ -13,7 +13,7 @@ public sealed class GPTSoVITSProvider : IAudioProviderSource
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("gptsovits_clone")
         .WithName("GPT-SoVITS")
-        .WithCategory(AudioCategory.VoiceClone)
+        .WithCategory(AudioCategory.VoiceConversion)
         .WithPythonEngine("clone_gptsovits", "GPTSoVITSEngine")
         .WithModelPrefix("GPTSoVITS")
         .WithModelClass("gptsovits_clone", "GPT-SoVITS")
@@ -42,7 +42,7 @@ public sealed class GPTSoVITSProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "default", Name = "GPT-SoVITS Default", Description = "Few-shot voice cloning from 1 min reference, CJK + English", SourceUrl = "https://github.com/RVC-Boss/GPT-SoVITS", License = "MIT", EstimatedSize = "~2GB", EstimatedVram = "~4GB" }
+        new() { Id = "default", Name = "GPT-SoVITS Default", Description = "Text-to-speech with voice cloning: generates new speech from text using a ~1 min reference audio clip. Unlike RVC/OpenVoice, this creates speech from text rather than converting existing audio. CJK + English.", SourceUrl = "https://github.com/RVC-Boss/GPT-SoVITS", License = "MIT", EstimatedSize = "~2GB", EstimatedVram = "~4GB" }
     ];
 
     #endregion

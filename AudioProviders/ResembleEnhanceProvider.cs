@@ -13,7 +13,7 @@ public sealed class ResembleEnhanceProvider : IAudioProviderSource
     public AudioProviderDefinition GetProvider() => AudioProviderDefinitionBuilder.Create()
         .WithId("resemble_enhance_fx")
         .WithName("Resemble Enhance")
-        .WithCategory(AudioCategory.AudioFX)
+        .WithCategory(AudioCategory.AudioProcessing)
         .WithPythonEngine("fx_resemble_enhance", "ResembleEnhanceEngine")
         .WithModelPrefix("ResembleEnhance")
         .WithModelClass("resemble_enhance_fx", "Resemble Enhance")

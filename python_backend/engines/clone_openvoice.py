@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""OpenVoice V2 engine — zero-shot voice tone cloning."""
+"""OpenVoice V2 engine — voice tone/style transfer (audio in → audio out).
+
+Takes existing audio + a reference voice clip and transfers the
+reference voice's tone/style onto the source audio.  Does NOT
+generate new speech from text — only changes the voice characteristics
+of existing audio.  Zero-shot (no model training needed, just a wav clip).
+"""
 
 import base64
 import logging
@@ -13,7 +19,7 @@ logger = logging.getLogger("Clone.OpenVoice")
 
 
 class OpenVoiceEngine(BaseAudioEngine):
-    """OpenVoice V2 voice cloning engine."""
+    """OpenVoice V2 voice tone transfer engine (audio in → audio out, no text generation)."""
 
     name = "openvoice"
     category = "voiceclone"

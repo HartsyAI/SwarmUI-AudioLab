@@ -27,17 +27,17 @@ const AudioLabConfig = {
         distilwhisper_stt: { category: 'audiolab_stt', providerFlag: 'distilwhisper_stt_params' },
         moonshine_stt: { category: 'audiolab_stt', providerFlag: 'moonshine_stt_params' },
         realtimestt_stt: { category: 'audiolab_stt', providerFlag: 'realtimestt_params' },
-        musicgen_music: { category: 'audiolab_music', providerFlag: 'musicgen_music_params' },
-        acestep_music: { category: 'audiolab_music', providerFlag: 'acestep_music_params' },
+        musicgen_music: { category: 'audiolab_audiogen', providerFlag: 'musicgen_music_params' },
+        acestep_music: { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params' },
         openvoice_clone: { category: 'audiolab_clone', providerFlag: 'openvoice_clone_params' },
         rvc_clone: { category: 'audiolab_clone', providerFlag: 'rvc_clone_params' },
         gptsovits_clone: { category: 'audiolab_clone', providerFlag: 'gptsovits_clone_params' },
-        demucs_fx: { category: 'audiolab_fx', providerFlag: 'demucs_fx_params' },
-        resemble_enhance_fx: { category: 'audiolab_fx', providerFlag: 'resemble_enhance_fx_params' },
-        audiogen_sfx: { category: 'audiolab_sfx', providerFlag: 'audiogen_sfx_params' }
+        demucs_fx: { category: 'audiolab_audioproc', providerFlag: 'demucs_fx_params' },
+        resemble_enhance_fx: { category: 'audiolab_audioproc', providerFlag: 'resemble_enhance_fx_params' },
+        audiogen_sfx: { category: 'audiolab_audiogen', providerFlag: 'audiogen_sfx_params' }
     },
 
-    categoryFlags: ['audiolab_tts', 'audiolab_stt', 'audiolab_music', 'audiolab_clone', 'audiolab_fx', 'audiolab_sfx'],
+    categoryFlags: ['audiolab_tts', 'audiolab_stt', 'audiolab_audiogen', 'audiolab_clone', 'audiolab_audioproc'],
 
     /** Core image params to hide when an audio model is selected. */
     coreParamsToHide: [
@@ -275,10 +275,9 @@ setTimeout(() => {
 const ENGINE_CATEGORIES = [
     { key: 'TTS', label: 'Text-to-Speech' },
     { key: 'STT', label: 'Speech-to-Text' },
-    { key: 'MusicGen', label: 'Music Generation' },
-    { key: 'VoiceClone', label: 'Voice Cloning' },
-    { key: 'AudioFX', label: 'Audio Effects' },
-    { key: 'SoundFX', label: 'Sound Effects' }
+    { key: 'AudioGeneration', label: 'Audio Generation' },
+    { key: 'VoiceConversion', label: 'Voice Conversion' },
+    { key: 'AudioProcessing', label: 'Audio Processing' }
 ];
 
 let audioLabEngineData = null;
