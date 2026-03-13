@@ -13,7 +13,6 @@ public static class ProgressTracking
 
     static ProgressTracking()
     {
-        // Auto-cleanup completed trackers every 5 minutes
         _cleanupTimer = new Timer(CleanupCompletedTrackers, null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
     }
 
@@ -56,7 +55,6 @@ public static class ProgressTracking
         foreach (KeyValuePair<string, ProgressTracker> kvp in _trackers)
         {
             ProgressTracker tracker = kvp.Value;
-            // Remove trackers completed more than 10 minutes ago
             if (tracker.IsComplete && tracker.EndTime.HasValue &&
                 DateTime.UtcNow - tracker.EndTime.Value > TimeSpan.FromMinutes(10))
             {

@@ -47,7 +47,6 @@ public static class VideoAudioEndpoints
             if (string.IsNullOrEmpty(audioData))
                 return AudioLab.CreateErrorResponse("audio_data is required", "missing_audio");
 
-            // Validate sizes
             long videoBytes = (videoData.Length * 3) / 4;
             long audioBytes = (audioData.Length * 3) / 4;
             if (videoBytes > MaxVideoSizeMB * 1024 * 1024)
@@ -55,7 +54,6 @@ public static class VideoAudioEndpoints
             if (audioBytes > MaxAudioSizeMB * 1024 * 1024)
                 return AudioLab.CreateErrorResponse($"Audio too large (max {MaxAudioSizeMB}MB)", "audio_too_large");
 
-            // Write temp files
             string tempDir = Path.Combine(Path.GetTempPath(), "audiolab_video");
             Directory.CreateDirectory(tempDir);
             string videoPath = Path.Combine(tempDir, $"video_{Guid.NewGuid():N}.mp4");
@@ -163,6 +161,7 @@ public static class VideoAudioEndpoints
         }
     }
 
+    /// <summary>Runs an ffmpeg command and returns combined stdout/stderr output.</summary>
     private static async Task<string> RunFfmpeg(string ffmpegPath, string[] args)
     {
         ProcessStartInfo start = new(ffmpegPath, args)
@@ -181,6 +180,7 @@ public static class VideoAudioEndpoints
         return string.IsNullOrWhiteSpace(error) ? output : $"{output}\n{error}";
     }
 
+    /// <summary>Best-effort deletion of a temporary file.</summary>
     private static void TryDelete(string path)
     {
         try { if (File.Exists(path)) File.Delete(path); }

@@ -17,6 +17,8 @@ namespace Hartsy.Extensions.AudioLab.AudioServices;
 /// on a separate port. Servers are started lazily on first use via EnsureGroupRunningAsync.</summary>
 public class AudioServerManager : IDisposable
 {
+    #region Fields
+
     private static readonly Lazy<AudioServerManager> InstanceLazy = new(() => new AudioServerManager());
     public static AudioServerManager Instance => InstanceLazy.Value;
 
@@ -30,12 +32,18 @@ public class AudioServerManager : IDisposable
     /// <summary>State for a single compatibility group's server process.</summary>
     private class GroupServerState
     {
+        /// <summary>Compatibility group name (e.g. "main", "chatterbox", "audiocraft").</summary>
         public string Group { get; init; }
+        /// <summary>The running Python server process, or null if not started.</summary>
         public Process ServerProcess { get; set; }
+        /// <summary>The HTTP port this group's server listens on.</summary>
         public int Port { get; set; }
+        /// <summary>Whether the server has passed its health check.</summary>
         public bool IsRunning { get; set; }
+        /// <summary>Prevents concurrent start attempts for this group.</summary>
         public SemaphoreSlim StartLock { get; } = new(1, 1);
 
+        /// <summary>True if the server is running and the process hasn't exited.</summary>
         public bool IsAlive => IsRunning && ServerProcess is not null && !ServerProcess.HasExited;
     }
 
@@ -43,6 +51,10 @@ public class AudioServerManager : IDisposable
     {
         Logs.Debug("[AudioLab] AudioServerManager instance created");
     }
+
+    #endregion
+
+    #region Properties
 
     /// <summary>Whether any group server is currently running and healthy.</summary>
     public bool IsRunning => _groupServers.Values.Any(g => g.IsAlive);
@@ -54,6 +66,10 @@ public class AudioServerManager : IDisposable
     /// <summary>The port for a specific group's server, or 0 if not running.</summary>
     public int GetGroupPort(string group) =>
         _groupServers.TryGetValue(group, out GroupServerState state) ? state.Port : 0;
+
+    #endregion
+
+    #region Server Lifecycle
 
     /// <summary>Starts the default group server with backend status management.
     /// Called by DynamicAudioBackend during initialization.</summary>
@@ -86,7 +102,7 @@ public class AudioServerManager : IDisposable
 
         if (state.IsAlive) return true;
 
-        // Check if this group recently failed to start (prevents retry storms during streaming)
+        // Prevents retry storms during streaming when a group fails to start
         if (_groupStartFailures.TryGetValue(group, out DateTime failedAt)
             && DateTime.UtcNow - failedAt < StartFailureCooldown)
         {
@@ -96,7 +112,6 @@ public class AudioServerManager : IDisposable
         await state.StartLock.WaitAsync();
         try
         {
-            // Double-check after acquiring lock
             if (state.IsAlive) return true;
 
             string scriptPath = Path.Combine(AudioConfiguration.PythonBackendDirectory, "audio_server.py");
@@ -106,7 +121,6 @@ public class AudioServerManager : IDisposable
                 return false;
             }
 
-            // Get Python from the group's venv (creates venv if needed)
             string pythonPath = await VenvManager.Instance.EnsureVenvAsync(group);
             if (pythonPath == null)
             {
@@ -115,7 +129,6 @@ public class AudioServerManager : IDisposable
                 return false;
             }
 
-            // Install minimum packages needed for audio_server.py to start (numpy is imported by base_engine.py)
             if (!await InstallBootstrapDependenciesAsync(pythonPath, group))
             {
                 _groupStartFailures[group] = DateTime.UtcNow;
@@ -139,14 +152,11 @@ public class AudioServerManager : IDisposable
                 WorkingDirectory = Path.GetDirectoryName(scriptPath)
             };
             PythonLaunchHelper.CleanEnvironmentOfPythonMess(psi, $"(AudioLab/{group}) ");
-            // Suppress noisy but harmless Python library warnings
             psi.Environment["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1";
             psi.Environment["TOKENIZERS_PARALLELISM"] = "false";
             psi.Environment["PYTHONWARNINGS"] = "ignore::FutureWarning,ignore::UserWarning";
-            // Set PATH to the venv's directory so pip-installed scripts are found
             string pythonDir = Path.GetDirectoryName(Path.GetFullPath(pythonPath));
             psi.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(pythonDir);
-            // Pass the user's HuggingFace API token for authenticated model downloads
             try
             {
                 if (Program.Sessions == null)
@@ -185,7 +195,6 @@ public class AudioServerManager : IDisposable
             state.ServerProcess = new Process { StartInfo = psi };
             state.ServerProcess.Start();
 
-            // Monitor stderr and capture for error reporting
             StringBuilder startupStderr = new();
             Process proc = state.ServerProcess;
             string logPrefix = group;
@@ -206,7 +215,6 @@ public class AudioServerManager : IDisposable
                 catch { /* Process exited */ }
             });
 
-            // Poll health check
             for (int i = 0; i < 60; i++)
             {
                 await Task.Delay(1000);
@@ -250,16 +258,18 @@ public class AudioServerManager : IDisposable
         }
     }
 
+    #endregion
+
+    #region Request Processing
+
     /// <summary>Routes a processing request to the appropriate group server (or Docker) via HTTP.</summary>
     public async Task<JObject> ProcessAsync(AudioProviderDefinition provider, Dictionary<string, object> args)
     {
-        // Route Docker-required providers to the Docker container if enabled
         if (provider.RequiresDocker && AudioConfiguration.UseDocker)
         {
             return await ProcessViaDockerAsync(provider, args);
         }
 
-        // Determine which group this provider belongs to and ensure its server is running
         string group = provider.EngineGroup;
         if (!IsGroupRunning(group))
         {
@@ -378,7 +388,6 @@ public class AudioServerManager : IDisposable
 
         state.IsRunning = false;
 
-        // Wait for process to exit, kill if needed
         if (state.ServerProcess is not null && !state.ServerProcess.HasExited)
         {
             try
@@ -398,6 +407,10 @@ public class AudioServerManager : IDisposable
         _groupServers.TryRemove(group, out _);
         Logs.Info($"[AudioLab] Audio server for group '{group}' stopped");
     }
+
+    #endregion
+
+    #region Diagnostics
 
     /// <summary>Gets diagnostic status of all group servers.</summary>
     public JObject GetStatus()
@@ -424,6 +437,10 @@ public class AudioServerManager : IDisposable
 
         return status;
     }
+
+    #endregion
+
+    #region Docker Support
 
     /// <summary>Starts the Docker container for Linux-only engines.</summary>
     public async Task StartDockerAsync()
@@ -457,7 +474,6 @@ public class AudioServerManager : IDisposable
 
             if (proc.ExitCode == 0)
             {
-                // Wait for health check
                 for (int i = 0; i < 30; i++)
                 {
                     await Task.Delay(2000);
@@ -565,12 +581,17 @@ public class AudioServerManager : IDisposable
         }
     }
 
+    /// <summary>Disposes HTTP client and shuts down all servers.</summary>
     public void Dispose()
     {
         ShutdownAsync().Wait(5000);
         StopDockerAsync().Wait(5000);
         _httpClient.Dispose();
     }
+
+    #endregion
+
+    #region Private Helpers
 
     /// <summary>Installs the minimum packages needed for audio_server.py to start.
     /// Currently just numpy (imported at top level by base_engine.py).
@@ -634,6 +655,7 @@ public class AudioServerManager : IDisposable
         }
     }
 
+    /// <summary>Gets the request timeout in milliseconds from configuration.</summary>
     private static int GetTimeoutMs(AudioCategory _) => AudioConfiguration.TimeoutSeconds * 1000;
 
     /// <summary>Retrieves the current HuggingFace API token from user settings.
@@ -697,6 +719,7 @@ public class AudioServerManager : IDisposable
         }
     }
 
+    /// <summary>Creates the standard model subdirectories (tts, stt, music, etc.) under the model root.</summary>
     private static void EnsureModelDirectories(string root)
     {
         foreach (string sub in new[] { "tts", "stt", "music", "clone", "fx", ".cache" })
@@ -705,6 +728,7 @@ public class AudioServerManager : IDisposable
         }
     }
 
+    /// <summary>Creates a standardized JSON error response.</summary>
     private static JObject CreateErrorResponse(string message)
     {
         return new JObject
@@ -714,4 +738,6 @@ public class AudioServerManager : IDisposable
             ["timestamp"] = DateTime.UtcNow.ToString("O")
         };
     }
+
+    #endregion
 }

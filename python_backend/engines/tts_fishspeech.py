@@ -31,11 +31,8 @@ class FishSpeechEngine(BaseAudioEngine):
 
     def __init__(self):
         self.engine = None
-        self.llama_model = None
-        self.decode_one_token = None
         self.decoder_model = None
         self.llama_queue = None
-        self.llama_thread = None
         self.sample_rate = 44100
         self.device = None
         self.current_model_name = None
@@ -92,10 +89,9 @@ class FishSpeechEngine(BaseAudioEngine):
         )
         self.sample_rate = getattr(self.decoder_model, "sample_rate", 44100)
 
-        # Launch LLM inference thread with queue
+        # Launch LLM inference thread — returns the input queue
         logger.info("Loading DualARTransformer from %s", local_path)
-        self.llama_queue = queue.Queue()
-        self.llama_thread = launch_thread_safe_queue(
+        self.llama_queue = launch_thread_safe_queue(
             checkpoint_path=local_path,
             device=self.device,
             precision=precision,
@@ -220,9 +216,6 @@ class FishSpeechEngine(BaseAudioEngine):
 
     def cleanup(self):
         self.engine = None
-        self.llama_model = None
-        self.decode_one_token = None
         self.decoder_model = None
         self.llama_queue = None
-        self.llama_thread = None
         self.current_model_name = None

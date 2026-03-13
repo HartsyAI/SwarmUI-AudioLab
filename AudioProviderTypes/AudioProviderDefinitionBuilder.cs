@@ -5,6 +5,8 @@ namespace Hartsy.Extensions.AudioLab.AudioProviderTypes;
 /// <summary>Fluent builder for creating <see cref="AudioProviderDefinition"/> instances.</summary>
 public sealed class AudioProviderDefinitionBuilder
 {
+    #region Fields
+
     private string _id = "";
     private string _name = "";
     private AudioCategory _category;
@@ -18,6 +20,10 @@ public sealed class AudioProviderDefinitionBuilder
     private readonly List<AudioModelDefinition> _models = [];
     private string _engineGroup = "default";
     private bool _requiresDocker = false;
+
+    #endregion
+
+    #region Builder Methods
 
     /// <summary>Sets the unique provider identifier.</summary>
     public AudioProviderDefinitionBuilder WithId(string id) { _id = id; return this; }
@@ -68,6 +74,11 @@ public sealed class AudioProviderDefinitionBuilder
     /// <summary>Marks this provider as requiring Docker to run.</summary>
     public AudioProviderDefinitionBuilder WithRequiresDocker() { _requiresDocker = true; return this; }
 
+    #endregion
+
+    #region Build
+
+    /// <summary>Validates required fields and constructs the provider definition.</summary>
     public AudioProviderDefinition Build()
     {
         if (string.IsNullOrEmpty(_id)) throw new InvalidOperationException("Provider ID is required");
@@ -96,4 +107,6 @@ public sealed class AudioProviderDefinitionBuilder
 
     /// <summary>Creates a new builder instance.</summary>
     public static AudioProviderDefinitionBuilder Create() => new();
+
+    #endregion
 }

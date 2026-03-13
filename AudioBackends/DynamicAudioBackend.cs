@@ -24,6 +24,8 @@ namespace Hartsy.Extensions.AudioLab.AudioBackends;
 /// routes generation requests to the correct provider's Python engine.</summary>
 public class DynamicAudioBackend : AbstractT2IBackend
 {
+    #region Static Initialization
+
     /// <summary>Static constructor to register our model provider with ModelsAPI.
     /// Mirrors DynamicAPIBackend static constructor pattern.</summary>
     static DynamicAudioBackend()
@@ -54,6 +56,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
         return [];
     }
+
+    #endregion
+
+    #region Settings and Fields
 
     /// <summary>Settings for the dynamic audio backend.</summary>
     public class DynamicAudioSettings : AutoConfiguration
@@ -106,6 +112,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// <summary>Path to the installed engines config file.</summary>
     private static string InstalledEnginesConfigPath => Path.Combine(Program.DataDir, "AudioLabInstalledEngines.json");
 
+    #endregion
+
+    #region Initialization
+
     /// <summary>Initializes the backend with default settings and LOADING status.</summary>
     public DynamicAudioBackend()
     {
@@ -125,7 +135,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
         RemoteModels.Clear();
         Program.ModelRefreshEvent -= ReRegisterModelsAfterRefresh;
 
-        // Apply settings to configuration
         AudioConfiguration.UseDocker = Settings.UseDocker;
         AudioConfiguration.TimeoutSeconds = Settings.TimeoutSeconds;
         if (!string.IsNullOrEmpty(Settings.AudioModelRoot))
@@ -146,7 +155,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     continue;
                 }
 
-                // Platform check: skip Docker-only engines on Windows without Docker
                 if (definition.RequiresDocker && RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && !Settings.UseDocker)
                 {
                     Logs.Warning($"[AudioLab] {definition.Name} requires Docker on Windows. Enable 'Use Docker' in settings.");
@@ -183,7 +191,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
             }
             Program.ModelRefreshEvent += ReRegisterModelsAfterRefresh;
 
-            // Start servers for installed engine groups
             HashSet<string> activeGroups = [];
             foreach (AudioProviderMetadata providerMeta in _providers.Values)
             {
@@ -204,7 +211,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 }
             }
 
-            // Start Docker container if any installed providers require it
             if (AudioConfiguration.UseDocker && _providers.Values.Any(p => p.Definition.RequiresDocker))
             {
                 await AudioServerManager.Instance.StartDockerAsync();
@@ -227,6 +233,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
             Status = BackendStatus.ERRORED;
         }
     }
+
+    #endregion
+
+    #region Model Registration
 
     /// <summary>Registers models for a specific provider into MainSDModels.
     /// Mirrors DynamicAPIBackend.RegisterModelsForProvider().</summary>
@@ -322,6 +332,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
         };
     }
 
+    #endregion
+
+    #region Generation
+
     /// <summary>Generate with live output. Yields AudioFile objects via takeOutput.
     /// Routes to streaming or normal path based on StreamAudio param.
     /// Mirrors DynamicAPIBackend.GenerateLive().</summary>
@@ -339,7 +353,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
         AudioProviderDefinition provider = meta.Definition;
         AudioModelDefinition modelDef = GetModelDefinition(modelName, provider);
 
-        // Check streaming conditions: TTS + StreamChunkSize != "off" + 2+ chunks
         if (provider.Category == AudioCategory.TTS
             && user_input.TryGet(AudioLabParams.StreamChunkSize, out string chunkMode) && chunkMode != "off")
         {
@@ -429,7 +442,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
     {
         Logs.Info($"[AudioLab] Streaming TTS: {chunks.Count} chunks via {provider.Name}");
 
-        // Enable DoNotSaveIntermediates so chunk outputs aren't saved to disk
         user_input.Set(T2IParamTypes.DoNotSaveIntermediates, true);
 
         List<byte[]> pcmChunks = [];
@@ -442,7 +454,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
         for (int i = 0; i < chunks.Count; i++)
         {
-            // Send progress update
             double overallPercent = (double)i / chunks.Count * 100;
             takeOutput(new JObject
             {
@@ -454,7 +465,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 }
             });
 
-            // Build args with this chunk as the text
             T2IParamInput chunkInput = user_input.Clone();
             chunkInput.Set(T2IParamTypes.Prompt, chunks[i]);
             Dictionary<string, object> args = BuildEngineArgs(chunkInput, provider, modelDef);
@@ -470,17 +480,14 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     {
                         byte[] audioBytes = Convert.FromBase64String(audioBase64);
 
-                        // Read format from first chunk
                         if (!formatRead)
                         {
                             (sampleRate, channels, bitsPerSample) = ReadWavFormat(audioBytes);
                             formatRead = true;
                         }
 
-                        // Accumulate raw PCM for final concatenation
                         pcmChunks.Add(StripWavHeader(audioBytes));
 
-                        // Send chunk as intermediate (non-real) output for auto-play
                         AudioFile chunkAudio = new(audioBytes, MediaType.AudioWav);
                         takeOutput(new T2IEngine.ImageOutput { File = chunkAudio, IsReal = false });
 
@@ -521,7 +528,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
             }
         }
 
-        // Concatenate all PCM chunks into final WAV
         if (pcmChunks.Count > 0)
         {
             byte[] finalWav = BuildWavFromPcm(pcmChunks, sampleRate, channels, bitsPerSample);
@@ -537,7 +543,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
             meta.LastError ??= "Streaming generation produced no audio";
         }
 
-        // Final progress
         takeOutput(new JObject
         {
             ["gen_progress"] = new JObject
@@ -554,6 +559,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
     {
         return [];
     }
+
+    #endregion
+
+    #region Model Loading and Shutdown
 
     /// <summary>Loads a model by matching its name against provider prefixes.</summary>
     public override Task<bool> LoadModel(T2IModel model, T2IParamInput input)
@@ -593,6 +602,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// <summary>Gets all currently enabled provider metadata (for API status endpoints).</summary>
     public IReadOnlyDictionary<string, AudioProviderMetadata> GetProviders() => _providers;
 
+    #endregion
+
     #region Engine Installation and Management
 
     /// <summary>Installs an engine: creates venv, installs deps, starts server,
@@ -612,7 +623,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
         {
             if (!definition.RequiresDocker)
             {
-                // 1. Ensure venv exists for this engine group
                 onProgress?.Invoke($"Creating Python environment for group '{definition.EngineGroup}'...");
                 string venvPython = await VenvManager.Instance.EnsureVenvAsync(definition.EngineGroup);
                 if (venvPython == null)
@@ -622,7 +632,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     return false;
                 }
 
-                // 2. Install pip dependencies
                 onProgress?.Invoke($"Installing dependencies for {definition.Name}...");
                 AudioDependencyInstaller installer = new();
                 PythonEnvironmentInfo pythonInfo = await installer.DetectPythonEnvironmentForGroupAsync(definition.EngineGroup);
@@ -640,13 +649,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     return false;
                 }
 
-                // 3. Start the server for this group
                 onProgress?.Invoke($"Starting audio server for group '{definition.EngineGroup}'...");
                 await AudioServerManager.Instance.EnsureGroupRunningAsync(definition.EngineGroup);
             }
             else
             {
-                // Docker-based engine
                 if (!AudioConfiguration.UseDocker)
                 {
                     Logs.Error($"[AudioLab] {definition.Name} requires Docker but Docker is not enabled.");
@@ -657,7 +664,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 await AudioServerManager.Instance.StartDockerAsync();
             }
 
-            // 3.5. Download model weights for engines with known HuggingFace model IDs
             foreach (AudioModelDefinition modelDef in definition.Models)
             {
                 if (modelDef.EngineConfig.TryGetValue("model_name", out object modelNameObj)
@@ -682,7 +688,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 }
             }
 
-            // 4. Register models
             onProgress?.Invoke($"Registering models for {definition.Name}...");
             AudioProviderMetadata meta = new()
             {
@@ -704,11 +709,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
             UpdateRemoteModels();
 
-            // 5. Persist installed state
             InstalledEngines.Add(providerId);
             SaveInstalledEnginesConfig();
 
-            // 6. Trigger model refresh so UI picks up the new models
             Program.ModelRefreshEvent?.Invoke();
 
             onProgress?.Invoke($"{definition.Name} installed successfully!");
@@ -729,7 +732,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
         AudioProviderDefinition definition = AudioProviderRegistry.GetById(providerId);
         string providerName = definition?.Name ?? providerId;
 
-        // Remove models from MainSDModels
         if (definition != null)
         {
             foreach (AudioModelDefinition modelDef in definition.Models)
@@ -744,7 +746,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
             }
         }
 
-        // Remove from Models list
         if (Models.TryGetValue("Stable-Diffusion", out List<string> modelList) && definition != null)
         {
             foreach (AudioModelDefinition modelDef in definition.Models)
@@ -753,12 +754,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
             }
         }
 
-        // Remove provider metadata and feature flags
         _providers.Remove(providerId);
         RebuildFeatureFlags();
         UpdateRemoteModels();
 
-        // Persist
         InstalledEngines.Remove(providerId);
         SaveInstalledEnginesConfig();
 
@@ -1008,6 +1007,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             case "f5_tts":
                 args["nfe_step"] = input.TryGet(AudioLabParams.NFEStep, out int nfeStep) ? nfeStep : 32;
                 args["speed"] = input.TryGet(AudioLabParams.F5Speed, out double f5spd) ? f5spd : 1.0;
+                args["cfg_scale"] = input.TryGet(AudioLabParams.F5CFG, out double f5Cfg) ? f5Cfg : 2.0;
                 break;
 
             case "zonos_tts":
@@ -1022,6 +1022,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["max_new_tokens"] = input.TryGet(AudioLabParams.FishSpeechMaxTokens, out int fsMaxTok) ? fsMaxTok : 1024;
                 args["chunk_length"] = input.TryGet(AudioLabParams.FishSpeechChunkLength, out int fsChunk) ? fsChunk : 200;
                 args["normalize"] = input.TryGet(AudioLabParams.FishSpeechNormalize, out string fsNorm) ? fsNorm == "true" : true;
+                break;
+
+            case "qwen3_tts":
+                args["qwen3_language"] = input.TryGet(AudioLabParams.Qwen3Language, out string q3Lang) ? q3Lang : "Auto";
+                args["qwen3_speaker"] = input.TryGet(AudioLabParams.Qwen3Speaker, out string q3Spk) ? q3Spk : "Ryan";
+                if (input.TryGet(AudioLabParams.Qwen3Instruct, out string q3Inst) && !string.IsNullOrEmpty(q3Inst))
+                    args["qwen3_instruct"] = q3Inst;
                 break;
 
             case "cosyvoice_tts":

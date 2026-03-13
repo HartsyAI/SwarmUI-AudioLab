@@ -8,7 +8,6 @@ public static class AudioProviderDefinitions
     /// <summary>All built-in provider sources that should be registered at startup.</summary>
     public static IReadOnlyList<IAudioProviderSource> All =>
     [
-        // TTS providers
         ChatterboxProvider.Instance,
         BarkProvider.Instance,
         VibeVoiceProvider.Instance,
@@ -21,23 +20,19 @@ public static class AudioProviderDefinitions
         CosyVoiceProvider.Instance,
         NeuTTSProvider.Instance,
         FishSpeechProvider.Instance,
+        Qwen3TTSProvider.Instance,
         PiperProvider.Instance,
-        // STT providers
         WhisperProvider.Instance,
         RealtimeSTTProvider.Instance,
         MoonshineProvider.Instance,
         DistilWhisperProvider.Instance,
-        // Music generation providers
         AceStepProvider.Instance,
         MusicGenProvider.Instance,
-        // Voice cloning providers
         OpenVoiceProvider.Instance,
         RVCProvider.Instance,
         GPTSoVITSProvider.Instance,
-        // Audio FX providers
         DemucsProvider.Instance,
         ResembleEnhanceProvider.Instance,
-        // Sound FX providers
         AudioGenProvider.Instance
     ];
 

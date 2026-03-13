@@ -11,6 +11,8 @@ namespace Hartsy.Extensions.AudioLab.AudioServices;
 /// with a generic interface that routes requests through the engine_registry.</summary>
 public class PythonAudioProcessor
 {
+    #region Fields
+
     private static readonly Lazy<PythonAudioProcessor> InstanceLazy = new(() => new PythonAudioProcessor());
     public static PythonAudioProcessor Instance => InstanceLazy.Value;
 
@@ -23,6 +25,10 @@ public class PythonAudioProcessor
     {
         Logs.Debug("[AudioLab] PythonAudioProcessor instance created");
     }
+
+    #endregion
+
+    #region Public API
 
     /// <summary>Initializes the processor by detecting the Python environment.</summary>
     public async Task<bool> InitializeAsync()
@@ -139,6 +145,10 @@ public class PythonAudioProcessor
         };
     }
 
+    #endregion
+
+    #region Private Helpers
+
     /// <summary>Runs the voice_processor.py script with arguments and returns JSON output.</summary>
     private async Task<string> RunPythonScriptAsync(string[] args, int timeoutMs = 30000)
     {
@@ -252,6 +262,7 @@ public class PythonAudioProcessor
         }
     }
 
+    /// <summary>Resolves SwarmUI's bundled Python path (embedded or venv).</summary>
     private static string GetSwarmUIPythonPath()
     {
         if (File.Exists("./dlbackend/comfy/python_embeded/python.exe"))
@@ -261,12 +272,14 @@ public class PythonAudioProcessor
         return null;
     }
 
+    /// <summary>Escapes special characters in a command-line argument.</summary>
     private static string EscapeArgument(string argument)
     {
         if (string.IsNullOrEmpty(argument)) return "";
         return argument.Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
     }
 
+    /// <summary>Creates a standardized JSON error response.</summary>
     private static JObject CreateErrorResponse(string message)
     {
         return new JObject
@@ -276,4 +289,6 @@ public class PythonAudioProcessor
             ["timestamp"] = DateTime.UtcNow.ToString("O")
         };
     }
+
+    #endregion
 }

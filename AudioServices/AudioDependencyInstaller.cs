@@ -10,10 +10,12 @@ using System.IO;
 
 namespace Hartsy.Extensions.AudioLab.AudioServices;
 
-/// <summary>Provider-aware dependency installer. Replaces the old DependencyInstaller
-/// that had hardcoded STT/TTS package arrays with provider-driven dependency resolution.</summary>
+/// <summary>Provider-aware dependency installer. Resolves and installs pip packages
+/// declared by <see cref="AudioProviderDefinition.Dependencies"/>.</summary>
 public class AudioDependencyInstaller
 {
+    #region Fields
+
     private static readonly object _installLock = new();
     private bool _isInstalling;
     private Dictionary<string, string> _cachedInstalledPackages;
@@ -22,13 +24,16 @@ public class AudioDependencyInstaller
     /// <summary>Whether a dependency installation is currently in progress.</summary>
     public bool IsInstalling => _isInstalling;
 
+    #endregion
+
+    #region Environment Detection
+
     /// <summary>Detects the Python environment for the "main" venv group.
     /// Falls back to base Python if the venv hasn't been created yet.</summary>
     public PythonEnvironmentInfo DetectPythonEnvironment()
     {
         try
         {
-            // Check if "main" group venv exists
             string venvPython = VenvManager.GetVenvPythonPath("main");
             if (File.Exists(venvPython))
             {
@@ -40,9 +45,8 @@ public class AudioDependencyInstaller
                     Version = "detected",
                 };
             }
-            // Fall back to base python (for initial setup before venv exists)
             string basePython = VenvManager.GetBasePythonPath();
-            if (basePython != null)
+            if (basePython is not null)
             {
                 return new PythonEnvironmentInfo
                 {
@@ -69,7 +73,7 @@ public class AudioDependencyInstaller
         try
         {
             string pythonPath = await VenvManager.Instance.EnsureVenvAsync(group);
-            if (pythonPath == null)
+            if (pythonPath is null)
             {
                 Logs.Error($"[AudioLab] Could not create Python venv for group '{group}'");
                 return null;
@@ -89,10 +93,14 @@ public class AudioDependencyInstaller
         }
     }
 
+    #endregion
+
+    #region Dependency Checking
+
     /// <summary>Checks if all dependencies for a specific provider are installed.</summary>
     public async Task<bool> CheckProviderDependenciesAsync(PythonEnvironmentInfo pythonInfo, AudioProviderDefinition provider, bool forceRefresh = false)
     {
-        if (pythonInfo?.IsValid != true) return false;
+        if (pythonInfo?.IsValid is not true) return false;
         try
         {
             Dictionary<string, PackageStatus> statuses = await GetProviderPackageStatusAsync(pythonInfo, provider, forceRefresh);
@@ -105,140 +113,7 @@ public class AudioDependencyInstaller
         }
     }
 
-    /// <summary>Installs all dependencies for a specific provider.</summary>
-    public async Task<bool> InstallProviderDependenciesAsync(PythonEnvironmentInfo pythonInfo, AudioProviderDefinition provider)
-    {
-        if (pythonInfo?.IsValid != true)
-            throw new InvalidOperationException("Invalid Python environment");
-
-        lock (_installLock)
-        {
-            if (_isInstalling)
-                throw new InvalidOperationException("Installation already in progress");
-            _isInstalling = true;
-        }
-
-        try
-        {
-            Logs.Info($"[AudioLab] Installing dependencies for {provider.Name}");
-            ProgressTracker tracker = ProgressTracking.Installation;
-            tracker.Reset();
-            tracker.UpdateProgress(5, $"Analyzing {provider.Name} dependencies", "Checking current installation status...");
-
-            Dictionary<string, PackageStatus> statuses = await GetProviderPackageStatusAsync(pythonInfo, provider);
-            List<PackageDefinition> toInstall = [.. provider.Dependencies.Where(pkg => !statuses[pkg.Name].IsInstalled)];
-
-            if (toInstall.Count == 0)
-            {
-                tracker.SetComplete($"All {provider.Name} dependencies already installed!");
-                return true;
-            }
-
-            Logs.Info($"[AudioLab] Need to install {toInstall.Count} packages for {provider.Name}");
-
-            // Group by category for batched install
-            Dictionary<string, List<PackageDefinition>> byCategory = toInstall
-                .GroupBy(p => p.Category)
-                .ToDictionary(g => g.Key, g => g.ToList());
-
-            int progress = 10;
-            int perCategory = 80 / Math.Max(byCategory.Count, 1);
-
-            foreach (KeyValuePair<string, List<PackageDefinition>> group in byCategory)
-            {
-                tracker.UpdateProgress(progress, $"Installing {provider.Name} {group.Key} packages",
-                    $"Installing {group.Value.Count} {group.Key} packages...");
-                await InstallPackageCategoryAsync(pythonInfo, group.Value, tracker, progress, perCategory);
-                progress += perCategory;
-            }
-
-            InvalidatePackageCache();
-            tracker.SetComplete($"All {provider.Name} dependencies installed successfully!");
-            return true;
-        }
-        catch (Exception ex)
-        {
-            ProgressTracking.Installation.SetError($"{provider.Name} installation failed: {ex.Message}");
-            Logs.Error($"[AudioLab] {provider.Name} dependency installation failed: {ex.Message}");
-            throw;
-        }
-        finally
-        {
-            _isInstalling = false;
-        }
-    }
-
-    /// <summary>Installs dependencies for multiple providers, deduplicating shared packages.</summary>
-    public async Task<bool> InstallMultipleProviderDependenciesAsync(PythonEnvironmentInfo pythonInfo, IEnumerable<AudioProviderDefinition> providers)
-    {
-        if (pythonInfo?.IsValid != true)
-            throw new InvalidOperationException("Invalid Python environment");
-
-        lock (_installLock)
-        {
-            if (_isInstalling)
-                throw new InvalidOperationException("Installation already in progress");
-            _isInstalling = true;
-        }
-
-        try
-        {
-            ProgressTracker tracker = ProgressTracking.Installation;
-            tracker.Reset();
-
-            // Deduplicate packages by ImportName
-            Dictionary<string, PackageDefinition> uniquePackages = [];
-            foreach (AudioProviderDefinition provider in providers)
-            {
-                foreach (PackageDefinition dep in provider.Dependencies)
-                {
-                    if (!uniquePackages.ContainsKey(dep.ImportName))
-                    {
-                        uniquePackages[dep.ImportName] = dep;
-                    }
-                }
-            }
-
-            Dictionary<string, string> installed = await GetInstalledPackagesAsync(pythonInfo);
-            List<PackageDefinition> toInstall = [.. uniquePackages.Values.Where(p => !IsPackageInstalled(p.ImportName, installed))];
-
-            if (toInstall.Count == 0)
-            {
-                tracker.SetComplete("All dependencies already installed!");
-                return true;
-            }
-
-            Dictionary<string, List<PackageDefinition>> byCategory = toInstall
-                .GroupBy(p => p.Category)
-                .ToDictionary(g => g.Key, g => g.ToList());
-
-            int progress = 5;
-            int perCategory = 90 / Math.Max(byCategory.Count, 1);
-
-            foreach (KeyValuePair<string, List<PackageDefinition>> group in byCategory)
-            {
-                tracker.UpdateProgress(progress, $"Installing {group.Key} packages",
-                    $"Installing {group.Value.Count} {group.Key} packages...");
-                await InstallPackageCategoryAsync(pythonInfo, group.Value, tracker, progress, perCategory);
-                progress += perCategory;
-            }
-
-            InvalidatePackageCache();
-            tracker.SetComplete("All dependencies installed successfully!");
-            return true;
-        }
-        catch (Exception ex)
-        {
-            ProgressTracking.Installation.SetError($"Installation failed: {ex.Message}");
-            throw;
-        }
-        finally
-        {
-            _isInstalling = false;
-        }
-    }
-
-    /// <summary>Gets package status for a provider's dependencies.</summary>
+    /// <summary>Gets package status for each of a provider's declared dependencies.</summary>
     public async Task<Dictionary<string, PackageStatus>> GetProviderPackageStatusAsync(
         PythonEnvironmentInfo pythonInfo, AudioProviderDefinition provider, bool forceRefresh = false)
     {
@@ -291,35 +166,177 @@ public class AudioDependencyInstaller
         return results;
     }
 
+    #endregion
+
+    #region Installation
+
+    /// <summary>Installs all missing dependencies for a single provider.</summary>
+    public async Task<bool> InstallProviderDependenciesAsync(PythonEnvironmentInfo pythonInfo, AudioProviderDefinition provider)
+    {
+        if (pythonInfo?.IsValid is not true)
+            throw new InvalidOperationException("Invalid Python environment");
+
+        lock (_installLock)
+        {
+            if (_isInstalling)
+                throw new InvalidOperationException("Installation already in progress");
+            _isInstalling = true;
+        }
+
+        try
+        {
+            Logs.Info($"[AudioLab] Installing dependencies for {provider.Name}");
+            ProgressTracker tracker = ProgressTracking.Installation;
+            tracker.Reset();
+            tracker.UpdateProgress(5, $"Analyzing {provider.Name} dependencies", "Checking current installation status...");
+
+            Dictionary<string, PackageStatus> statuses = await GetProviderPackageStatusAsync(pythonInfo, provider);
+            List<PackageDefinition> toInstall = [.. provider.Dependencies.Where(pkg => !statuses[pkg.Name].IsInstalled)];
+
+            if (toInstall.Count is 0)
+            {
+                tracker.SetComplete($"All {provider.Name} dependencies already installed!");
+                return true;
+            }
+
+            Logs.Info($"[AudioLab] Need to install {toInstall.Count} packages for {provider.Name}");
+
+            Dictionary<string, List<PackageDefinition>> byCategory = toInstall
+                .GroupBy(p => p.Category)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            int progress = 10;
+            int perCategory = 80 / Math.Max(byCategory.Count, 1);
+
+            foreach (KeyValuePair<string, List<PackageDefinition>> group in byCategory)
+            {
+                tracker.UpdateProgress(progress, $"Installing {provider.Name} {group.Key} packages",
+                    $"Installing {group.Value.Count} {group.Key} packages...");
+                await InstallPackageCategoryAsync(pythonInfo, group.Value, tracker, progress, perCategory);
+                progress += perCategory;
+            }
+
+            InvalidatePackageCache();
+            tracker.SetComplete($"All {provider.Name} dependencies installed successfully!");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ProgressTracking.Installation.SetError($"{provider.Name} installation failed: {ex.Message}");
+            Logs.Error($"[AudioLab] {provider.Name} dependency installation failed: {ex.Message}");
+            throw;
+        }
+        finally
+        {
+            _isInstalling = false;
+        }
+    }
+
+    /// <summary>Installs dependencies for multiple providers, deduplicating shared packages.</summary>
+    public async Task<bool> InstallMultipleProviderDependenciesAsync(PythonEnvironmentInfo pythonInfo, IEnumerable<AudioProviderDefinition> providers)
+    {
+        if (pythonInfo?.IsValid != true)
+            throw new InvalidOperationException("Invalid Python environment");
+
+        lock (_installLock)
+        {
+            if (_isInstalling)
+                throw new InvalidOperationException("Installation already in progress");
+            _isInstalling = true;
+        }
+
+        try
+        {
+            ProgressTracker tracker = ProgressTracking.Installation;
+            tracker.Reset();
+
+            Dictionary<string, PackageDefinition> uniquePackages = [];
+            foreach (AudioProviderDefinition provider in providers)
+            {
+                foreach (PackageDefinition dep in provider.Dependencies)
+                {
+                    if (!uniquePackages.ContainsKey(dep.ImportName))
+                    {
+                        uniquePackages[dep.ImportName] = dep;
+                    }
+                }
+            }
+
+            Dictionary<string, string> installed = await GetInstalledPackagesAsync(pythonInfo);
+            List<PackageDefinition> toInstall = [.. uniquePackages.Values.Where(p => !IsPackageInstalled(p.ImportName, installed))];
+
+            if (toInstall.Count == 0)
+            {
+                tracker.SetComplete("All dependencies already installed!");
+                return true;
+            }
+
+            Dictionary<string, List<PackageDefinition>> byCategory = toInstall
+                .GroupBy(p => p.Category)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            int progress = 5;
+            int perCategory = 90 / Math.Max(byCategory.Count, 1);
+
+            foreach (KeyValuePair<string, List<PackageDefinition>> group in byCategory)
+            {
+                tracker.UpdateProgress(progress, $"Installing {group.Key} packages",
+                    $"Installing {group.Value.Count} {group.Key} packages...");
+                await InstallPackageCategoryAsync(pythonInfo, group.Value, tracker, progress, perCategory);
+                progress += perCategory;
+            }
+
+            InvalidatePackageCache();
+            tracker.SetComplete("All dependencies installed successfully!");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ProgressTracking.Installation.SetError($"Installation failed: {ex.Message}");
+            throw;
+        }
+        finally
+        {
+            _isInstalling = false;
+        }
+    }
+
+    #endregion
+
+    #region Package Cache
+
+    /// <summary>Clears the cached package list so the next check queries pip fresh.</summary>
     private void InvalidatePackageCache()
     {
         _cachedInstalledPackages = null;
         _cachedInstalledPackagesKey = null;
     }
 
+    /// <summary>Queries pip for all installed packages. Results are cached per Python path
+    /// until <see cref="InvalidatePackageCache"/> is called.</summary>
     private async Task<Dictionary<string, string>> GetInstalledPackagesAsync(PythonEnvironmentInfo pythonInfo, bool forceRefresh = false)
     {
-        if (_cachedInstalledPackages != null && !forceRefresh && _cachedInstalledPackagesKey == pythonInfo.PythonPath)
+        if (_cachedInstalledPackages is not null && !forceRefresh && _cachedInstalledPackagesKey == pythonInfo.PythonPath)
             return _cachedInstalledPackages;
 
         try
         {
             string script = @"import sys, json
-try:
-    import importlib.metadata
-    distributions = list(importlib.metadata.distributions())
-    package_data = {}
-    for dist in distributions:
-        try:
-            package_data[dist.metadata['Name'].lower()] = dist.version
-        except Exception:
-            pass
-    print('PACKAGE_LIST_START')
-    print(json.dumps(package_data))
-    print('PACKAGE_LIST_END')
-except Exception as e:
-    print(f'CRITICAL_ERROR: {e}')
-";
+                try:
+                    import importlib.metadata
+                    distributions = list(importlib.metadata.distributions())
+                    package_data = {}
+                    for dist in distributions:
+                        try:
+                            package_data[dist.metadata['Name'].lower()] = dist.version
+                        except Exception:
+                            pass
+                    print('PACKAGE_LIST_START')
+                    print(json.dumps(package_data))
+                    print('PACKAGE_LIST_END')
+                except Exception as e:
+                    print(f'CRITICAL_ERROR: {e}')
+                ";
             string result = await RunPythonScriptAsync(pythonInfo.PythonPath, script);
             Dictionary<string, string> packages = [];
 
@@ -342,6 +359,7 @@ except Exception as e:
         }
     }
 
+    /// <summary>Checks whether a package name (or its dash/underscore variants) exists in the installed set.</summary>
     private static bool IsPackageInstalled(string packageName, Dictionary<string, string> installed)
     {
         string norm = packageName.ToLower().Replace("-", "_").Replace("_", "-");
@@ -352,6 +370,7 @@ except Exception as e:
                installed.Keys.Any(k => k.Replace("-", "_") == alt || k.Replace("_", "-") == norm);
     }
 
+    /// <summary>Uses <c>importlib.util.find_spec</c> to check if a git-installed package is importable.</summary>
     private async Task<bool> CheckGitPackageAsync(PythonEnvironmentInfo pythonInfo, PackageDefinition package)
     {
         try
@@ -375,6 +394,12 @@ except Exception as e:
         }
     }
 
+    #endregion
+
+    #region Pip Execution
+
+    /// <summary>Installs a list of packages grouped by category, batching simple packages
+    /// and installing git/custom-args packages individually.</summary>
     private static async Task InstallPackageCategoryAsync(PythonEnvironmentInfo pythonInfo, List<PackageDefinition> packages, ProgressTracker tracker, int baseProgress, int progressRange)
     {
         List<PackageDefinition> batchable = [.. packages.Where(p => !p.IsGitPackage && string.IsNullOrEmpty(p.CustomInstallArgs))];
@@ -398,6 +423,7 @@ except Exception as e:
         }
     }
 
+    /// <summary>Installs multiple simple (non-git, no custom args) packages in a single pip invocation.</summary>
     private static async Task InstallPackagesBatchAsync(PythonEnvironmentInfo pythonInfo, List<PackageDefinition> packages, ProgressTracker tracker)
     {
         string packageList = string.Join(" ", packages.Select(p => $"\"{p.InstallName}\""));
@@ -406,6 +432,7 @@ except Exception as e:
         foreach (PackageDefinition p in packages) tracker.AddCompletedPackage(p.Name);
     }
 
+    /// <summary>Installs a single package with automatic retry on failure (exponential backoff).</summary>
     private static async Task InstallSinglePackageAsync(PythonEnvironmentInfo pythonInfo, PackageDefinition package, ProgressTracker tracker, int retry = 0, int maxRetries = 3)
     {
         try
@@ -430,6 +457,8 @@ except Exception as e:
         }
     }
 
+    /// <summary>Spawns a pip install process, streams output to the progress tracker,
+    /// and throws on timeout or non-zero exit.</summary>
     private static async Task RunPipInstallAsync(PythonEnvironmentInfo pythonInfo, string arguments, string[] packageNames, ProgressTracker tracker, int estMinutes = 5)
     {
         ProcessStartInfo startInfo = new()
@@ -443,14 +472,13 @@ except Exception as e:
             WorkingDirectory = Environment.CurrentDirectory
         };
 
-        // Derive PATH from the python executable's own directory
         string pythonDir = Path.GetDirectoryName(Path.GetFullPath(pythonInfo.PythonPath));
         startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(pythonDir);
         PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[AudioLab] ");
 
-        // Use a short temp path to avoid Windows 260-char path limit during pip extraction.
-        // Must override TMPDIR too — SwarmUI sets it globally (Program.cs) and Python's
-        // tempfile module checks TMPDIR before TMP/TEMP on all platforms.
+        // Short temp path avoids Windows 260-char limit during pip extraction.
+        // TMPDIR override needed because SwarmUI sets it globally (Program.cs)
+        // and Python's tempfile module checks TMPDIR before TMP/TEMP.
         string shortTmp = Path.Combine(Path.GetPathRoot(Environment.CurrentDirectory) ?? "C:\\", "tmp", "audiolab");
         Directory.CreateDirectory(shortTmp);
         startInfo.Environment["TMP"] = shortTmp;
@@ -501,6 +529,11 @@ except Exception as e:
         }
     }
 
+    #endregion
+
+    #region Python Script Execution
+
+    /// <summary>Runs a Python script string in a subprocess and returns its stdout.</summary>
     private async Task<string> RunPythonScriptAsync(string pythonPath, string script)
     {
         return await Task.Run(() =>
@@ -521,7 +554,6 @@ except Exception as e:
                         RedirectStandardError = true
                     };
 
-                    // Derive PATH from the python executable's own directory
                     string pythonDir = Path.GetDirectoryName(Path.GetFullPath(pythonPath));
                     startInfo.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(pythonDir);
                     PythonLaunchHelper.CleanEnvironmentOfPythonMess(startInfo, "[AudioLab] ");
@@ -546,4 +578,6 @@ except Exception as e:
             }
         });
     }
+
+    #endregion
 }

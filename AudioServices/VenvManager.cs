@@ -12,6 +12,8 @@ namespace Hartsy.Extensions.AudioLab.AudioServices;
 /// Venvs live under {ExtensionDirectory}/python_backend/venvs/{group}/.</summary>
 public class VenvManager
 {
+    #region Fields
+
     private static readonly Lazy<VenvManager> InstanceLazy = new(() => new VenvManager());
     public static VenvManager Instance => InstanceLazy.Value;
 
@@ -20,6 +22,10 @@ public class VenvManager
 
     /// <summary>Cache of validated venv python paths (group -> python executable path).</summary>
     private readonly ConcurrentDictionary<string, string> _venvPythonPaths = new();
+
+    #endregion
+
+    #region Path Resolution
 
     /// <summary>Root directory for all venvs.
     /// On Windows, uses a short path (e.g. C:\audiolab-venvs) to avoid the 260-char path limit.
@@ -50,11 +56,14 @@ public class VenvManager
             : Path.Combine(venvDir, "bin", "python");
     }
 
+    #endregion
+
+    #region Venv Lifecycle
+
     /// <summary>Ensures a venv exists for the given group. Creates it if needed.
     /// Returns the python executable path inside the venv, or null on failure.</summary>
     public async Task<string> EnsureVenvAsync(string group)
     {
-        // Check cache first
         if (_venvPythonPaths.TryGetValue(group, out string cachedPath) && File.Exists(cachedPath))
             return cachedPath;
 
@@ -62,7 +71,6 @@ public class VenvManager
         await groupLock.WaitAsync();
         try
         {
-            // Double-check after lock
             string pythonPath = GetVenvPythonPath(group);
             if (File.Exists(pythonPath))
             {
@@ -70,7 +78,6 @@ public class VenvManager
                 return pythonPath;
             }
 
-            // Create the venv
             bool created = await CreateVenvAsync(group);
             if (!created) return null;
 
@@ -131,7 +138,6 @@ public class VenvManager
             return false;
         }
 
-        // Verify the python executable was created
         string venvPython = GetVenvPythonPath(group);
         if (!File.Exists(venvPython))
         {
@@ -163,6 +169,10 @@ public class VenvManager
         }
     }
 
+    #endregion
+
+    #region Base Python Detection
+
     // TODO: Find a better solution for Python bootstrapping. Currently requires system Python
     // because ComfyUI's embedded Python doesn't include the 'venv' module. Options to explore:
     // - Use 'virtualenv' package (works with embedded Python, unlike 'venv')
@@ -174,11 +184,9 @@ public class VenvManager
     /// venvs (missing venv module), so it is not used.</summary>
     public static string GetBasePythonPath()
     {
-        // System Python (required — ComfyUI's embedded Python lacks the venv module)
         string systemPython = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "python" : "python3";
         if (TryFindSystemPython(systemPython, out string systemPath))
             return systemPath;
-        // On Windows also try python3
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && TryFindSystemPython("python3", out string py3Path))
             return py3Path;
 
@@ -233,4 +241,6 @@ public class VenvManager
         catch { /* Not found on PATH */ }
         return false;
     }
+
+    #endregion
 }

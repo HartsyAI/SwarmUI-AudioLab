@@ -40,21 +40,14 @@ public static class AudioLabAPI
     {
         try
         {
-            // Generic provider-based processing
             API.RegisterAPICall(ProcessAudio, false, AudioLabPermissions.PermProcessAudio);
-
-            // Backward-compatible endpoints
             API.RegisterAPICall(ProcessSTT, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(ProcessTTS, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(ProcessWorkflow, false, AudioLabPermissions.PermProcessAudio);
-
-            // Provider status and dependency management
             API.RegisterAPICall(GetAllProvidersStatus, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(InstallProviderDependencies, false, AudioLabPermissions.PermManageBackends);
             API.RegisterAPICall(GetInstallationStatus, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(GetInstallationProgress, false, AudioLabPermissions.PermCheckStatus);
-
-            // Engine management (install-driven registration)
             API.RegisterAPICall(AudioLabListEngines, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(AudioLabInstallEngine, true, AudioLabPermissions.PermManageBackends);
             API.RegisterAPICall(AudioLabUninstallEngine, true, AudioLabPermissions.PermManageBackends);
@@ -85,7 +78,6 @@ public static class AudioLabAPI
                 return AudioLab.CreateErrorResponse($"Unknown provider: {providerId}", "unknown_provider");
             }
 
-            // Build args from input
             Dictionary<string, object> args = [];
             if (input["args"] is JObject argsObj)
             {
@@ -115,7 +107,6 @@ public static class AudioLabAPI
         {
             STTRequest request = ParseSTTRequest(input, session.ID);
 
-            // Use provider_id from request if supplied, otherwise fall back to first available
             string requestedProvider = input["provider_id"]?.ToString();
             AudioProviderDefinition sttProvider = !string.IsNullOrEmpty(requestedProvider)
                 ? AudioProviderRegistry.GetById(requestedProvider)
@@ -166,7 +157,6 @@ public static class AudioLabAPI
         {
             TTSRequest request = ParseTTSRequest(input, session.ID);
 
-            // Use provider_id from request if supplied, otherwise fall back to first available
             string requestedProvider = input["provider_id"]?.ToString();
             Logs.Debug($"[AudioLab] ProcessTTS: requested provider_id='{requestedProvider}'");
             AudioProviderDefinition ttsProvider = !string.IsNullOrEmpty(requestedProvider)
@@ -645,6 +635,7 @@ public static class AudioLabAPI
 
     #region Request Parsing
 
+    /// <summary>Parses and validates an STT request from raw JSON input.</summary>
     private static STTRequest ParseSTTRequest(JObject input, string sessionId)
     {
         STTRequest request = new()
@@ -664,6 +655,7 @@ public static class AudioLabAPI
         return request;
     }
 
+    /// <summary>Parses and validates a TTS request from raw JSON input.</summary>
     private static TTSRequest ParseTTSRequest(JObject input, string sessionId)
     {
         TTSRequest request = new()
@@ -685,6 +677,7 @@ public static class AudioLabAPI
         return request;
     }
 
+    /// <summary>Parses and validates a workflow request from raw JSON input.</summary>
     private static WorkflowRequest ParseWorkflowRequest(JObject input, string sessionId)
     {
         WorkflowRequest request = new()
