@@ -8,18 +8,21 @@ const AudioLabConfig = {
     /** Maps model class IDs (curArch) to their category flag and provider-specific flag. */
     archToCategory: {
         kokoro_tts: { category: 'audiolab_tts', providerFlag: 'kokoro_tts_params' },
-        chatterbox_tts: { category: 'audiolab_tts', providerFlag: 'chatterbox_tts_params' },
+        chatterbox_tts: { category: 'audiolab_tts', providerFlag: 'chatterbox_tts_params', extraFlags: ['tts_voice_ref'] },
         bark_tts: { category: 'audiolab_tts', providerFlag: 'bark_tts_params' },
         piper_tts: { category: 'audiolab_tts', providerFlag: 'piper_tts_params' },
         dia_tts: { category: 'audiolab_tts', providerFlag: 'dia_tts_params' },
         csm_tts: { category: 'audiolab_tts', providerFlag: 'csm_tts_params' },
         orpheus_tts: { category: 'audiolab_tts', providerFlag: 'orpheus_tts_params' },
-        vibevoice_tts: { category: 'audiolab_tts', providerFlag: 'vibevoice_tts_params' },
-        zonos_tts: { category: 'audiolab_tts', providerFlag: 'zonos_tts_params' },
-        f5_tts: { category: 'audiolab_tts', providerFlag: 'f5_tts_params' },
-        neutts_tts: { category: 'audiolab_tts', providerFlag: 'neutts_tts_params' },
-        cosyvoice_tts: { category: 'audiolab_tts', providerFlag: 'cosyvoice_tts_params' },
-        fishspeech_tts: { category: 'audiolab_tts', providerFlag: 'fishspeech_tts_params' },
+        vibevoice_tts: { category: 'audiolab_tts', providerFlag: 'vibevoice_tts_params', extraFlags: ['tts_voice_ref'] },
+        zonos_tts: { category: 'audiolab_tts', providerFlag: 'zonos_tts_params', extraFlags: ['tts_voice_ref'] },
+        f5_tts: { category: 'audiolab_tts', providerFlag: 'f5_tts_params', extraFlags: ['tts_voice_ref'] },
+        neutts_tts: { category: 'audiolab_tts', providerFlag: 'neutts_tts_params', extraFlags: ['tts_voice_ref'] },
+        cosyvoice_tts: { category: 'audiolab_tts', providerFlag: 'cosyvoice_tts_params', extraFlags: ['tts_voice_ref'] },
+        fishspeech_tts: { category: 'audiolab_tts', providerFlag: 'fishspeech_tts_params', extraFlags: ['tts_voice_ref'] },
+        qwen3_tts_clone: { category: 'audiolab_tts', providerFlag: 'qwen3tts_tts_params', extraFlags: ['tts_voice_ref'] },
+        qwen3_tts_custom: { category: 'audiolab_tts', providerFlag: 'qwen3tts_tts_params', extraFlags: ['qwen3tts_speaker_params', 'qwen3tts_instruct_params'] },
+        qwen3_tts_design: { category: 'audiolab_tts', providerFlag: 'qwen3tts_tts_params', extraFlags: ['qwen3tts_instruct_params'] },
         whisper_stt: { category: 'audiolab_stt', providerFlag: 'whisper_stt_params' },
         distilwhisper_stt: { category: 'audiolab_stt', providerFlag: 'distilwhisper_stt_params' },
         moonshine_stt: { category: 'audiolab_stt', providerFlag: 'moonshine_stt_params' },
@@ -84,10 +87,14 @@ const AudioLabConfig = {
         return arch in this.archToCategory;
     },
 
-    /** Get all audio-related flags (categories + all provider flags). */
+    /** Get all audio-related flags (categories + all provider flags + extra flags). */
     get allAudioFlags() {
-        const providerFlags = Object.values(this.archToCategory).map(v => v.providerFlag);
-        return [...this.categoryFlags, ...providerFlags];
+        const flags = new Set(this.categoryFlags);
+        for (const v of Object.values(this.archToCategory)) {
+            flags.add(v.providerFlag);
+            if (v.extraFlags) v.extraFlags.forEach(f => flags.add(f));
+        }
+        return [...flags];
     },
 
     /** Get all provider IDs (architecture keys). */
@@ -104,6 +111,7 @@ featureSetChangers.push(() => {
 
     const curArch = currentModelHelper.curArch;
     const isAudioModel = AudioLabConfig.isAudioModel(curArch);
+    console.log('[audiolab] featureSetChanger: curArch =', JSON.stringify(curArch), 'isAudioModel =', isAudioModel);
 
     for (const param of gen_param_types) {
         if (AudioLabConfig.coreParamsToHide.includes(param.id)) {
@@ -147,9 +155,11 @@ featureSetChangers.push(() => {
     const activeCategory = config.category;
     const activeProviderFlag = config.providerFlag;
 
-    const otherAudioFlags = AudioLabConfig.allAudioFlags.filter(f => f !== activeCategory && f !== activeProviderFlag);
+    const activeExtraFlags = config.extraFlags || [];
+    const activeSet = new Set([activeCategory, activeProviderFlag, ...activeExtraFlags]);
+    const otherAudioFlags = AudioLabConfig.allAudioFlags.filter(f => !activeSet.has(f));
     const removeFlags = [...AudioLabConfig.incompatibleFlags, ...otherAudioFlags];
-    const addFlags = ['prompt', activeCategory, activeProviderFlag];
+    const addFlags = ['prompt', ...activeSet];
 
     return [addFlags, removeFlags];
 });

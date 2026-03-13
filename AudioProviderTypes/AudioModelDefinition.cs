@@ -26,4 +26,11 @@ public sealed class AudioModelDefinition
 
     /// <summary>Engine-specific configuration passed to the Python engine at runtime.</summary>
     public Dictionary<string, object> EngineConfig { get; init; } = [];
+
+    /// <summary>Optional model class ID override. When set, this model uses a different model class
+    /// than the provider default, enabling per-model feature flag visibility.</summary>
+    public string ModelClassId { get; init; }
+
+    /// <summary>Optional model class display name override. Used with <see cref="ModelClassId"/>.</summary>
+    public string ModelClassName { get; init; }
 }

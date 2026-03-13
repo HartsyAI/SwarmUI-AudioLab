@@ -149,13 +149,13 @@ public static class AudioLabParams
 
     #endregion
 
-    #region TTS — Qwen3-TTS (flag: qwen3tts_tts_params)
+    #region TTS — Qwen3-TTS
 
     /// <summary>Language for Qwen3-TTS synthesis. Feature flag: <c>qwen3tts_tts_params</c>.</summary>
     public static T2IRegisteredParam<string> Qwen3Language;
-    /// <summary>Speaker voice for Qwen3-TTS CustomVoice models. Feature flag: <c>qwen3tts_tts_params</c>.</summary>
+    /// <summary>Speaker voice for Qwen3-TTS CustomVoice models. Feature flag: <c>qwen3tts_speaker_params</c>.</summary>
     public static T2IRegisteredParam<string> Qwen3Speaker;
-    /// <summary>Natural language instruction for Qwen3-TTS voice style/emotion. Feature flag: <c>qwen3tts_tts_params</c>.</summary>
+    /// <summary>Natural language instruction for Qwen3-TTS voice style/emotion. Feature flag: <c>qwen3tts_instruct_params</c>.</summary>
     public static T2IRegisteredParam<string> Qwen3Instruct;
 
     #endregion
@@ -575,7 +575,7 @@ public static class AudioLabParams
             Min: 5, Max: 100, Step: 1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "vibevoice_tts_params"));
 
-        VibeVoiceCFG = T2IParamTypes.Register<double>(new("CFG Scale",
+        VibeVoiceCFG = T2IParamTypes.Register<double>(new("VibeVoice CFG",
             "Classifier-free guidance scale for speech diffusion.\n1.3 is recommended for standard models, 1.5 for streaming.",
             "1.3",
             Min: 0.0, Max: 5.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
@@ -605,7 +605,7 @@ public static class AudioLabParams
             Min: 0.25, Max: 4.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -4, Group: TTSGroup, FeatureFlag: "f5_tts_params"));
 
-        F5CFG = T2IParamTypes.Register<double>(new("CFG Scale",
+        F5CFG = T2IParamTypes.Register<double>(new("F5 CFG",
             "Classifier-free guidance for flow matching.\n2.0 is recommended. Higher = stronger prompt adherence.",
             "2.0",
             Min: 0.0, Max: 10.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
@@ -692,12 +692,12 @@ public static class AudioLabParams
                 "Ono_Anna///Ono Anna (Japanese Female)",
                 "Sohee///Sohee (Korean Female)"
             ],
-            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "qwen3tts_tts_params"));
+            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "qwen3tts_speaker_params"));
 
         Qwen3Instruct = T2IParamTypes.Register<string>(new("Qwen3 Instruct",
             "Natural language instruction for voice control.\nCustomVoice: describe emotion/style (e.g. 'Speak with excitement').\nVoiceDesign: describe the voice (e.g. 'A deep male voice with a British accent').\nIgnored for Base models.",
             "",
-            OrderPriority: -3, Group: TTSGroup, FeatureFlag: "qwen3tts_tts_params"));
+            OrderPriority: -3, Group: TTSGroup, FeatureFlag: "qwen3tts_instruct_params"));
 
         #endregion
 

@@ -133,7 +133,10 @@ class Qwen3TTSEngine(BaseAudioEngine):
     def _generate_voice_clone(self, text, language, reference_audio_b64, ref_text):
         """Voice cloning via Base models."""
         if not reference_audio_b64:
-            return None, 0
+            raise ValueError(
+                "Voice clone mode requires reference audio. "
+                "Upload a reference audio clip, or use a CustomVoice/VoiceDesign model instead."
+            )
 
         ref_audio_path = None
         try:

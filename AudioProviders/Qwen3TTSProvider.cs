@@ -18,6 +18,8 @@ public sealed class Qwen3TTSProvider : IAudioProviderSource
         .WithModelPrefix("Qwen3TTS")
         .WithModelClass("qwen3_tts", "Qwen3 TTS")
         .AddFeatureFlag("qwen3tts_tts_params")
+        .AddFeatureFlag("qwen3tts_speaker_params")
+        .AddFeatureFlag("qwen3tts_instruct_params")
         .AddFeatureFlag("tts_voice_ref")
         .AddDependencies(Dependencies)
         .AddModels(Models)
@@ -59,6 +61,8 @@ public sealed class Qwen3TTSProvider : IAudioProviderSource
             License = "Apache 2.0",
             EstimatedSize = "~3.4GB",
             EstimatedVram = "~8GB",
+            ModelClassId = "qwen3_tts_clone",
+            ModelClassName = "Qwen3 TTS Clone",
             EngineConfig = new() { ["model_name"] = "Qwen/Qwen3-TTS-12Hz-1.7B-Base", ["mode"] = "voice_clone" }
         },
         new()
@@ -70,6 +74,8 @@ public sealed class Qwen3TTSProvider : IAudioProviderSource
             License = "Apache 2.0",
             EstimatedSize = "~1.2GB",
             EstimatedVram = "~4GB",
+            ModelClassId = "qwen3_tts_clone",
+            ModelClassName = "Qwen3 TTS Clone",
             EngineConfig = new() { ["model_name"] = "Qwen/Qwen3-TTS-12Hz-0.6B-Base", ["mode"] = "voice_clone" }
         },
         new()
@@ -81,6 +87,8 @@ public sealed class Qwen3TTSProvider : IAudioProviderSource
             License = "Apache 2.0",
             EstimatedSize = "~3.4GB",
             EstimatedVram = "~8GB",
+            ModelClassId = "qwen3_tts_custom",
+            ModelClassName = "Qwen3 TTS CustomVoice",
             EngineConfig = new() { ["model_name"] = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice", ["mode"] = "custom_voice" }
         },
         new()
@@ -92,6 +100,8 @@ public sealed class Qwen3TTSProvider : IAudioProviderSource
             License = "Apache 2.0",
             EstimatedSize = "~1.2GB",
             EstimatedVram = "~4GB",
+            ModelClassId = "qwen3_tts_custom",
+            ModelClassName = "Qwen3 TTS CustomVoice",
             EngineConfig = new() { ["model_name"] = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice", ["mode"] = "custom_voice" }
         },
         new()
@@ -103,6 +113,8 @@ public sealed class Qwen3TTSProvider : IAudioProviderSource
             License = "Apache 2.0",
             EstimatedSize = "~3.4GB",
             EstimatedVram = "~8GB",
+            ModelClassId = "qwen3_tts_design",
+            ModelClassName = "Qwen3 TTS VoiceDesign",
             EngineConfig = new() { ["model_name"] = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign", ["mode"] = "voice_design" }
         }
     ];

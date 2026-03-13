@@ -17,7 +17,10 @@ public static class AudioModelFactory
     {
         string fullName = provider.GetFullModelName(model.Id);
         string previewImage = LoadPreviewImage(provider.Id);
-        T2IModelClass modelClass = GetOrCreateModelClass(provider);
+        // Use model-level class override if present, otherwise fall back to provider class
+        string classId = model.ModelClassId ?? provider.ModelClassId;
+        string className = model.ModelClassName ?? provider.ModelClassName;
+        T2IModelClass modelClass = GetOrCreateModelClass(classId, className, provider.Category);
         List<string> allTags = ["audiolab", provider.Category.ToString().ToLowerInvariant(), provider.EngineGroup];
         return new T2IModel(null, null, null, fullName)
         {
@@ -39,7 +42,7 @@ public static class AudioModelFactory
                 StandardHeight = 0,
                 License = string.IsNullOrEmpty(model.License) ? "Open Source" : model.License,
                 UsageHint = $"Audio processing via {provider.Name}",
-                ModelClassType = provider.ModelClassId,
+                ModelClassType = classId,
                 Tags = [.. allTags],
                 TimeCreated = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 TimeModified = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
@@ -62,20 +65,23 @@ public static class AudioModelFactory
 
     /// <summary>Gets or creates a T2IModelClass for the provider. Registers compat class with IsAudioModel = true.</summary>
     public static T2IModelClass GetOrCreateModelClass(AudioProviderDefinition provider)
+        => GetOrCreateModelClass(provider.ModelClassId, provider.ModelClassName, provider.Category);
+
+    /// <summary>Gets or creates a T2IModelClass by explicit ID and name. Registers compat class with IsAudioModel = true.</summary>
+    public static T2IModelClass GetOrCreateModelClass(string id, string name, AudioCategory category)
     {
-        string id = provider.ModelClassId;
         if (!_modelClasses.TryGetValue(id, out T2IModelClass modelClass))
         {
             T2IModelCompatClass compat = T2IModelClassSorter.RegisterCompat(new()
             {
                 ID = id,
-                ShortCode = GetShortCode(provider.Category),
+                ShortCode = GetShortCode(category),
                 IsAudioModel = true
             });
             modelClass = new T2IModelClass
             {
                 ID = id,
-                Name = provider.ModelClassName,
+                Name = name,
                 CompatClass = compat,
                 StandardWidth = 0,
                 StandardHeight = 0,
@@ -83,7 +89,7 @@ public static class AudioModelFactory
             };
             _modelClasses[id] = modelClass;
             T2IModelClassSorter.Register(modelClass);
-            Logs.Debug($"[AudioModelFactory] Registered model class: {id} ({provider.ModelClassName})");
+            Logs.Debug($"[AudioModelFactory] Registered model class: {id} ({name})");
         }
         return modelClass;
     }
