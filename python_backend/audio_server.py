@@ -120,6 +120,7 @@ class AudioRequestHandler(BaseHTTPRequestHandler):
             # Redirect stdout to stderr during processing to keep stdout clean
             old_stdout = sys.stdout
             sys.stdout = sys.stderr
+            engine = None
             try:
                 engine = engine_registry.get_engine(module, engine_class)
                 # Inject cancel event so engine.is_cancelled() works
@@ -127,7 +128,8 @@ class AudioRequestHandler(BaseHTTPRequestHandler):
                 result = engine.process(**kwargs)
             finally:
                 sys.stdout = old_stdout
-                engine._cancel_event = None
+                if engine is not None:
+                    engine._cancel_event = None
 
             # If cancelled during processing, override the result
             if cancel_event and cancel_event.is_set():

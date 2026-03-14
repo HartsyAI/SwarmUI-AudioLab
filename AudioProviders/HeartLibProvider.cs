@@ -78,11 +78,11 @@ public sealed class HeartLibProvider : IAudioProviderSource
             Id = "3b-rl",
             Name = "HeartMuLa 3B (RL-Tuned)",
             Description = "4B params, reinforcement learning optimized variant. Improved output quality via DPO training. Requires ~12GB VRAM (lazy load) or ~16GB VRAM (full load).",
-            SourceUrl = "https://huggingface.co/HeartMuLa/HeartMuLa-RL-oss-3B",
+            SourceUrl = "https://huggingface.co/HeartMuLa/HeartMuLa-RL-oss-3B-20260123",
             License = "Apache-2.0",
             EstimatedSize = "~12GB",
             EstimatedVram = "~12GB (lazy load)",
-            EngineConfig = new() { ["model_name"] = "HeartMuLa/HeartMuLa-RL-oss-3B" }
+            EngineConfig = new() { ["model_name"] = "HeartMuLa/HeartMuLa-RL-oss-3B-20260123" }
         },
     ];
 

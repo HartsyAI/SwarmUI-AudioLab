@@ -55,6 +55,10 @@ class HeartLibEngine(BaseAudioEngine):
         logger.info("Using float16 (GPU capability < 8.0 or no CUDA)")
         return torch.float16
 
+    def _get_device(self):
+        import torch
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     def _ensure_model_dir(self, model_name: str) -> str:
         """Download and arrange the 3 HuggingFace repos into the expected layout.
 
@@ -117,6 +121,43 @@ class HeartLibEngine(BaseAudioEngine):
 
         return root
 
+    def _init_rope_caches(self):
+        """Initialize RoPE position embedding caches on the mula model.
+
+        torchtune's RotaryPositionalEmbeddings requires rope_init() to build
+        the cos/sin cache before inference. The cache is built on CPU and must
+        be moved to the model's device. This must be called after every model
+        load/reload (including lazy_load reloads).
+        """
+        device = self._get_device()
+        for module in self._pipeline.mula.modules():
+            if hasattr(module, 'rope_init'):
+                module.rope_init()
+                if hasattr(module, 'cache') and module.cache is not None:
+                    module.cache = module.cache.to(device)
+
+    def _ensure_codec_loaded(self):
+        """Pre-load HeartCodec with ignore_mismatched_sizes=True.
+
+        The HeartCodec checkpoint has a known shape mismatch in
+        flow_matching.vq_embed.layers.*._codebook.initted (Size([1]) vs Size([]))
+        which is functionally identical but causes transformers to error out.
+        Pre-loading here prevents the pipeline's lazy codec loader from failing.
+        """
+        from heartlib.heartcodec.modeling_heartcodec import HeartCodec
+
+        if isinstance(self._pipeline._codec, HeartCodec):
+            return
+
+        logger.info("Pre-loading HeartCodec with ignore_mismatched_sizes=True")
+        self._pipeline._codec = HeartCodec.from_pretrained(
+            self._pipeline.codec_path,
+            device_map=self._pipeline.codec_device,
+            dtype=self._pipeline.codec_dtype,
+            ignore_mismatched_sizes=True,
+        )
+        logger.info("HeartCodec loaded successfully")
+
     def _ensure_loaded(self, model_name: str):
         """Lazy-load the HeartMuLaGenPipeline."""
         if self._pipeline is not None and self._loaded_model == model_name:
@@ -134,7 +175,7 @@ class HeartLibEngine(BaseAudioEngine):
 
         model_root = self._ensure_model_dir(model_name)
         mula_dtype = self._get_dtype()
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = self._get_device()
 
         logger.info("Loading HeartMuLaGenPipeline from %s (dtype=%s, lazy_load=True)",
                      model_root, mula_dtype)
@@ -145,6 +186,13 @@ class HeartLibEngine(BaseAudioEngine):
             version="3B",
             lazy_load=True,
         )
+
+        # Pre-load codec to avoid ignore_mismatched_sizes error
+        self._ensure_codec_loaded()
+
+        # Initialize RoPE caches for initial load
+        self._init_rope_caches()
+
         self._loaded_model = model_name
         logger.info("HeartMuLaGenPipeline loaded successfully")
 
@@ -173,6 +221,12 @@ class HeartLibEngine(BaseAudioEngine):
 
         # Load model
         self._ensure_loaded(model_name)
+
+        # Re-init RoPE caches before every generation.
+        # With lazy_load=True the pipeline may have unloaded and reloaded the
+        # mula model since _ensure_loaded last ran — accessing .mula here
+        # triggers the reload if needed, then we rebuild the RoPE caches.
+        self._init_rope_caches()
 
         max_audio_length_ms = int(duration * 1000)
 

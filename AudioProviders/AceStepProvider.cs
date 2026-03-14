@@ -45,7 +45,14 @@ public sealed class AceStepProvider : IAudioProviderSource
         new() { Name = "safetensors==0.7.0", InstallName = "safetensors==0.7.0", ImportName = "safetensors", Category = "music" },
         new() { Name = "scipy>=1.10.1", InstallName = "scipy>=1.10.1", ImportName = "scipy", Category = "music" },
         new() { Name = "soundfile>=0.13.1", InstallName = "soundfile>=0.13.1", ImportName = "soundfile", Category = "core" },
-        new() { Name = "loguru>=0.7.3", InstallName = "loguru>=0.7.3", ImportName = "loguru", Category = "music" }
+        new() { Name = "loguru>=0.7.3", InstallName = "loguru>=0.7.3", ImportName = "loguru", Category = "music" },
+        new() { Name = "pypinyin", InstallName = "pypinyin", ImportName = "pypinyin", Category = "music" },
+        new() { Name = "hangul-romanize", InstallName = "hangul-romanize", ImportName = "hangul_romanize", Category = "music" },
+        new() { Name = "num2words", InstallName = "num2words", ImportName = "num2words", Category = "music" },
+        new() { Name = "cutlet", InstallName = "cutlet", ImportName = "cutlet", Category = "music" },
+        new() { Name = "fugashi", InstallName = "fugashi[unidic-lite]", ImportName = "fugashi", Category = "music" },
+        new() { Name = "spacy", InstallName = "spacy", ImportName = "spacy", Category = "music" },
+        new() { Name = "librosa", InstallName = "librosa", ImportName = "librosa", Category = "music" }
     ];
 
     #endregion
