@@ -70,9 +70,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
         [ConfigComment("Audio model storage path. Models are cached here instead of ~/.cache/huggingface/.")]
         public string AudioModelRoot = "Models/audio";
 
-        [ConfigComment("Maximum time in seconds to wait for audio generation to complete.\nIncrease for slow models (e.g. VibeVoice) or long music generation.\nDefault: 300 (5 minutes).")]
-        public int TimeoutSeconds = 300;
-
         [ConfigComment("Enable debug logging for audio processing.")]
         public bool DebugMode = false;
     }
@@ -135,7 +132,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
         Program.ModelRefreshEvent -= ReRegisterModelsAfterRefresh;
 
         AudioConfiguration.UseDocker = Settings.UseDocker;
-        AudioConfiguration.TimeoutSeconds = Settings.TimeoutSeconds;
         if (!string.IsNullOrEmpty(Settings.AudioModelRoot))
         {
             AudioConfiguration.ModelRoot = Settings.AudioModelRoot;

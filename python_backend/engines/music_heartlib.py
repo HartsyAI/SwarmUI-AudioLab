@@ -136,27 +136,32 @@ class HeartLibEngine(BaseAudioEngine):
                 if hasattr(module, 'cache') and module.cache is not None:
                     module.cache = module.cache.to(device)
 
-    def _ensure_codec_loaded(self):
-        """Pre-load HeartCodec with ignore_mismatched_sizes=True.
+    @staticmethod
+    def _patch_codec_from_pretrained():
+        """Patch HeartCodec.from_pretrained to pass ignore_mismatched_sizes=True.
 
-        The HeartCodec checkpoint has a known shape mismatch in
+        The HeartCodec checkpoint has a shape mismatch in
         flow_matching.vq_embed.layers.*._codebook.initted (Size([1]) vs Size([]))
-        which is functionally identical but causes transformers to error out.
-        Pre-loading here prevents the pipeline's lazy codec loader from failing.
+        — functionally identical (scalar vs 1-element tensor) but newer
+        transformers versions reject it. The pipeline's lazy codec property
+        calls from_pretrained without the flag, and since _unload() deletes
+        the codec between _forward and postprocess, we can't pre-load it.
+        Patching the class method ensures all loads work correctly.
         """
         from heartlib.heartcodec.modeling_heartcodec import HeartCodec
 
-        if isinstance(self._pipeline._codec, HeartCodec):
+        if getattr(HeartCodec, '_mismatched_sizes_patched', False):
             return
 
-        logger.info("Pre-loading HeartCodec with ignore_mismatched_sizes=True")
-        self._pipeline._codec = HeartCodec.from_pretrained(
-            self._pipeline.codec_path,
-            device_map=self._pipeline.codec_device,
-            dtype=self._pipeline.codec_dtype,
-            ignore_mismatched_sizes=True,
-        )
-        logger.info("HeartCodec loaded successfully")
+        _orig = HeartCodec.from_pretrained
+
+        def _patched(*args, **kwargs):
+            kwargs.setdefault('ignore_mismatched_sizes', True)
+            return _orig(*args, **kwargs)
+
+        HeartCodec.from_pretrained = _patched
+        HeartCodec._mismatched_sizes_patched = True
+        logger.info("Patched HeartCodec.from_pretrained for _codebook.initted shape mismatch")
 
     def _ensure_loaded(self, model_name: str):
         """Lazy-load the HeartMuLaGenPipeline."""
@@ -187,8 +192,10 @@ class HeartLibEngine(BaseAudioEngine):
             lazy_load=True,
         )
 
-        # Pre-load codec to avoid ignore_mismatched_sizes error
-        self._ensure_codec_loaded()
+        # Patch HeartCodec.from_pretrained so the pipeline's lazy codec
+        # loader passes ignore_mismatched_sizes=True (needed after _unload
+        # deletes the codec between _forward and postprocess)
+        self._patch_codec_from_pretrained()
 
         # Initialize RoPE caches for initial load
         self._init_rope_caches()

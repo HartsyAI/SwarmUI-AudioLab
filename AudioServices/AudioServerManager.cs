@@ -22,7 +22,14 @@ public class AudioServerManager : IDisposable
     private static readonly Lazy<AudioServerManager> InstanceLazy = new(() => new AudioServerManager());
     public static AudioServerManager Instance => InstanceLazy.Value;
 
-    private readonly HttpClient _httpClient = NetworkBackendUtils.MakeHttpClient(timeoutMinutes: 10);
+    private readonly HttpClient _httpClient = CreateHttpClient();
+
+    private static HttpClient CreateHttpClient()
+    {
+        HttpClient client = NetworkBackendUtils.MakeHttpClient();
+        client.Timeout = Timeout.InfiniteTimeSpan;
+        return client;
+    }
     private readonly ConcurrentDictionary<string, GroupServerState> _groupServers = new();
     private readonly ConcurrentDictionary<string, DateTime> _groupStartFailures = new();
     private static readonly TimeSpan StartFailureCooldown = TimeSpan.FromSeconds(60);
@@ -301,19 +308,11 @@ public class AudioServerManager : IDisposable
             ["request_id"] = requestId
         };
 
-        int timeoutMs = GetTimeoutMs(provider.Category);
-
         try
         {
-            using CancellationTokenSource timeoutCts = new(timeoutMs);
-            using CancellationTokenSource linkedCts = cancelToken.CanBeCanceled
-                ? CancellationTokenSource.CreateLinkedTokenSource(cancelToken, timeoutCts.Token)
-                : null;
-            CancellationToken effectiveToken = linkedCts?.Token ?? timeoutCts.Token;
-
             StringContent content = new(payload.ToString(), Encoding.UTF8, "application/json");
             HttpResponseMessage response = await _httpClient.PostAsync(
-                $"http://127.0.0.1:{port}/process", content, effectiveToken);
+                $"http://127.0.0.1:{port}/process", content, cancelToken);
             string body = await response.Content.ReadAsStringAsync();
 
             if (string.IsNullOrEmpty(body) || !body.StartsWith("{"))
@@ -325,14 +324,11 @@ public class AudioServerManager : IDisposable
         }
         catch (TaskCanceledException)
         {
-            if (cancelToken.IsCancellationRequested && !string.IsNullOrEmpty(requestId))
+            if (!string.IsNullOrEmpty(requestId))
             {
                 _ = SendCancelAsync(port, requestId);
             }
-            string reason = cancelToken.IsCancellationRequested
-                ? "Generation cancelled by user"
-                : $"Request to {provider.Name} timed out after {timeoutMs / 1000}s";
-            return CreateErrorResponse(reason);
+            return CreateErrorResponse("Generation cancelled by user");
         }
         catch (HttpRequestException ex)
         {
@@ -594,19 +590,11 @@ public class AudioServerManager : IDisposable
             ["request_id"] = requestId
         };
 
-        int timeoutMs = GetTimeoutMs(provider.Category);
-
         try
         {
-            using CancellationTokenSource timeoutCts = new(timeoutMs);
-            using CancellationTokenSource linkedCts = cancelToken.CanBeCanceled
-                ? CancellationTokenSource.CreateLinkedTokenSource(cancelToken, timeoutCts.Token)
-                : null;
-            CancellationToken effectiveToken = linkedCts?.Token ?? timeoutCts.Token;
-
             StringContent content = new(payload.ToString(), Encoding.UTF8, "application/json");
             HttpResponseMessage response = await _httpClient.PostAsync(
-                $"http://127.0.0.1:{_dockerPort}/process", content, effectiveToken);
+                $"http://127.0.0.1:{_dockerPort}/process", content, cancelToken);
             string body = await response.Content.ReadAsStringAsync();
 
             if (string.IsNullOrEmpty(body) || !body.StartsWith("{"))
@@ -618,14 +606,11 @@ public class AudioServerManager : IDisposable
         }
         catch (TaskCanceledException)
         {
-            if (cancelToken.IsCancellationRequested && !string.IsNullOrEmpty(requestId))
+            if (!string.IsNullOrEmpty(requestId))
             {
                 _ = SendCancelAsync(_dockerPort, requestId);
             }
-            string reason = cancelToken.IsCancellationRequested
-                ? "Generation cancelled by user"
-                : $"Docker request to {provider.Name} timed out after {timeoutMs / 1000}s";
-            return CreateErrorResponse(reason);
+            return CreateErrorResponse("Generation cancelled by user");
         }
         catch (HttpRequestException ex)
         {
@@ -712,8 +697,6 @@ public class AudioServerManager : IDisposable
         }
     }
 
-    /// <summary>Gets the request timeout in milliseconds from configuration.</summary>
-    private static int GetTimeoutMs(AudioCategory _) => AudioConfiguration.TimeoutSeconds * 1000;
 
     /// <summary>Retrieves the current HuggingFace API token from user settings.
     /// Called per-request so token changes take effect without restarting the server.</summary>

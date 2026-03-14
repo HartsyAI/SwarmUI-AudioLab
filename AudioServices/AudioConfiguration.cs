@@ -101,9 +101,6 @@ public static class AudioConfiguration
     /// <summary>Whether to use Docker for Linux-only engines.</summary>
     public static bool UseDocker { get; set; } = false;
 
-    /// <summary>Request timeout in seconds, configurable from backend settings.</summary>
-    public static int TimeoutSeconds { get; set; } = 300;
-
     #endregion
 
     /// <summary>Validates the current configuration and logs any issues.</summary>
