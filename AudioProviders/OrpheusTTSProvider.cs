@@ -17,6 +17,7 @@ public sealed class OrpheusTTSProvider : IAudioProviderSource
         .WithPythonEngine("tts_orpheus", "OrpheusEngine")
         .WithModelPrefix("Orpheus")
         .WithModelClass("orpheus_tts", "Orpheus TTS")
+        .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("orpheus_tts_params")
         .AddFeatureFlag("tts_sampling")
         .AddDependencies(Dependencies)

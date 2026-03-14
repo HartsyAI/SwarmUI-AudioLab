@@ -17,6 +17,7 @@ public sealed class OpenVoiceProvider : IAudioProviderSource
         .WithPythonEngine("clone_openvoice", "OpenVoiceEngine")
         .WithModelPrefix("OpenVoice")
         .WithModelClass("openvoice_clone", "OpenVoice V2")
+        .AddFeatureFlag("audiolab_clone")
         .AddFeatureFlag("openvoice_clone_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)

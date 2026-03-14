@@ -17,6 +17,7 @@ public sealed class DistilWhisperProvider : IAudioProviderSource
         .WithPythonEngine("stt_distilwhisper", "DistilWhisperEngine")
         .WithModelPrefix("DistilWhisper")
         .WithModelClass("distilwhisper_stt", "Distil-Whisper STT")
+        .AddFeatureFlag("audiolab_stt")
         .AddFeatureFlag("distilwhisper_stt_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
@@ -32,7 +33,8 @@ public sealed class DistilWhisperProvider : IAudioProviderSource
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "transformers>=4.40.0", InstallName = "transformers>=4.40.0", ImportName = "transformers", Category = "stt" },
         new() { Name = "accelerate>=0.25.0", InstallName = "accelerate>=0.25.0", ImportName = "accelerate", Category = "stt" },
-        new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
+        new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" },
+        new() { Name = "imageio-ffmpeg", InstallName = "imageio-ffmpeg", ImportName = "imageio_ffmpeg", Category = "stt" }
     ];
 
     #endregion

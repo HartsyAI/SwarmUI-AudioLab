@@ -17,6 +17,7 @@ public sealed class ResembleEnhanceProvider : IAudioProviderSource
         .WithPythonEngine("fx_resemble_enhance", "ResembleEnhanceEngine")
         .WithModelPrefix("ResembleEnhance")
         .WithModelClass("resemble_enhance_fx", "Resemble Enhance")
+        .AddFeatureFlag("audiolab_audioproc")
         .AddFeatureFlag("resemble_enhance_fx_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)

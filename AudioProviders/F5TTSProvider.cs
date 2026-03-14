@@ -17,6 +17,7 @@ public sealed class F5TTSProvider : IAudioProviderSource
         .WithPythonEngine("tts_f5", "F5TTSEngine")
         .WithModelPrefix("F5TTS")
         .WithModelClass("f5_tts", "F5-TTS")
+        .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("f5_tts_params")
         .AddFeatureFlag("tts_voice_ref")
         .AddDependencies(Dependencies)
@@ -31,7 +32,7 @@ public sealed class F5TTSProvider : IAudioProviderSource
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
         new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        new() { Name = "f5-tts>=1.1.0", InstallName = "f5-tts>=1.1.0", ImportName = "f5_tts", Category = "tts", EstimatedInstallTimeMinutes = 8 },
+        new() { Name = "f5-tts>=1.1.0", InstallName = "f5-tts>=1.1.0", ImportName = "f5_tts", Category = "tts", EstimatedInstallTimeMinutes = 8, CustomInstallArgs = "--no-deps" },
         new() { Name = "transformers>=4.40.0", InstallName = "transformers>=4.40.0", ImportName = "transformers", Category = "tts" },
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
     ];

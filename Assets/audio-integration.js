@@ -8,12 +8,12 @@ const AudioLabConfig = {
     /** Maps model class IDs (curArch) to their category flag and provider-specific flag. */
     archToCategory: {
         kokoro_tts: { category: 'audiolab_tts', providerFlag: 'kokoro_tts_params' },
-        chatterbox_tts: { category: 'audiolab_tts', providerFlag: 'chatterbox_tts_params', extraFlags: ['tts_voice_ref'] },
+        chatterbox_tts: { category: 'audiolab_tts', providerFlag: 'chatterbox_tts_params', extraFlags: ['tts_sampling', 'tts_voice_ref'] },
         bark_tts: { category: 'audiolab_tts', providerFlag: 'bark_tts_params' },
         piper_tts: { category: 'audiolab_tts', providerFlag: 'piper_tts_params' },
-        dia_tts: { category: 'audiolab_tts', providerFlag: 'dia_tts_params' },
-        csm_tts: { category: 'audiolab_tts', providerFlag: 'csm_tts_params' },
-        orpheus_tts: { category: 'audiolab_tts', providerFlag: 'orpheus_tts_params' },
+        dia_tts: { category: 'audiolab_tts', providerFlag: 'dia_tts_params', extraFlags: ['tts_sampling', 'tts_cfg'] },
+        csm_tts: { category: 'audiolab_tts', providerFlag: 'csm_tts_params', extraFlags: ['tts_sampling'] },
+        orpheus_tts: { category: 'audiolab_tts', providerFlag: 'orpheus_tts_params', extraFlags: ['tts_sampling'] },
         vibevoice_tts: { category: 'audiolab_tts', providerFlag: 'vibevoice_tts_params', extraFlags: ['tts_voice_ref'] },
         zonos_tts: { category: 'audiolab_tts', providerFlag: 'zonos_tts_params', extraFlags: ['tts_voice_ref'] },
         f5_tts: { category: 'audiolab_tts', providerFlag: 'f5_tts_params', extraFlags: ['tts_voice_ref'] },
@@ -27,14 +27,16 @@ const AudioLabConfig = {
         distilwhisper_stt: { category: 'audiolab_stt', providerFlag: 'distilwhisper_stt_params' },
         moonshine_stt: { category: 'audiolab_stt', providerFlag: 'moonshine_stt_params' },
         realtimestt_stt: { category: 'audiolab_stt', providerFlag: 'realtimestt_params' },
-        musicgen_music: { category: 'audiolab_audiogen', providerFlag: 'musicgen_music_params' },
-        acestep_music: { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params' },
+        musicgen_music: { category: 'audiolab_audiogen', providerFlag: 'musicgen_music_params', extraFlags: ['audiocraft_sampling'] },
+        acestep_music: { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params', extraFlags: ['acestep_lm_params', 'acestep_task_params'] },
         openvoice_clone: { category: 'audiolab_clone', providerFlag: 'openvoice_clone_params' },
         rvc_clone: { category: 'audiolab_clone', providerFlag: 'rvc_clone_params' },
         gptsovits_clone: { category: 'audiolab_clone', providerFlag: 'gptsovits_clone_params' },
         demucs_fx: { category: 'audiolab_audioproc', providerFlag: 'demucs_fx_params' },
         resemble_enhance_fx: { category: 'audiolab_audioproc', providerFlag: 'resemble_enhance_fx_params' },
-        audiogen_sfx: { category: 'audiolab_audiogen', providerFlag: 'audiogen_sfx_params' }
+        audiogen_sfx: { category: 'audiolab_audiogen', providerFlag: 'audiogen_sfx_params', extraFlags: ['audiocraft_sampling'] },
+        yue_music: { category: 'audiolab_audiogen', providerFlag: 'yue_music_params' },
+        heartlib_music: { category: 'audiolab_audiogen', providerFlag: 'heartlib_music_params' }
     },
 
     categoryFlags: ['audiolab_tts', 'audiolab_stt', 'audiolab_audiogen', 'audiolab_clone', 'audiolab_audioproc'],

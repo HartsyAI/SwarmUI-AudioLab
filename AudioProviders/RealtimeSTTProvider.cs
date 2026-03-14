@@ -17,6 +17,7 @@ public sealed class RealtimeSTTProvider : IAudioProviderSource
         .WithPythonEngine("stt_realtimestt", "RealtimeSTTEngine")
         .WithModelPrefix("RealtimeSTT")
         .WithModelClass("realtimestt_stt", "RealtimeSTT")
+        .AddFeatureFlag("audiolab_stt")
         .AddFeatureFlag("realtimestt_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)

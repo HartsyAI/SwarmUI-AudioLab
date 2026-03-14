@@ -157,6 +157,15 @@ public class AudioServerManager : IDisposable
             psi.Environment["PYTHONWARNINGS"] = "ignore::FutureWarning,ignore::UserWarning";
             string pythonDir = Path.GetDirectoryName(Path.GetFullPath(pythonPath));
             psi.Environment["PATH"] = PythonLaunchHelper.ReworkPythonPaths(pythonDir);
+            string ffmpegPath = Utilities.FfmegLocation.Value;
+            if (!string.IsNullOrEmpty(ffmpegPath))
+            {
+                string ffmpegDir = Path.GetDirectoryName(Path.GetFullPath(ffmpegPath));
+                if (!string.IsNullOrEmpty(ffmpegDir))
+                {
+                    psi.Environment["PATH"] = psi.Environment["PATH"] + Path.PathSeparator + ffmpegDir;
+                }
+            }
             try
             {
                 if (Program.Sessions == null)

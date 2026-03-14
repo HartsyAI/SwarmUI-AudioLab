@@ -17,6 +17,7 @@ public sealed class DiaTTSProvider : IAudioProviderSource
         .WithPythonEngine("tts_dia", "DiaEngine")
         .WithModelPrefix("Dia")
         .WithModelClass("dia_tts", "Dia TTS")
+        .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("dia_tts_params")
         .AddFeatureFlag("tts_sampling")
         .AddFeatureFlag("tts_cfg")

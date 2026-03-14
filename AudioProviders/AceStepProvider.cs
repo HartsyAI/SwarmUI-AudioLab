@@ -17,6 +17,7 @@ public sealed class AceStepProvider : IAudioProviderSource
         .WithPythonEngine("music_acestep", "AceStepEngine")
         .WithModelPrefix("AceStep")
         .WithModelClass("acestep_music", "ACE-Step Music")
+        .AddFeatureFlag("audiolab_audiogen")
         .AddFeatureFlag("acestep_music_params")
         .AddFeatureFlag("acestep_lm_params")
         .AddFeatureFlag("acestep_task_params")

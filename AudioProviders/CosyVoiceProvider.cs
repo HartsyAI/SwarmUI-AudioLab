@@ -17,6 +17,7 @@ public sealed class CosyVoiceProvider : IAudioProviderSource
         .WithPythonEngine("tts_cosyvoice", "CosyVoiceEngine")
         .WithModelPrefix("CosyVoice")
         .WithModelClass("cosyvoice_tts", "CosyVoice TTS")
+        .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("cosyvoice_tts_params")
         .AddFeatureFlag("tts_voice_ref")
         .AddDependencies(Dependencies)

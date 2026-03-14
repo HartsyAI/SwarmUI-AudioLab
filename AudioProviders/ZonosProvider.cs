@@ -17,6 +17,7 @@ public sealed class ZonosProvider : IAudioProviderSource
         .WithPythonEngine("tts_zonos", "ZonosEngine")
         .WithModelPrefix("Zonos")
         .WithModelClass("zonos_tts", "Zonos TTS")
+        .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("zonos_tts_params")
         .AddFeatureFlag("tts_voice_ref")
         .AddDependencies(Dependencies)

@@ -17,6 +17,7 @@ public sealed class DemucsProvider : IAudioProviderSource
         .WithPythonEngine("fx_demucs", "DemucsEngine")
         .WithModelPrefix("Demucs")
         .WithModelClass("demucs_fx", "Demucs Separation")
+        .AddFeatureFlag("audiolab_audioproc")
         .AddFeatureFlag("demucs_fx_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)

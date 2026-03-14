@@ -403,7 +403,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     takeOutput(audio);
                 }
 
-                // For STT, also output the transcription text as progress
+                // For STT, output the transcription text and a placeholder audio
                 if (provider.Category == AudioCategory.STT)
                 {
                     string transcription = result["text"]?.ToString() ?? "";
@@ -415,6 +415,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
                             ["current_status"] = $"Transcription: {transcription}"
                         }
                     });
+                    // STT produces no audio, but the pipeline requires at least one output.
+                    // Generate a minimal silent WAV so the generation isn't treated as a failure.
+                    if (string.IsNullOrEmpty(audioBase64))
+                    {
+                        byte[] silentWav = GenerateSilentWav(sampleRate: 16000, durationMs: 100);
+                        takeOutput(new AudioFile(silentWav, MediaType.AudioWav));
+                    }
                 }
 
                 meta.LastUsed = DateTime.UtcNow;
@@ -1103,6 +1110,26 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     args["reference_audio"] = melodyRef;
                 break;
 
+            case "yue_music":
+                args["lyrics"] = input.TryGet(AudioLabParams.YuELyrics, out string yueLy) ? yueLy : "";
+                args["max_new_tokens"] = input.TryGet(AudioLabParams.YuEMaxTokens, out int yueTokens) ? yueTokens : 3000;
+                args["quantization"] = input.TryGet(AudioLabParams.YuEQuantization, out string yueQuant) ? yueQuant : "fp16";
+                args["seed"] = input.TryGet(AudioLabParams.YuESeed, out int yueSeed) ? yueSeed : -1;
+                args["stage2_batch_size"] = input.TryGet(AudioLabParams.YuEStage2BatchSize, out int yueS2Bs) ? yueS2Bs : 4;
+                args["temperature"] = input.TryGet(AudioLabParams.YuETemperature, out double yueTemp) ? yueTemp : 0.9;
+                args["top_p"] = input.TryGet(AudioLabParams.YuETopP, out double yueTopP) ? yueTopP : 0.93;
+                args["repetition_penalty"] = input.TryGet(AudioLabParams.YuERepetitionPenalty, out double yueRepPen) ? yueRepPen : 1.2;
+                args["run_n_segments"] = input.TryGet(AudioLabParams.YuESegments, out int yueSegs) ? yueSegs : 2;
+                break;
+
+            case "heartlib_music":
+                args["lyrics"] = input.TryGet(AudioLabParams.HeartLibLyrics, out string hlLy) ? hlLy : "";
+                args["cfg_scale"] = input.TryGet(AudioLabParams.HeartLibCFGScale, out double hlCfg) ? hlCfg : 1.5;
+                args["temperature"] = input.TryGet(AudioLabParams.HeartLibTemperature, out double hlTemp) ? hlTemp : 1.0;
+                args["topk"] = input.TryGet(AudioLabParams.HeartLibTopK, out int hlTopK) ? hlTopK : 50;
+                args["seed"] = input.TryGet(AudioLabParams.HeartLibSeed, out int hlSeed) ? hlSeed : -1;
+                break;
+
             case "whisper_stt":
                 args["task"] = input.TryGet(AudioLabParams.WhisperTask, out string whisperTask) ? whisperTask : "transcribe";
                 break;
@@ -1403,6 +1430,14 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
 
         return ms.ToArray();
+    }
+
+    /// <summary>Generates a minimal silent WAV file (all zeros) for use as a placeholder output.</summary>
+    private static byte[] GenerateSilentWav(int sampleRate = 16000, int durationMs = 100)
+    {
+        int numSamples = sampleRate * durationMs / 1000;
+        byte[] silence = new byte[numSamples * 2]; // 16-bit mono = 2 bytes per sample
+        return BuildWavFromPcm([silence], sampleRate, channels: 1, bitsPerSample: 16);
     }
 
     #endregion

@@ -17,6 +17,7 @@ public sealed class KokoroProvider : IAudioProviderSource
         .WithPythonEngine("tts_kokoro", "KokoroEngine")
         .WithModelPrefix("Kokoro")
         .WithModelClass("kokoro_tts", "Kokoro TTS")
+        .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("kokoro_tts_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)

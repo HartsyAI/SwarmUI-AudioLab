@@ -17,6 +17,7 @@ public sealed class MusicGenProvider : IAudioProviderSource
         .WithPythonEngine("music_musicgen", "MusicGenEngine")
         .WithModelPrefix("MusicGen")
         .WithModelClass("musicgen_music", "MusicGen")
+        .AddFeatureFlag("audiolab_audiogen")
         .AddFeatureFlag("musicgen_music_params")
         .AddFeatureFlag("audiocraft_sampling")
         .AddDependencies(Dependencies)

@@ -17,6 +17,7 @@ public sealed class ChatterboxProvider : IAudioProviderSource
         .WithPythonEngine("tts_chatterbox", "ChatterboxEngine")
         .WithModelPrefix("Chatterbox")
         .WithModelClass("chatterbox_tts", "Chatterbox TTS")
+        .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("chatterbox_tts_params")
         .AddFeatureFlag("tts_sampling")
         .AddFeatureFlag("tts_voice_ref")

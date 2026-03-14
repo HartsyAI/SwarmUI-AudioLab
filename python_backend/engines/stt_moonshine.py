@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Moonshine STT engine — tiny, fast, edge-optimized speech-to-text."""
+"""Moonshine STT engine — tiny, fast, edge-optimized speech-to-text.
+
+Uses useful-moonshine-onnx for ONNX-based inference (CPU-friendly, tiny models).
+"""
 
 import base64
 import logging
@@ -12,7 +15,7 @@ logger = logging.getLogger("STT.Moonshine")
 
 
 class MoonshineEngine(BaseAudioEngine):
-    """Moonshine STT engine from Useful Sensors."""
+    """Moonshine STT engine from Useful Sensors (ONNX variant)."""
 
     name = "moonshine"
     category = "stt"
@@ -22,9 +25,9 @@ class MoonshineEngine(BaseAudioEngine):
 
     def initialize(self) -> bool:
         try:
-            import moonshine  # noqa: F401
+            import moonshine_onnx  # noqa: F401
 
-            logger.info("Moonshine initialized (model: %s)", self.model_name)
+            logger.info("Moonshine ONNX initialized (model: %s)", self.model_name)
             return True
         except Exception as e:
             logger.error("Moonshine init failed: %s", e)
@@ -39,7 +42,7 @@ class MoonshineEngine(BaseAudioEngine):
 
         temp_path = None
         try:
-            import moonshine
+            import moonshine_onnx
 
             audio_bytes = base64.b64decode(audio_data)
 
@@ -49,7 +52,7 @@ class MoonshineEngine(BaseAudioEngine):
                 tmp.write(audio_bytes)
                 temp_path = tmp.name
 
-            result = moonshine.transcribe(temp_path, model_name)
+            result = moonshine_onnx.transcribe(temp_path, model_name)
 
             # Result is a list of transcription strings
             text = result[0] if isinstance(result, list) and result else str(result)

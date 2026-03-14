@@ -17,6 +17,7 @@ public sealed class CSMProvider : IAudioProviderSource
         .WithPythonEngine("tts_csm", "CSMEngine")
         .WithModelPrefix("CSM")
         .WithModelClass("csm_tts", "CSM Conversational")
+        .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("csm_tts_params")
         .AddFeatureFlag("tts_sampling")
         .AddDependencies(Dependencies)

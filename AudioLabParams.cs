@@ -301,6 +301,44 @@ public static class AudioLabParams
 
     #endregion
 
+    #region Music — YuE (flag: yue_music_params)
+
+    /// <summary>Song lyrics with [verse]/[chorus] section markers for YuE. Feature flag: <c>yue_music_params</c>.</summary>
+    public static T2IRegisteredParam<string> YuELyrics;
+    /// <summary>Max new tokens for Stage-1 generation (controls output length). Feature flag: <c>yue_music_params</c>.</summary>
+    public static T2IRegisteredParam<int> YuEMaxTokens;
+    /// <summary>Quantization mode for YuE Stage-1 model. Feature flag: <c>yue_music_params</c>.</summary>
+    public static T2IRegisteredParam<string> YuEQuantization;
+    /// <summary>Random seed for reproducible YuE generation. Feature flag: <c>yue_music_params</c>.</summary>
+    public static T2IRegisteredParam<int> YuESeed;
+    /// <summary>Stage-2 batch size (lower = less VRAM). Feature flag: <c>yue_music_params</c>.</summary>
+    public static T2IRegisteredParam<int> YuEStage2BatchSize;
+    /// <summary>Sampling temperature for YuE generation. Feature flag: <c>yue_music_params</c>.</summary>
+    public static T2IRegisteredParam<double> YuETemperature;
+    /// <summary>Nucleus sampling threshold for YuE. Feature flag: <c>yue_music_params</c>.</summary>
+    public static T2IRegisteredParam<double> YuETopP;
+    /// <summary>Repetition penalty for YuE token generation. Feature flag: <c>yue_music_params</c>.</summary>
+    public static T2IRegisteredParam<double> YuERepetitionPenalty;
+    /// <summary>Number of lyric segments to generate for YuE. Feature flag: <c>yue_music_params</c>.</summary>
+    public static T2IRegisteredParam<int> YuESegments;
+
+    #endregion
+
+    #region Music — HeartLib (flag: heartlib_music_params)
+
+    /// <summary>Song lyrics with [Verse]/[Chorus]/[Bridge] section markers for HeartLib. Feature flag: <c>heartlib_music_params</c>.</summary>
+    public static T2IRegisteredParam<string> HeartLibLyrics;
+    /// <summary>Classifier-free guidance strength for HeartLib. Feature flag: <c>heartlib_music_params</c>.</summary>
+    public static T2IRegisteredParam<double> HeartLibCFGScale;
+    /// <summary>Sampling temperature for HeartLib generation. Feature flag: <c>heartlib_music_params</c>.</summary>
+    public static T2IRegisteredParam<double> HeartLibTemperature;
+    /// <summary>Top-K token sampling for HeartLib. Feature flag: <c>heartlib_music_params</c>.</summary>
+    public static T2IRegisteredParam<int> HeartLibTopK;
+    /// <summary>Random seed for reproducible HeartLib generation. Feature flag: <c>heartlib_music_params</c>.</summary>
+    public static T2IRegisteredParam<int> HeartLibSeed;
+
+    #endregion
+
     #region Clone Shared (flag: audiolab_clone)
 
     /// <summary>Source audio for voice cloning or conversion. Feature flag: <c>audiolab_clone</c>.</summary>
@@ -1024,6 +1062,94 @@ public static class AudioLabParams
             "Reference melody for MusicGen melody conditioning.\nOnly used with the melody model variant.",
             null,
             OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "musicgen_music_params"));
+
+        #endregion
+
+        #region Music — YuE
+        YuELyrics = T2IParamTypes.Register<string>(new("YuE Lyrics",
+            "Song lyrics for YuE music generation.\nUse section markers: [verse], [chorus], [bridge], [outro].\nEach section generates a segment of the song.",
+            "",
+            OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
+
+        YuEMaxTokens = T2IParamTypes.Register<int>(new("Max Tokens",
+            "Maximum new tokens for Stage-1 generation.\nControls output length. Higher = longer songs but slower.\n3000 ≈ ~30s of audio.",
+            "3000",
+            Min: 1000, Max: 12000, Step: 500, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
+
+        YuEQuantization = T2IParamTypes.Register<string>(new("Quantization",
+            "Model quantization for Stage-1 (7B params).\nfp16: best quality, ~16GB VRAM.\n8-bit: balanced, ~10GB VRAM.\n4-bit: lowest VRAM, ~8GB.",
+            "fp16",
+            GetValues: _ => ["fp16///FP16 (Best Quality)", "8bit///8-bit (Balanced)", "4bit///4-bit (Low VRAM)"],
+            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
+
+        YuESeed = T2IParamTypes.Register<int>(new("YuE Seed",
+            "Random seed for reproducible generation.\n-1 = random seed each time.",
+            "-1",
+            Min: -1, Max: 999999, Step: 1,
+            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
+
+        YuEStage2BatchSize = T2IParamTypes.Register<int>(new("Stage-2 Batch Size",
+            "Batch size for Stage-2 refinement.\nLower = less VRAM but slower. Higher = faster but more VRAM.\nProcesses in 6-second chunks.",
+            "4",
+            Min: 1, Max: 32, Step: 1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
+
+        YuETemperature = T2IParamTypes.Register<double>(new("YuE Temperature",
+            "Sampling temperature for music generation.\nHigher = more creative/varied. Lower = more predictable.",
+            "0.9",
+            Min: 0.1, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -4, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
+
+        YuETopP = T2IParamTypes.Register<double>(new("YuE Top P",
+            "Nucleus sampling threshold.\nLower values produce more focused, deterministic output.",
+            "0.93",
+            Min: 0.0, Max: 1.0, Step: 0.01, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -3, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
+
+        YuERepetitionPenalty = T2IParamTypes.Register<double>(new("YuE Repetition Penalty",
+            "Penalizes repeated audio tokens.\nHigher values reduce musical repetition and looping.",
+            "1.2",
+            Min: 1.0, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -2, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
+
+        YuESegments = T2IParamTypes.Register<int>(new("Segments",
+            "Number of lyric segments to generate.\nMore segments = longer song. 0 = generate all segments from lyrics.",
+            "2",
+            Min: 0, Max: 10, Step: 1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -1, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
+
+        #endregion
+
+        #region Music — HeartLib
+        HeartLibLyrics = T2IParamTypes.Register<string>(new("HeartLib Lyrics",
+            "Song lyrics for HeartLib music generation.\nUse section markers: [Verse], [Chorus], [Bridge], [Outro].\nLeave empty for instrumental generation.",
+            "",
+            OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params"));
+
+        HeartLibCFGScale = T2IParamTypes.Register<double>(new("HeartLib CFG Scale",
+            "Classifier-free guidance strength.\nHigher = stronger adherence to tags/lyrics. Lower = more creative variation.",
+            "1.5",
+            Min: 0.1, Max: 10.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params"));
+
+        HeartLibTemperature = T2IParamTypes.Register<double>(new("HeartLib Temperature",
+            "Sampling temperature for music generation.\nHigher = more creative/varied. Lower = more predictable.",
+            "1.0",
+            Min: 0.1, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params"));
+
+        HeartLibTopK = T2IParamTypes.Register<int>(new("HeartLib Top K",
+            "Top-K token sampling limit.\nLower values produce more focused output. Higher values increase variety.",
+            "50",
+            Min: 1, Max: 500, Step: 10, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params"));
+
+        HeartLibSeed = T2IParamTypes.Register<int>(new("HeartLib Seed",
+            "Random seed for reproducible generation.\n-1 = random seed each time.",
+            "-1",
+            Min: -1, Max: 999999, Step: 1,
+            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params"));
 
         #endregion
 

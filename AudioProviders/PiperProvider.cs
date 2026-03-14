@@ -17,6 +17,7 @@ public sealed class PiperProvider : IAudioProviderSource
         .WithPythonEngine("tts_piper", "PiperEngine")
         .WithModelPrefix("Piper")
         .WithModelClass("piper_tts", "Piper TTS")
+        .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("piper_tts_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)

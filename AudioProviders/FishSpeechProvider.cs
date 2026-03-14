@@ -17,6 +17,7 @@ public sealed class FishSpeechProvider : IAudioProviderSource
         .WithPythonEngine("tts_fishspeech", "FishSpeechEngine")
         .WithModelPrefix("FishSpeech")
         .WithModelClass("fishspeech_tts", "Fish Speech TTS")
+        .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("fishspeech_tts_params")
         .AddFeatureFlag("tts_voice_ref")
         .AddDependencies(Dependencies)

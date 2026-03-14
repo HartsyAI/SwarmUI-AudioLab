@@ -18,6 +18,7 @@ public sealed class VibeVoiceProvider : IAudioProviderSource
         .WithPythonEngine("tts_vibevoice", "VibeVoiceEngine")
         .WithModelPrefix("VibeVoice")
         .WithModelClass("vibevoice_tts", "VibeVoice TTS")
+        .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("vibevoice_tts_params")
         .AddFeatureFlag("tts_voice_ref")
         .AddDependencies(Dependencies)

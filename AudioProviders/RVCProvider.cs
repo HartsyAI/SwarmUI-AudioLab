@@ -17,6 +17,7 @@ public sealed class RVCProvider : IAudioProviderSource
         .WithPythonEngine("clone_rvc", "RVCEngine")
         .WithModelPrefix("RVC")
         .WithModelClass("rvc_clone", "RVC Voice Conversion")
+        .AddFeatureFlag("audiolab_clone")
         .AddFeatureFlag("rvc_clone_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)

@@ -17,6 +17,7 @@ public sealed class Qwen3TTSProvider : IAudioProviderSource
         .WithPythonEngine("tts_qwen3", "Qwen3TTSEngine")
         .WithModelPrefix("Qwen3TTS")
         .WithModelClass("qwen3_tts", "Qwen3 TTS")
+        .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("qwen3tts_tts_params")
         .AddFeatureFlag("qwen3tts_speaker_params")
         .AddFeatureFlag("qwen3tts_instruct_params")

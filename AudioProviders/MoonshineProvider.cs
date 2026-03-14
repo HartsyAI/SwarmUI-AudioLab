@@ -17,6 +17,7 @@ public sealed class MoonshineProvider : IAudioProviderSource
         .WithPythonEngine("stt_moonshine", "MoonshineEngine")
         .WithModelPrefix("Moonshine")
         .WithModelClass("moonshine_stt", "Moonshine STT")
+        .AddFeatureFlag("audiolab_stt")
         .AddFeatureFlag("moonshine_stt_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
@@ -29,7 +30,7 @@ public sealed class MoonshineProvider : IAudioProviderSource
     [
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
         new() { Name = "torch>=2.0.0", InstallName = "torch>=2.0.0", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12 },
-        new() { Name = "moonshine", InstallName = "moonshine", ImportName = "moonshine", Category = "stt", EstimatedInstallTimeMinutes = 5 },
+        new() { Name = "useful-moonshine-onnx", InstallName = "useful-moonshine-onnx", ImportName = "moonshine_onnx", Category = "stt", EstimatedInstallTimeMinutes = 5 },
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
     ];
 

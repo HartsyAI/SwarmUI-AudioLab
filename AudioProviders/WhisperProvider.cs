@@ -17,6 +17,7 @@ public sealed class WhisperProvider : IAudioProviderSource
         .WithPythonEngine("stt_whisper", "WhisperEngine")
         .WithModelPrefix("Whisper")
         .WithModelClass("whisper_stt", "Whisper STT")
+        .AddFeatureFlag("audiolab_stt")
         .AddFeatureFlag("whisper_stt_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
@@ -31,7 +32,8 @@ public sealed class WhisperProvider : IAudioProviderSource
         new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "openai-whisper", InstallName = "openai-whisper", ImportName = "whisper", Category = "stt", EstimatedInstallTimeMinutes = 5 },
-        new() { Name = "ffmpeg-python", InstallName = "ffmpeg-python", ImportName = "ffmpeg", Category = "stt" }
+        new() { Name = "ffmpeg-python", InstallName = "ffmpeg-python", ImportName = "ffmpeg", Category = "stt" },
+        new() { Name = "imageio-ffmpeg", InstallName = "imageio-ffmpeg", ImportName = "imageio_ffmpeg", Category = "stt" }
     ];
 
     #endregion

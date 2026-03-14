@@ -17,6 +17,7 @@ public sealed class GPTSoVITSProvider : IAudioProviderSource
         .WithPythonEngine("clone_gptsovits", "GPTSoVITSEngine")
         .WithModelPrefix("GPTSoVITS")
         .WithModelClass("gptsovits_clone", "GPT-SoVITS")
+        .AddFeatureFlag("audiolab_clone")
         .AddFeatureFlag("gptsovits_clone_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)

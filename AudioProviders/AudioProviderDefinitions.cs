@@ -33,7 +33,9 @@ public static class AudioProviderDefinitions
         GPTSoVITSProvider.Instance,
         DemucsProvider.Instance,
         ResembleEnhanceProvider.Instance,
-        AudioGenProvider.Instance
+        AudioGenProvider.Instance,
+        YuEProvider.Instance,
+        HeartLibProvider.Instance
     ];
 
     /// <summary>Registers all built-in providers with the AudioProviderRegistry.</summary>

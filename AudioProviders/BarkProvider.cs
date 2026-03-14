@@ -17,6 +17,7 @@ public sealed class BarkProvider : IAudioProviderSource
         .WithPythonEngine("tts_bark", "BarkEngine")
         .WithModelPrefix("Bark")
         .WithModelClass("bark_tts", "Bark TTS")
+        .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("bark_tts_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
