@@ -823,7 +823,7 @@ public static class AudioLabParams
         AudioSeed = T2IParamTypes.Register<int>(new("Audio Seed",
             "Random seed for reproducible generation.\n-1 = random seed each time.",
             "-1",
-            Min: -1, Max: 999999, Step: 1,
+            Min: -1, Max: int.MaxValue, Step: 1,
             OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         InferStep = T2IParamTypes.Register<int>(new("Infer Steps",
@@ -1086,7 +1086,7 @@ public static class AudioLabParams
         YuESeed = T2IParamTypes.Register<int>(new("YuE Seed",
             "Random seed for reproducible generation.\n-1 = random seed each time.",
             "-1",
-            Min: -1, Max: 999999, Step: 1,
+            Min: -1, Max: int.MaxValue, Step: 1,
             OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
 
         YuEStage2BatchSize = T2IParamTypes.Register<int>(new("Stage-2 Batch Size",
@@ -1148,7 +1148,7 @@ public static class AudioLabParams
         HeartLibSeed = T2IParamTypes.Register<int>(new("HeartLib Seed",
             "Random seed for reproducible generation.\n-1 = random seed each time.",
             "-1",
-            Min: -1, Max: 999999, Step: 1,
+            Min: -1, Max: int.MaxValue, Step: 1,
             OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params"));
 
         #endregion
