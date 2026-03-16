@@ -76,7 +76,7 @@ const AudioDawTrack = (() => {
             soloed: false,
             armed: false,
             color: opts.color || TRACK_COLORS[(id - 1) % TRACK_COLORS.length],
-            height: opts.height || 80,
+            height: opts.height || 100,
             collapsed: false,
             // Runtime DOM refs (not serialized)
             headerEl: null,

@@ -67,10 +67,14 @@ const AudioDaw = (() => {
         if (!modalEl) buildModal();
         resetState();
         $(modalEl).modal('show');
-        // Allow modal to render, then initialize
+        // Allow modal to fully render before initializing layout
         await sleep(150);
         initLayout();
-        // Create first track and load audio into it
+        renderAllTracks();
+        updateTimeDisplay();
+        // Show loading spinner while audio decodes
+        const overlay = showDawLoadingOverlay('Loading audio...');
+        // Create first track and load audio in background
         const track = addTrack();
         try {
             const blob = await fetchAsBlob(audioSrc);
@@ -81,6 +85,7 @@ const AudioDaw = (() => {
         } catch (err) {
             console.error('[AudioDaw] Failed to load audio:', err);
         }
+        hideDawLoadingOverlay(overlay);
     }
 
     function close() {
@@ -98,14 +103,16 @@ const AudioDaw = (() => {
         const bodyHtml = `
         <div class="modal-body daw-body">
             <div class="daw-transport" id="daw_transport"></div>
-            <div class="daw-main">
+            <div class="daw-main" id="daw_main">
                 <div class="daw-ruler-corner"></div>
                 <div class="daw-ruler" id="daw_ruler"></div>
                 <div class="daw-track-headers" id="daw_track_headers"></div>
+                <div class="daw-header-splitter" id="daw_header_splitter"></div>
                 <div class="daw-clip-lanes" id="daw_clip_lanes">
                     <div class="daw-playhead" id="daw_playhead"></div>
                 </div>
             </div>
+            <div class="daw-split-bar" id="daw_split_bar"></div>
             <div class="daw-bottom-panel" id="daw_bottom_panel"></div>
         </div>`;
 
@@ -138,6 +145,73 @@ const AudioDaw = (() => {
         initTimeline();
         buildBottomPanel();
         setupScrollSync();
+        initBottomSplitter();
+        initHeaderSplitter();
+    }
+
+    function initHeaderSplitter() {
+        const splitter = document.getElementById('daw_header_splitter');
+        const main = document.getElementById('daw_main');
+        if (!splitter || !main) return;
+        let dragging = false;
+        const savedWidth = localStorage.getItem('daw_header_width');
+        if (savedWidth) {
+            main.style.setProperty('--daw-header-width', savedWidth + 'px');
+        }
+        splitter.addEventListener('mousedown', (e) => { dragging = true; e.preventDefault(); });
+        splitter.addEventListener('touchstart', (e) => { dragging = true; e.preventDefault(); }, { passive: false });
+        const onMove = (clientX) => {
+            if (!dragging) return;
+            const mainRect = main.getBoundingClientRect();
+            const newWidth = Math.max(120, Math.min(clientX - mainRect.left, mainRect.width * 0.4));
+            main.style.setProperty('--daw-header-width', newWidth + 'px');
+        };
+        document.addEventListener('mousemove', (e) => onMove(e.clientX));
+        document.addEventListener('touchmove', (e) => onMove(e.touches[0].clientX));
+        const onUp = () => {
+            if (dragging) {
+                dragging = false;
+                const width = parseInt(getComputedStyle(main).getPropertyValue('--daw-header-width'));
+                if (width) localStorage.setItem('daw_header_width', width);
+            }
+        };
+        document.addEventListener('mouseup', onUp);
+        document.addEventListener('touchend', onUp);
+    }
+
+    function initBottomSplitter() {
+        const splitBar = document.getElementById('daw_split_bar');
+        if (!splitBar || !bottomPanelEl) return;
+        let dragging = false;
+        const savedHeight = localStorage.getItem('daw_bottom_panel_height');
+        if (savedHeight) {
+            bottomPanelEl.style.height = savedHeight + 'px';
+        }
+        splitBar.addEventListener('mousedown', (e) => {
+            dragging = true;
+            e.preventDefault();
+        });
+        splitBar.addEventListener('touchstart', (e) => {
+            dragging = true;
+            e.preventDefault();
+        }, { passive: false });
+        const onMove = (clientY) => {
+            if (!dragging) return;
+            const bodyRect = bottomPanelEl.parentElement.getBoundingClientRect();
+            const footerHeight = footerEl ? footerEl.offsetHeight : 0;
+            const newHeight = Math.max(80, Math.min(bodyRect.bottom - clientY - footerHeight, bodyRect.height * 0.7));
+            bottomPanelEl.style.height = newHeight + 'px';
+        };
+        document.addEventListener('mousemove', (e) => onMove(e.clientY));
+        document.addEventListener('touchmove', (e) => onMove(e.touches[0].clientY));
+        const onUp = () => {
+            if (dragging) {
+                dragging = false;
+                localStorage.setItem('daw_bottom_panel_height', bottomPanelEl.offsetHeight);
+            }
+        };
+        document.addEventListener('mouseup', onUp);
+        document.addEventListener('touchend', onUp);
     }
 
     // ===== TRANSPORT BAR =====
@@ -238,12 +312,7 @@ const AudioDaw = (() => {
 
     function buildFooter() {
         footerEl.innerHTML = '';
-        quickAppendButton(footerEl, '+ Add Track', () => {
-            addTrack();
-            renderAllTracks();
-        }, ' basic-button', 'Add a new empty track');
-
-        quickAppendButton(footerEl, '&#x1F4C2; Import Audio', importAudioToTrack, ' basic-button', 'Import an audio file');
+        quickAppendButton(footerEl, 'Import Audio', importAudioToTrack, ' basic-button', 'Import audio files (each file gets its own track)');
 
         // Spacer
         const spacer = createDiv(null, 'daw-footer-spacer');
@@ -252,7 +321,7 @@ const AudioDaw = (() => {
         // Export dropdown
         const exportGroup = createDiv(null, 'daw-export-group');
         exportGroup.style.cssText = 'display:flex;gap:0;';
-        quickAppendButton(exportGroup, '&#x2913; Export WAV', () => doExportMixdown('wav'), ' btn btn-primary basic-button', 'Export all tracks as WAV');
+        quickAppendButton(exportGroup, 'Export WAV', () => doExportMixdown('wav'), ' btn btn-primary basic-button', 'Export all tracks as WAV');
         const exportDropdown = document.createElement('button');
         exportDropdown.className = 'btn btn-primary basic-button';
         exportDropdown.innerHTML = '&#x25BC;';
@@ -356,15 +425,74 @@ const AudioDaw = (() => {
                 infoRow.innerHTML = `<strong>${escapeHtml(clip.name)}</strong> | Track: ${escapeHtml(track.name)} | Duration: ${formatTimePrecise(clip.duration)}s | Start: ${formatTimePrecise(clip.startTime)}s`;
                 info.appendChild(infoRow);
 
+                // Re-lookup clip at click time to avoid stale closures
+                const getClip = () => findClipById(state.selectedClipId);
                 const actions = createDiv(null, 'daw-clip-editor-actions');
-                quickAppendButton(actions, 'Split at Playhead', () => doSplitClip(clip, track), ' basic-button btn-sm', 'Split clip at current playhead position');
-                quickAppendButton(actions, 'Duplicate', () => doDuplicateClip(clip, track), ' basic-button btn-sm', 'Duplicate this clip');
-                quickAppendButton(actions, 'Delete', () => doDeleteClip(clip, track), ' basic-button btn-sm', 'Delete this clip');
-                quickAppendButton(actions, clip.muted ? 'Unmute' : 'Mute', () => {
-                    clip.muted = !clip.muted;
-                    renderAllTracks();
-                    updateBottomPanel();
-                }, ' basic-button btn-sm', 'Toggle clip mute');
+                const splitBtn = document.createElement('button');
+                splitBtn.className = 'basic-button btn-sm';
+                splitBtn.textContent = 'Split at Playhead';
+                splitBtn.title = 'Split clip at current playhead position';
+                splitBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    console.log('[AudioDaw] Split button clicked, selectedClipId:', state.selectedClipId);
+                    const sel = getClip();
+                    if (sel) {
+                        doSplitClip(sel.clip, sel.track);
+                    } else {
+                        console.warn('[AudioDaw] No clip found for split');
+                    }
+                });
+                actions.appendChild(splitBtn);
+                const dupBtn = document.createElement('button');
+                dupBtn.className = 'basic-button btn-sm';
+                dupBtn.textContent = 'Duplicate';
+                dupBtn.title = 'Duplicate this clip';
+                dupBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    console.log('[AudioDaw] Duplicate button clicked, selectedClipId:', state.selectedClipId);
+                    const sel = getClip();
+                    if (sel) {
+                        doDuplicateClip(sel.clip, sel.track);
+                    } else {
+                        console.warn('[AudioDaw] No clip found for duplicate');
+                    }
+                });
+                actions.appendChild(dupBtn);
+                const delBtn = document.createElement('button');
+                delBtn.className = 'basic-button btn-sm';
+                delBtn.textContent = 'Delete';
+                delBtn.title = 'Delete this clip';
+                delBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    console.log('[AudioDaw] Delete button clicked, selectedClipId:', state.selectedClipId);
+                    const sel = getClip();
+                    if (sel) {
+                        doDeleteClip(sel.clip, sel.track);
+                    } else {
+                        console.warn('[AudioDaw] No clip found for delete');
+                    }
+                });
+                actions.appendChild(delBtn);
+                const muteBtn = document.createElement('button');
+                muteBtn.className = 'basic-button btn-sm';
+                muteBtn.textContent = clip.muted ? 'Unmute' : 'Mute';
+                muteBtn.title = 'Toggle clip mute';
+                muteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    console.log('[AudioDaw] Mute button clicked, selectedClipId:', state.selectedClipId);
+                    const sel = getClip();
+                    if (sel) {
+                        sel.clip.muted = !sel.clip.muted;
+                        renderAllTracks();
+                        updateBottomPanel();
+                        if (typeof doNoticePopover === 'function') {
+                            doNoticePopover(sel.clip.muted ? 'Clip muted' : 'Clip unmuted', 'notice-pop-green');
+                        }
+                    } else {
+                        console.warn('[AudioDaw] No clip found for mute');
+                    }
+                });
+                actions.appendChild(muteBtn);
                 info.appendChild(actions);
 
                 clipEditorContent.appendChild(info);
@@ -402,48 +530,24 @@ const AudioDaw = (() => {
         }
     }
 
-    /** Simple inline mixer when AudioDawMixer module isn't loaded. */
+    /** Simple inline mixer fallback when AudioDawMixer module isn't loaded. */
     function renderInlineMixer(container) {
         container.innerHTML = '';
         const mixer = createDiv(null, 'daw-mixer');
 
         for (const track of state.tracks) {
-            const ch = createDiv(null, 'daw-mixer-channel');
-            ch.style.borderTop = `3px solid ${track.color}`;
-
-            // Label
+            const row = createDiv(null, 'daw-mixer-row');
+            const colorBar = createDiv(null, 'daw-mixer-color');
+            colorBar.style.background = track.color;
+            row.appendChild(colorBar);
             const label = createDiv(null, 'daw-mixer-label');
             label.textContent = track.name;
             label.title = track.name;
-            ch.appendChild(label);
-
-            // Fader
-            const faderWrap = createDiv(null, 'daw-mixer-fader-wrap');
-            const fader = document.createElement('input');
-            fader.type = 'range';
-            fader.className = 'daw-mixer-fader';
-            fader.min = '0';
-            fader.max = '1';
-            fader.step = '0.01';
-            fader.value = track.volume;
-            fader.title = `${track.name} volume`;
-            fader.addEventListener('input', (e) => {
-                track.volume = parseFloat(e.target.value);
-                dbLabel.textContent = volumeToDb(track.volume);
-                updatePlaybackGains();
-            });
-            faderWrap.appendChild(fader);
-            ch.appendChild(faderWrap);
-
-            // dB label
-            const dbLabel = createDiv(null, 'daw-mixer-db');
-            dbLabel.textContent = volumeToDb(track.volume);
-            ch.appendChild(dbLabel);
-
-            // Mute/Solo buttons
+            row.appendChild(label);
+            // M/S buttons
             const btns = createDiv(null, 'daw-mixer-btns');
             const muteBtn = document.createElement('button');
-            muteBtn.className = 'daw-track-btn' + (track.muted ? ' active-mute' : '');
+            muteBtn.className = 'daw-mixer-btn' + (track.muted ? ' active-mute' : '');
             muteBtn.textContent = 'M';
             muteBtn.addEventListener('click', () => {
                 track.muted = !track.muted;
@@ -452,9 +556,8 @@ const AudioDaw = (() => {
                 renderAllTracks();
             });
             btns.appendChild(muteBtn);
-
             const soloBtn = document.createElement('button');
-            soloBtn.className = 'daw-track-btn' + (track.soloed ? ' active-solo' : '');
+            soloBtn.className = 'daw-mixer-btn' + (track.soloed ? ' active-solo' : '');
             soloBtn.textContent = 'S';
             soloBtn.addEventListener('click', () => {
                 track.soloed = !track.soloed;
@@ -463,37 +566,62 @@ const AudioDaw = (() => {
                 renderAllTracks();
             });
             btns.appendChild(soloBtn);
-            ch.appendChild(btns);
-
-            mixer.appendChild(ch);
+            row.appendChild(btns);
+            // Volume
+            const volGroup = createDiv(null, 'daw-mixer-vol-group');
+            const volLbl = createSpan(null, 'daw-mixer-vol-label');
+            volLbl.textContent = 'Vol';
+            const fader = document.createElement('input');
+            fader.type = 'range';
+            fader.className = 'daw-mixer-fader';
+            fader.min = '0'; fader.max = '1'; fader.step = '0.01';
+            fader.value = track.volume;
+            const dbLabel = createSpan(null, 'daw-mixer-db');
+            dbLabel.textContent = volumeToDb(track.volume);
+            fader.addEventListener('input', (e) => {
+                track.volume = parseFloat(e.target.value);
+                dbLabel.textContent = volumeToDb(track.volume);
+                updatePlaybackGains();
+            });
+            volGroup.appendChild(volLbl);
+            volGroup.appendChild(fader);
+            volGroup.appendChild(dbLabel);
+            row.appendChild(volGroup);
+            mixer.appendChild(row);
         }
 
-        // Master channel
-        const master = createDiv(null, 'daw-mixer-channel master');
+        // Master row
+        const sep = createDiv(null, 'daw-mixer-separator');
+        mixer.appendChild(sep);
+        const master = createDiv(null, 'daw-mixer-row master');
+        const masterColor = createDiv(null, 'daw-mixer-color');
+        masterColor.style.background = 'var(--emphasis)';
+        master.appendChild(masterColor);
         const masterLabel = createDiv(null, 'daw-mixer-label');
         masterLabel.textContent = 'Master';
+        masterLabel.style.fontWeight = '600';
         master.appendChild(masterLabel);
-
-        const masterFaderWrap = createDiv(null, 'daw-mixer-fader-wrap');
+        const masterBtns = createDiv(null, 'daw-mixer-btns');
+        master.appendChild(masterBtns);
+        const masterVolGroup = createDiv(null, 'daw-mixer-vol-group');
+        const masterVolLbl = createSpan(null, 'daw-mixer-vol-label');
+        masterVolLbl.textContent = 'Vol';
         const masterFader = document.createElement('input');
         masterFader.type = 'range';
         masterFader.className = 'daw-mixer-fader';
-        masterFader.min = '0';
-        masterFader.max = '1';
-        masterFader.step = '0.01';
+        masterFader.min = '0'; masterFader.max = '1'; masterFader.step = '0.01';
         masterFader.value = state.masterVolume;
-        masterFader.title = 'Master volume';
-        const masterDb = createDiv(null, 'daw-mixer-db');
+        const masterDb = createSpan(null, 'daw-mixer-db');
         masterDb.textContent = volumeToDb(state.masterVolume);
         masterFader.addEventListener('input', (e) => {
             state.masterVolume = parseFloat(e.target.value);
             masterDb.textContent = volumeToDb(state.masterVolume);
             updatePlaybackGains();
         });
-        masterFaderWrap.appendChild(masterFader);
-        master.appendChild(masterFaderWrap);
-        master.appendChild(masterDb);
-
+        masterVolGroup.appendChild(masterVolLbl);
+        masterVolGroup.appendChild(masterFader);
+        masterVolGroup.appendChild(masterDb);
+        master.appendChild(masterVolGroup);
         mixer.appendChild(master);
         container.appendChild(mixer);
     }
@@ -592,16 +720,18 @@ const AudioDaw = (() => {
                 `;
                 statusRow.appendChild(notInstalled);
 
+                const btnRow = createDiv(null);
+                btnRow.style.cssText = 'display:flex;gap:0.5rem;margin-top:0.3rem;';
+
                 const installBtn = document.createElement('button');
                 installBtn.className = 'basic-button btn-sm';
                 installBtn.textContent = 'Install Demucs';
-                installBtn.style.marginTop = '0.3rem';
                 installBtn.addEventListener('click', async () => {
                     installBtn.disabled = true;
                     installBtn.textContent = 'Installing...';
                     try {
                         await AudioLabAPI.installProviderDependencies('demucs_fx');
-                        demucsInstallStatus = true;
+                        demucsInstallStatus = null; // clear cache
                         if (typeof doNoticePopover === 'function') doNoticePopover('Demucs installed', 'notice-pop-green');
                         updateBottomPanel();
                     } catch (err) {
@@ -610,10 +740,24 @@ const AudioDaw = (() => {
                         if (typeof doNoticePopover === 'function') doNoticePopover('Install failed: ' + err.message, 'notice-pop-red');
                     }
                 });
-                statusRow.appendChild(installBtn);
+                btnRow.appendChild(installBtn);
+
+                const refreshBtn = document.createElement('button');
+                refreshBtn.className = 'basic-button btn-sm';
+                refreshBtn.textContent = 'Refresh Status';
+                refreshBtn.addEventListener('click', async () => {
+                    demucsInstallStatus = null;
+                    updateBottomPanel();
+                });
+                btnRow.appendChild(refreshBtn);
+
+                statusRow.appendChild(btnRow);
             } else {
-                // Installed — show model picker and action
-                statusRow.innerHTML = '<span style="color:var(--green);font-size:0.8rem;">Demucs is installed and ready.</span>';
+                // Installed — show ready status with refresh option
+                const readyRow = createDiv(null);
+                readyRow.style.cssText = 'display:flex;align-items:center;gap:0.5rem;';
+                readyRow.innerHTML = '<span style="color:var(--green);font-size:0.8rem;">Demucs is installed and ready.</span>';
+                statusRow.appendChild(readyRow);
                 renderStemsControls(section);
             }
         });
@@ -1100,15 +1244,16 @@ const AudioDaw = (() => {
         input.accept = 'audio/*';
         input.multiple = true;
         input.onchange = async () => {
+            const overlay = showDawLoadingOverlay('Importing audio...');
             for (const file of input.files) {
                 const ext = file.name.split('.').pop().toLowerCase();
                 if (!isAudioExt('file.' + ext)) continue;
-                let track = getSelectedTrack();
-                if (!track) track = addTrack();
+                const track = addTrack({ name: file.name.replace(/\.[^.]+$/, '') });
                 await addClipToTrack(track, file, { name: file.name });
             }
             updateTotalDuration();
             renderAllTracks();
+            hideDawLoadingOverlay(overlay);
         };
         input.click();
     }
@@ -1171,81 +1316,125 @@ const AudioDaw = (() => {
             return;
         }
         pushUndo();
-        const parts = await AudioLabCore.splitAudio(clip.blob, splitTime + clip.offset);
-        if (!parts) return;
+        try {
+            const parts = await AudioLabCore.splitAudio(clip.blob, splitTime + clip.offset);
+            if (!parts) {
+                console.error('[AudioDaw] splitAudio returned null');
+                return;
+            }
 
-        const idx = track.clips.indexOf(clip);
-        if (idx === -1) return;
+            const idx = track.clips.indexOf(clip);
+            if (idx === -1) {
+                console.error('[AudioDaw] clip not found in track during split');
+                return;
+            }
 
-        // Create two new clips replacing the original
-        const clipA = AudioDawTrack.createClip(parts.before, {
-            name: clip.name + ' (A)',
-            startTime: clip.startTime,
-            color: clip.color
-        });
-        await AudioDawTrack.decodeClip(clipA);
-        blobStore.set(clipA.blobKey, { blob: parts.before, decodedBuffer: clipA.decodedBuffer });
+            // Create two new clips replacing the original
+            const clipA = AudioDawTrack.createClip(parts.before, {
+                name: clip.name + ' (A)',
+                startTime: clip.startTime,
+                color: clip.color
+            });
+            await AudioDawTrack.decodeClip(clipA);
+            blobStore.set(clipA.blobKey, { blob: parts.before, decodedBuffer: clipA.decodedBuffer });
 
-        const clipB = AudioDawTrack.createClip(parts.after, {
-            name: clip.name + ' (B)',
-            startTime: clip.startTime + splitTime,
-            color: clip.color
-        });
-        await AudioDawTrack.decodeClip(clipB);
-        blobStore.set(clipB.blobKey, { blob: parts.after, decodedBuffer: clipB.decodedBuffer });
+            const clipB = AudioDawTrack.createClip(parts.after, {
+                name: clip.name + ' (B)',
+                startTime: clip.startTime + splitTime,
+                color: clip.color
+            });
+            await AudioDawTrack.decodeClip(clipB);
+            blobStore.set(clipB.blobKey, { blob: parts.after, decodedBuffer: clipB.decodedBuffer });
 
-        // Replace original clip
-        track.clips.splice(idx, 1, clipA, clipB);
+            // Replace original clip
+            track.clips.splice(idx, 1, clipA, clipB);
 
-        // Clean up old clip WaveSurfer
-        const oldEntry = track.clipElements.get(clip.id);
-        if (oldEntry?.ws) oldEntry.ws.destroy();
-        if (oldEntry?.el) oldEntry.el.remove();
-        track.clipElements.delete(clip.id);
+            // Clean up old clip WaveSurfer
+            const oldEntry = track.clipElements.get(clip.id);
+            if (oldEntry?.ws) oldEntry.ws.destroy();
+            if (oldEntry?.el) oldEntry.el.remove();
+            track.clipElements.delete(clip.id);
 
-        updateTotalDuration();
-        renderAllTracks();
+            state.selectedClipId = null;
+            updateTotalDuration();
+            renderAllTracks();
+            updateBottomPanel();
+            if (typeof doNoticePopover === 'function') {
+                doNoticePopover('Clip split successfully', 'notice-pop-green');
+            }
+        } catch (err) {
+            console.error('[AudioDaw] Split failed:', err);
+            if (typeof doNoticePopover === 'function') {
+                doNoticePopover('Split failed: ' + err.message, 'notice-pop-red');
+            }
+        }
     }
 
     function doDuplicateClip(clip, track) {
-        pushUndo();
-        const newClip = AudioDawTrack.createClip(clip.blob, {
-            name: clip.name + ' (copy)',
-            startTime: clip.startTime + clip.duration + 0.5,
-            color: clip.color,
-            blobKey: clip.blobKey // share the same blob
-        });
-        newClip.decodedBuffer = clip.decodedBuffer;
-        newClip.duration = clip.duration;
-        newClip.offset = clip.offset;
-        newClip.trimEnd = clip.trimEnd;
-        newClip.gain = clip.gain;
-        track.clips.push(newClip);
-        updateTotalDuration();
-        renderAllTracks();
+        try {
+            pushUndo();
+            const newClip = AudioDawTrack.createClip(clip.blob, {
+                name: clip.name + ' (copy)',
+                startTime: clip.startTime + clip.duration + 0.5,
+                color: clip.color,
+                blobKey: clip.blobKey // share the same blob
+            });
+            newClip.decodedBuffer = clip.decodedBuffer;
+            newClip.duration = clip.duration;
+            newClip.offset = clip.offset;
+            newClip.trimEnd = clip.trimEnd;
+            newClip.gain = clip.gain;
+            track.clips.push(newClip);
+            state.selectedClipId = newClip.id;
+            updateTotalDuration();
+            renderAllTracks();
+            updateBottomPanel();
+            if (typeof doNoticePopover === 'function') {
+                doNoticePopover('Clip duplicated', 'notice-pop-green');
+            }
+        } catch (err) {
+            console.error('[AudioDaw] Duplicate failed:', err);
+            if (typeof doNoticePopover === 'function') {
+                doNoticePopover('Duplicate failed: ' + err.message, 'notice-pop-red');
+            }
+        }
     }
 
     function doDeleteClip(clip, track) {
-        pushUndo();
-        const idx = track.clips.indexOf(clip);
-        if (idx === -1) return;
-        track.clips.splice(idx, 1);
+        try {
+            pushUndo();
+            const idx = track.clips.indexOf(clip);
+            if (idx === -1) {
+                console.error('[AudioDaw] clip not found in track during delete');
+                return;
+            }
+            track.clips.splice(idx, 1);
 
-        // Clean up element
-        const entry = track.clipElements.get(clip.id);
-        if (entry?.ws) entry.ws.destroy();
-        if (entry?.el) entry.el.remove();
-        track.clipElements.delete(clip.id);
+            // Clean up element
+            const entry = track.clipElements.get(clip.id);
+            if (entry?.ws) entry.ws.destroy();
+            if (entry?.el) entry.el.remove();
+            track.clipElements.delete(clip.id);
 
-        // Remove from blob store if no other references
-        const otherRefs = state.tracks.some(t =>
-            t.clips.some(c => c.blobKey === clip.blobKey)
-        );
-        if (!otherRefs) blobStore.delete(clip.blobKey);
+            // Remove from blob store if no other references
+            const otherRefs = state.tracks.some(t =>
+                t.clips.some(c => c.blobKey === clip.blobKey)
+            );
+            if (!otherRefs) blobStore.delete(clip.blobKey);
 
-        if (state.selectedClipId === clip.id) state.selectedClipId = null;
-        updateTotalDuration();
-        renderAllTracks();
+            if (state.selectedClipId === clip.id) state.selectedClipId = null;
+            updateTotalDuration();
+            renderAllTracks();
+            updateBottomPanel();
+            if (typeof doNoticePopover === 'function') {
+                doNoticePopover('Clip deleted', 'notice-pop-green');
+            }
+        } catch (err) {
+            console.error('[AudioDaw] Delete failed:', err);
+            if (typeof doNoticePopover === 'function') {
+                doNoticePopover('Delete failed: ' + err.message, 'notice-pop-red');
+            }
+        }
     }
 
     // ===== STEM SEPARATION (Demucs) =====
@@ -1253,13 +1442,16 @@ const AudioDaw = (() => {
     /** Cache the Demucs install status so we don't poll every time the tab renders. */
     let demucsInstallStatus = null; // null = unchecked, true = installed, false = not installed
 
-    async function checkDemucsInstalled() {
-        if (demucsInstallStatus !== null) return demucsInstallStatus;
+    async function checkDemucsInstalled(forceRefresh = false) {
+        if (!forceRefresh && demucsInstallStatus !== null) return demucsInstallStatus;
         try {
             const result = await AudioLabAPI.callAPI('GetInstallationStatus');
             const providers = result.providers || {};
-            demucsInstallStatus = providers['demucs_fx']?.installed === true;
-        } catch {
+            const val = providers['demucs_fx'];
+            // Backend returns raw boolean (true/false), not an object
+            demucsInstallStatus = val === true;
+        } catch (err) {
+            console.warn('[AudioDaw] Failed to check Demucs status:', err);
             demucsInstallStatus = false;
         }
         return demucsInstallStatus;
