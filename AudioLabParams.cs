@@ -779,8 +779,8 @@ public static class AudioLabParams
         #endregion
 
         #region Music Shared
-        Duration = T2IParamTypes.Register<double>(new("Duration",
-            "Duration of generated music in seconds.\nLonger durations need more time and VRAM.",
+        Duration = T2IParamTypes.Register<double>(new("Max Duration",
+            "Maximum duration of generated audio in seconds.\nThe actual output may be shorter depending on lyrics/content.\nLonger durations need more time and VRAM.",
             "30",
             Min: 1, Max: 300, Step: 1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "audiolab_audiogen"));
@@ -1125,6 +1125,7 @@ public static class AudioLabParams
         HeartLibLyrics = T2IParamTypes.Register<string>(new("HeartLib Lyrics",
             "Song lyrics for HeartLib music generation.\nUse section markers: [Verse], [Chorus], [Bridge], [Outro].\nLeave empty for instrumental generation.",
             "",
+            ViewType: ParamViewType.PROMPT,
             OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params"));
 
         HeartLibCFGScale = T2IParamTypes.Register<double>(new("HeartLib CFG Scale",
