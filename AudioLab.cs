@@ -41,14 +41,20 @@ public class AudioLab : Extension
             AudioProviderDefinitions.RegisterAll();
             Logs.Info($"[AudioLab] Registered {AudioProviderDefinitions.All.Count} audio providers");
 
-            // Register web assets — libraries first, then integration module
+            // Register web assets — libraries first, then DAW modules, then integration
             ScriptFiles.Add("Assets/lib/wavesurfer.min.js");
             ScriptFiles.Add("Assets/lib/wavesurfer-record.min.js");
             ScriptFiles.Add("Assets/lib/wavesurfer-regions.min.js");
+            ScriptFiles.Add("Assets/lib/wavesurfer-timeline.min.js");
+            ScriptFiles.Add("Assets/lib/wavesurfer-minimap.min.js");
             ScriptFiles.Add("Assets/lib/crunker.min.js");
             ScriptFiles.Add("Assets/audio-player.js");
             ScriptFiles.Add("Assets/audio-api.js");
             ScriptFiles.Add("Assets/audio-core.js");
+            ScriptFiles.Add("Assets/audio-daw-timeline.js");
+            ScriptFiles.Add("Assets/audio-daw-track.js");
+            ScriptFiles.Add("Assets/audio-daw-mixer.js");
+            ScriptFiles.Add("Assets/audio-daw.js");
             ScriptFiles.Add("Assets/audio-editor.js");
             ScriptFiles.Add("Assets/audio-integration.js");
             StyleSheetFiles.Add("Assets/audio-lab.css");

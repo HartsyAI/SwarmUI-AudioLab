@@ -147,6 +147,7 @@ const AudioLabAPI = (() => {
     }
 
     return {
+        callAPI,
         getAllProvidersStatus,
         getInstallationStatus,
         installProviderDependencies,

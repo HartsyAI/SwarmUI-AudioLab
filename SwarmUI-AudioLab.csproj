@@ -3,4 +3,7 @@
     <AssemblyName>SwarmExtensionSwarmUI-AudioLab</AssemblyName>
   </PropertyGroup>
   <Import Project="../../SwarmUI.extension.props" />
+  <ItemGroup>
+    <PackageReference Include="FFMpegCore" Version="5.4.0" />
+  </ItemGroup>
 </Project>

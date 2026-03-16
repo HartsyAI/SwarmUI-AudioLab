@@ -9,6 +9,7 @@ A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeypr
 - **Audio Generation** — ACE-Step 1.5 (6 DiT models, 6 task types, lyrics alignment, 50 languages), MusicGen (text-to-music with melody conditioning), and AudioGen (text-to-sound-effects)
 - **Voice Conversion** — RVC (re-voice existing audio), OpenVoice (tone/style transfer), GPT-SoVITS (TTS with cloned voice)
 - **Audio Processing** — Demucs (stem separation) and Resemble Enhance (audio enhancement/denoising)
+- **Multi-Track DAW Editor** — Full digital audio workstation with timeline, transport controls, per-track mute/solo/volume, clip arrangement via drag-and-drop, mixer panel, loop regions, undo/redo, and multi-track mixdown export (WAV/MP3/OGG/FLAC/AAC)
 - **Video + Audio** — Combine audio with video or extract audio from video via ffmpeg
 - **Streaming TTS** — Chunked text-to-speech with auto-play for immediate playback while generating
 - **Generation Cancellation** — Stop Generation and Stop All Generations buttons work for all audio providers
@@ -130,6 +131,30 @@ Use the API endpoints or UI to combine generated audio with video files or extra
 - **Replace** mode swaps the video's audio track with your generated audio.
 - **Mix** mode blends the original and new audio tracks together.
 
+### Multi-Track DAW Editor
+
+Click **Audio Lab** on any audio output to open the DAW editor. The editor opens near-fullscreen with the audio loaded as the first clip on Track 1.
+
+**Layout:**
+- **Transport Bar** — Record, rewind, play/stop, forward, loop toggle, time display, BPM, and zoom slider
+- **Timeline Ruler** — Canvas-rendered time ruler with beat grid, playhead indicator, and draggable loop region handles
+- **Track Headers** — Per-track controls: editable name, mute (M), solo (S), volume slider, arm (R), and remove (X) button
+- **Clip Lanes** — Drag clips horizontally to reposition, or drag across tracks to move between lanes. Right-click clips for context menu (split at playhead, delete, duplicate, rename, mute/unmute)
+- **Bottom Panel** — Tabbed panel with Clip Editor (details + actions for selected clip), Mixer (vertical faders, pan, mute/solo per track + master), and Apply to Model (set clip as voice reference for TTS)
+- **Footer** — Add Track, Import Audio, Export Mixdown (WAV/MP3/OGG/FLAC/AAC), and Close
+
+**Playback:** Uses the Web Audio API (`AudioBufferSourceNode`) for sample-accurate multi-track synchronized playback. WaveSurfer.js provides visual-only waveform rendering per clip. Loop regions wrap playback between start and end markers.
+
+**Export:** Multi-track mixdown renders via `OfflineAudioContext` with per-track gain and pan. WAV exports directly from the browser. MP3, OGG, FLAC, and AAC formats route through the backend ffmpeg conversion endpoint.
+
+**Keyboard Shortcuts:**
+| Key | Action |
+| --- | --- |
+| Space | Play / Stop |
+| Ctrl+Z | Undo |
+| Ctrl+Shift+Z | Redo |
+| Delete | Delete selected clip |
+
 ## API Endpoints
 
 All endpoints require authentication and use SwarmUI's permission system.
@@ -155,6 +180,12 @@ All endpoints require authentication and use SwarmUI's permission system.
 | `GetInstallationProgress` | GET | Poll real-time installation progress (percentage, current package) |
 | `InstallProviderDependencies` | POST | Install pip dependencies for a provider |
 
+### Audio Format Conversion
+
+| Endpoint | Method | Description |
+| --- | --- | --- |
+| `ConvertAudioFormat` | POST | Convert WAV audio to MP3, OGG, FLAC, AAC, or M4A via ffmpeg. Used by DAW export. |
+
 ### Video + Audio
 
 | Endpoint | Method | Description |
@@ -166,7 +197,7 @@ All endpoints require authentication and use SwarmUI's permission system.
 
 | Permission | Level | Covers |
 | --- | --- | --- |
-| `audio_process` | Power Users | ProcessAudio, ProcessTTS, ProcessSTT, ProcessWorkflow, CombineVideoAudio, ExtractAudioFromVideo |
+| `audio_process` | Power Users | ProcessAudio, ProcessTTS, ProcessSTT, ProcessWorkflow, CombineVideoAudio, ExtractAudioFromVideo, ConvertAudioFormat |
 | `audio_manage_backends` | Power Users | InstallProviderDependencies, AudioLabInstallEngine, AudioLabUninstallEngine |
 | `audio_check_status` | Power Users | GetAllProvidersStatus, GetInstallationStatus, GetInstallationProgress, AudioLabListEngines |
 
@@ -199,12 +230,16 @@ SwarmUI-AudioLab/
 │   └── VenvManager.cs                   # Per-engine-group virtual environments
 ├── Assets/
 │   ├── audio-core.js                    # Frontend UI (engine browser, param groups)
-│   ├── audio-api.js                     # API client
+│   ├── audio-api.js                     # API client (backend communication)
 │   ├── audio-player.js                  # Waveform player (WaveSurfer.js)
-│   ├── audio-editor.js                  # Audio editor modal
+│   ├── audio-editor.js                  # Audio editor modal (delegates to DAW)
+│   ├── audio-daw.js                     # DAW orchestrator (modal, transport, state, playback, undo/redo, export)
+│   ├── audio-daw-track.js              # Track class (header UI, clip lane, drag-drop, WaveSurfer rendering)
+│   ├── audio-daw-timeline.js           # Timeline ruler (canvas, beat grid, zoom, loop markers, playhead)
+│   ├── audio-daw-mixer.js              # Mixer panel (per-track faders, pan, mute/solo, master bus)
 │   ├── audio-integration.js             # SwarmUI integration hooks
-│   ├── audio-lab.css                    # Styling
-│   └── lib/                             # WaveSurfer, Crunker
+│   ├── audio-lab.css                    # Styling (theme-aware, uses CSS custom properties)
+│   └── lib/                             # WaveSurfer, Crunker, Timeline, Minimap plugins
 ├── python_backend/
 │   ├── audio_server.py                  # Threaded HTTP server with /process, /cancel, /download endpoints
 │   ├── engine_registry.py               # Engine discovery and caching
@@ -297,5 +332,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Acknowledgments
 
 - [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI) — Base platform
-- [WaveSurfer.js](https://wavesurfer.xyz/) — Audio waveform visualization
+- [WaveSurfer.js](https://wavesurfer.xyz/) — Audio waveform visualization (player + DAW clip rendering)
 - [Crunker](https://github.com/jaggad/crunker) — Audio concatenation
+- [FFMpegCore](https://github.com/rosenbjerg/FFMpegCore) — FFmpeg wrapper for audio format conversion

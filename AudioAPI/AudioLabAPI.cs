@@ -48,6 +48,7 @@ public static class AudioLabAPI
             API.RegisterAPICall(InstallProviderDependencies, false, AudioLabPermissions.PermManageBackends);
             API.RegisterAPICall(GetInstallationStatus, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(GetInstallationProgress, false, AudioLabPermissions.PermCheckStatus);
+            API.RegisterAPICall(ConvertAudioFormat, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(AudioLabListEngines, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(AudioLabInstallEngine, true, AudioLabPermissions.PermManageBackends);
             API.RegisterAPICall(AudioLabUninstallEngine, true, AudioLabPermissions.PermManageBackends);
@@ -628,6 +629,113 @@ public static class AudioLabAPI
         catch (Exception ex)
         {
             return AudioLab.CreateErrorResponse($"Engine uninstall failed: {ex.Message}", "uninstall_error", ex);
+        }
+    }
+
+    #endregion
+
+    #region Audio Format Conversion
+
+    /// <summary>Convert audio between formats using FFMpegCore. Accepts WAV base64, returns converted base64.</summary>
+    public static async Task<JObject> ConvertAudioFormat(Session session, JObject input)
+    {
+        try
+        {
+            string audioData = input["audio_data"]?.ToString();
+            string targetFormat = input["format"]?.ToString()?.ToLowerInvariant() ?? "mp3";
+            if (string.IsNullOrEmpty(audioData))
+            {
+                return AudioLab.CreateErrorResponse("audio_data is required", "missing_audio");
+            }
+
+            string[] supportedFormats = ["mp3", "ogg", "flac", "wav", "aac", "m4a"];
+            if (!supportedFormats.Contains(targetFormat))
+            {
+                return AudioLab.CreateErrorResponse($"Unsupported format: {targetFormat}. Supported: {string.Join(", ", supportedFormats)}", "unsupported_format");
+            }
+
+            string ffmpeg = Utilities.FfmegLocation.Value;
+            if (string.IsNullOrEmpty(ffmpeg))
+            {
+                return AudioLab.CreateErrorResponse("ffmpeg not found. Install ffmpeg and ensure it is in your PATH.", "ffmpeg_not_found");
+            }
+
+            // Decode input base64 to temp WAV file
+            byte[] audioBytes = Convert.FromBase64String(audioData);
+            string tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "audiolab");
+            System.IO.Directory.CreateDirectory(tempDir);
+            string inputPath = System.IO.Path.Combine(tempDir, $"convert_input_{Guid.NewGuid()}.wav");
+            string outputPath = System.IO.Path.Combine(tempDir, $"convert_output_{Guid.NewGuid()}.{targetFormat}");
+
+            try
+            {
+                await System.IO.File.WriteAllBytesAsync(inputPath, audioBytes);
+
+                // Build ffmpeg args for format conversion
+                List<string> args = ["-i", inputPath, "-y"];
+                switch (targetFormat)
+                {
+                    case "mp3":
+                        args.AddRange(["-codec:a", "libmp3lame", "-b:a", "192k"]);
+                        break;
+                    case "ogg":
+                        args.AddRange(["-codec:a", "libvorbis", "-q:a", "6"]);
+                        break;
+                    case "flac":
+                        args.AddRange(["-codec:a", "flac"]);
+                        break;
+                    case "aac":
+                    case "m4a":
+                        args.AddRange(["-codec:a", "aac", "-b:a", "192k"]);
+                        break;
+                    case "wav":
+                        args.AddRange(["-codec:a", "pcm_s16le", "-ar", "44100", "-ac", "2"]);
+                        break;
+                }
+                args.Add(outputPath);
+
+                string result = await Utilities.QuickRunProcess(ffmpeg, [.. args]);
+                Logs.Debug($"[AudioLab] ffmpeg convert output: {result}");
+
+                if (!System.IO.File.Exists(outputPath))
+                {
+                    return AudioLab.CreateErrorResponse("Conversion failed - no output file produced", "conversion_failed");
+                }
+
+                byte[] outputBytes = await System.IO.File.ReadAllBytesAsync(outputPath);
+                string outputBase64 = Convert.ToBase64String(outputBytes);
+
+                string mimeType = targetFormat switch
+                {
+                    "mp3" => "audio/mpeg",
+                    "ogg" => "audio/ogg",
+                    "flac" => "audio/flac",
+                    "aac" or "m4a" => "audio/mp4",
+                    "wav" => "audio/wav",
+                    _ => "audio/octet-stream"
+                };
+
+                return AudioLab.CreateSuccessResponse(new JObject
+                {
+                    ["audio_data"] = outputBase64,
+                    ["format"] = targetFormat,
+                    ["mime_type"] = mimeType,
+                    ["size"] = outputBytes.Length
+                });
+            }
+            finally
+            {
+                if (System.IO.File.Exists(inputPath)) System.IO.File.Delete(inputPath);
+                if (System.IO.File.Exists(outputPath)) System.IO.File.Delete(outputPath);
+            }
+        }
+        catch (FormatException)
+        {
+            return AudioLab.CreateErrorResponse("Invalid base64 audio data", "invalid_audio");
+        }
+        catch (Exception ex)
+        {
+            return AudioLab.CreateErrorResponse("Audio conversion failed", "conversion_error", ex);
         }
     }
 

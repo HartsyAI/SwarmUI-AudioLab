@@ -228,6 +228,19 @@ const AudioLabCore = (() => {
         return crunker.export(mixed, 'audio/wav').blob;
     }
 
+    /** Decode a Blob to an AudioBuffer.
+     *  @param {Blob} blob - audio Blob
+     *  @returns {Promise<AudioBuffer>} decoded buffer */
+    async function decodeToBuffer(blob) {
+        const arrayBuffer = await blob.arrayBuffer();
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        try {
+            return await ctx.decodeAudioData(arrayBuffer);
+        } finally {
+            ctx.close();
+        }
+    }
+
     return {
         isRecordingSupported,
         startRecording,
@@ -246,6 +259,7 @@ const AudioLabCore = (() => {
         concatAudio,
         mixAudio,
         applyGain,
+        decodeToBuffer,
         getStatus: () => ({
             capabilities,
             isRecording: isRecording(),
