@@ -704,63 +704,8 @@ const AudioDaw = (() => {
         desc.textContent = 'Separate audio into individual tracks — vocals, drums, bass, and more. Uses AI-powered source separation to split a mixed audio clip into its component parts. Each stem becomes a new track in the DAW.';
         section.appendChild(desc);
 
-        // Check install status (async, updates UI when ready)
-        const statusRow = createDiv(null, 'daw-stems-status');
-        statusRow.innerHTML = '<span style="color:var(--text-soft);font-size:0.8rem;">Checking Demucs status...</span>';
-        section.appendChild(statusRow);
-
-        checkDemucsInstalled().then(installed => {
-            statusRow.innerHTML = '';
-            if (!installed) {
-                // Not installed — show install prompt
-                const notInstalled = createDiv(null, 'daw-stems-install');
-                notInstalled.innerHTML = `
-                    <span style="color:var(--yellow);font-size:0.85rem;">Demucs is not installed.</span>
-                    <span style="color:var(--text-soft);font-size:0.8rem;">It requires ~2 GB VRAM and will download model weights on first use (~80 MB).</span>
-                `;
-                statusRow.appendChild(notInstalled);
-
-                const btnRow = createDiv(null);
-                btnRow.style.cssText = 'display:flex;gap:0.5rem;margin-top:0.3rem;';
-
-                const installBtn = document.createElement('button');
-                installBtn.className = 'basic-button btn-sm';
-                installBtn.textContent = 'Install Demucs';
-                installBtn.addEventListener('click', async () => {
-                    installBtn.disabled = true;
-                    installBtn.textContent = 'Installing...';
-                    try {
-                        await AudioLabAPI.installProviderDependencies('demucs_fx');
-                        demucsInstallStatus = null; // clear cache
-                        if (typeof doNoticePopover === 'function') doNoticePopover('Demucs installed', 'notice-pop-green');
-                        updateBottomPanel();
-                    } catch (err) {
-                        installBtn.disabled = false;
-                        installBtn.textContent = 'Install Demucs';
-                        if (typeof doNoticePopover === 'function') doNoticePopover('Install failed: ' + err.message, 'notice-pop-red');
-                    }
-                });
-                btnRow.appendChild(installBtn);
-
-                const refreshBtn = document.createElement('button');
-                refreshBtn.className = 'basic-button btn-sm';
-                refreshBtn.textContent = 'Refresh Status';
-                refreshBtn.addEventListener('click', async () => {
-                    demucsInstallStatus = null;
-                    updateBottomPanel();
-                });
-                btnRow.appendChild(refreshBtn);
-
-                statusRow.appendChild(btnRow);
-            } else {
-                // Installed — show ready status with refresh option
-                const readyRow = createDiv(null);
-                readyRow.style.cssText = 'display:flex;align-items:center;gap:0.5rem;';
-                readyRow.innerHTML = '<span style="color:var(--green);font-size:0.8rem;">Demucs is installed and ready.</span>';
-                statusRow.appendChild(readyRow);
-                renderStemsControls(section);
-            }
-        });
+        // Always show controls — the actual API call will report if Demucs isn't available
+        renderStemsControls(section);
 
         container.appendChild(section);
     }
@@ -1315,8 +1260,8 @@ const AudioDaw = (() => {
             }
             return;
         }
-        pushUndo();
         try {
+            pushUndo();
             const parts = await AudioLabCore.splitAudio(clip.blob, splitTime + clip.offset);
             if (!parts) {
                 console.error('[AudioDaw] splitAudio returned null');
@@ -1371,8 +1316,10 @@ const AudioDaw = (() => {
     }
 
     function doDuplicateClip(clip, track) {
+        console.log('[AudioDaw] doDuplicateClip called', clip?.id, track?.id);
         try {
             pushUndo();
+            console.log('[AudioDaw] pushUndo done');
             const newClip = AudioDawTrack.createClip(clip.blob, {
                 name: clip.name + ' (copy)',
                 startTime: clip.startTime + clip.duration + 0.5,
@@ -1386,9 +1333,13 @@ const AudioDaw = (() => {
             newClip.gain = clip.gain;
             track.clips.push(newClip);
             state.selectedClipId = newClip.id;
+            console.log('[AudioDaw] new clip created:', newClip.id, 'at', newClip.startTime);
             updateTotalDuration();
+            console.log('[AudioDaw] about to renderAllTracks');
             renderAllTracks();
+            console.log('[AudioDaw] renderAllTracks done');
             updateBottomPanel();
+            console.log('[AudioDaw] duplicate complete');
             if (typeof doNoticePopover === 'function') {
                 doNoticePopover('Clip duplicated', 'notice-pop-green');
             }
@@ -1401,9 +1352,11 @@ const AudioDaw = (() => {
     }
 
     function doDeleteClip(clip, track) {
+        console.log('[AudioDaw] doDeleteClip called', clip?.id, track?.id);
         try {
             pushUndo();
             const idx = track.clips.indexOf(clip);
+            console.log('[AudioDaw] clip index in track:', idx);
             if (idx === -1) {
                 console.error('[AudioDaw] clip not found in track during delete');
                 return;
@@ -1446,8 +1399,10 @@ const AudioDaw = (() => {
         if (!forceRefresh && demucsInstallStatus !== null) return demucsInstallStatus;
         try {
             const result = await AudioLabAPI.callAPI('GetInstallationStatus');
+            console.log('[AudioDaw] GetInstallationStatus response:', JSON.stringify(result));
             const providers = result.providers || {};
             const val = providers['demucs_fx'];
+            console.log('[AudioDaw] demucs_fx value:', val, typeof val);
             // Backend returns raw boolean (true/false), not an object
             demucsInstallStatus = val === true;
         } catch (err) {

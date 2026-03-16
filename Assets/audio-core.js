@@ -142,8 +142,12 @@ const AudioLabCore = (() => {
     let crunkerInstance = null;
 
     function getCrunker() {
-        if (!crunkerInstance && window.Crunker) {
-            crunkerInstance = new Crunker();
+        if (!crunkerInstance) {
+            // Crunker UMD exports {default: class} — unwrap the module wrapper
+            const CrunkerClass = window.Crunker?.default || window.Crunker;
+            if (CrunkerClass) {
+                crunkerInstance = new CrunkerClass();
+            }
         }
         return crunkerInstance;
     }
