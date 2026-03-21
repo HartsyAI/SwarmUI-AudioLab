@@ -34,7 +34,7 @@ public sealed class FishSpeechProvider : IAudioProviderSource
         new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         // Installed with --no-deps to avoid pulling pinned versions of pydantic, datasets, gradio, etc.
-        new() { Name = "fish-speech", InstallName = "fish-speech", ImportName = "fish_speech", Category = "tts", CustomInstallArgs = "--no-deps", EstimatedInstallTimeMinutes = 5 },
+        new() { Name = "fish-speech", InstallName = "git+https://github.com/fishaudio/fish-speech.git", ImportName = "fish_speech", Category = "tts", CustomInstallArgs = "--no-deps", EstimatedInstallTimeMinutes = 5 },
         // Explicit runtime dependencies needed by fish-speech inference
         new() { Name = "transformers>=4.45.2", InstallName = "transformers>=4.45.2", ImportName = "transformers", Category = "tts" },
         new() { Name = "einops>=0.7.0", InstallName = "einops>=0.7.0", ImportName = "einops", Category = "tts" },

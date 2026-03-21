@@ -9,7 +9,10 @@ namespace Hartsy.Extensions.AudioLab.AudioServices;
 /// <summary>Manages per-compatibility-group Python virtual environments.
 /// Creates venvs from a base Python, validates them, and resolves
 /// the correct python executable path for each compatibility group.
-/// Venvs live under {ExtensionDirectory}/python_backend/venvs/{group}/.</summary>
+/// Venvs live under dlbackend/audiolab/{group}/.
+/// Uses SwarmUI's bundled Python (ComfyUI embedded/venv) when available,
+/// falling back to system Python. Supports 'virtualenv' fallback for
+/// embedded Python distributions that lack the 'venv' module.</summary>
 public class VenvManager
 {
     #region Fields
@@ -27,22 +30,9 @@ public class VenvManager
 
     #region Path Resolution
 
-    /// <summary>Root directory for all venvs.
-    /// On Windows, uses a short path (e.g. C:\audiolab-venvs) to avoid the 260-char path limit.
-    /// Packages like onnx have deeply nested test directories that exceed 260 chars
-    /// when combined with a long venv base path.</summary>
-    public static string VenvRoot
-    {
-        get
-        {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                string drive = Path.GetPathRoot(Environment.CurrentDirectory) ?? "C:\\";
-                return Path.Combine(drive, "audiolab-venvs");
-            }
-            return Path.Combine(AudioConfiguration.PythonBackendDirectory, "venvs");
-        }
-    }
+    /// <summary>Root directory for all venvs, inside dlbackend/ to keep everything
+    /// within the SwarmUI folder. Nothing should ever be created outside the main folder.</summary>
+    public static string VenvRoot => Path.GetFullPath("dlbackend/audiolab");
 
     /// <summary>Gets the venv directory for a specific group.</summary>
     public static string GetVenvDirectory(string group) => Path.Combine(VenvRoot, group);
@@ -96,12 +86,12 @@ public class VenvManager
         string basePython = GetBasePythonPath();
         if (basePython == null)
         {
-            Logs.Error("[AudioLab/VenvManager] System Python not found! AudioLab requires Python 3.10+ on your PATH to create virtual environments. Download from https://www.python.org/downloads/ (check 'Add python.exe to PATH' during install), then restart SwarmUI.");
+            Logs.Error("[AudioLab] No Python found! Install a SwarmUI backend with ComfyUI, or install Python 3.10+ from https://www.python.org/downloads/ (check 'Add python.exe to PATH'), then restart SwarmUI.");
             return false;
         }
 
         string venvDir = GetVenvDirectory(group);
-        Logs.Info($"[AudioLab/VenvManager] Creating venv for group '{group}' at {venvDir} using {basePython}");
+        Logs.Info($"[AudioLab] Creating venv for group '{group}' at {venvDir} using {basePython}");
 
         Directory.CreateDirectory(Path.GetDirectoryName(venvDir));
 
@@ -115,7 +105,7 @@ public class VenvManager
             CreateNoWindow = true,
             WorkingDirectory = AudioConfiguration.PythonBackendDirectory
         };
-        PythonLaunchHelper.CleanEnvironmentOfPythonMess(psi, $"[AudioLab/Venv/{group}] ");
+        PythonLaunchHelper.CleanEnvironmentOfPythonMess(psi, $"[AudioLab] ");
 
         using Process proc = new() { StartInfo = psi };
         StringBuilder stderr = new();
@@ -128,20 +118,28 @@ public class VenvManager
         if (!exited)
         {
             try { proc.Kill(); } catch { }
-            Logs.Error($"[AudioLab/VenvManager] Venv creation timed out for group '{group}'");
+            Logs.Error($"[AudioLab] Venv creation timed out for group '{group}'");
             return false;
         }
 
         if (proc.ExitCode != 0)
         {
-            Logs.Error($"[AudioLab/VenvManager] Venv creation failed (exit {proc.ExitCode}): {stderr}");
-            return false;
+            // 'python -m venv' failed — common with ComfyUI's embedded Python (no venv module).
+            // Fall back to 'virtualenv' package which works with any Python, including embedded.
+            Logs.Debug($"[AudioLab] 'python -m venv' failed (exit {proc.ExitCode}), trying virtualenv fallback...");
+            bool fallback = await TryCreateWithVirtualenvAsync(basePython, venvDir, group);
+            if (!fallback)
+            {
+                Logs.Error($"[AudioLab] Venv creation failed for group '{group}'. "
+                    + $"Neither 'python -m venv' nor 'virtualenv' succeeded. stderr: {stderr}");
+                return false;
+            }
         }
 
         string venvPython = GetVenvPythonPath(group);
         if (!File.Exists(venvPython))
         {
-            Logs.Error($"[AudioLab/VenvManager] Venv created but python not found at {venvPython}");
+            Logs.Error($"[AudioLab] Venv created but python not found at {venvPython}");
             return false;
         }
 
@@ -150,8 +148,61 @@ public class VenvManager
         // CPU-only torch from PyPI, overriding our explicitly installed CUDA version.
         WritePipConfig(venvDir);
 
-        Logs.Info($"[AudioLab/VenvManager] Venv for group '{group}' created successfully");
+        Logs.Info($"[AudioLab] Venv for group '{group}' created successfully");
         return true;
+    }
+
+    /// <summary>Fallback venv creation using 'virtualenv' package. Installs virtualenv via pip
+    /// if needed, then creates the venv. Works with embedded Python that lacks the 'venv' module.</summary>
+    private async Task<bool> TryCreateWithVirtualenvAsync(string basePython, string venvDir, string group)
+    {
+        // Install virtualenv into the base Python
+        Logs.Info($"[AudioLab] Installing virtualenv for embedded Python fallback...");
+        int installExit = await RunProcessAsync(basePython, "-m pip install virtualenv", group);
+        if (installExit != 0)
+        {
+            Logs.Warning($"[AudioLab] Failed to install virtualenv (exit {installExit})");
+            return false;
+        }
+
+        // Create the venv using virtualenv
+        int createExit = await RunProcessAsync(basePython, $"-m virtualenv \"{venvDir}\"", group);
+        if (createExit != 0)
+        {
+            Logs.Warning($"[AudioLab] virtualenv creation failed (exit {createExit})");
+            return false;
+        }
+
+        Logs.Info($"[AudioLab] Venv created via virtualenv fallback for group '{group}'");
+        return true;
+    }
+
+    /// <summary>Runs a Python command and returns the exit code. Helper for venv creation.</summary>
+    private async Task<int> RunProcessAsync(string python, string arguments, string group)
+    {
+        ProcessStartInfo psi = new()
+        {
+            FileName = python,
+            Arguments = arguments,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = AudioConfiguration.PythonBackendDirectory
+        };
+        PythonLaunchHelper.CleanEnvironmentOfPythonMess(psi, $"[AudioLab] ");
+
+        using Process proc = new() { StartInfo = psi };
+        proc.Start();
+        await proc.StandardOutput.ReadToEndAsync();
+        await proc.StandardError.ReadToEndAsync();
+        bool exited = await Task.Run(() => proc.WaitForExit(120_000));
+        if (!exited)
+        {
+            try { proc.Kill(); } catch { }
+            return -1;
+        }
+        return proc.ExitCode;
     }
 
     /// <summary>Validates that a venv is intact (python executable exists).</summary>
@@ -165,7 +216,7 @@ public class VenvManager
         {
             Directory.Delete(venvDir, recursive: true);
             _venvPythonPaths.TryRemove(group, out _);
-            Logs.Info($"[AudioLab/VenvManager] Deleted venv for group '{group}'");
+            Logs.Info($"[AudioLab] Deleted venv for group '{group}'");
         }
     }
 
@@ -173,24 +224,44 @@ public class VenvManager
 
     #region Base Python Detection
 
-    // TODO: Find a better solution for Python bootstrapping. Currently requires system Python
-    // because ComfyUI's embedded Python doesn't include the 'venv' module. Options to explore:
-    // - Use 'virtualenv' package (works with embedded Python, unlike 'venv')
-    // - Download a standalone Python embeddable zip from python.org automatically
-    // - Bundle a minimal Python with AudioLab
-
     /// <summary>Finds the base Python used to create venvs.
-    /// Requires system Python 3.10+ on PATH. ComfyUI's embedded Python cannot create
-    /// venvs (missing venv module), so it is not used.</summary>
+    /// Checks SwarmUI's bundled Python first (ComfyUI embedded/venv), then system Python.
+    /// If the found Python lacks the 'venv' module (e.g. embedded Python on Windows),
+    /// CreateVenvAsync will automatically fall back to 'virtualenv'.</summary>
     public static string GetBasePythonPath()
     {
+        // 1. Try SwarmUI's bundled Python (follows PythonLaunchHelper.LaunchGeneric pattern)
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            string embedded = Path.GetFullPath("dlbackend/comfy/python_embeded/python.exe");
+            if (File.Exists(embedded))
+            {
+                Logs.Debug($"[AudioLab] Using ComfyUI embedded Python: {embedded}");
+                return embedded;
+            }
+        }
+        else
+        {
+            string venvPy = Path.GetFullPath("dlbackend/ComfyUI/venv/bin/python");
+            if (File.Exists(venvPy))
+            {
+                Logs.Debug($"[AudioLab] Using ComfyUI venv Python: {venvPy}");
+                return venvPy;
+            }
+        }
+
+        // 2. Fall back to system Python
         string systemPython = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "python" : "python3";
         if (TryFindSystemPython(systemPython, out string systemPath))
             return systemPath;
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && TryFindSystemPython("python3", out string py3Path))
             return py3Path;
 
-        Logs.Error("[AudioLab/VenvManager] System Python not found! AudioLab requires Python 3.10+ installed on your system PATH to create isolated virtual environments. Download from https://www.python.org/downloads/ and ensure 'Add python.exe to PATH' is checked during installation. Then restart SwarmUI.");
+        Logs.Error("[AudioLab] No Python found! AudioLab checks for Python in this order: "
+            + "(1) SwarmUI's bundled ComfyUI Python, (2) system Python on PATH. "
+            + "Either install a SwarmUI backend with ComfyUI, or install Python 3.10+ from "
+            + "https://www.python.org/downloads/ (check 'Add python.exe to PATH' during install), "
+            + "then restart SwarmUI.");
         return null;
     }
 
@@ -204,11 +275,11 @@ public class VenvManager
             string configPath = Path.Combine(venvDir, configName);
             string content = "[global]\nextra-index-url = https://download.pytorch.org/whl/cu126\n";
             File.WriteAllText(configPath, content);
-            Logs.Debug($"[AudioLab/VenvManager] Wrote {configName} with PyTorch CUDA index");
+            Logs.Debug($"[AudioLab] Wrote {configName} with PyTorch CUDA index");
         }
         catch (Exception ex)
         {
-            Logs.Warning($"[AudioLab/VenvManager] Failed to write pip config: {ex.Message}");
+            Logs.Warning($"[AudioLab] Failed to write pip config: {ex.Message}");
         }
     }
 
@@ -234,7 +305,7 @@ public class VenvManager
             if (exited && proc.ExitCode == 0 && output.Contains("Python"))
             {
                 resolvedPath = command;
-                Logs.Debug($"[AudioLab/VenvManager] Found system Python: {command} ({output.Trim()})");
+                Logs.Debug($"[AudioLab] Found system Python: {command} ({output.Trim()})");
                 return true;
             }
         }
