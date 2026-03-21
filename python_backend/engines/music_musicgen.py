@@ -84,24 +84,28 @@ class MusicGenEngine(BaseAudioEngine):
                 wav = self.model.generate([prompt])
 
             # wav shape: [batch, channels, samples]
+            output_format = kwargs.get("output_format", "wav_16")
+            output_quality = kwargs.get("output_quality", "high")
             num_channels = wav.shape[1]
             if num_channels >= 2:
                 # Stereo: interleave L/R channels for WAV format
                 left = wav[0, 0].cpu().numpy().astype(np.float32)
                 right = wav[0, 1].cpu().numpy().astype(np.float32)
                 audio_numpy = np.stack([left, right], axis=0)  # [2, samples]
-                audio_b64 = self.audio_to_base64(
-                    audio_numpy.T.flatten(), self.sample_rate, num_channels=2
+                audio_b64, fmt = self.encode_audio(
+                    audio_numpy.T.flatten(), self.sample_rate, num_channels=2,
+                    output_format=output_format, quality=output_quality,
                 )
                 actual_duration = len(left) / self.sample_rate
             else:
                 audio_numpy = wav[0, 0].cpu().numpy().astype(np.float32)
-                audio_b64 = self.audio_to_base64(audio_numpy, self.sample_rate)
+                audio_b64, fmt = self.encode_audio(audio_numpy, self.sample_rate, output_format=output_format, quality=output_quality)
                 actual_duration = len(audio_numpy) / self.sample_rate
 
             return {
                 "success": True,
                 "audio_data": audio_b64,
+                "output_format": fmt,
                 "duration": actual_duration,
                 "metadata": {
                     "engine": "musicgen",

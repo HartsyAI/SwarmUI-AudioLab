@@ -103,7 +103,10 @@ class DemucsEngine(BaseAudioEngine):
             sources = sources * (ref.std() + 1e-8) + ref.mean()
 
             # Build stems dict
+            output_format = kwargs.get("output_format", "wav_16")
+            output_quality = kwargs.get("output_quality", "high")
             stems = {}
+            stem_fmt = None
             source_names = self.model.sources
             for i, name in enumerate(source_names):
                 stem_audio = sources[i].cpu().numpy().astype(np.float32)
@@ -112,11 +115,13 @@ class DemucsEngine(BaseAudioEngine):
                     stem_mono = np.mean(stem_audio, axis=0)
                 else:
                     stem_mono = stem_audio
-                stems[name] = self.audio_to_base64(stem_mono, self.sample_rate)
+                stem_b64, stem_fmt = self.encode_audio(stem_mono, self.sample_rate, output_format=output_format, quality=output_quality)
+                stems[name] = stem_b64
 
             return {
                 "success": True,
                 "stems": stems,
+                "output_format": stem_fmt,
                 "metadata": {
                     "engine": "demucs",
                     "model": model_name,

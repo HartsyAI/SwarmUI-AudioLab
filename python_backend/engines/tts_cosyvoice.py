@@ -135,12 +135,15 @@ class CosyVoiceEngine(BaseAudioEngine):
             audio_numpy = audio_numpy * volume
             sr = self.sample_rate
 
-            audio_b64 = self.audio_to_base64(audio_numpy, sr)
+            output_format = kwargs.get("output_format", "wav_16")
+            output_quality = kwargs.get("output_quality", "high")
+            audio_b64, fmt = self.encode_audio(audio_numpy, sr, output_format=output_format, quality=output_quality)
             duration = len(audio_numpy) / sr
 
             return {
                 "success": True,
                 "audio_data": audio_b64,
+                "output_format": fmt,
                 "duration": duration,
                 "metadata": {
                     "engine": "cosyvoice",

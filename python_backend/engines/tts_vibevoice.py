@@ -184,6 +184,9 @@ class VibeVoiceEngine(BaseAudioEngine):
         if not text.strip():
             return {"success": False, "error": "No text provided"}
 
+        output_format = kwargs.get("output_format", "wav_16")
+        output_quality = kwargs.get("output_quality", "high")
+
         try:
             self._ensure_loaded(model_name)
 
@@ -191,11 +194,13 @@ class VibeVoiceEngine(BaseAudioEngine):
                 return self._generate_streaming(
                     text, volume, cfg_scale, diffusion_steps, temperature,
                     top_p, top_k, reference_audio, max_new_tokens, seed,
+                    output_format=output_format, output_quality=output_quality,
                 )
             else:
                 return self._generate_standard(
                     text, volume, cfg_scale, diffusion_steps, temperature,
                     top_p, top_k, reference_audio, max_new_tokens, seed,
+                    output_format=output_format, output_quality=output_quality,
                 )
         except Exception as e:
             logger.error("VibeVoice process failed: %s", e)
@@ -203,7 +208,8 @@ class VibeVoiceEngine(BaseAudioEngine):
 
     def _generate_standard(self, text, volume, cfg_scale, diffusion_steps,
                            temperature, top_p, top_k, reference_audio,
-                           max_new_tokens, seed):
+                           max_new_tokens, seed, output_format="wav_16",
+                           output_quality="high"):
         """Generate with standard (non-streaming) models (1.5B, 7B).
 
         Uses VibeVoiceForConditionalGenerationInference which handles
@@ -269,12 +275,13 @@ class VibeVoiceEngine(BaseAudioEngine):
 
         sr = self.sample_rate
         audio_data = audio_data * volume
-        audio_b64 = self.audio_to_base64(audio_data, sr)
+        audio_b64, fmt = self.encode_audio(audio_data, sr, output_format=output_format, quality=output_quality)
         duration = len(audio_data) / sr
 
         return {
             "success": True,
             "audio_data": audio_b64,
+            "output_format": fmt,
             "duration": duration,
             "metadata": {
                 "engine": "vibevoice",
@@ -288,7 +295,8 @@ class VibeVoiceEngine(BaseAudioEngine):
 
     def _generate_streaming(self, text, volume, cfg_scale, diffusion_steps,
                             temperature, top_p, top_k, reference_audio,
-                            max_new_tokens, seed):
+                            max_new_tokens, seed, output_format="wav_16",
+                            output_quality="high"):
         """Generate with streaming model (0.5B Realtime).
 
         Uses VibeVoiceStreamingForConditionalGenerationInference with
@@ -364,12 +372,13 @@ class VibeVoiceEngine(BaseAudioEngine):
 
         sr = self.sample_rate
         audio_data = audio_data * volume
-        audio_b64 = self.audio_to_base64(audio_data, sr)
+        audio_b64, fmt = self.encode_audio(audio_data, sr, output_format=output_format, quality=output_quality)
         duration = len(audio_data) / sr
 
         return {
             "success": True,
             "audio_data": audio_b64,
+            "output_format": fmt,
             "duration": duration,
             "metadata": {
                 "engine": "vibevoice",

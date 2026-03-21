@@ -182,9 +182,130 @@ class BaseAudioEngine(ABC):
         return buf.getvalue()
 
     @staticmethod
+    def _numpy_to_wav_float32(audio_numpy: np.ndarray, sample_rate: int,
+                               num_channels: int = 1) -> bytes:
+        """Convert a float32 numpy array to WAV bytes (32-bit IEEE float)."""
+        if len(audio_numpy.shape) > 1:
+            audio_numpy = np.mean(audio_numpy, axis=0)
+        max_amp = np.max(np.abs(audio_numpy))
+        if max_amp > 0.8:
+            audio_numpy = audio_numpy * 0.8 / max_amp
+        audio_float32 = audio_numpy.astype(np.float32)
+
+        bits_per_sample = 32
+        byte_rate = sample_rate * num_channels * bits_per_sample // 8
+        block_align = num_channels * bits_per_sample // 8
+        data_size = len(audio_float32) * bits_per_sample // 8
+        fmt_chunk_size = 18  # IEEE float needs extra 2 bytes (cbSize)
+        file_size = 4 + (8 + fmt_chunk_size) + (8 + data_size)
+
+        buf = io.BytesIO()
+        buf.write(b"RIFF")
+        buf.write(struct.pack("<I", file_size))
+        buf.write(b"WAVE")
+        buf.write(b"fmt ")
+        buf.write(struct.pack("<I", fmt_chunk_size))
+        buf.write(struct.pack("<H", 3))           # IEEE float
+        buf.write(struct.pack("<H", num_channels))
+        buf.write(struct.pack("<I", sample_rate))
+        buf.write(struct.pack("<I", byte_rate))
+        buf.write(struct.pack("<H", block_align))
+        buf.write(struct.pack("<H", bits_per_sample))
+        buf.write(struct.pack("<H", 0))           # cbSize
+        buf.write(b"data")
+        buf.write(struct.pack("<I", data_size))
+        buf.write(audio_float32.tobytes())
+        return buf.getvalue()
+
+    @staticmethod
+    def _encode_with_torchaudio(audio_numpy: np.ndarray, sample_rate: int,
+                                 num_channels: int, fmt: str,
+                                 quality: str) -> bytes:
+        """Encode numpy audio to a compressed format via torchaudio.
+
+        Supports flac, mp3, and ogg. Falls back to 16-bit WAV if the
+        torchaudio backend cannot handle the requested format.
+        """
+        import logging
+        import torch
+        import torchaudio
+
+        logger = logging.getLogger("AudioLab.Encode")
+
+        # Normalize
+        if len(audio_numpy.shape) > 1:
+            audio_numpy = np.mean(audio_numpy, axis=0)
+        max_amp = np.max(np.abs(audio_numpy))
+        if max_amp > 0.8:
+            audio_numpy = audio_numpy * 0.8 / max_amp
+
+        # Reshape interleaved 1D → (channels, samples) for torchaudio
+        if num_channels > 1:
+            samples_per_ch = len(audio_numpy) // num_channels
+            waveform = torch.tensor(audio_numpy, dtype=torch.float32) \
+                            .reshape(samples_per_ch, num_channels).T
+        else:
+            waveform = torch.tensor(audio_numpy, dtype=torch.float32).unsqueeze(0)
+
+        kwargs = {}
+        if fmt == "mp3":
+            bitrate_map = {"low": 128000, "medium": 192000, "high": 256000,
+                           "max": 320000}
+            kwargs["compression"] = bitrate_map.get(quality, 256000)
+        elif fmt == "flac":
+            level_map = {"low": 0, "medium": 5, "high": 8, "max": 8}
+            kwargs["compression"] = level_map.get(quality, 5)
+        elif fmt == "ogg":
+            quality_map = {"low": 2, "medium": 5, "high": 8, "max": 10}
+            kwargs["compression"] = quality_map.get(quality, 5)
+
+        buf = io.BytesIO()
+        try:
+            torchaudio.save(buf, waveform, sample_rate, format=fmt, **kwargs)
+            buf.seek(0)
+            return buf.read()
+        except Exception as e:
+            logger.warning("torchaudio cannot encode '%s': %s — falling back to WAV", fmt, e)
+            return BaseAudioEngine.numpy_to_wav(audio_numpy, sample_rate, num_channels)
+
+    @staticmethod
+    def encode_audio(audio_numpy: np.ndarray, sample_rate: int,
+                     num_channels: int = 1, output_format: str = "wav_16",
+                     quality: str = "high") -> tuple:
+        """Encode numpy audio to the requested format.
+
+        Args:
+            audio_numpy: Float32 numpy array (1D interleaved or 2D).
+            sample_rate: Sample rate in Hz.
+            num_channels: Number of audio channels.
+            output_format: One of wav_16, wav_32, flac, mp3, ogg.
+            quality: One of low, medium, high, max (affects lossy formats).
+
+        Returns:
+            (base64_string, format_extension) tuple.
+        """
+        if output_format == "wav_32":
+            audio_bytes = BaseAudioEngine._numpy_to_wav_float32(
+                audio_numpy, sample_rate, num_channels)
+            return base64.b64encode(audio_bytes).decode("utf-8"), "wav"
+        elif output_format in ("flac", "mp3", "ogg"):
+            audio_bytes = BaseAudioEngine._encode_with_torchaudio(
+                audio_numpy, sample_rate, num_channels, output_format, quality)
+            return base64.b64encode(audio_bytes).decode("utf-8"), output_format
+        else:
+            # Default: wav_16
+            audio_bytes = BaseAudioEngine.numpy_to_wav(
+                audio_numpy, sample_rate, num_channels)
+            return base64.b64encode(audio_bytes).decode("utf-8"), "wav"
+
+    @staticmethod
     def audio_to_base64(audio_numpy: np.ndarray, sample_rate: int,
                         num_channels: int = 1) -> str:
-        """Convert numpy audio to a base64-encoded WAV string."""
+        """Convert numpy audio to a base64-encoded WAV string (16-bit PCM).
+
+        Legacy helper kept for streaming TTS chunks which always use WAV.
+        For final outputs, prefer :meth:`encode_audio`.
+        """
         wav_bytes = BaseAudioEngine.numpy_to_wav(audio_numpy, sample_rate,
                                                   num_channels)
         return base64.b64encode(wav_bytes).decode("utf-8")

@@ -698,7 +698,9 @@ class YuEEngine(BaseAudioEngine):
             instrumental_audio = instrumental_audio[:min_len]
             mixed = (vocal_audio + instrumental_audio) / 2.0
 
-            audio_b64 = self.audio_to_base64(mixed, self.sample_rate)
+            output_format = kwargs.get("output_format", "wav_16")
+            output_quality = kwargs.get("output_quality", "high")
+            audio_b64, fmt = self.encode_audio(mixed, self.sample_rate, output_format=output_format, quality=output_quality)
             actual_duration = len(mixed) / self.sample_rate
 
             logger.info("YuE generation complete: %.1fs of audio", actual_duration)
@@ -706,6 +708,7 @@ class YuEEngine(BaseAudioEngine):
             return {
                 "success": True,
                 "audio_data": audio_b64,
+                "output_format": fmt,
                 "duration": actual_duration,
                 "metadata": {
                     "engine": "yue",

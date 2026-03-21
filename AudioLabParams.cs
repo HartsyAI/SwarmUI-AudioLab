@@ -23,6 +23,18 @@ public static class AudioLabParams
     /// <summary>Audio processing parameter group (stem separation, enhancement).</summary>
     public static T2IParamGroup AudioProcGroup;
 
+    /// <summary>Output format parameter group (shared across all audio-producing categories).</summary>
+    public static T2IParamGroup OutputGroup;
+
+    #endregion
+
+    #region Output Format (flag: audiolab_output)
+
+    /// <summary>Audio output file format. Feature flag: <c>audiolab_output</c>.</summary>
+    public static T2IRegisteredParam<string> AudioOutputFormat;
+    /// <summary>Quality/compression level for lossy formats. Feature flag: <c>audiolab_output</c>.</summary>
+    public static T2IRegisteredParam<string> AudioQuality;
+
     #endregion
 
     #region TTS Shared (flag: audiolab_tts)
@@ -401,13 +413,6 @@ public static class AudioLabParams
 
     #endregion
 
-    #region Audio Generation — SFX (flag: audiolab_audiogen)
-
-    /// <summary>Duration of generated sound effect in seconds. Feature flag: <c>audiolab_audiogen</c>.</summary>
-    public static T2IRegisteredParam<double> SFXDuration;
-
-    #endregion
-
     /// <summary>Registers all AudioLab parameters. Called from <see cref="AudioLab.OnInit"/>.</summary>
     public static void RegisterAll()
     {
@@ -424,6 +429,35 @@ public static class AudioLabParams
             Description: "Voice conversion parameters. Provide source audio to convert and target voice reference.");
         AudioProcGroup = new("Audio Processing", Open: true, OrderPriority: -23, Toggles: false,
             Description: "Audio processing parameters. Upload audio to process (stem separation, denoising, enhancement).");
+
+        OutputGroup = new("Output Format", Open: false, OrderPriority: -20, Toggles: false,
+            Description: "Audio output format and quality settings. Applies to all generated audio.");
+
+        #endregion
+
+        #region Output Format
+        AudioOutputFormat = T2IParamTypes.Register<string>(new("Audio Output Format",
+            "File format for saved audio output.\nWAV 16-bit = standard quality, smallest WAV. WAV 32-bit = lossless float, larger.\nFLAC = lossless compression (~50% of WAV). MP3/OGG = lossy, smallest files.",
+            "wav_16", IgnoreIf: "wav_16",
+            GetValues: _ => [
+                "wav_16///WAV (16-bit PCM)",
+                "wav_32///WAV (32-bit Float)",
+                "flac///FLAC (Lossless)",
+                "mp3///MP3",
+                "ogg///OGG Vorbis"
+            ],
+            OrderPriority: -10, Group: OutputGroup, FeatureFlag: "audiolab_output"));
+
+        AudioQuality = T2IParamTypes.Register<string>(new("Audio Quality",
+            "Quality level for compressed formats.\nAffects MP3 bitrate and OGG quality. Ignored for WAV and FLAC.",
+            "high", IgnoreIf: "high",
+            GetValues: _ => [
+                "low///Low (128kbps MP3)",
+                "medium///Medium (192kbps MP3)",
+                "high///High (256kbps MP3)",
+                "max///Maximum (320kbps MP3)"
+            ],
+            OrderPriority: -9, Group: OutputGroup, FeatureFlag: "audiolab_output"));
 
         #endregion
 
@@ -1123,7 +1157,22 @@ public static class AudioLabParams
 
         #region Music — HeartLib
         HeartLibLyrics = T2IParamTypes.Register<string>(new("HeartLib Lyrics",
-            "Song lyrics for HeartLib music generation.\nUse section markers: [Verse], [Chorus], [Bridge], [Outro].\nLeave empty for instrumental generation.",
+            "Song lyrics for HeartLib music generation.\n\n"
+            + "SECTION MARKERS (only these 6 are recognized):\n"
+            + "  [Intro] [Verse] [Prechorus] [Chorus] [Bridge] [Outro]\n"
+            + "Repeat markers for multiple sections (e.g. two [Verse] blocks), do NOT number them ([Verse 1] won't work).\n"
+            + "[Prechorus] is heavily used in training data — include it if your song has a pre-chorus.\n\n"
+            + "INSTRUMENTAL SECTIONS:\n"
+            + "  Use <||> under a section marker for sections without vocals.\n"
+            + "  (Instrumental) is NOT recognized.\n\n"
+            + "FORMATTING NOTES:\n"
+            + "  - All text is lowercased internally, capitalization doesn't matter.\n"
+            + "  - No inline controls for emphasis, yelling, pauses, or dynamics.\n"
+            + "  - Vocal style is controlled globally via tags (Prompt), not lyrics.\n\n"
+            + "EXAMPLE:\n"
+            + "  [Intro]\n  <||>\n  [Verse]\n  your lyrics here\n  [Prechorus]\n  building up\n"
+            + "  [Chorus]\n  main hook\n  [Verse]\n  second verse\n  [Bridge]\n  bridge lyrics\n"
+            + "  [Chorus]\n  hook again\n  [Outro]\n  <||>",
             "",
             ViewType: ParamViewType.PROMPT,
             OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params"));
@@ -1272,13 +1321,5 @@ public static class AudioLabParams
 
         #endregion
 
-        #region Sound FX Shared
-        SFXDuration = T2IParamTypes.Register<double>(new("SFX Duration",
-            "Duration of generated sound effect in seconds.",
-            "10",
-            Min: 1, Max: 60, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "audiolab_audiogen"));
-
-        #endregion
     }
 }

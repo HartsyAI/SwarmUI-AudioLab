@@ -113,12 +113,15 @@ class Qwen3TTSEngine(BaseAudioEngine):
                 audio_numpy = np.mean(audio_numpy, axis=0)
             audio_numpy = audio_numpy * volume
 
-            audio_b64 = self.audio_to_base64(audio_numpy, self.sample_rate)
+            output_format = kwargs.get("output_format", "wav_16")
+            output_quality = kwargs.get("output_quality", "high")
+            audio_b64, fmt = self.encode_audio(audio_numpy, self.sample_rate, output_format=output_format, quality=output_quality)
             duration = len(audio_numpy) / self.sample_rate
 
             return {
                 "success": True,
                 "audio_data": audio_b64,
+                "output_format": fmt,
                 "duration": duration,
                 "metadata": {
                     "engine": "qwen3tts",

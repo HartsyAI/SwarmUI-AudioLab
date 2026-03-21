@@ -259,27 +259,33 @@ class HeartLibEngine(BaseAudioEngine):
             if self.is_cancelled():
                 return self.cancelled_response()
 
-            # Read output file and encode to base64
+            # Read output file and convert to 16-bit PCM WAV (torchaudio saves 32-bit float)
             if not os.path.isfile(tmp_path) or os.path.getsize(tmp_path) == 0:
                 return {"success": False, "error": "Generation produced no output audio."}
 
-            with open(tmp_path, "rb") as f:
-                audio_bytes = f.read()
+            import torchaudio
+            waveform, sr = torchaudio.load(tmp_path)  # (channels, samples) float32
+            audio_numpy = waveform.numpy()
+            num_channels = audio_numpy.shape[0]
+            # Interleave channels for WAV: (channels, samples) -> (samples,) interleaved
+            if num_channels > 1:
+                audio_numpy = audio_numpy.T.flatten()  # stereo interleave
+            else:
+                audio_numpy = audio_numpy.squeeze()
+            output_format = kwargs.get("output_format", "wav_16")
+            quality = kwargs.get("output_quality", "high")
+            audio_b64, fmt = self.encode_audio(
+                audio_numpy, sr, num_channels,
+                output_format=output_format, quality=quality)
+            estimated_duration = waveform.shape[1] / sr
 
-            audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
-
-            # Estimate duration from WAV file size (48kHz, 16-bit, mono/stereo)
-            # WAV header is 44 bytes, rest is PCM data
-            data_size = len(audio_bytes) - 44
-            # Assume 48kHz, 32-bit float (4 bytes per sample) based on torchaudio output
-            estimated_duration = data_size / (48000 * 4) if data_size > 0 else 0
-
-            logger.info("Generation complete: ~%.1fs of audio", estimated_duration)
+            logger.info("Generation complete: ~%.1fs of audio (%s)", estimated_duration, fmt)
 
             return {
                 "success": True,
                 "audio_data": audio_b64,
-                "sample_rate": 48000,
+                "output_format": fmt,
+                "sample_rate": sr,
                 "duration": round(estimated_duration, 2),
                 "metadata": {
                     "engine": "heartlib",

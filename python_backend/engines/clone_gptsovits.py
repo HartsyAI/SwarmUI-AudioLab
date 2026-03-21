@@ -102,12 +102,15 @@ class GPTSoVITSEngine(BaseAudioEngine):
                 if np.max(np.abs(audio_data)) > 1.0:
                     audio_data = audio_data / 32768.0
 
-            audio_b64 = self.audio_to_base64(audio_data, sr)
+            output_format = kwargs.get("output_format", "wav_16")
+            output_quality = kwargs.get("output_quality", "high")
+            audio_b64, fmt = self.encode_audio(audio_data, sr, output_format=output_format, quality=output_quality)
             duration = len(audio_data) / sr
 
             return {
                 "success": True,
                 "audio_data": audio_b64,
+                "output_format": fmt,
                 "duration": duration,
                 "metadata": {
                     "engine": "gptsovits",

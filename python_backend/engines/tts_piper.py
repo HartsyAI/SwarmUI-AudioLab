@@ -138,12 +138,15 @@ class PiperEngine(BaseAudioEngine):
             audio_float = audio_float * volume
             self.sample_rate = sr
 
-            audio_b64 = self.audio_to_base64(audio_float, self.sample_rate)
+            output_format = kwargs.get("output_format", "wav_16")
+            output_quality = kwargs.get("output_quality", "high")
+            audio_b64, fmt = self.encode_audio(audio_float, self.sample_rate, output_format=output_format, quality=output_quality)
             duration = len(audio_float) / self.sample_rate
 
             return {
                 "success": True,
                 "audio_data": audio_b64,
+                "output_format": fmt,
                 "duration": duration,
                 "metadata": {
                     "engine": "piper",

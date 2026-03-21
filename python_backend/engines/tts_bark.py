@@ -90,13 +90,15 @@ class BarkEngine(BaseAudioEngine):
             )
         audio_array = audio_array * volume
 
-        wav_bytes = self._numpy_to_wav(audio_array)
-        audio_base64 = base64.b64encode(wav_bytes).decode("utf-8")
+        output_format = kwargs.get("output_format", "wav_16")
+        output_quality = kwargs.get("output_quality", "high")
+        audio_b64, fmt = self.encode_audio(audio_array, self.sample_rate, output_format=output_format, quality=output_quality)
         duration = len(audio_array) / self.sample_rate
 
         return {
             "success": True,
-            "audio_data": audio_base64,
+            "audio_data": audio_b64,
+            "output_format": fmt,
             "duration": duration,
             "metadata": {
                 "engine": "bark",

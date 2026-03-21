@@ -169,6 +169,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 {
                     _supportedFeatureSet.Add(categoryFlag);
                 }
+                if (definition.Category != AudioCategory.STT)
+                {
+                    _supportedFeatureSet.Add("audiolab_output");
+                }
                 foreach (string flag in definition.FeatureFlags)
                 {
                     _supportedFeatureSet.Add(flag);
@@ -395,7 +399,14 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 if (!string.IsNullOrEmpty(audioBase64))
                 {
                     byte[] audioBytes = Convert.FromBase64String(audioBase64);
-                    AudioFile audio = new(audioBytes, MediaType.AudioWav);
+                    MediaType mediaType = (result["output_format"]?.ToString()) switch
+                    {
+                        "mp3" => MediaType.AudioMp3,
+                        "flac" => MediaType.AudioFlac,
+                        "ogg" => MediaType.AudioOgg,
+                        _ => MediaType.AudioWav,
+                    };
+                    AudioFile audio = new(audioBytes, mediaType);
                     takeOutput(audio);
                 }
 
@@ -553,6 +564,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
         if (pcmChunks.Count > 0)
         {
+            // Streaming TTS always saves as WAV — chunks are PCM-concatenated in C#.
+            // Output format param applies to single-shot generation only.
             byte[] finalWav = BuildWavFromPcm(pcmChunks, sampleRate, channels, bitsPerSample);
             AudioFile finalAudio = new(finalWav, MediaType.AudioWav);
             takeOutput(finalAudio);  // Real output — saved to disk
@@ -811,6 +824,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
             {
                 _supportedFeatureSet.Add(categoryFlag);
             }
+            if (meta.Definition.Category != AudioCategory.STT)
+            {
+                _supportedFeatureSet.Add("audiolab_output");
+            }
             foreach (string flag in meta.Definition.FeatureFlags)
             {
                 _supportedFeatureSet.Add(flag);
@@ -971,6 +988,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
             default:
                 args["prompt"] = input.Get(T2IParamTypes.Prompt, "");
                 break;
+        }
+
+        // 1b. Output format args (shared across all audio-producing categories)
+        if (provider.Category != AudioCategory.STT)
+        {
+            args["output_format"] = input.TryGet(AudioLabParams.AudioOutputFormat, out string fmt) ? fmt : "wav_16";
+            args["output_quality"] = input.TryGet(AudioLabParams.AudioQuality, out string qual) ? qual : "high";
         }
 
         // 2. Merge model's EngineConfig (model_name, model_size, mode, etc.)

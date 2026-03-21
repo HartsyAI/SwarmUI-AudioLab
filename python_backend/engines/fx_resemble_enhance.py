@@ -85,12 +85,15 @@ class ResembleEnhanceEngine(BaseAudioEngine):
             if len(out_numpy.shape) > 1:
                 out_numpy = np.mean(out_numpy, axis=0)
 
-            audio_b64 = self.audio_to_base64(out_numpy, out_sr)
+            output_format = kwargs.get("output_format", "wav_16")
+            output_quality = kwargs.get("output_quality", "high")
+            audio_b64, fmt = self.encode_audio(out_numpy, out_sr, output_format=output_format, quality=output_quality)
             duration = len(out_numpy) / out_sr
 
             return {
                 "success": True,
                 "audio_data": audio_b64,
+                "output_format": fmt,
                 "duration": duration,
                 "metadata": {
                     "engine": "resemble_enhance",
