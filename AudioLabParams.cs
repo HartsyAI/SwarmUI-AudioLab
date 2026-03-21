@@ -228,8 +228,6 @@ public static class AudioLabParams
 
     /// <summary>Song lyrics for ACE-Step generation. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<string> Lyrics;
-    /// <summary>Random seed for reproducible ACE-Step generation. Feature flag: <c>acestep_music_params</c>.</summary>
-    public static T2IRegisteredParam<int> AudioSeed;
     /// <summary>Diffusion inference step count for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<int> InferStep;
     /// <summary>Classifier-free guidance strength for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
@@ -321,8 +319,6 @@ public static class AudioLabParams
     public static T2IRegisteredParam<int> YuEMaxTokens;
     /// <summary>Quantization mode for YuE Stage-1 model. Feature flag: <c>yue_music_params</c>.</summary>
     public static T2IRegisteredParam<string> YuEQuantization;
-    /// <summary>Random seed for reproducible YuE generation. Feature flag: <c>yue_music_params</c>.</summary>
-    public static T2IRegisteredParam<int> YuESeed;
     /// <summary>Stage-2 batch size (lower = less VRAM). Feature flag: <c>yue_music_params</c>.</summary>
     public static T2IRegisteredParam<int> YuEStage2BatchSize;
     /// <summary>Sampling temperature for YuE generation. Feature flag: <c>yue_music_params</c>.</summary>
@@ -346,8 +342,6 @@ public static class AudioLabParams
     public static T2IRegisteredParam<double> HeartLibTemperature;
     /// <summary>Top-K token sampling for HeartLib. Feature flag: <c>heartlib_music_params</c>.</summary>
     public static T2IRegisteredParam<int> HeartLibTopK;
-    /// <summary>Random seed for reproducible HeartLib generation. Feature flag: <c>heartlib_music_params</c>.</summary>
-    public static T2IRegisteredParam<int> HeartLibSeed;
 
     #endregion
 
@@ -721,7 +715,7 @@ public static class AudioLabParams
         FishSpeechChunkLength = T2IParamTypes.Register<int>(new("FishSpeech Chunk Length",
             "Text chunk size in bytes for batched generation.\nSmaller = faster first audio, larger = better coherence.",
             "200",
-            Min: 100, Max: 300, Step: 10, ViewType: ParamViewType.SLIDER,
+            Min: 100, Max: 1000, Step: 10, ViewType: ParamViewType.SLIDER,
             OrderPriority: -4, Group: TTSGroup, FeatureFlag: "fishspeech_tts_params"));
 
         FishSpeechNormalize = T2IParamTypes.Register<string>(new("FishSpeech Normalize",
@@ -854,11 +848,6 @@ public static class AudioLabParams
             "[Instrumental]",
             OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
-        AudioSeed = T2IParamTypes.Register<int>(new("Audio Seed",
-            "Random seed for reproducible generation.\n-1 = random seed each time.",
-            "-1",
-            Min: -1, Max: int.MaxValue, Step: 1,
-            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         InferStep = T2IParamTypes.Register<int>(new("Infer Steps",
             "Number of diffusion inference steps.\nTurbo models: 8. SFT/Base models: 50.",
@@ -1117,12 +1106,6 @@ public static class AudioLabParams
             GetValues: _ => ["fp16///FP16 (Best Quality)", "8bit///8-bit (Balanced)", "4bit///4-bit (Low VRAM)"],
             OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
 
-        YuESeed = T2IParamTypes.Register<int>(new("YuE Seed",
-            "Random seed for reproducible generation.\n-1 = random seed each time.",
-            "-1",
-            Min: -1, Max: int.MaxValue, Step: 1,
-            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
-
         YuEStage2BatchSize = T2IParamTypes.Register<int>(new("Stage-2 Batch Size",
             "Batch size for Stage-2 refinement.\nLower = less VRAM but slower. Higher = faster but more VRAM.\nProcesses in 6-second chunks.",
             "4",
@@ -1194,12 +1177,6 @@ public static class AudioLabParams
             "50",
             Min: 1, Max: 500, Step: 10, ViewType: ParamViewType.SLIDER,
             OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params"));
-
-        HeartLibSeed = T2IParamTypes.Register<int>(new("HeartLib Seed",
-            "Random seed for reproducible generation.\n-1 = random seed each time.",
-            "-1",
-            Min: -1, Max: int.MaxValue, Step: 1,
-            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params"));
 
         #endregion
 

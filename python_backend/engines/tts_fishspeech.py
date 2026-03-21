@@ -126,6 +126,7 @@ class FishSpeechEngine(BaseAudioEngine):
         max_new_tokens = int(kwargs.get("max_new_tokens", 1024))
         chunk_length = int(kwargs.get("chunk_length", 200))
         normalize = kwargs.get("normalize", True)
+        seed = int(kwargs.get("seed", -1))
 
         if not text.strip():
             return {"success": False, "error": "No text provided"}
@@ -165,6 +166,7 @@ class FishSpeechEngine(BaseAudioEngine):
                     repetition_penalty=repetition_penalty,
                     temperature=temperature,
                     normalize=normalize if isinstance(normalize, bool) else str(normalize).lower() == "true",
+                    seed=seed if seed >= 0 else None,
                     format="wav",
                     streaming=False,
                 )

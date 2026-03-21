@@ -1065,6 +1065,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["max_new_tokens"] = input.TryGet(AudioLabParams.FishSpeechMaxTokens, out int fsMaxTok) ? fsMaxTok : 1024;
                 args["chunk_length"] = input.TryGet(AudioLabParams.FishSpeechChunkLength, out int fsChunk) ? fsChunk : 200;
                 args["normalize"] = input.TryGet(AudioLabParams.FishSpeechNormalize, out string fsNorm) ? fsNorm == "true" : true;
+                args["seed"] = input.TryGet(T2IParamTypes.Seed, out long fsSeed) ? fsSeed : -1L;
                 break;
 
             case "qwen3_tts":
@@ -1082,7 +1083,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             case "acestep_music":
                 // Core DiT params (acestep_music_params)
                 args["lyrics"] = input.TryGet(AudioLabParams.Lyrics, out string ly) ? ly : "[Instrumental]";
-                args["seed"] = input.TryGet(AudioLabParams.AudioSeed, out int aceSeed) ? aceSeed : -1;
+                args["seed"] = input.TryGet(T2IParamTypes.Seed, out long aceSeed) ? aceSeed : -1L;
                 args["infer_step"] = input.TryGet(AudioLabParams.InferStep, out int infStep) ? infStep : 8;
                 args["guidance_scale"] = input.TryGet(AudioLabParams.ACEGuidanceScale, out double aceGuide) ? aceGuide : 7.0;
                 args["instrumental"] = input.TryGet(AudioLabParams.Instrumental, out string aceInst) ? aceInst : "false";
@@ -1134,7 +1135,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["lyrics"] = input.TryGet(AudioLabParams.YuELyrics, out string yueLy) ? yueLy : "";
                 args["max_new_tokens"] = input.TryGet(AudioLabParams.YuEMaxTokens, out int yueTokens) ? yueTokens : 3000;
                 args["quantization"] = input.TryGet(AudioLabParams.YuEQuantization, out string yueQuant) ? yueQuant : "fp16";
-                args["seed"] = input.TryGet(AudioLabParams.YuESeed, out int yueSeed) ? yueSeed : -1;
+                args["seed"] = input.TryGet(T2IParamTypes.Seed, out long yueSeed) ? yueSeed : -1L;
                 args["stage2_batch_size"] = input.TryGet(AudioLabParams.YuEStage2BatchSize, out int yueS2Bs) ? yueS2Bs : 4;
                 args["temperature"] = input.TryGet(AudioLabParams.YuETemperature, out double yueTemp) ? yueTemp : 0.9;
                 args["top_p"] = input.TryGet(AudioLabParams.YuETopP, out double yueTopP) ? yueTopP : 0.93;
@@ -1147,7 +1148,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["cfg_scale"] = input.TryGet(AudioLabParams.HeartLibCFGScale, out double hlCfg) ? hlCfg : 1.5;
                 args["temperature"] = input.TryGet(AudioLabParams.HeartLibTemperature, out double hlTemp) ? hlTemp : 1.0;
                 args["topk"] = input.TryGet(AudioLabParams.HeartLibTopK, out int hlTopK) ? hlTopK : 50;
-                args["seed"] = input.TryGet(AudioLabParams.HeartLibSeed, out int hlSeed) ? hlSeed : -1;
+                args["seed"] = input.TryGet(T2IParamTypes.Seed, out long hlSeed) ? hlSeed : -1L;
                 break;
 
             case "whisper_stt":

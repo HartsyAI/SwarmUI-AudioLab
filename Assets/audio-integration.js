@@ -44,7 +44,7 @@ const AudioLabConfig = {
     /** Core image params to hide when an audio model is selected. */
     coreParamsToHide: [
         'steps', 'cfgscale', 'width', 'height', 'sidelength', 'aspectratio',
-        'seed', 'batchsize', 'initimage', 'initimagecreativity', 'initimageresettonorm',
+        'batchsize', 'initimage', 'initimagecreativity', 'initimageresettonorm',
         'initimagenoise', 'maskimage', 'maskblur', 'maskgrow', 'maskshrinkgrow',
         'useinpaintingencode', 'initimagerecompositemask', 'unsamplepprompt', 'zeronegative',
         'seamlesstileable', 'cascadelatentcompression', 'sd3textencs',
