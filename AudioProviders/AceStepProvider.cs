@@ -33,6 +33,7 @@ public sealed class AceStepProvider : IAudioProviderSource
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
         new() { Name = "torch==2.7.1+cu128", InstallName = "torch==2.7.1+cu128", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu128" },
         new() { Name = "torchaudio==2.7.1+cu128", InstallName = "torchaudio==2.7.1+cu128", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu128" },
+        new() { Name = "torchvision==0.22.1+cu128", InstallName = "torchvision==0.22.1+cu128", ImportName = "torchvision", Category = "pytorch", EstimatedInstallTimeMinutes = 8, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu128" },
         new() { Name = "ace-step", InstallName = "git+https://github.com/ace-step/ACE-Step.git", ImportName = "acestep", Category = "music", IsGitPackage = true, EstimatedInstallTimeMinutes = 15, CustomInstallArgs = "--no-deps" },
         new() { Name = "transformers>=4.51.0,<4.58.0", InstallName = "transformers>=4.51.0,<4.58.0", ImportName = "transformers", Category = "music" },
         new() { Name = "diffusers", InstallName = "diffusers", ImportName = "diffusers", Category = "music" },
@@ -52,7 +53,10 @@ public sealed class AceStepProvider : IAudioProviderSource
         new() { Name = "cutlet", InstallName = "cutlet", ImportName = "cutlet", Category = "music" },
         new() { Name = "fugashi", InstallName = "fugashi[unidic-lite]", ImportName = "fugashi", Category = "music" },
         new() { Name = "spacy", InstallName = "spacy", ImportName = "spacy", Category = "music" },
-        new() { Name = "librosa", InstallName = "librosa", ImportName = "librosa", Category = "music" }
+        new() { Name = "librosa", InstallName = "librosa", ImportName = "librosa", Category = "music" },
+        new() { Name = "py3langid", InstallName = "py3langid", ImportName = "py3langid", Category = "music" },
+        new() { Name = "tqdm", InstallName = "tqdm", ImportName = "tqdm", Category = "core" },
+        new() { Name = "opencc-python-reimplemented", InstallName = "opencc-python-reimplemented", ImportName = "opencc", Category = "music" }
     ];
 
     #endregion
