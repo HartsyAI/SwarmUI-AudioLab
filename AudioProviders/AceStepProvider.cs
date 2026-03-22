@@ -23,7 +23,7 @@ public sealed class AceStepProvider : IAudioProviderSource
         .AddFeatureFlag("acestep_task_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
-        .WithEngineGroup("acestep")
+        .WithEngineGroup("music")
         .Build();
 
     #region Dependencies

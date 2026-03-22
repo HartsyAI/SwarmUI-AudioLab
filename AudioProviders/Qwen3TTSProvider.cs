@@ -44,7 +44,9 @@ public sealed class Qwen3TTSProvider : IAudioProviderSource
         new() { Name = "einops", InstallName = "einops", ImportName = "einops", Category = "tts" },
         new() { Name = "onnxruntime", InstallName = "onnxruntime", ImportName = "onnxruntime", Category = "tts" },
         new() { Name = "safetensors", InstallName = "safetensors", ImportName = "safetensors", Category = "tts" },
-        new() { Name = "huggingface_hub", InstallName = "huggingface_hub", ImportName = "huggingface_hub", Category = "tts" }
+        new() { Name = "huggingface_hub", InstallName = "huggingface_hub", ImportName = "huggingface_hub", Category = "tts" },
+        // sox is a hard import in qwen_tts/core/tokenizer_25hz/vq/speech_vq.py; requires SoX system binary on PATH
+        new() { Name = "sox", InstallName = "sox", ImportName = "sox", Category = "tts" }
     ];
 
     #endregion

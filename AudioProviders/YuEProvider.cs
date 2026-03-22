@@ -21,7 +21,7 @@ public sealed class YuEProvider : IAudioProviderSource
         .AddFeatureFlag("yue_music_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
-        .WithEngineGroup("yue")
+        .WithEngineGroup("music")
         .Build();
 
     #region Dependencies
@@ -42,6 +42,12 @@ public sealed class YuEProvider : IAudioProviderSource
         new() { Name = "huggingface_hub", InstallName = "huggingface_hub", ImportName = "huggingface_hub", Category = "music" },
         new() { Name = "descript-audio-codec", InstallName = "descript-audio-codec", ImportName = "dac", Category = "music", CustomInstallArgs = "--no-deps" },
         new() { Name = "descript-audiotools>=0.7.2", InstallName = "descript-audiotools>=0.7.2", ImportName = "audiotools", Category = "music", CustomInstallArgs = "--no-deps" },
+        // Explicit deps for descript-audio-codec and descript-audiotools (installed with --no-deps)
+        new() { Name = "argbind", InstallName = "argbind", ImportName = "argbind", Category = "music" },
+        new() { Name = "tqdm", InstallName = "tqdm", ImportName = "tqdm", Category = "core" },
+        new() { Name = "pyloudnorm", InstallName = "pyloudnorm", ImportName = "pyloudnorm", Category = "music" },
+        new() { Name = "julius", InstallName = "julius", ImportName = "julius", Category = "music" },
+        new() { Name = "rich", InstallName = "rich", ImportName = "rich", Category = "music" },
     ];
 
     #endregion

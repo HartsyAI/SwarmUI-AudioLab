@@ -51,7 +51,10 @@ public sealed class ChatterboxProvider : IAudioProviderSource
         new() { Name = "resampy==0.4.3", InstallName = "resampy==0.4.3", ImportName = "resampy", Category = "tts" },
         new() { Name = "peft", InstallName = "peft", ImportName = "peft", Category = "tts" },
         new() { Name = "langdetect", InstallName = "langdetect", ImportName = "langdetect", Category = "tts" },
-        new() { Name = "huggingface_hub", InstallName = "huggingface_hub", ImportName = "huggingface_hub", Category = "tts" }
+        new() { Name = "huggingface_hub", InstallName = "huggingface_hub", ImportName = "huggingface_hub", Category = "tts" },
+        new() { Name = "pyloudnorm", InstallName = "pyloudnorm", ImportName = "pyloudnorm", Category = "tts" },
+        new() { Name = "spacy-pkuseg", InstallName = "spacy-pkuseg", ImportName = "pkuseg", Category = "tts" },
+        new() { Name = "pykakasi==2.3.0", InstallName = "pykakasi==2.3.0", ImportName = "pykakasi", Category = "tts" }
     ];
 
     #endregion

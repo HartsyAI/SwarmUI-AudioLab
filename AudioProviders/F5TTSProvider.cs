@@ -33,8 +33,25 @@ public sealed class F5TTSProvider : IAudioProviderSource
         new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "f5-tts>=1.1.0", InstallName = "f5-tts>=1.1.0", ImportName = "f5_tts", Category = "tts", EstimatedInstallTimeMinutes = 8, CustomInstallArgs = "--no-deps" },
+        // Explicit f5-tts runtime dependencies (installed with --no-deps)
         new() { Name = "transformers>=4.40.0", InstallName = "transformers>=4.40.0", ImportName = "transformers", Category = "tts" },
-        new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
+        new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" },
+        new() { Name = "torchdiffeq", InstallName = "torchdiffeq", ImportName = "torchdiffeq", Category = "tts" },
+        new() { Name = "x-transformers>=1.31.14", InstallName = "x-transformers>=1.31.14", ImportName = "x_transformers", Category = "tts" },
+        new() { Name = "vocos", InstallName = "vocos", ImportName = "vocos", Category = "tts" },
+        new() { Name = "librosa", InstallName = "librosa", ImportName = "librosa", Category = "tts" },
+        new() { Name = "pydub", InstallName = "pydub", ImportName = "pydub", Category = "tts" },
+        new() { Name = "safetensors", InstallName = "safetensors", ImportName = "safetensors", Category = "tts" },
+        new() { Name = "pypinyin", InstallName = "pypinyin", ImportName = "pypinyin", Category = "tts" },
+        new() { Name = "rjieba", InstallName = "rjieba", ImportName = "rjieba", Category = "tts" },
+        new() { Name = "cached_path", InstallName = "cached_path", ImportName = "cached_path", Category = "tts" },
+        new() { Name = "tomli", InstallName = "tomli", ImportName = "tomli", Category = "tts" },
+        new() { Name = "unidecode", InstallName = "unidecode", ImportName = "unidecode", Category = "tts" },
+        new() { Name = "huggingface_hub", InstallName = "huggingface_hub", ImportName = "huggingface_hub", Category = "tts" },
+        new() { Name = "omegaconf", InstallName = "omegaconf", ImportName = "omegaconf", Category = "tts" },
+        new() { Name = "hydra-core>=1.3.0", InstallName = "hydra-core>=1.3.0", ImportName = "hydra", Category = "tts" },
+        new() { Name = "matplotlib", InstallName = "matplotlib", ImportName = "matplotlib", Category = "tts" },
+        new() { Name = "tqdm", InstallName = "tqdm", ImportName = "tqdm", Category = "core" }
     ];
 
     #endregion

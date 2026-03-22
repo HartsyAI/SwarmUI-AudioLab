@@ -32,6 +32,9 @@ public sealed class ZonosProvider : IAudioProviderSource
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
         new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
+        // NOTE: Zonos requires espeak-ng system binary (not pip-installable).
+        // On Windows: install from https://github.com/espeak-ng/espeak-ng/releases or choco install espeak-ng
+        // The phonemizer transitive dep calls espeak-ng for grapheme-to-phoneme conversion.
         new() { Name = "zonos", InstallName = "git+https://github.com/Zyphra/Zonos.git", ImportName = "zonos", Category = "tts", IsGitPackage = true, EstimatedInstallTimeMinutes = 10 },
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
     ];

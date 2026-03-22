@@ -33,7 +33,8 @@ public sealed class VibeVoiceProvider : IAudioProviderSource
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
         new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
         new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        new() { Name = "transformers>=4.40.0", InstallName = "transformers>=4.40.0", ImportName = "transformers", Category = "tts" },
+        new() { Name = "transformers>=4.51.3", InstallName = "transformers>=4.51.3", ImportName = "transformers", Category = "tts" },
+        new() { Name = "accelerate>=1.6.0", InstallName = "accelerate>=1.6.0", ImportName = "accelerate", Category = "tts" },
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" },
         new() { Name = "vibevoice", InstallName = "git+https://github.com/vibevoice-community/VibeVoice.git", ImportName = "vibevoice", Category = "tts", IsGitPackage = true, EstimatedInstallTimeMinutes = 15 }
     ];

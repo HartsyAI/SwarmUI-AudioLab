@@ -32,6 +32,7 @@ public sealed class NeuTTSProvider : IAudioProviderSource
         new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
         new() { Name = "torch>=2.0.0", InstallName = "torch>=2.0.0", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12 },
         new() { Name = "neutts", InstallName = "neutts", ImportName = "neutts", Category = "tts", EstimatedInstallTimeMinutes = 5 },
+        new() { Name = "onnxruntime>=1.17.0", InstallName = "onnxruntime>=1.17.0", ImportName = "onnxruntime", Category = "tts" },
         new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
     ];
 

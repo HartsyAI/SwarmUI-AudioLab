@@ -47,7 +47,10 @@ public sealed class AudioGenProvider : IAudioProviderSource
         new() { Name = "num2words", InstallName = "num2words", ImportName = "num2words", Category = "sound_fx" },
         new() { Name = "av", InstallName = "av", ImportName = "av", Category = "sound_fx" },
         new() { Name = "lameenc", InstallName = "lameenc", ImportName = "lameenc", Category = "sound_fx" },
-        new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
+        new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" },
+        new() { Name = "omegaconf", InstallName = "omegaconf", ImportName = "omegaconf", Category = "sound_fx" },
+        new() { Name = "xformers<0.0.30", InstallName = "xformers<0.0.30", ImportName = "xformers", Category = "sound_fx" },
+        new() { Name = "spacy", InstallName = "spacy", ImportName = "spacy", Category = "sound_fx" }
     ];
 
     #endregion

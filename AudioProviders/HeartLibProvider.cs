@@ -21,7 +21,7 @@ public sealed class HeartLibProvider : IAudioProviderSource
         .AddFeatureFlag("heartlib_music_params")
         .AddDependencies(Dependencies)
         .AddModels(Models)
-        .WithEngineGroup("heartlib")
+        .WithEngineGroup("music")
         .Build();
 
     #region Dependencies
