@@ -85,7 +85,7 @@ public static class AudioModelFactory
                 CompatClass = compat,
                 StandardWidth = 0,
                 StandardHeight = 0,
-                IsThisModelOfClass = (model, header) => true
+                IsThisModelOfClass = (model, header) => false
             };
             _modelClasses[id] = modelClass;
             T2IModelClassSorter.Register(modelClass);
