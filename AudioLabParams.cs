@@ -188,6 +188,20 @@ public static class AudioLabParams
 
     #endregion
 
+    #region TTS — Pocket TTS (flag: pockettts_tts_params)
+
+    /// <summary>Built-in voice preset for Pocket TTS. Feature flag: <c>pockettts_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> PocketTTSVoice;
+
+    #endregion
+
+    #region TTS — Kyutai TTS (flag: kyutaitts_tts_params)
+
+    /// <summary>Voice selection for Kyutai TTS from the tts-voices repo. Feature flag: <c>kyutaitts_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> KyutaiTTSVoice;
+
+    #endregion
+
     #region STT Shared (flag: audiolab_stt)
 
     /// <summary>Audio file input for speech-to-text. Feature flag: <c>audiolab_stt</c>.</summary>
@@ -774,6 +788,28 @@ public static class AudioLabParams
                 "韩语女///Korean Female"
             ],
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "cosyvoice_tts_params"));
+
+        #endregion
+
+        #region TTS — Pocket TTS
+        PocketTTSVoice = T2IParamTypes.Register<string>(new("Pocket TTS Voice",
+            "Built-in voice for Pocket TTS.\n8 voices from Les Misérables characters.\nIgnored when reference audio is provided for voice cloning.",
+            "alba",
+            GetValues: _ => [
+                "alba///Alba (Female)", "cosette///Cosette (Female)",
+                "eponine///Eponine (Female)", "fantine///Fantine (Female)",
+                "azelma///Azelma (Female)", "marius///Marius (Male)",
+                "javert///Javert (Male)", "jean///Jean (Male)"
+            ],
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "pockettts_tts_params"));
+
+        #endregion
+
+        #region TTS — Kyutai TTS
+        KyutaiTTSVoice = T2IParamTypes.Register<string>(new("Kyutai TTS Voice",
+            "Voice from the Kyutai tts-voices repository.\nPath relative to the HF repo root (e.g. 'expresso/ex03-...').\nIgnored when reference audio is provided.",
+            "expresso/ex03-ex01_happy_001_channel1_334s.wav",
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "kyutaitts_tts_params"));
 
         #endregion
 

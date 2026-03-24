@@ -4,8 +4,8 @@ A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeypr
 
 ## Features
 
-- **Text-to-Speech (TTS)** — 14 providers: Chatterbox, Kokoro, Bark, Orpheus, Piper, Dia, F5-TTS, Fish Speech, Qwen3, Zonos, CSM, VibeVoice, CosyVoice, and NeuTTS
-- **Speech-to-Text (STT)** — 4 providers: Whisper, Distil-Whisper, Moonshine, and RealtimeSTT
+- **Text-to-Speech (TTS)** — 16 providers: Chatterbox, Kokoro, Bark, Orpheus, Piper, Dia, F5-TTS, Fish Speech, Pocket TTS, Kyutai TTS, Qwen3, Zonos, CSM, VibeVoice, CosyVoice, and NeuTTS
+- **Speech-to-Text (STT)** — 5 providers: Whisper, Kyutai STT, Distil-Whisper, Moonshine, and RealtimeSTT
 - **Audio Generation** — ACE-Step 1.5 (6 DiT models, 6 task types, lyrics alignment, 50 languages), MusicGen (text-to-music with melody conditioning), and AudioGen (text-to-sound-effects)
 - **Voice Conversion** — RVC (re-voice existing audio), OpenVoice (tone/style transfer), GPT-SoVITS (TTS with cloned voice)
 - **Audio Processing** — Demucs (stem separation) and Resemble Enhance (audio enhancement/denoising)
@@ -39,12 +39,14 @@ A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeypr
 
 ## Supported Engines
 
-### Text-to-Speech (14 Providers, 30+ Models)
+### Text-to-Speech (16 Providers, 30+ Models)
 
 | Engine | Voice Reference | Streaming | VRAM | Notes |
 | --- | --- | --- | --- | --- |
 | Chatterbox | Optional | Yes | ~4 GB | Expressive with exaggeration/CFG controls |
 | Kokoro | No | Yes | ~1 GB | 96x real-time on GPU, CPU-capable, multiple built-in voices |
+| Pocket TTS | Optional | No | CPU (~200MB) | 100M params, 8 built-in voices, voice cloning, MIT license, ~6x real-time on CPU |
+| Kyutai TTS | Optional | No | ~8 GB | 1.8B params, English+French, voice conditioning, 75x real-time, ~200ms latency |
 | Piper | No | Yes | CPU only | CPU-only ONNX runtime, lightweight, auto-downloads voices |
 | Bark | No | Yes | ~5 GB | Multi-language, emotion/music/SFX support |
 | Orpheus | No | Yes | ~16 GB | 3B params, emotion tags (`<laugh>`, `<sigh>`, etc.) |
@@ -58,11 +60,12 @@ A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeypr
 | CosyVoice | Optional | Yes | ~8 GB | Ultra-low latency streaming, multilingual (Docker required on Windows) |
 | NeuTTS | Required | Yes | ~2 GB | 0.5B params, instant voice cloning, CPU-capable |
 
-### Speech-to-Text (4 Providers, 12 Models)
+### Speech-to-Text (5 Providers, 14 Models)
 
 | Engine | Models | VRAM | Notes |
 | --- | --- | --- | --- |
 | Whisper | 7 sizes (tiny–turbo) | 1–10 GB | OpenAI Whisper, transcribe + translate, multi-language |
+| Kyutai STT | 1B (en+fr), 2.6B (en) | 3–6 GB | Auto capitalization/punctuation, 1B has voice activity detection |
 | Distil-Whisper | large-v3, large-v3.5 | ~2 GB | 6x faster than Whisper large-v3 |
 | Moonshine | base, tiny | ~1 GB / CPU | Lightweight, CPU-capable |
 | RealtimeSTT | default | ~2 GB | Real-time streaming with wake word detection (Docker required on Windows) |
@@ -120,7 +123,7 @@ Each chunk generates and plays back immediately while the next chunk processes. 
 
 Many TTS engines accept a **reference audio** file (WAV) and optional **reference text** (transcript of the reference audio). Upload a short clip (~5–15 seconds) of the target voice. The model generates new speech from your text prompt that sounds like the reference voice.
 
-Supported by: F5-TTS, Fish Speech, Qwen3, Zonos, VibeVoice, Chatterbox, CosyVoice, NeuTTS.
+Supported by: F5-TTS, Fish Speech, Pocket TTS, Kyutai TTS, Qwen3, Zonos, VibeVoice, Chatterbox, CosyVoice, NeuTTS.
 
 This is different from the **Voice Conversion** engines (RVC, OpenVoice) which take existing audio and change the voice without generating new speech.
 
@@ -273,7 +276,7 @@ Engines are organized into groups that share a Python virtual environment:
 
 | Group | Engines | Notes |
 | --- | --- | --- |
-| `main` | 17 providers (Kokoro, Piper, F5, Fish Speech, Qwen3, Bark, NeuTTS, Orpheus, Dia, CSM, VibeVoice, Zonos, Whisper, Distil-Whisper, Moonshine, Demucs, OpenVoice) | Shared venv, most engines |
+| `main` | 20 providers (Kokoro, Pocket TTS, Kyutai TTS, Piper, F5, Fish Speech, Qwen3, Bark, NeuTTS, Orpheus, Dia, CSM, VibeVoice, Zonos, Whisper, Kyutai STT, Distil-Whisper, Moonshine, Demucs, OpenVoice) | Shared venv, most engines |
 | `chatterbox` | Chatterbox | Isolated due to dependency conflicts |
 | `audiocraft` | MusicGen, AudioGen | Shared AudioCraft dependencies |
 | `acestep` | ACE-Step | Isolated venv |

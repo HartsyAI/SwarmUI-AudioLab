@@ -1080,6 +1080,16 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     args["voice"] = cvv;
                 break;
 
+            case "pockettts_tts":
+                if (input.TryGet(AudioLabParams.PocketTTSVoice, out string pttv))
+                    args["voice"] = pttv;
+                break;
+
+            case "kyutaitts_tts":
+                if (input.TryGet(AudioLabParams.KyutaiTTSVoice, out string ktv))
+                    args["voice"] = ktv;
+                break;
+
             case "acestep_music":
                 // Core DiT params (acestep_music_params)
                 args["lyrics"] = input.TryGet(AudioLabParams.Lyrics, out string ly) ? ly : "[Instrumental]";
