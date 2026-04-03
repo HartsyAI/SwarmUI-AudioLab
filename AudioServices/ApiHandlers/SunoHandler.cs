@@ -38,7 +38,7 @@ public sealed class SunoMusicHandler : ApiEngineHandlerBase
             await Task.Delay(2000, cancel);
             JObject status = await GetJsonAsync($"{BaseUrl}/feed/{clipId}", headers, cancel);
             if (IsError(status)) return status;
-            JArray items = status as JArray ?? (status["clips"] as JArray);
+            JArray items = status["clips"] as JArray;
             JObject clip = items?[0] as JObject ?? status;
             string state = clip["status"]?.ToString();
             if (state == "complete" || state == "streaming")
