@@ -44,6 +44,13 @@ public sealed class AudioProviderDefinition
     /// <summary>Whether this provider requires Docker to run (Linux-only engines).</summary>
     public bool RequiresDocker { get; init; } = false;
 
+    /// <summary>Whether this provider is API-based (no local models, requires API key).</summary>
+    public bool IsApiProvider { get; init; } = false;
+
+    /// <summary>The key name used to look up the API key in user settings (e.g. "elevenlabs_api").
+    /// Used with <c>user.GetGenericData(ApiKeySettingsId, "key")</c>.</summary>
+    public string ApiKeySettingsId { get; init; } = "";
+
     /// <summary>Creates the full model name with the Audio Models prefix for SwarmUI routing.</summary>
     public string GetFullModelName(string modelId) => $"Audio Models/{ModelPrefix}/{modelId}";
 }

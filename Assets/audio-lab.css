@@ -172,6 +172,19 @@
     flex: 1;
 }
 
+.audiolab-api-badge {
+    display: inline-block;
+    padding: 0.1em 0.45em;
+    font-size: 0.65em;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #fff;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    border-radius: 0.25rem;
+    flex-shrink: 0;
+}
+
 .audiolab-engine-meta {
     color: var(--text-soft);
     font-size: 0.8em;

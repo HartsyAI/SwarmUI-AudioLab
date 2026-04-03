@@ -286,6 +286,12 @@ public class AudioServerManager : IDisposable
             return await ProcessViaDockerAsync(provider, args, cancelToken);
         }
 
+        // API providers are handled entirely in C# — no Python server needed
+        if (provider.IsApiProvider)
+        {
+            return await ProcessViaApiAsync(provider, args, cancelToken);
+        }
+
         string group = provider.EngineGroup;
         if (!IsGroupRunning(group))
         {
@@ -706,6 +712,53 @@ public class AudioServerManager : IDisposable
         {
             User user = Program.Sessions?.GetUser(SessionHandler.LocalUserID);
             return user?.GetGenericData("huggingface_api", "key") ?? "";
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    /// <summary>Routes an API provider request to its C# handler (no Python involved).</summary>
+    private async Task<JObject> ProcessViaApiAsync(AudioProviderDefinition provider, Dictionary<string, object> args, CancellationToken cancelToken)
+    {
+        IApiEngineHandler handler = ApiHandlerRegistry.GetHandler(provider.Id);
+        if (handler == null)
+        {
+            return CreateErrorResponse($"No API handler found for provider '{provider.Id}'.");
+        }
+        string apiKey = GetProviderApiKey(provider.ApiKeySettingsId);
+        if (string.IsNullOrEmpty(apiKey))
+        {
+            return CreateErrorResponse($"{provider.Name} requires an API key. Set your '{provider.ApiKeySettingsId}' key in Server > User Settings > API Keys.");
+        }
+        try
+        {
+            return await handler.ProcessAsync(args, apiKey, cancelToken);
+        }
+        catch (TaskCanceledException)
+        {
+            return CreateErrorResponse("Request cancelled by user.");
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] API handler error for '{provider.Id}': {ex.Message}");
+            return CreateErrorResponse($"API processing error: {ex.Message}");
+        }
+    }
+
+    /// <summary>Retrieves a provider-specific API key from user settings.
+    /// Called per-request so key changes take effect without restarting the server.</summary>
+    private static string GetProviderApiKey(string settingsId)
+    {
+        if (string.IsNullOrEmpty(settingsId))
+        {
+            return "";
+        }
+        try
+        {
+            User user = Program.Sessions?.GetUser(SessionHandler.LocalUserID);
+            return user?.GetGenericData(settingsId, "key") ?? "";
         }
         catch
         {
