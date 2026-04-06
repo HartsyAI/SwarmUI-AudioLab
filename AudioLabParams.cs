@@ -882,6 +882,7 @@ public static class AudioLabParams
         Lyrics = T2IParamTypes.Register<string>(new("Lyrics",
             "Song lyrics for ACE-Step generation.\nUse [Instrumental] for instrumental-only tracks.\nSupports section tags like [Verse], [Chorus], [Bridge].",
             "[Instrumental]",
+            ViewType: ParamViewType.PROMPT,
             OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
 
