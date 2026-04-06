@@ -169,7 +169,6 @@
 .audiolab-engine-name {
     font-weight: 600;
     color: var(--text);
-    flex: 1;
 }
 
 .audiolab-api-badge {
