@@ -21,6 +21,7 @@ public sealed class AudioProviderDefinitionBuilder
     private string _engineGroup = "default";
     private bool _requiresDocker = false;
     private bool _isApiProvider = false;
+    private bool _isNativeBinary = false;
     private string _apiKeySettingsId = "";
 
     #endregion
@@ -76,6 +77,9 @@ public sealed class AudioProviderDefinitionBuilder
     /// <summary>Marks this provider as requiring Docker to run.</summary>
     public AudioProviderDefinitionBuilder WithRequiresDocker() { _requiresDocker = true; return this; }
 
+    /// <summary>Marks this provider as using a native binary instead of a Python engine.</summary>
+    public AudioProviderDefinitionBuilder WithNativeBinary() { _isNativeBinary = true; return this; }
+
     /// <summary>Marks this provider as API-based (no local models, requires an API key).</summary>
     /// <param name="apiKeySettingsId">The key name for user settings lookup (e.g. "elevenlabs_api").</param>
     public AudioProviderDefinitionBuilder WithApiProvider(string apiKeySettingsId)
@@ -94,7 +98,7 @@ public sealed class AudioProviderDefinitionBuilder
     {
         if (string.IsNullOrEmpty(_id)) throw new InvalidOperationException("Provider ID is required");
         if (string.IsNullOrEmpty(_name)) throw new InvalidOperationException("Provider name is required");
-        if (!_isApiProvider)
+        if (!_isApiProvider && !_isNativeBinary)
         {
             if (string.IsNullOrEmpty(_pythonModule)) throw new InvalidOperationException("Python module is required");
             if (string.IsNullOrEmpty(_pythonEngineClass)) throw new InvalidOperationException("Python engine class is required");
@@ -117,6 +121,7 @@ public sealed class AudioProviderDefinitionBuilder
             EngineGroup = _engineGroup,
             RequiresDocker = _requiresDocker,
             IsApiProvider = _isApiProvider,
+            IsNativeBinary = _isNativeBinary,
             ApiKeySettingsId = _apiKeySettingsId
         };
     }

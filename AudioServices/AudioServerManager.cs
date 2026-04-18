@@ -286,6 +286,12 @@ public class AudioServerManager : IDisposable
             return await ProcessViaDockerAsync(provider, args, cancelToken);
         }
 
+        // Native binary providers use their own server manager (e.g. acestep.cpp)
+        if (provider.IsNativeBinary)
+        {
+            return await AceStepCppManager.Instance.ProcessAsync(args, cancelToken);
+        }
+
         // API providers are handled entirely in C# — no Python server needed
         if (provider.IsApiProvider)
         {
