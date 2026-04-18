@@ -39,7 +39,32 @@ const AudioLabConfig = {
         resemble_enhance_fx: { category: 'audiolab_audioproc', providerFlag: 'resemble_enhance_fx_params' },
         audiogen_sfx: { category: 'audiolab_audiogen', providerFlag: 'audiogen_sfx_params', extraFlags: ['audiocraft_sampling'] },
         yue_music: { category: 'audiolab_audiogen', providerFlag: 'yue_music_params' },
-        heartlib_music: { category: 'audiolab_audiogen', providerFlag: 'heartlib_music_params' }
+        heartlib_music: { category: 'audiolab_audiogen', providerFlag: 'heartlib_music_params' },
+        // API TTS providers
+        elevenlabs_tts: { category: 'audiolab_tts', providerFlag: 'elevenlabs_tts_params' },
+        openai_tts: { category: 'audiolab_tts', providerFlag: 'openai_tts_params' },
+        google_tts: { category: 'audiolab_tts', providerFlag: 'google_tts_params' },
+        azure_tts: { category: 'audiolab_tts', providerFlag: 'azure_tts_params' },
+        amazon_polly: { category: 'audiolab_tts', providerFlag: 'polly_tts_params' },
+        deepgram_tts: { category: 'audiolab_tts', providerFlag: 'deepgram_tts_params' },
+        cartesia_tts: { category: 'audiolab_tts', providerFlag: 'cartesia_tts_params' },
+        playht_tts: { category: 'audiolab_tts', providerFlag: 'playht_tts_params' },
+        // API STT providers
+        openai_stt: { category: 'audiolab_stt', providerFlag: 'openai_stt_params' },
+        google_stt: { category: 'audiolab_stt', providerFlag: 'google_stt_params' },
+        azure_stt: { category: 'audiolab_stt', providerFlag: 'azure_stt_params' },
+        aws_transcribe: { category: 'audiolab_stt', providerFlag: 'aws_stt_params' },
+        assemblyai_stt: { category: 'audiolab_stt', providerFlag: 'assemblyai_stt_params' },
+        deepgram_stt: { category: 'audiolab_stt', providerFlag: 'deepgram_stt_params' },
+        // API audio generation providers
+        elevenlabs_sfx: { category: 'audiolab_audiogen', providerFlag: 'elevenlabs_sfx_params' },
+        suno_music: { category: 'audiolab_audiogen', providerFlag: 'suno_music_params' },
+        udio_music: { category: 'audiolab_audiogen', providerFlag: 'udio_music_params' },
+        // API voice conversion providers
+        elevenlabs_vc: { category: 'audiolab_clone', providerFlag: 'elevenlabs_vc_params' },
+        // API audio processing providers
+        elevenlabs_isolator: { category: 'audiolab_audioproc', providerFlag: 'elevenlabs_isolator_params' },
+        dolby_audioproc: { category: 'audiolab_audioproc', providerFlag: 'dolby_audioproc_params' }
     },
 
     categoryFlags: ['audiolab_tts', 'audiolab_stt', 'audiolab_audiogen', 'audiolab_clone', 'audiolab_audioproc'],
@@ -338,6 +363,8 @@ function audioLabRenderEngineManager(container, engines) {
         catHeader.addEventListener('click', () => {
             catGroup.classList.toggle('collapsed');
         });
+        // Start collapsed by default
+        catGroup.classList.add('collapsed');
         catGroup.appendChild(catHeader);
 
         // Card grid body
@@ -369,6 +396,13 @@ function audioLabBuildEngineCard(engine) {
     nameSpan.className = 'audiolab-engine-name';
     nameSpan.innerText = engine.name;
     cardHeader.appendChild(nameSpan);
+    if (engine.is_api_provider) {
+        const apiBadge = document.createElement('span');
+        apiBadge.className = 'audiolab-api-badge';
+        apiBadge.innerText = 'API';
+        apiBadge.title = 'Cloud API — requires an API key, no local GPU needed';
+        cardHeader.appendChild(apiBadge);
+    }
     card.appendChild(cardHeader);
 
     const firstModel = engine.models && engine.models.length > 0 ? engine.models[0] : null;
@@ -550,26 +584,7 @@ function audioLabRefreshEngineManager() {
     });
 }
 
-// TODO: PR to SwarmUI to add a buttonsForImageCallbacks array in outputhistory.js
-// so extensions can register buttons without wrapping.
-setTimeout(() => {
-    if (typeof buttonsForImage !== 'function') {
-        console.warn('[audiolab] buttonsForImage not found, Audio Lab button not registered');
-        return;
-    }
-    const origButtonsForImage = buttonsForImage;
-    buttonsForImage = function(fullsrc, src, metadata) {
-        const buttons = origButtonsForImage(fullsrc, src, metadata);
-        if (isAudioExt(src)) {
-            buttons.push({
-                label: 'Audio Lab',
-                title: 'Open Audio Lab for editing, voice cloning setup, and export',
-                onclick: () => AudioLab.open(src)
-            });
-        }
-        return buttons;
-    };
-}, 100);
+registerMediaButton('Audio Lab', (src) => AudioLab.open(src), 'Open Audio Lab for editing, voice cloning setup, and export', ['audio'], true);
 
 /** Injects engine manager UI into Audio Backend cards via backendsRevisedCallbacks. */
 backendsRevisedCallbacks.push(() => {

@@ -659,7 +659,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
         try
         {
-            if (!definition.RequiresDocker)
+            if (definition.IsApiProvider)
+            {
+                // API providers use external cloud APIs — no venv, no deps, no model downloads needed.
+                // The lightweight "api" group server starts lazily on first request via EnsureGroupRunningAsync.
+                onProgress?.Invoke($"Registering {definition.Name} (cloud API — no local setup needed)...");
+            }
+            else if (!definition.RequiresDocker)
             {
                 onProgress?.Invoke($"Creating Python environment for group '{definition.EngineGroup}'...");
                 string venvPython = await VenvManager.Instance.EnsureVenvAsync(definition.EngineGroup);

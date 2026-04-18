@@ -20,6 +20,8 @@ public sealed class AudioProviderDefinitionBuilder
     private readonly List<AudioModelDefinition> _models = [];
     private string _engineGroup = "default";
     private bool _requiresDocker = false;
+    private bool _isApiProvider = false;
+    private string _apiKeySettingsId = "";
 
     #endregion
 
@@ -74,6 +76,15 @@ public sealed class AudioProviderDefinitionBuilder
     /// <summary>Marks this provider as requiring Docker to run.</summary>
     public AudioProviderDefinitionBuilder WithRequiresDocker() { _requiresDocker = true; return this; }
 
+    /// <summary>Marks this provider as API-based (no local models, requires an API key).</summary>
+    /// <param name="apiKeySettingsId">The key name for user settings lookup (e.g. "elevenlabs_api").</param>
+    public AudioProviderDefinitionBuilder WithApiProvider(string apiKeySettingsId)
+    {
+        _isApiProvider = true;
+        _apiKeySettingsId = apiKeySettingsId;
+        return this;
+    }
+
     #endregion
 
     #region Build
@@ -83,8 +94,11 @@ public sealed class AudioProviderDefinitionBuilder
     {
         if (string.IsNullOrEmpty(_id)) throw new InvalidOperationException("Provider ID is required");
         if (string.IsNullOrEmpty(_name)) throw new InvalidOperationException("Provider name is required");
-        if (string.IsNullOrEmpty(_pythonModule)) throw new InvalidOperationException("Python module is required");
-        if (string.IsNullOrEmpty(_pythonEngineClass)) throw new InvalidOperationException("Python engine class is required");
+        if (!_isApiProvider)
+        {
+            if (string.IsNullOrEmpty(_pythonModule)) throw new InvalidOperationException("Python module is required");
+            if (string.IsNullOrEmpty(_pythonEngineClass)) throw new InvalidOperationException("Python engine class is required");
+        }
         if (string.IsNullOrEmpty(_modelPrefix)) throw new InvalidOperationException("Model prefix is required");
 
         return new AudioProviderDefinition
@@ -101,7 +115,9 @@ public sealed class AudioProviderDefinitionBuilder
             Dependencies = _dependencies.AsReadOnly(),
             Models = _models.AsReadOnly(),
             EngineGroup = _engineGroup,
-            RequiresDocker = _requiresDocker
+            RequiresDocker = _requiresDocker,
+            IsApiProvider = _isApiProvider,
+            ApiKeySettingsId = _apiKeySettingsId
         };
     }
 

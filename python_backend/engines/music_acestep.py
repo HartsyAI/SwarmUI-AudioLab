@@ -215,14 +215,18 @@ class AceStepEngine(BaseAudioEngine):
             audio_numpy = waveform.cpu().numpy().astype(np.float32)
             self.sample_rate = sr
 
-            # Mix to mono if stereo
-            if len(audio_numpy.shape) > 1:
-                audio_numpy = np.mean(audio_numpy, axis=0)
+            # Preserve stereo: interleave [channels, samples] → [samples * channels]
+            num_channels = 1
+            if len(audio_numpy.shape) > 1 and audio_numpy.shape[0] >= 2:
+                num_channels = audio_numpy.shape[0]
+                audio_numpy = audio_numpy.T.flatten()  # [C, N] → [N, C] → [N*C]
+            elif len(audio_numpy.shape) > 1:
+                audio_numpy = audio_numpy.squeeze(0)
 
             output_format = kwargs.get("output_format", "wav_16")
             output_quality = kwargs.get("output_quality", "high")
-            audio_b64, fmt = self.encode_audio(audio_numpy, self.sample_rate, output_format=output_format, quality=output_quality)
-            actual_duration = len(audio_numpy) / self.sample_rate
+            audio_b64, fmt = self.encode_audio(audio_numpy, self.sample_rate, num_channels=num_channels, output_format=output_format, quality=output_quality)
+            actual_duration = len(audio_numpy) / (self.sample_rate * num_channels)
 
             return {
                 "success": True,

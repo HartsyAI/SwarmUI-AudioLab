@@ -510,6 +510,8 @@ public static class AudioLabAPI
                     ["category"] = provider.Category.ToString(),
                     ["engine_group"] = provider.EngineGroup,
                     ["requires_docker"] = provider.RequiresDocker,
+                    ["is_api_provider"] = provider.IsApiProvider,
+                    ["api_key_settings_id"] = provider.ApiKeySettingsId,
                     ["platform_compatible"] = platformCompatible,
                     ["platform_note"] = platformNote,
                     ["installed"] = installedIds.Contains(provider.Id),
