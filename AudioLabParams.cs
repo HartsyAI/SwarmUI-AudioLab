@@ -241,14 +241,11 @@ public static class AudioLabParams
     #endregion
 
     #region Music — ACE-Step Core (flag: acestep_music_params)
+    // Steps, CFG Scale use built-in Core params (kept visible via keepCoreParams in audio-integration.js).
     // BPM, Key Scale, Time Signature, Language use built-in Text2Audio params (Text To Audio group).
 
     /// <summary>Song lyrics for ACE-Step generation. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<string> Lyrics;
-    /// <summary>Diffusion inference step count for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
-    public static T2IRegisteredParam<int> InferStep;
-    /// <summary>Classifier-free guidance strength for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
-    public static T2IRegisteredParam<double> ACEGuidanceScale;
     /// <summary>Instrumental-only toggle for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<string> Instrumental;
     /// <summary>Noise schedule shift factor for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
@@ -860,19 +857,6 @@ public static class AudioLabParams
             "[Instrumental]",
             ViewType: ParamViewType.PROMPT,
             OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
-
-
-        InferStep = T2IParamTypes.Register<int>(new("Infer Steps",
-            "Number of diffusion inference steps.\nTurbo models: 8. SFT/Base models: 50.",
-            "8",
-            Min: 1, Max: 200, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
-
-        ACEGuidanceScale = T2IParamTypes.Register<double>(new("ACE Guidance",
-            "Classifier-free guidance strength.\nOnly effective with SFT/Base models that support CFG.",
-            "7.0",
-            Min: 1.0, Max: 30.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         Instrumental = T2IParamTypes.Register<string>(new("Instrumental",
             "Generate instrumental-only track without vocals.",

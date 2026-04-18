@@ -31,7 +31,7 @@ const AudioLabConfig = {
         moonshine_stt: { category: 'audiolab_stt', providerFlag: 'moonshine_stt_params' },
         realtimestt_stt: { category: 'audiolab_stt', providerFlag: 'realtimestt_params' },
         musicgen_music: { category: 'audiolab_audiogen', providerFlag: 'musicgen_music_params', extraFlags: ['audiocraft_sampling'] },
-        acestep_music: { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params', extraFlags: ['acestep_lm_params', 'acestep_task_params'] },
+        acestep_music: { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params', extraFlags: ['acestep_lm_params', 'acestep_task_params'], keepCoreParams: ['steps', 'cfgscale'] },
         openvoice_clone: { category: 'audiolab_clone', providerFlag: 'openvoice_clone_params' },
         rvc_clone: { category: 'audiolab_clone', providerFlag: 'rvc_clone_params' },
         gptsovits_clone: { category: 'audiolab_clone', providerFlag: 'gptsovits_clone_params' },
@@ -141,10 +141,12 @@ featureSetChangers.push(() => {
 
     const curArch = currentModelHelper.curArch;
     const isAudioModel = AudioLabConfig.isAudioModel(curArch);
+    const archConfig = isAudioModel ? AudioLabConfig.archToCategory[curArch] : null;
+    const keepCoreParams = archConfig?.keepCoreParams || [];
     console.log('[audiolab] featureSetChanger: curArch =', JSON.stringify(curArch), 'isAudioModel =', isAudioModel);
 
     for (const param of gen_param_types) {
-        if (AudioLabConfig.coreParamsToHide.includes(param.id)) {
+        if (AudioLabConfig.coreParamsToHide.includes(param.id) && !keepCoreParams.includes(param.id)) {
             if (isAudioModel) {
                 if (!param.hasOwnProperty('original_feature_flag_audiolab')) {
                     param.original_feature_flag_audiolab = param.feature_flag;
