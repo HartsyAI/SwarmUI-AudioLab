@@ -1107,8 +1107,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 bool instrumental = input.TryGet(AudioLabParams.Instrumental, out string aceInst) && aceInst == "true";
                 args["lyrics"] = instrumental ? "[Instrumental]" : lyrics;
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long aceSeed) ? aceSeed : -1L;
-                args["inference_steps"] = input.TryGet(AudioLabParams.InferStep, out int infStep) ? infStep : 0;
-                args["guidance_scale"] = input.TryGet(AudioLabParams.ACEGuidanceScale, out double aceGuide) ? aceGuide : 0.0;
+                args["inference_steps"] = input.TryGet(T2IParamTypes.Steps, out int infStep) ? infStep : 0;
+                args["guidance_scale"] = input.TryGet(T2IParamTypes.CFGScale, out double aceGuide) ? aceGuide : 0.0;
                 args["bpm"] = input.TryGet(T2IParamTypes.Text2AudioBPM, out long aceBpm) ? (int)aceBpm : 0;
                 args["keyscale"] = input.TryGet(T2IParamTypes.Text2AudioKeyScale, out string aceKey) ? aceKey : "";
                 args["timesignature"] = input.TryGet(T2IParamTypes.Text2AudioTimeSignature, out string aceTs) ? aceTs : "";
