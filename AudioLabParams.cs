@@ -1,3 +1,5 @@
+using System.IO;
+using Hartsy.Extensions.AudioLab.AudioServices;
 using SwarmUI.Media;
 using SwarmUI.Text2Image;
 
@@ -246,12 +248,8 @@ public static class AudioLabParams
 
     /// <summary>Song lyrics for ACE-Step generation. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<string> Lyrics;
-    /// <summary>Instrumental-only toggle for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
-    public static T2IRegisteredParam<string> Instrumental;
     /// <summary>Noise schedule shift factor for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<double> ACEShift;
-    /// <summary>GGUF quantization level for ACE-Step model downloads. Feature flag: <c>acestep_music_params</c>.</summary>
-    public static T2IRegisteredParam<string> ACEQuantLevel;
 
     #endregion
 
@@ -858,47 +856,28 @@ public static class AudioLabParams
             ViewType: ParamViewType.PROMPT,
             OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
-        Instrumental = T2IParamTypes.Register<string>(new("Instrumental",
-            "Generate instrumental-only track without vocals.",
-            "false",
-            GetValues: _ => ["false///No", "true///Yes"],
-            IsAdvanced: true, OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
-
-        // BPM removed — use T2IParamTypes.Text2AudioBPM (Text To Audio group)
-        // KeyScale removed — use T2IParamTypes.Text2AudioKeyScale (Text To Audio group)
-        // TimeSignature removed — use T2IParamTypes.Text2AudioTimeSignature (Text To Audio group)
-        // VocalLanguage removed — use T2IParamTypes.Text2AudioLanguage (Text To Audio group)
-
         ACEShift = T2IParamTypes.Register<double>(new("Shift",
             "Noise schedule shift factor.\nHigher values increase generation diversity.",
             "3.0",
             Min: 1.0, Max: 5.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
             IsAdvanced: true, OrderPriority: 0, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
-        ACEQuantLevel = T2IParamTypes.Register<string>(new("Quant Level",
-            "GGUF quantization level for model downloads.\nHigher = better quality but more VRAM/disk.",
-            "Q8_0",
-            GetValues: _ => [
-                "Q8_0///Q8_0 (Best Quality)", "Q6_K///Q6_K (High)",
-                "Q5_K_M///Q5_K_M (Balanced)", "Q4_K_M///Q4_K_M (Smallest)",
-                "BF16///BF16 (Full Precision)"
-            ],
-            IsAdvanced: true, OrderPriority: 1, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
-
         #endregion
 
         #region Music — ACE-Step LM Planner
-        // ACE LM Model stays in Audio Generation group (it's the primary toggle)
         ACELMModel = T2IParamTypes.Register<string>(new("ACE LM Model",
-            "Language Model planner for structured music metadata generation.\nDownloads GGUF model on first use. Enriches prompt with lyrics, BPM, key, etc.",
+            "Language Model planner for structured music metadata.\n"
+            + "Place acestep-5Hz-lm-*.gguf files in Models/audio/music/acestep-gguf/ to enable.\n"
+            + "Download from: https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF\n"
+            + "Larger models produce better metadata. 4B recommended for quality, 0.6B for speed.",
             "none",
-            GetValues: _ => [
-                "none///None (Disabled)", "lm-0.6B///Qwen3 0.6B (Fast, ~710MB)",
-                "lm-1.7B///Qwen3 1.7B (Balanced, ~2GB)", "lm-4B///Qwen3 4B (Best, ~4.5GB)"
-            ],
-            OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
-
-        // LM tuning params in dedicated LM Planner group
+            GetValues: _ => ["none///None (Disabled)",
+                .. (Directory.Exists(AceStepCppManager.ModelRoot)
+                    ? Directory.GetFiles(AceStepCppManager.ModelRoot, "acestep-5Hz-lm-*.gguf")
+                        .Select(Path.GetFileName).OrderBy(f => f)
+                        .Select(f => $"{f}///{FormatLmDisplayName(f)}")
+                    : [])],
+            OrderPriority: -10, Group: LMPlannerGroup, FeatureFlag: "acestep_lm_params"));
         LMTemperature = T2IParamTypes.Register<double>(new("LM Temperature",
             "Sampling temperature for the LM planner.\nHigher = more creative metadata generation.",
             "0.85",
@@ -937,37 +916,41 @@ public static class AudioLabParams
         #endregion
 
         #region Music — ACE-Step Tasks
-        ACETaskType = T2IParamTypes.Register<string>(new("Task Type",
-            "ACE-Step generation task type.\ntext2music = generate from prompt.\ncover = style transfer with source audio.\nrepaint = regenerate a time region.\nlego = extract/isolate a track (vocals, drums, etc.).",
-            "text2music",
-            GetValues: _ => [
-                "text2music///Text to Music", "cover///Cover (Style Transfer)",
-                "repaint///Repaint (Section Regen)", "lego///Lego (Track Isolation)"
-            ],
+        ACESourceAudio = T2IParamTypes.Register<AudioFile>(new("ACE Source Audio",
+            "Source audio for cover, repaint, and lego tasks.\nUpload audio to enable task selection below.",
+            null,
             OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
 
-        ACESourceAudio = T2IParamTypes.Register<AudioFile>(new("ACE Source Audio",
-            "Source audio for cover, repaint, and lego tasks.\nRequired for all tasks except text2music.",
-            null,
-            OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
-
-        RepaintStart = T2IParamTypes.Register<double>(new("Repaint Start",
-            "Start time in seconds for repaint task.\nThe section from this point will be regenerated.",
-            "0.0",
-            Min: 0.0, Max: 600.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
-            IsAdvanced: true, OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
-
-        RepaintEnd = T2IParamTypes.Register<double>(new("Repaint End",
-            "End time in seconds for repaint task.\n-1 = auto (repaint to end of audio).",
-            "-1.0",
-            Min: -1.0, Max: 600.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
-            IsAdvanced: true, OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
+        ACETaskType = T2IParamTypes.Register<string>(new("Task Type",
+            "What to do with the source audio.\ncover = style transfer.\nrepaint = regenerate a time region.\nlego = extract/isolate a track (vocals, drums, etc.).",
+            "cover",
+            GetValues: _ => [
+                "cover///Cover (Style Transfer)",
+                "repaint///Repaint (Section Regen)", "lego///Lego (Track Isolation)"
+            ],
+            OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "acestep_task_params",
+            DependNonDefault: ACESourceAudio.Type.ID));
 
         CoverStrength = T2IParamTypes.Register<double>(new("Cover Strength",
             "Style transfer strength for cover task.\nFraction of DiT steps using source audio. 1.0 = full transfer.",
             "0.5",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            IsAdvanced: true, OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
+            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "acestep_task_params",
+            DependNonDefault: ACESourceAudio.Type.ID));
+
+        RepaintStart = T2IParamTypes.Register<double>(new("Repaint Start",
+            "Start time in seconds for repaint task.\nThe section from this point will be regenerated.",
+            "0.0",
+            Min: 0.0, Max: 600.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "acestep_task_params",
+            DependNonDefault: ACESourceAudio.Type.ID));
+
+        RepaintEnd = T2IParamTypes.Register<double>(new("Repaint End",
+            "End time in seconds for repaint task.\n-1 = auto (repaint to end of audio).",
+            "-1.0",
+            Min: -1.0, Max: 600.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "acestep_task_params",
+            DependNonDefault: ACESourceAudio.Type.ID));
 
         #endregion
 
@@ -1189,5 +1172,17 @@ public static class AudioLabParams
 
         #endregion
 
+    }
+
+    /// <summary>Formats an LM GGUF filename for display.
+    /// "acestep-5Hz-lm-4B-Q8_0.gguf" → "LM 4B (Q8_0)"</summary>
+    private static string FormatLmDisplayName(string filename)
+    {
+        string stem = Path.GetFileNameWithoutExtension(filename);
+        string[] parts = stem.Split('-');
+        // Pattern: acestep-5Hz-lm-{size}-{quant}
+        string size = parts.Length >= 4 ? parts[3] : stem;
+        string quant = parts.Length >= 5 ? parts[4] : "";
+        return string.IsNullOrEmpty(quant) ? $"LM {size}" : $"LM {size} ({quant})";
     }
 }

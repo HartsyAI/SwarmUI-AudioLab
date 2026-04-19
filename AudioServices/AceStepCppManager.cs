@@ -73,7 +73,7 @@ public sealed class AceStepCppManager : IDisposable
     #region Paths
 
     /// <summary>Root directory for the ace-server binary.</summary>
-    public static string BinaryRoot => Path.GetFullPath(Path.Combine("dlbackend", "acestep-cpp"));
+    public static string BinaryRoot => Path.GetFullPath(Path.Combine("dlbackend", "audiolab", "acestep"));
 
     /// <summary>Root directory for GGUF models.</summary>
     public static string ModelRoot => Path.GetFullPath(Path.Combine("Models", "audio", "music", "acestep-gguf"));
@@ -541,13 +541,13 @@ public sealed class AceStepCppManager : IDisposable
         await EnsureSingleModelAsync("Qwen3-Embedding-0.6B-Q8_0.gguf");
         // DiT model
         await EnsureSingleModelAsync(ditFileName);
-        // Optional LM model
+        // Optional LM model (filename provided directly from filesystem-scanned param)
         if (lmModel != "none" && !string.IsNullOrEmpty(lmModel))
         {
-            string lmFileName = GetLmFileName(lmModel);
-            if (lmFileName is not null)
+            string lmPath = Path.Combine(ModelRoot, lmModel);
+            if (!File.Exists(lmPath))
             {
-                await EnsureSingleModelAsync(lmFileName);
+                Logs.Warning($"[AceStep] LM model not found: {lmModel}");
             }
         }
     }
@@ -572,18 +572,6 @@ public sealed class AceStepCppManager : IDisposable
             }
         });
         Logs.Info($"[AceStep] Downloaded {fileName}");
-    }
-
-    /// <summary>Maps LM model selection to GGUF filename.</summary>
-    public static string GetLmFileName(string lmModel)
-    {
-        return lmModel switch
-        {
-            "lm-0.6B" => "acestep-5Hz-lm-0.6B-Q8_0.gguf",
-            "lm-1.7B" => "acestep-5Hz-lm-1.7B-Q8_0.gguf",
-            "lm-4B" => "acestep-5Hz-lm-4B-Q8_0.gguf",
-            _ => null
-        };
     }
 
     /// <summary>Resolves a DiT model ID + quant level to a GGUF filename.</summary>

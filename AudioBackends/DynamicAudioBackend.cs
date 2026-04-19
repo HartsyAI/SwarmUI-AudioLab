@@ -1097,16 +1097,14 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "acestep_music":
-                // Resolve DiT GGUF filename from model config + quant level
+                // Resolve DiT GGUF filename from model config
                 string ditModel = modelDef?.EngineConfig?.TryGetValue("dit_model", out object dmObj) == true ? dmObj?.ToString() : "acestep-v15-turbo";
-                string quantLevel = input.TryGet(AudioLabParams.ACEQuantLevel, out string ql) ? ql : "Q8_0";
-                args["dit_file"] = AceStepCppManager.GetDitFileName(ditModel, quantLevel);
-                // AceRequest-compatible params (acestep_music_params)
+                args["dit_file"] = AceStepCppManager.GetDitFileName(ditModel);
+                // AceRequest-compatible params
                 args["caption"] = input.Get(T2IParamTypes.Prompt, "");
-                string lyrics = input.TryGet(AudioLabParams.Lyrics, out string ly) ? ly : "";
-                bool instrumental = input.TryGet(AudioLabParams.Instrumental, out string aceInst) && aceInst == "true";
-                args["lyrics"] = instrumental ? "[Instrumental]" : lyrics;
+                args["lyrics"] = input.TryGet(AudioLabParams.Lyrics, out string ly) ? ly : "[Instrumental]";
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long aceSeed) ? aceSeed : -1L;
+                args["duration"] = input.TryGet(T2IParamTypes.Text2AudioDuration, out double aceDur) ? aceDur : 30.0;
                 args["inference_steps"] = input.TryGet(T2IParamTypes.Steps, out int infStep) ? infStep : 0;
                 args["guidance_scale"] = input.TryGet(T2IParamTypes.CFGScale, out double aceGuide) ? aceGuide : 0.0;
                 args["bpm"] = input.TryGet(T2IParamTypes.Text2AudioBPM, out long aceBpm) ? (int)aceBpm : 0;
@@ -1123,21 +1121,22 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 if (input.TryGet(AudioLabParams.LMNegativePrompt, out string aceLmNeg) && !string.IsNullOrEmpty(aceLmNeg))
                     args["lm_negative_prompt"] = aceLmNeg;
                 args["use_cot_caption"] = input.TryGet(AudioLabParams.UseCotCaption, out string aceCotC) && aceCotC == "true";
-                // Task params (acestep_task_params)
-                string taskType = input.TryGet(AudioLabParams.ACETaskType, out string aceTask) ? aceTask : "text2music";
+                // Task params — source audio determines task mode (acestep_task_params)
                 string aceSrcAudio = GetBase64Audio(input, AudioLabParams.ACESourceAudio);
                 if (!string.IsNullOrEmpty(aceSrcAudio))
-                    args["src_audio"] = aceSrcAudio;
-                // Map task-specific fields into AceRequest
-                if (taskType == "cover")
-                    args["audio_cover_strength"] = input.TryGet(AudioLabParams.CoverStrength, out double aceCovStr) ? aceCovStr : 0.5;
-                if (taskType == "repaint")
                 {
-                    args["repainting_start"] = input.TryGet(AudioLabParams.RepaintStart, out double aceRpS) ? aceRpS : -1.0;
-                    args["repainting_end"] = input.TryGet(AudioLabParams.RepaintEnd, out double aceRpE) ? aceRpE : -1.0;
+                    args["src_audio"] = aceSrcAudio;
+                    string taskType = input.TryGet(AudioLabParams.ACETaskType, out string aceTask) ? aceTask : "cover";
+                    if (taskType == "cover")
+                        args["audio_cover_strength"] = input.TryGet(AudioLabParams.CoverStrength, out double aceCovStr) ? aceCovStr : 0.5;
+                    if (taskType == "repaint")
+                    {
+                        args["repainting_start"] = input.TryGet(AudioLabParams.RepaintStart, out double aceRpS) ? aceRpS : -1.0;
+                        args["repainting_end"] = input.TryGet(AudioLabParams.RepaintEnd, out double aceRpE) ? aceRpE : -1.0;
+                    }
+                    if (taskType == "lego")
+                        args["lego"] = "vocals";
                 }
-                if (taskType == "lego")
-                    args["lego"] = "vocals"; // Default track; could add a param for this later
                 break;
 
             case "musicgen_music":
