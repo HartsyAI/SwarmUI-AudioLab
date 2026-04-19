@@ -1,5 +1,5 @@
 # AudioLab Docker image for Linux-only engines
-# Engines: ACE-Step, RVC, GPT-SoVITS, Resemble-Enhance, CosyVoice, RealtimeSTT
+# Engines: RVC, GPT-SoVITS, Resemble-Enhance, CosyVoice, RealtimeSTT
 #
 # Build:  docker build -t audiolab-linux -f python_backend/docker/Dockerfile .
 # Run:    docker compose -f python_backend/docker/docker-compose.yml up -d
@@ -37,8 +37,7 @@ RUN pip install --no-cache-dir \
     accelerate scipy librosa
 
 # Install Linux-only engine dependencies
-# ACE-Step 1.5
-RUN pip install --no-cache-dir ace-step || true
+# ACE-Step now uses native C++ binary (acestep.cpp) — no longer in Docker
 
 # Resemble-Enhance (requires deepspeed which only builds on Linux)
 RUN pip install --no-cache-dir deepspeed && \

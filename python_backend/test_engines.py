@@ -35,7 +35,7 @@ ENGINES = {
     "tts_chatterbox": ("ChatterboxEngine", "tts", {"text": "Hello, this is a test of Chatterbox.", "volume": 0.8}),
     "tts_bark": ("BarkEngine", "tts", {"text": "Hello, this is a test of Bark.", "volume": 0.8}),
     "music_musicgen": ("MusicGenEngine", "music", {"prompt": "upbeat electronic music", "duration": 5}),
-    "music_acestep": ("AceStepEngine", "music", {"prompt": "calm piano music", "duration": 5}),
+    # music_acestep removed — ACE-Step now uses native C++ binary (acestep.cpp)
     "sfx_audiogen": ("AudioGenEngine", "sfx", {"prompt": "thunder and rain storm", "duration": 5}),
     "clone_openvoice": ("OpenVoiceEngine", "clone", None),  # Needs audio input
     "clone_rvc": ("RVCEngine", "clone", None),  # Needs audio input
