@@ -334,19 +334,14 @@ public static class AudioLabAPI
                 return AudioLab.CreateErrorResponse($"Unknown provider: {providerId}", "unknown_provider");
             }
 
-            AudioDependencyInstaller installer = new();
-            PythonEnvironmentInfo pythonInfo = await installer.DetectPythonEnvironmentForGroupAsync(provider.EngineGroup);
-            if (pythonInfo?.IsValid != true)
-            {
-                return AudioLab.CreateErrorResponse("Python environment not available. Install Python 3.10+ or ensure python/python3 is on your system PATH.", "python_not_found");
-            }
-
-            bool success = await installer.InstallProviderDependenciesAsync(pythonInfo, provider);
+            // Python pip dependencies are gone — engines run in-process on the HartsyInference C# engine.
+            // "Installing" a provider now downloads its weights via the install (WebSocket) endpoint.
+            await Task.CompletedTask;
             return new JObject
             {
-                ["success"] = success,
+                ["success"] = true,
                 ["provider_id"] = providerId,
-                ["message"] = success ? $"Dependencies for {provider.Name} installed successfully" : $"Failed to install dependencies for {provider.Name}"
+                ["message"] = $"{provider.Name} runs on the in-process C# engine — no Python dependencies to install. Use the Install button to fetch its weights."
             };
         }
         catch (Exception ex)
@@ -355,63 +350,30 @@ public static class AudioLabAPI
         }
     }
 
-    /// <summary>Get installation status for all providers (checks per-group venvs).</summary>
+    /// <summary>Get install status for all providers. "Installed" now means the provider's models are
+    /// registered (engine-backed or API), reported from the running backend — no Python/venv involved.</summary>
     public static async Task<JObject> GetInstallationStatus(Session session, JObject input)
     {
         try
         {
-            AudioDependencyInstaller installer = new();
-
-            // Check if base Python is available at all
-            string basePython = VenvManager.GetBasePythonPath();
-            bool pythonDetected = basePython != null;
+            await Task.CompletedTask;
+            DynamicAudioBackend backend = Program.Backends.AllBackends.Values
+                .Select(b => b.AbstractBackend as DynamicAudioBackend)
+                .FirstOrDefault(b => b is not null);
+            IReadOnlySet<string> installedIds = backend?.GetInstalledEngineIds() ?? new HashSet<string>();
+            bool engineAvailable = HartsyEngineBridge.Available;
 
             JObject providerStatuses = [];
-            // Cache PythonEnvironmentInfo per group to avoid redundant lookups
-            Dictionary<string, PythonEnvironmentInfo> groupEnvCache = [];
-
             foreach (AudioProviderDefinition provider in AudioProviderRegistry.All)
             {
-                if (provider.Dependencies.Count == 0)
-                {
-                    providerStatuses[provider.Id] = true;
-                    continue;
-                }
-
-                string group = provider.EngineGroup;
-
-                // Get or create the PythonEnvironmentInfo for this group
-                if (!groupEnvCache.TryGetValue(group, out PythonEnvironmentInfo groupPython))
-                {
-                    string venvPython = VenvManager.GetVenvPythonPath(group);
-                    if (System.IO.File.Exists(venvPython))
-                    {
-                        groupPython = new PythonEnvironmentInfo
-                        {
-                            PythonPath = venvPython,
-                            OperatingSystem = Environment.OSVersion.ToString(),
-                            IsEmbedded = false,
-                            Version = "detected",
-                        };
-                    }
-                    groupEnvCache[group] = groupPython; // may be null
-                }
-
-                if (groupPython?.IsValid != true)
-                {
-                    providerStatuses[provider.Id] = false;
-                    continue;
-                }
-
-                bool installed = await installer.CheckProviderDependenciesAsync(groupPython, provider);
-                providerStatuses[provider.Id] = installed;
+                providerStatuses[provider.Id] = installedIds.Contains(provider.Id);
             }
 
             return new JObject
             {
                 ["success"] = true,
-                ["python_detected"] = pythonDetected,
-                ["base_python"] = basePython ?? "not found",
+                ["engine_available"] = engineAvailable,
+                ["engine_ready"] = engineAvailable && HartsyEngineBridge.EngineReady(),
                 ["providers"] = providerStatuses
             };
         }

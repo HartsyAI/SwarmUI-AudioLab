@@ -604,25 +604,6 @@ public class InstallationProgressResponse : BaseResponse
 
 #region Internal Support Models
 
-/// <summary>Python environment information for dependency management.</summary>
-public class PythonEnvironmentInfo
-{
-    /// <summary>Path to the Python executable</summary>
-    public string PythonPath { get; set; } = string.Empty;
-
-    /// <summary>Operating system information</summary>
-    public string OperatingSystem { get; set; } = string.Empty;
-
-    /// <summary>Whether this is SwarmUI's embedded Python</summary>
-    public bool IsEmbedded { get; set; } = false;
-
-    /// <summary>Python version information</summary>
-    public string Version { get; set; } = string.Empty;
-
-    /// <summary>Whether the Python environment is valid and usable</summary>
-    public bool IsValid => !string.IsNullOrEmpty(PythonPath) && File.Exists(PythonPath);
-}
-
 /// <summary>Information about a running process.</summary>
 public class ProcessInfo
 {

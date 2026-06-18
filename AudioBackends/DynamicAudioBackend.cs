@@ -190,30 +190,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
             }
             Program.ModelRefreshEvent += ReRegisterModelsAfterRefresh;
 
-            HashSet<string> activeGroups = [];
-            foreach (AudioProviderMetadata providerMeta in _providers.Values)
-            {
-                if (!providerMeta.Definition.RequiresDocker)
-                {
-                    activeGroups.Add(providerMeta.Definition.EngineGroup);
-                }
-            }
-            foreach (string group in activeGroups)
-            {
-                try
-                {
-                    await AudioServerManager.Instance.EnsureGroupRunningAsync(group);
-                }
-                catch (Exception ex)
-                {
-                    Logs.Warning($"[AudioLab] Failed to start server for group '{group}': {ex.Message}");
-                }
-            }
-
-            if (AudioConfiguration.UseDocker && _providers.Values.Any(p => p.Definition.RequiresDocker))
-            {
-                await AudioServerManager.Instance.StartDockerAsync();
-            }
+            // No Python servers / Docker to start — inference runs in-process on the HartsyInference
+            // C# engine (via HartsyEngineBridge) or through cloud API handlers. The backend is ready
+            // as soon as installed engines' models are registered.
 
             Status = BackendStatus.RUNNING;
             if (_providers.Count > 0)
@@ -632,8 +611,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
         RemoteModels.Clear();
         _providers.Clear();
         _supportedFeatureSet.Clear();
-        await AudioServerManager.Instance.ShutdownAsync();
-        await AudioServerManager.Instance.StopDockerAsync();
+        // No Python servers / Docker containers to stop — the C# engine is owned by the HartsyInference
+        // backend extension and lives independently of this routing backend.
         Status = BackendStatus.DISABLED;
     }
 
@@ -659,85 +638,43 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
         try
         {
-            if (definition.IsApiProvider)
+            // Engine-backed providers run in-process via the HartsyInference C# engine — no venv, no pip,
+            // no Python server. This is the migration path; it takes precedence over the Python provisioning
+            // below whenever the engine boundary advertises support for the provider.
+            bool engineBacked = !definition.IsApiProvider && !definition.RequiresDocker
+                && HartsyEngineBridge.Available && HartsyEngineBridge.IsProviderSupported(definition.Id);
+
+            if (engineBacked)
+            {
+                if (HartsyEngineBridge.ProviderManagesOwnWeights(definition.Id))
+                {
+                    // STT: the engine downloads its model into its own cache on first transcription.
+                    onProgress?.Invoke($"{definition.Name} runs on the in-process C# engine (model downloads on first use).");
+                }
+                else
+                {
+                    // Checkpoint providers (music): fetch the .safetensors now.
+                    onProgress?.Invoke($"Downloading weights for {definition.Name} (in-process C# engine)...");
+                    bool registered = await AudioWeights.EnsureProviderWeightsAsync(definition, msg => onProgress?.Invoke(msg));
+                    if (!registered)
+                    {
+                        onProgress?.Invoke($"No auto-download is registered for {definition.Name} yet — place its .safetensors in {AudioWeights.WeightsDirectory(definition)} to enable it.");
+                    }
+                }
+            }
+            else if (definition.IsApiProvider)
             {
                 // API providers use external cloud APIs — no venv, no deps, no model downloads needed.
                 // The lightweight "api" group server starts lazily on first request via EnsureGroupRunningAsync.
                 onProgress?.Invoke($"Registering {definition.Name} (cloud API — no local setup needed)...");
             }
-            else if (!definition.RequiresDocker)
-            {
-                onProgress?.Invoke($"Creating Python environment for group '{definition.EngineGroup}'...");
-                string venvPython = await VenvManager.Instance.EnsureVenvAsync(definition.EngineGroup);
-                if (venvPython == null)
-                {
-                    Logs.Error($"[AudioLab] Failed to create venv for group '{definition.EngineGroup}'.");
-                    onProgress?.Invoke("Error: Failed to create Python environment.");
-                    return false;
-                }
-
-                onProgress?.Invoke($"Installing dependencies for {definition.Name}...");
-                AudioDependencyInstaller installer = new();
-                PythonEnvironmentInfo pythonInfo = await installer.DetectPythonEnvironmentForGroupAsync(definition.EngineGroup);
-                if (pythonInfo?.IsValid != true)
-                {
-                    Logs.Error($"[AudioLab] Python environment not available for group '{definition.EngineGroup}'.");
-                    onProgress?.Invoke("Error: Python environment not available.");
-                    return false;
-                }
-                bool depsOk = await installer.InstallProviderDependenciesAsync(pythonInfo, definition);
-                if (!depsOk)
-                {
-                    Logs.Error($"[AudioLab] Dependency installation failed for {definition.Name}.");
-                    onProgress?.Invoke("Error: Dependency installation failed.");
-                    return false;
-                }
-
-                onProgress?.Invoke($"Starting audio server for group '{definition.EngineGroup}'...");
-                await AudioServerManager.Instance.EnsureGroupRunningAsync(definition.EngineGroup);
-            }
             else
             {
-                if (!AudioConfiguration.UseDocker)
-                {
-                    Logs.Error($"[AudioLab] {definition.Name} requires Docker but Docker is not enabled.");
-                    onProgress?.Invoke("Error: Enable 'Use Docker' in backend settings first.");
-                    return false;
-                }
-                onProgress?.Invoke("Starting Docker container...");
-                await AudioServerManager.Instance.StartDockerAsync();
-            }
-
-            foreach (AudioModelDefinition modelDef in definition.Models)
-            {
-                if (modelDef.EngineConfig.TryGetValue("model_name", out object modelNameObj)
-                    && modelNameObj is string modelName && !string.IsNullOrEmpty(modelName))
-                {
-                    // Skip pre-download for self-managed models whose Python libraries handle
-                    // their own downloading at runtime (e.g. Whisper, Moonshine, Demucs).
-                    if (modelDef.SelfManaged)
-                    {
-                        Logs.Info($"[AudioLab] Skipping pre-download for '{modelName}' (library-managed model).");
-                        continue;
-                    }
-
-                    string category = definition.Category.ToString().ToLower();
-                    onProgress?.Invoke($"Downloading {modelDef.Name} ({modelDef.EstimatedSize})...");
-                    Logs.Info($"[AudioLab] Downloading model '{modelName}' for {definition.Name}...");
-
-                    JObject downloadResult = await AudioServerManager.Instance.DownloadModelAsync(
-                        definition.EngineGroup, modelName, category);
-
-                    if (downloadResult["success"]?.Value<bool>() != true)
-                    {
-                        string error = downloadResult["error"]?.ToString() ?? "Unknown download error";
-                        Logs.Error($"[AudioLab] Model download failed for {definition.Name}: {error}");
-                        onProgress?.Invoke($"Error: Failed to download {modelDef.Name}: {error}");
-                        return false;
-                    }
-
-                    Logs.Info($"[AudioLab] Model '{modelName}' downloaded successfully.");
-                }
+                // Not an API provider and not yet supported by the C# engine: with Python removed there is
+                // no way to run it. Refuse cleanly rather than registering a model that can't generate.
+                Logs.Error($"[AudioLab] {definition.Name} is not yet supported by the in-process C# engine.");
+                onProgress?.Invoke($"{definition.Name} isn't supported by the C# engine yet — it will become installable once engine support lands.");
+                return false;
             }
 
             onProgress?.Invoke($"Registering models for {definition.Name}...");
@@ -934,6 +871,14 @@ public class DynamicAudioBackend : AbstractT2IBackend
     private static Dictionary<string, object> BuildEngineArgs(T2IParamInput input, AudioProviderDefinition provider, AudioModelDefinition modelDef)
     {
         Dictionary<string, object> args = [];
+
+        // Model-variant hint (consumed by the C# engine routing gate to resolve the exact checkpoint;
+        // ignored by the Python path and by the engine's process methods). Prefixed to avoid colliding
+        // with real engine kwargs.
+        if (modelDef is not null)
+        {
+            args["__model_id"] = modelDef.Id;
+        }
 
         // 1. Category-level args (shared across all providers in a category)
         switch (provider.Category)
