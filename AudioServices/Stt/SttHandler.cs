@@ -5,15 +5,9 @@ using HartsyInference.Core.Backends;
 
 namespace Hartsy.Extensions.AudioLab.AudioServices.Stt;
 
-/// <summary>
-/// Generic speech-to-text handler. Every STT model is uniform — load a pipeline from a HuggingFace repo,
-/// decode the input audio to mono 16 kHz, transcribe, return text — so a single handler driven by a
-/// per-model <see cref="SttModelDescriptor"/> covers Whisper, Moonshine, distil-whisper, etc. Adding an STT
-/// model is a ~5-line descriptor in <see cref="SttModels"/>, not a new handler class.
-///
-/// <para>Weights are HuggingFace-hosted and auto-downloaded into the engine cache on first use, so this
-/// handler <see cref="ManagesOwnWeights"/>. Runners are kept resident per resolved repo and reused.</para>
-/// </summary>
+/// <summary>Generic speech-to-text handler (decode audio → load → transcribe → text), driven by a per-model
+/// <see cref="SttModelDescriptor"/> so adding a model is a descriptor, not a class. Weights HF-auto-download
+/// on first use; runners cached per resolved repo.</summary>
 public sealed class SttHandler(SttModelDescriptor descriptor) : IAudioHandler
 {
     private readonly ConcurrentDictionary<string, ISttRunner> _cache = new(StringComparer.Ordinal);

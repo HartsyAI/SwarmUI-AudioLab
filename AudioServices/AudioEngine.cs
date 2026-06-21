@@ -10,66 +10,51 @@ using HartsyInference.Vulkan;
 
 namespace Hartsy.Extensions.AudioLab.AudioServices;
 
-/// <summary>
-/// In-process audio inference engine for AudioLab. Replaces the old reflection bridge to the separate
-/// HartsyInference backend extension: AudioLab now references the <c>HartsyInference</c> NuGet directly
-/// (see the csproj) and runs TTS/STT/voice/music pipelines itself, owning its own compute device.
-///
-/// <para><b>Device ownership:</b> a single process-wide <see cref="IBackend"/> (CUDA → Vulkan → CPU,
-/// auto-detected) is constructed lazily on first use and shared across all audio requests. CUDA PTX and
-/// Vulkan SPIR-V kernels are auto-copied next to AudioLab's own DLL by the engine's NuGet build targets,
-/// so they resolve from this assembly's directory. A global lock serializes inference so concurrent audio
-/// requests never collide on the shared device.</para>
-///
-/// <para>The static surface (<see cref="Available"/>, <see cref="EngineReady"/>,
-/// <see cref="IsProviderSupported"/>, <see cref="ProviderManagesOwnWeights"/>, <see cref="ProcessAsync"/>)
-/// mirrors the former bridge so call sites swap to it directly.</para>
-/// </summary>
+/// <summary>In-process audio inference for AudioLab: references the HartsyInference NuGet directly and runs
+/// the pipelines itself, owning its own lazily-constructed compute device. Replaces the old reflection
+/// bridge to the backend extension; the static surface mirrors it so call sites swap directly.</summary>
 public static class AudioEngine
 {
-    /// <summary>Provider-id → handler dispatch table. A handler may serve several ids that share a pipeline.
-    /// Grows as the engine gains the frontends each family needs (text→phoneme G2P for TTS; F0 extraction
-    /// for voice-conversion). Until then those providers report <see cref="IsProviderSupported"/> = false.</summary>
+    #region Dispatch table
+
+    /// <summary>Provider-id → handler. A handler may serve several ids that share a pipeline.</summary>
     private static readonly Dictionary<string, IAudioHandler> _handlers = BuildHandlers();
 
     private static Dictionary<string, IAudioHandler> BuildHandlers()
     {
         Dictionary<string, IAudioHandler> map = new(StringComparer.OrdinalIgnoreCase);
 
-        // ── STT — works end-to-end today (self-contained pipelines, no missing frontend). One generic
-        //    SttHandler drives every model; each is just a descriptor (see SttModels). ──
+        // STT — one generic SttHandler per model, each a descriptor (see SttModels).
         SttHandler whisper = new(SttModels.Whisper);
         map["whisper_stt"] = whisper;
-        map["distilwhisper_stt"] = whisper; // same pipeline, different HF repo resolved per model id
+        map["distilwhisper_stt"] = whisper; // same pipeline, repo resolved per model id
         map["moonshine_stt"] = new SttHandler(SttModels.Moonshine);
 
-        // ── TTS — same generic-handler pattern (TtsHandler + per-model descriptor). VibeVoice runs today
-        //    (built-in tokenizer, raw text + voice reference). Token-based TTS (Dia, Orpheus, CSM, …) join
-        //    as the engine's AudioTextFrontend ships and the Llama-3 / BERT tokenizer assets land. ──
+        // TTS — same pattern. Token-based TTS joins as the engine's text front-ends / tokenizer assets land.
         map["vibevoice_tts"] = new TtsHandler(TtsModels.VibeVoice);
 
         return map;
     }
 
-    // ───────────────────────────── compute device (lazy, shared) ─────────────────────────────
+    #endregion
+
+    #region Compute device
 
     private static IBackend _backend;
     private static readonly object _backendLock = new();
     private static bool _initFailed;
     private static string _initError;
 
-    /// <summary>Serializes inference across audio requests — one shared device/pipeline-cache per process.</summary>
+    /// <summary>Serializes inference across requests — one shared device per process.</summary>
     private static readonly SemaphoreSlim _genLock = new(1, 1);
 
-    /// <summary>The engine is compiled into AudioLab, so it is always present (unlike the old optional
-    /// reflection bridge). Readiness of the actual compute device is reported by <see cref="EngineReady"/>.</summary>
+    /// <summary>Always true (the engine is compiled in); device readiness is <see cref="EngineReady"/>.</summary>
     public static bool Available => true;
 
-    /// <summary>Whether the compute device is constructed (or constructable) — i.e. inference can run.</summary>
+    /// <summary>Whether the compute device is constructed (or constructable).</summary>
     public static bool EngineReady() => GetBackend() is not null;
 
-    /// <summary>Lazily constructs the shared compute device. Returns null (and caches the failure) if no
-    /// backend could be initialized.</summary>
+    /// <summary>Lazily constructs the shared compute device; null (failure cached) if none could init.</summary>
     private static IBackend GetBackend()
     {
         if (_backend is not null)
@@ -101,8 +86,7 @@ public static class AudioEngine
         }
     }
 
-    /// <summary>Auto-detects a compute backend: CUDA, then Vulkan, then CPU. Kernels resolve from AudioLab's
-    /// own output directory (where the engine NuGet targets copy them).</summary>
+    /// <summary>Auto-detects CUDA → Vulkan → CPU. Kernels resolve from AudioLab's own output dir.</summary>
     private static IBackend ConstructBackend()
     {
         string extDir = Path.GetDirectoryName(typeof(AudioEngine).Assembly.Location) ?? AppContext.BaseDirectory;
@@ -135,18 +119,19 @@ public static class AudioEngine
         return cpu;
     }
 
-    // ───────────────────────────── dispatch surface ─────────────────────────────
+    #endregion
 
-    /// <summary>Whether the named provider can be serviced by the in-process engine right now.</summary>
+    #region Public API
+
+    /// <summary>Whether the named provider can be serviced right now.</summary>
     public static bool IsProviderSupported(string providerId)
         => providerId is not null && _handlers.ContainsKey(providerId);
 
-    /// <summary>Whether the engine downloads/manages this provider's weights itself (HuggingFace auto-download),
-    /// so no local checkpoint needs resolving before routing here.</summary>
+    /// <summary>Whether the engine downloads/manages this provider's weights itself (HF auto-download).</summary>
     public static bool ProviderManagesOwnWeights(string providerId)
         => providerId is not null && _handlers.TryGetValue(providerId, out IAudioHandler h) && h.ManagesOwnWeights;
 
-    /// <summary>Runs an audio request. Returns the JObject shape AudioLab's generation path parses
+    /// <summary>Runs an audio request, returning the JObject shape AudioLab's generation path parses
     /// (<c>success</c> + <c>audio_data</c>/<c>text</c>/<c>output_format</c>/<c>duration</c>, or <c>error</c>).</summary>
     public static async Task<JObject> ProcessAsync(string providerId, IReadOnlyDictionary<string, object> args, CancellationToken cancel)
     {
@@ -211,4 +196,6 @@ public static class AudioEngine
             catch (Exception ex) { Logs.Debug($"[AudioLab] Unload('{providerId}','{modelId}') threw: {ex.Message}"); }
         }
     }
+
+    #endregion
 }

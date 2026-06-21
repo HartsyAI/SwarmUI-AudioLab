@@ -14,14 +14,8 @@ public sealed class TtsModelDescriptor
     public required Func<string, CancellationToken, Task<ITtsRunner>> LoadAsync { get; init; }
 }
 
-/// <summary>The TTS model registry. Each entry wires an engine pipeline to the generic handler — no
-/// per-model handler/runner classes.
-///
-/// <para>Most token-based TTS models (Dia, Orpheus, CSM, …) join here once the engine's text front-ends
-/// land (they need <c>AudioTextFrontend</c> from a newer engine build, and some need the Llama-3 / BERT
-/// tokenizer assets). VibeVoice needs none of that — it has a built-in tokenizer and takes raw text +
-/// a voice reference — so it runs against the current engine today.</para>
-/// </summary>
+/// <summary>TTS model registry. VibeVoice runs today; token-based TTS (Dia, Orpheus, CSM) join once the
+/// engine's AudioTextFrontend + Llama/BERT tokenizer assets land.</summary>
 public static class TtsModels
 {
     /// <summary>VibeVoice 1.5B — long-form multi-speaker synthesis. Built-in tokenizer (raw text in);

@@ -6,14 +6,8 @@ using HartsyInference.Audio.Io;
 
 namespace Hartsy.Extensions.AudioLab.AudioServices;
 
-/// <summary>
-/// Shared audio I/O helpers for the <see cref="AudioEngine"/> handlers: decoding the base64 audio AudioLab
-/// uploads (STT / voice-conversion / FX inputs) into the mono <c>float[]</c> the pipelines consume, encoding
-/// pipeline output back to base64 audio, and building the success/error JObjects AudioLab parses.
-///
-/// <para>Input decode goes through ffmpeg (Swarm's resolver — never bundled) so any container/codec the user
-/// uploads is accepted; output WAV is written purely in C# via the engine's <see cref="WavFile"/>.</para>
-/// </summary>
+/// <summary>Audio I/O helpers for the handlers: base64 ↔ mono <c>float[]</c> (decode via ffmpeg, encode WAV
+/// in C#) and the success/error JObjects AudioLab parses.</summary>
 public static class AudioIo
 {
     /// <summary>Decodes base64-encoded audio bytes (any ffmpeg-readable format) to a mono <c>float[]</c> in

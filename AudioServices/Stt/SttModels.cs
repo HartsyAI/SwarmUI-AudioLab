@@ -13,9 +13,7 @@ public sealed class SttModelDescriptor
     public required Func<string, CancellationToken, Task<ISttRunner>> LoadAsync { get; init; }
 }
 
-/// <summary>The STT model registry. Each entry is a few lines wiring an engine pipeline to the generic
-/// handler — no per-model handler/runner classes. Whisper and distil-whisper share one descriptor (same
-/// pipeline, different repos resolved per model id).</summary>
+/// <summary>STT model registry — each entry wires a pipeline to the generic handler.</summary>
 public static class SttModels
 {
     /// <summary>OpenAI Whisper + distil-whisper (same <see cref="WhisperPipeline"/>, different repos).</summary>

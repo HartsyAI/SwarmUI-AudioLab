@@ -7,15 +7,9 @@ using HartsyInference.Audio.Io;
 
 namespace Hartsy.Extensions.AudioLab.AudioServices.Tts;
 
-/// <summary>
-/// Generic text-to-speech handler. Every TTS model follows the same shape — load a pipeline, take the
-/// text (+ optional voice reference), synthesize to mono PCM, encode to base64 WAV — so a single handler
-/// driven by a per-model <see cref="TtsModelDescriptor"/> covers them all. Adding a TTS model is a small
-/// descriptor in <see cref="TtsModels"/> (its pipeline + a synth delegate), not a new handler class.
-///
-/// <para>Weights are HuggingFace-hosted and auto-downloaded on first use, so this handler
-/// <see cref="ManagesOwnWeights"/>. Runners are kept resident per resolved model and reused.</para>
-/// </summary>
+/// <summary>Generic text-to-speech handler (text + optional voice reference → synth → base64 WAV), driven by
+/// a per-model <see cref="TtsModelDescriptor"/> so adding a model is a descriptor, not a class. Weights
+/// HF-auto-download on first use; runners cached per resolved model.</summary>
 public sealed class TtsHandler(TtsModelDescriptor descriptor) : IAudioHandler
 {
     private readonly ConcurrentDictionary<string, ITtsRunner> _cache = new(StringComparer.Ordinal);

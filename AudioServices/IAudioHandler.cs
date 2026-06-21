@@ -3,17 +3,9 @@ using HartsyInference.Core.Backends;
 
 namespace Hartsy.Extensions.AudioLab.AudioServices;
 
-/// <summary>
-/// One audio provider's bridge between AudioLab's request args and a HartsyInference pipeline.
-/// Implementations are stateless dispatchers: they own a resident (lazily-loaded) pipeline cache,
-/// translate the loosely-typed <c>args</c> dictionary AudioLab builds (see
-/// <c>DynamicAudioBackend.BuildEngineArgs</c>) into the pipeline's strongly-typed inputs, run inference
-/// on the shared compute device, and shape the result into the JObject AudioLab parses back
-/// (<c>success</c> / <c>audio_data</c> / <c>text</c> / <c>output_format</c> / <c>duration</c> / <c>error</c>).
-///
-/// <para>Registered in <see cref="AudioEngine"/>'s dispatch table keyed by AudioLab provider id
-/// (e.g. <c>"whisper_stt"</c>). A handler may serve several provider ids that share a pipeline.</para>
-/// </summary>
+/// <summary>Bridges AudioLab's request args to a HartsyInference pipeline: maps the args dict to pipeline
+/// inputs, runs inference on the shared device, and returns the JObject AudioLab parses. Registered in
+/// <see cref="AudioEngine"/> keyed by provider id.</summary>
 public interface IAudioHandler
 {
     /// <summary>AudioLab category this handler serves: <c>tts</c>, <c>stt</c>, <c>audiogen</c>,
