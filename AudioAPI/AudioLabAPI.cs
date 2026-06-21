@@ -361,7 +361,7 @@ public static class AudioLabAPI
                 .Select(b => b.AbstractBackend as DynamicAudioBackend)
                 .FirstOrDefault(b => b is not null);
             IReadOnlySet<string> installedIds = backend?.GetInstalledEngineIds() ?? new HashSet<string>();
-            bool engineAvailable = HartsyEngineBridge.Available;
+            bool engineAvailable = AudioEngine.Available;
 
             JObject providerStatuses = [];
             foreach (AudioProviderDefinition provider in AudioProviderRegistry.All)
@@ -373,7 +373,7 @@ public static class AudioLabAPI
             {
                 ["success"] = true,
                 ["engine_available"] = engineAvailable,
-                ["engine_ready"] = engineAvailable && HartsyEngineBridge.EngineReady(),
+                ["engine_ready"] = engineAvailable && AudioEngine.EngineReady(),
                 ["providers"] = providerStatuses
             };
         }

@@ -10,9 +10,9 @@ namespace Hartsy.Extensions.AudioLab.AudioServices;
 ///
 /// <para>Historically this spawned per-group Python HTTP servers; that machinery is gone. Requests now go
 /// one of two ways: cloud <b>API providers</b> (ElevenLabs, OpenAI, …) run through their C# <see cref="IApiEngineHandler"/>;
-/// everything else runs <b>in-process on the HartsyInference C# engine</b> via <see cref="HartsyEngineBridge"/>
-/// (hosted by the sibling backend extension). A provider the engine can't service yet returns a clear error
-/// rather than falling back to Python.</para>
+/// everything else runs <b>in-process on the HartsyInference C# engine</b> via <see cref="AudioEngine"/>
+/// (AudioLab references the engine NuGet directly and owns its own compute device). A provider the engine
+/// can't service yet returns a clear error rather than falling back to Python.</para>
 ///
 /// <para>The class name is retained because many call sites use <c>AudioServerManager.Instance.ProcessAsync</c>;
 /// it is no longer a "server manager" in any literal sense.</para></summary>
@@ -35,32 +35,18 @@ public class AudioServerManager
             return await ProcessViaApiAsync(provider, args, cancelToken);
         }
 
-        // In-process C# inference via the HartsyInference engine (sibling backend extension).
-        if (HartsyEngineBridge.Available && HartsyEngineBridge.EngineReady() && HartsyEngineBridge.IsProviderSupported(provider.Id))
+        // In-process C# inference via the HartsyInference engine (compiled into AudioLab; the engine
+        // auto-downloads each provider's weights into its HuggingFace cache on first use).
+        if (AudioEngine.IsProviderSupported(provider.Id))
         {
-            if (HartsyEngineBridge.ProviderManagesOwnWeights(provider.Id))
+            if (!AudioEngine.EngineReady())
             {
-                // STT and friends: the engine downloads/manages their weights itself.
-                return await HartsyEngineBridge.ProcessAsync(provider.Id, args, cancelToken);
+                return CreateErrorResponse($"{provider.Name} needs a compute backend, but none could be initialized. Check the SwarmUI logs for the audio engine startup error.");
             }
-            string checkpointPath = AudioWeights.ResolveCheckpoint(provider, args);
-            if (checkpointPath is not null)
-            {
-                Dictionary<string, object> engineArgs = new(args) { ["checkpoint_path"] = checkpointPath };
-                return await HartsyEngineBridge.ProcessAsync(provider.Id, engineArgs, cancelToken);
-            }
-            return CreateErrorResponse($"{provider.Name} weights are not installed yet. Install the model from the AudioLab model browser first.");
+            return await AudioEngine.ProcessAsync(provider.Id, args, cancelToken);
         }
 
-        // No Python fallback exists anymore.
-        if (!HartsyEngineBridge.Available)
-        {
-            return CreateErrorResponse($"{provider.Name} runs on the HartsyInference C# engine, which isn't available. Install the 'HartsyInference (Pure C# Inference)' backend extension.");
-        }
-        if (!HartsyEngineBridge.EngineReady())
-        {
-            return CreateErrorResponse($"{provider.Name} needs the HartsyInference engine running. Add the 'HartsyInference (Pure C# Inference)' backend in Server > Backends.");
-        }
+        // Not an API provider and not yet wired into the in-process engine.
         return CreateErrorResponse($"{provider.Name} is not yet supported by the in-process C# engine. Support is being added engine-side; this provider will light up automatically once it lands.");
     }
 

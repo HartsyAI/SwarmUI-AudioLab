@@ -191,8 +191,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
             Program.ModelRefreshEvent += ReRegisterModelsAfterRefresh;
 
             // No Python servers / Docker to start — inference runs in-process on the HartsyInference
-            // C# engine (via HartsyEngineBridge) or through cloud API handlers. The backend is ready
-            // as soon as installed engines' models are registered.
+            // C# engine (via AudioEngine, compiled into AudioLab) or through cloud API handlers. The
+            // backend is ready as soon as installed engines' models are registered.
 
             Status = BackendStatus.RUNNING;
             if (_providers.Count > 0)
@@ -642,13 +642,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
             // no Python server. This is the migration path; it takes precedence over the Python provisioning
             // below whenever the engine boundary advertises support for the provider.
             bool engineBacked = !definition.IsApiProvider && !definition.RequiresDocker
-                && HartsyEngineBridge.Available && HartsyEngineBridge.IsProviderSupported(definition.Id);
+                && AudioEngine.IsProviderSupported(definition.Id);
 
             if (engineBacked)
             {
-                if (HartsyEngineBridge.ProviderManagesOwnWeights(definition.Id))
+                if (AudioEngine.ProviderManagesOwnWeights(definition.Id))
                 {
-                    // STT: the engine downloads its model into its own cache on first transcription.
+                    // STT and friends: the engine downloads its model into the HuggingFace cache on first use.
                     onProgress?.Invoke($"{definition.Name} runs on the in-process C# engine (model downloads on first use).");
                 }
                 else
