@@ -31,6 +31,7 @@ public static class AudioEngine
         map["whisper_stt"] = whisper;
         map["distilwhisper_stt"] = whisper; // same pipeline, repo resolved per model id
         map["moonshine_stt"] = new SttHandler(SttModels.Moonshine);
+        map["kyutaistt_stt"] = new SttHandler(SttModels.Kyutai);
 
         // TTS — same pattern. Token-based TTS joins as the engine's text front-ends / tokenizer assets land.
         map["vibevoice_tts"] = new TtsHandler(TtsModels.VibeVoice);
@@ -41,6 +42,8 @@ public static class AudioEngine
         // clear message until it ships). See TtsModels TODO(llama-asset).
         map["orpheus_tts"] = new TtsHandler(TtsModels.Orpheus);
         map["csm_tts"] = new TtsHandler(TtsModels.Csm);
+        map["fishspeech_tts"] = new TtsHandler(FishSpeechModel.Descriptor);
+        map["neutts_tts"] = new TtsHandler(NeuTtsModel.Descriptor);
 
         // Music — MusicGen/AudioGen HF-auto-download. YuE is ready (MusicModels.Yue) but gated until the
         // engine package ships YueTokenizer; re-enable this line + the #if false in MusicModels then.

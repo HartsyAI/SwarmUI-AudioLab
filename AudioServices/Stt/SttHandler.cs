@@ -36,7 +36,7 @@ public sealed class SttHandler(SttModelDescriptor descriptor) : IAudioHandler
         string repo = descriptor.ResolveRepo(AudioIo.Str(args, "__model_id"));
 
         // Decode to the 16 kHz mono the pipelines want (they would resample anyway; hand them 16k directly).
-        float[] audio = AudioIo.DecodeBase64ToMono(audioB64, 16_000, cancel);
+        float[] audio = AudioIo.DecodeBase64ToMono(audioB64, descriptor.InputSampleRate, cancel);
         if (audio.Length == 0)
         {
             return AudioIo.Error("The STT audio input decoded to no samples.");

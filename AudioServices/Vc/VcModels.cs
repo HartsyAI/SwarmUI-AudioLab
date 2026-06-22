@@ -22,6 +22,10 @@ public sealed class VcModelDescriptor
 
     /// <summary>Loads the model into a runner. Loading is device-independent (no backend needed).</summary>
     public required Func<string, string, CancellationToken, Task<IVcRunner>> LoadAsync { get; init; }
+
+    /// <summary>Sample rate the source/target audio is decoded to before conversion (RVC 16 kHz content input;
+    /// OpenVoice 22.05 kHz).</summary>
+    public int InputSampleRate { get; init; } = 16_000;
 }
 
 /// <summary>Voice-conversion model registry. RVC re-voices a source clip with a trained voice model, using
@@ -35,6 +39,7 @@ public static class VcModels
     public static readonly VcModelDescriptor Rvc = new()
     {
         ManagesOwnWeights = false,
+        InputSampleRate = 16_000, // RVC's HuBERT content encoder + YIN F0 both run on 16 kHz source.
         CacheKey = (providerId, modelId) => ResolveRvcModel(providerId, modelId),
         LoadAsync = (providerId, modelId, ct) => LoadRvcAsync(ResolveRvcModel(providerId, modelId), ct),
     };
@@ -80,8 +85,9 @@ public static class VcModels
 
         Logs.Info($"[AudioLab][RVC] Loaded voice '{Path.GetFileName(rvcModelPath)}' (40 kHz; ContentVec + YIN F0).");
         // Loaders kept alive for the runner's lifetime (the model tensors reference them); freed on Unload.
+        // RVC carries the target voice in its trained weights — the target argument is unused.
         return Task.FromResult<IVcRunner>(
-            new VcRunner(rvc.SampleRate, (backend, src) => ConvertRvc(backend, hubert, rvc, src), hubLoader, rvcLoader, rvc));
+            new VcRunner(rvc.SampleRate, (backend, src, _) => ConvertRvc(backend, hubert, rvc, src), hubLoader, rvcLoader, rvc));
     }
 
     private static float[] ConvertRvc(IBackend backend, Hubert hubert, RvcPipeline rvc, float[] source16k)

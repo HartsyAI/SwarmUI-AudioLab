@@ -68,27 +68,18 @@ public sealed class FishSpeechProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
+        // The in-process C# engine implements Fish-Speech 1.5 (DualAR + firefly-gan-vq, 44.1 kHz). The newer
+        // S1/S2 checkpoints use a different architecture the engine does not load yet — advertise only 1.5.
         new()
         {
-            Id = "s2-pro",
-            Name = "Fish Speech S2-Pro",
-            Description = "5B parameter flagship model. 80+ languages, inline prosody control with [tag] syntax, voice cloning. Requires ~24GB VRAM.",
-            SourceUrl = "https://huggingface.co/fishaudio/s2-pro",
-            License = "Fish Audio Research License",
-            EstimatedSize = "~10GB",
-            EstimatedVram = "~24GB",
-            EngineConfig = new() { ["model_name"] = "fishaudio/s2-pro" }
-        },
-        new()
-        {
-            Id = "s1-mini",
-            Name = "Fish Speech S1-Mini",
-            Description = "Lightweight variant for resource-constrained deployment. Requires ~4GB VRAM.",
-            SourceUrl = "https://huggingface.co/fishaudio/s1-mini",
-            License = "Fish Audio Research License",
-            EstimatedSize = "~1GB",
+            Id = "fish-speech-1.5",
+            Name = "Fish Speech 1.5",
+            Description = "DualAR text-to-semantic (Llama-style backbone + depth transformer over 8 codebooks) decoded by firefly-gan-vq to 44.1 kHz. Multilingual, voice cloning. ~4GB VRAM.",
+            SourceUrl = "https://huggingface.co/fishaudio/fish-speech-1.5",
+            License = "CC-BY-NC-SA-4.0",
+            EstimatedSize = "~2GB",
             EstimatedVram = "~4GB",
-            EngineConfig = new() { ["model_name"] = "fishaudio/s1-mini" }
+            EngineConfig = new() { ["model_name"] = "fishaudio/fish-speech-1.5" }
         }
     ];
 

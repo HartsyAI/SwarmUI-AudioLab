@@ -111,9 +111,9 @@ public static class TtsModels
             BertWordPieceTokenizer bert = new(vocabPath, lowerCase: false);
             Logs.Info("[AudioLab][Bark] Loaded suno/bark (3-stage GPT + EnCodec 24 kHz).");
 
-            // Loader kept alive: the F32 stage weights reference its tensors. Seed not plumbed (default 0).
+            // Loader kept alive: the F32 stage weights reference its tensors.
             return new TtsRunner(cfg.SampleRate,
-                (backend, req) => pipeline.Synthesize(backend, AudioTextFrontend.BarkText(bert, req.Text, cfg.TextEncodingOffset)),
+                (backend, req) => pipeline.Synthesize(backend, AudioTextFrontend.BarkText(bert, req.Text, cfg.TextEncodingOffset), req.Seed),
                 pipeline, loader);
         },
     };
@@ -144,7 +144,7 @@ public static class TtsModels
             Logs.Info("[AudioLab][Dia] Loaded nari-labs/Dia-1.6B (byte-level dialogue TTS, 44.1 kHz).");
 
             return new TtsRunner(44_100,
-                (backend, req) => pipeline.Generate(backend, AudioTextFrontend.DiaBytes(req.Text)),
+                (backend, req) => pipeline.Generate(backend, AudioTextFrontend.DiaBytes(req.Text), seed: req.Seed),
                 pipeline, modelLoader, dacLoader);
         },
     };
@@ -165,7 +165,7 @@ public static class TtsModels
             Logs.Info("[AudioLab][Orpheus] Loaded canopylabs/orpheus-3b-0.1-ft (Llama-3.2-3B + SNAC 24 kHz).");
             IDisposable[] keep = [pipeline, .. bbLoaders, .. snacLoaders];
             return new TtsRunner(pipeline.SampleRate,
-                (backend, req) => pipeline.Synthesize(backend, AudioTextFrontend.OrpheusText(req.Text)), keep);
+                (backend, req) => pipeline.Synthesize(backend, AudioTextFrontend.OrpheusText(req.Text), seed: req.Seed), keep);
         },
     };
 
@@ -188,7 +188,7 @@ public static class TtsModels
             Logs.Info("[AudioLab][CSM] Loaded sesame/csm-1b (dual-transformer + Mimi 24 kHz).");
             IDisposable[] keep = [pipeline, .. mLoaders, .. miLoaders];
             return new TtsRunner(24_000,
-                (backend, req) => pipeline.Synthesize(backend, AudioTextFrontend.CsmText(req.Text)), keep);
+                (backend, req) => pipeline.Synthesize(backend, AudioTextFrontend.CsmText(req.Text), seed: req.Seed), keep);
         },
     };
 

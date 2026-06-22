@@ -43,7 +43,7 @@ public static class FishSpeechModel
 
     public static readonly TtsModelDescriptor Descriptor = new()
     {
-        ResolveRepo = _ => Repo,
+        ResolveRepo = modelId => (modelId ?? "").Contains('/') ? modelId : Repo,
         LoadAsync = async (_, ct) =>
         {
             // Two separate pickles: DualAR weights + firefly codec weights. Both auto-download on first use.
@@ -77,7 +77,7 @@ public static class FishSpeechModel
                 string prompt = $"{FishSpeechTokenizer.ImStart}user\n{req.Text}{FishSpeechTokenizer.ImEnd}"
                     + $"{FishSpeechTokenizer.ImStart}assistant\n{FishSpeechTokenizer.AudioStart}";
                 int[] tokens = tokenizer.Encode(prompt);
-                return pipeline.Synthesize(backend, tokens, endToken: tokenizer.ImEndId);
+                return pipeline.Synthesize(backend, tokens, endToken: tokenizer.ImEndId, seed: req.Seed);
             }, pipeline, modelLoader, codecLoader);
         },
     };

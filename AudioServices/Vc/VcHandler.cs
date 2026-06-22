@@ -30,16 +30,20 @@ public sealed class VcHandler(string providerId, VcModelDescriptor descriptor) :
         {
             return AudioIo.Error("No source audio supplied to re-voice.");
         }
-        float[] source = AudioIo.DecodeBase64ToMono(sourceB64, 16_000, cancel);
+        int sr = descriptor.InputSampleRate;
+        float[] source = AudioIo.DecodeBase64ToMono(sourceB64, sr, cancel);
         if (source.Length == 0)
         {
             return AudioIo.Error("The source audio decoded to no samples.");
         }
+        // Optional target voice (for tone-color transfer models like OpenVoice); source-only models ignore it.
+        string targetB64 = AudioIo.Str(args, "target_voice");
+        float[] target = string.IsNullOrEmpty(targetB64) ? null : AudioIo.DecodeBase64ToMono(targetB64, sr, cancel);
         cancel.ThrowIfCancellationRequested();
 
         IVcRunner runner = await GetOrLoadAsync(AudioIo.Str(args, "__model_id"), cancel).ConfigureAwait(false);
         long start = Environment.TickCount64;
-        float[] audio = runner.Convert(backend, source);
+        float[] audio = runner.Convert(backend, source, target);
         if (audio is null || audio.Length == 0)
         {
             return AudioIo.Error("The voice-conversion model produced no audio.");

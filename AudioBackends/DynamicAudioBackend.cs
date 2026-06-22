@@ -906,6 +906,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     args["reference_audio"] = sharedRef;
                 if (input.TryGet(AudioLabParams.ReferenceText, out string sharedRefText) && !string.IsNullOrEmpty(sharedRefText))
                     args["ref_text"] = sharedRefText;
+                // Seed for reproducibility (pipelines that accept one). SwarmUI resolves -1 to a concrete value upstream.
+                args["seed"] = input.TryGet(T2IParamTypes.Seed, out long ttsSeed) ? ttsSeed : -1L;
                 break;
 
             case AudioCategory.STT:

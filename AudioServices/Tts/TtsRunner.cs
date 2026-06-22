@@ -18,6 +18,14 @@ public sealed class TtsRequest
     /// <summary>Temp 24 kHz mono WAV of the reference (for models that take a file path, e.g. VibeVoice),
     /// or null when no reference was supplied. Owned and cleaned up by the handler.</summary>
     public string ReferenceWavPath { get; init; }
+
+    /// <summary>Sampling seed (from SwarmUI's Seed param) for reproducibility; 0 if unset. Passed to pipelines
+    /// whose <c>Synthesize</c> accepts a seed.</summary>
+    public int Seed { get; init; }
+
+    /// <summary>Raw base64 of the voice reference (whatever the user uploaded), or null. Lets a descriptor
+    /// decode the reference at whatever sample rate its codec needs (e.g. NeuTTS encodes at 16 kHz).</summary>
+    public string ReferenceB64 { get; init; }
 }
 
 /// <summary>A loaded TTS model reduced to: text (+ optional voice reference) → mono PCM at <see cref="SampleRate"/>.</summary>

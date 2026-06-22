@@ -62,6 +62,8 @@ public sealed class TtsHandler(TtsModelDescriptor descriptor) : IAudioHandler
                 RefText = refText,
                 ReferenceMono24k = refMono,
                 ReferenceWavPath = refWavPath,
+                ReferenceB64 = refB64,
+                Seed = ReadSeed(args),
             };
             long start = Environment.TickCount64;
             float[] samples = runner.Synthesize(backend, request);
@@ -112,5 +114,16 @@ public sealed class TtsHandler(TtsModelDescriptor descriptor) : IAudioHandler
             _cache[repo] = loaded;
             return loaded;
         }
+    }
+
+    /// <summary>Reads SwarmUI's seed from the engine args (a long; -1 = random) as the int the pipelines take.</summary>
+    private static int ReadSeed(IReadOnlyDictionary<string, object> args)
+    {
+        if (args.TryGetValue("seed", out object raw) && raw is not null)
+        {
+            try { return unchecked((int)Convert.ToInt64(raw)); }
+            catch { return 0; }
+        }
+        return 0;
     }
 }
