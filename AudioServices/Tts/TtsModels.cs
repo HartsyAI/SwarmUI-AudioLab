@@ -1,3 +1,5 @@
+using System.IO;
+using HartsyInference.Audio.Frontends;
 using HartsyInference.Audio.Pipelines;
 
 namespace Hartsy.Extensions.AudioLab.AudioServices.Tts;
@@ -37,6 +39,28 @@ public static class TtsModels
                 // generous so typical sentences/paragraphs aren't truncated.
                 return p.Synthesize(backend, new[] { req.Text }, new[] { req.ReferenceWavPath }, maxNewTokens: 1024);
             });
+        },
+    };
+
+    /// <summary>Kokoro-82M — fast CPU-capable TTS at 24 kHz. Auto-downloads its weights + voice packs; uses
+    /// the engine's English <see cref="EnglishG2P"/> (text→IPA) front-end. Needs a CMU dictionary
+    /// (<c>cmudict.dict</c>) placed in the audio model root. Built-in voice (default <c>af_heart</c>).</summary>
+    public static readonly TtsModelDescriptor Kokoro = new()
+    {
+        ResolveRepo = _ => "hexgrad/Kokoro-82M",
+        LoadAsync = async (_, ct) =>
+        {
+            string cmudict = Path.Combine(Path.GetFullPath(AudioConfiguration.ModelRoot), "cmudict.dict");
+            if (!File.Exists(cmudict))
+            {
+                throw new FileNotFoundException(
+                    $"Kokoro needs an English G2P dictionary — place the public-domain CMU Pronouncing Dictionary "
+                    + $"('cmudict.dict') at '{cmudict}'.", cmudict);
+            }
+            EnglishG2P g2p = new(cmudict);
+            KokoroPipeline p = await KokoroPipeline.LoadAsync(ct).ConfigureAwait(false);
+            return new TtsRunner(p, sampleRate: 24_000, (backend, req) =>
+                p.Synthesize(backend, g2p.ToIpa(req.Text), voiceName: "af_heart"));
         },
     };
 }

@@ -233,9 +233,6 @@ public static class MusicModels
 
     #endregion
 
-    // ENABLE WHEN the engine package ships YueTokenizer (added to HartsyInference.Tokenizers; not in
-    // alpha.28). Then delete the #if false / #endif and uncomment yue_music in AudioEngine.BuildHandlers.
-#if false
     #region YuE (user-placed folder checkpoint)
 
     /// <summary>YuE Stage-1 (m-a-p/YuE-s1-7B-anneal-*) — folder checkpoint + sibling tokenizer.model + xcodec.safetensors.
@@ -297,5 +294,4 @@ public static class MusicModels
     }
 
     #endregion
-#endif
 }

@@ -4,6 +4,7 @@ using SwarmUI.Utils;
 using Hartsy.Extensions.AudioLab.AudioServices.Music;
 using Hartsy.Extensions.AudioLab.AudioServices.Stt;
 using Hartsy.Extensions.AudioLab.AudioServices.Tts;
+using Hartsy.Extensions.AudioLab.AudioServices.Vc;
 using HartsyInference.Core.Backends;
 using HartsyInference.Cpu;
 using HartsyInference.Cuda;
@@ -33,12 +34,17 @@ public static class AudioEngine
 
         // TTS — same pattern. Token-based TTS joins as the engine's text front-ends / tokenizer assets land.
         map["vibevoice_tts"] = new TtsHandler(TtsModels.VibeVoice);
+        map["kokoro_tts"] = new TtsHandler(TtsModels.Kokoro);
 
         // Music — MusicGen/AudioGen HF-auto-download. YuE is ready (MusicModels.Yue) but gated until the
         // engine package ships YueTokenizer; re-enable this line + the #if false in MusicModels then.
         map["musicgen_music"] = new MusicHandler("musicgen_music", MusicModels.MusicGen);
         map["audiogen_sfx"] = new MusicHandler("audiogen_sfx", MusicModels.AudioGen);
         map["acestep_music"] = new MusicHandler("acestep_music", MusicModels.AceStep);
+        map["yue_music"] = new MusicHandler("yue_music", MusicModels.Yue);
+
+        // Voice conversion — RVC re-voices a source clip (HuBERT content + YIN F0 + trained voice model).
+        map["rvc_clone"] = new VcHandler("rvc_clone", VcModels.Rvc);
 
         return map;
     }
