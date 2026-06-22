@@ -1,5 +1,4 @@
 using System.IO;
-using System.Linq;
 using SwarmUI.Utils;
 using Hartsy.Extensions.AudioLab.AudioProviders;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
@@ -7,11 +6,17 @@ using HartsyInference.Core.Backends;
 using HartsyInference.Core.Tensors;
 using HartsyInference.Audio.Cache;
 using HartsyInference.Audio.Models.Codecs.EnCodec;
+using HartsyInference.Audio.Models.Codecs.Oobleck;
 using HartsyInference.Audio.Models.Codecs.XCodec;
 using HartsyInference.Audio.Models.Music;
 using HartsyInference.Audio.Pipelines;
+using HartsyInference.Diffusion.Models.Denoisers;
+using HartsyInference.Diffusion.Models.Music;
 using HartsyInference.Diffusion.Models.TextEncoders;
+using HartsyInference.Diffusion.Pipelines;
+using HartsyInference.Diffusion.Utilities;
 using HartsyInference.ModelHandler.CheckpointConverters;
+using HartsyInference.ModelHandler.SafeTensors;
 using HartsyInference.Tokenizers;
 
 namespace Hartsy.Extensions.AudioLab.AudioServices.Music;
@@ -19,18 +24,20 @@ namespace Hartsy.Extensions.AudioLab.AudioServices.Music;
 /// <summary>Per-model specifics for the generic <see cref="MusicHandler"/>.</summary>
 public sealed class MusicModelDescriptor
 {
-    /// <summary>True for HF-auto-downloaded models (MusicGen/AudioGen); false for user-placed checkpoints (YuE).</summary>
+    /// <summary>True for HF-auto-downloaded models (MusicGen/AudioGen); false for user-placed checkpoints (YuE, ACE-Step).</summary>
     public required bool ManagesOwnWeights { get; init; }
 
-    /// <summary>Stable cache key for a model id (HF repo for MusicGen/AudioGen; folder path for YuE).</summary>
+    /// <summary>Stable cache key for a model id (HF repo, or local checkpoint path).</summary>
     public required Func<string, string, string> CacheKey { get; init; }
 
-    /// <summary>Loads the model into a runner. Args: (providerId, modelId, cancel).</summary>
-    public required Func<string, string, CancellationToken, Task<IMusicRunner>> LoadAsync { get; init; }
+    /// <summary>Loads the model into a runner. Args: (backend, providerId, modelId, cancel). The backend is
+    /// needed by pipelines that bind to a device at construction (ACE-Step); others ignore it.</summary>
+    public required Func<IBackend, string, string, CancellationToken, Task<IMusicRunner>> LoadAsync { get; init; }
 }
 
-/// <summary>The music model registry. MusicGen/AudioGen reuse the engine's combined-checkpoint converters +
-/// <see cref="MusicGenPipeline"/>; YuE reuses <see cref="YuePipeline"/> + <see cref="YueTokenizer"/>.</summary>
+/// <summary>The music model registry. MusicGen/AudioGen reuse the combined-checkpoint converters +
+/// <see cref="MusicGenPipeline"/>; ACE-Step reuses <see cref="AceStepPipeline15"/>; YuE reuses
+/// <see cref="YuePipeline"/> + YueTokenizer.</summary>
 public static class MusicModels
 {
     private const int T5MaxTokens = 256;
@@ -42,7 +49,7 @@ public static class MusicModels
     {
         ManagesOwnWeights = true,
         CacheKey = (_, modelId) => ResolveMusicGenRepo(modelId),
-        LoadAsync = (_, modelId, ct) => LoadMusicGenFamilyAsync(ResolveMusicGenRepo(modelId), audioGen: false, ct),
+        LoadAsync = (_, _, modelId, ct) => LoadMusicGenFamilyAsync(ResolveMusicGenRepo(modelId), audioGen: false, ct),
     };
 
     /// <summary>AudioGen (facebook/audiogen-medium) — sound effects at 16 kHz; fixed AudioGen preset.</summary>
@@ -50,7 +57,7 @@ public static class MusicModels
     {
         ManagesOwnWeights = true,
         CacheKey = (_, _) => "facebook/audiogen-medium",
-        LoadAsync = (_, _, ct) => LoadMusicGenFamilyAsync("facebook/audiogen-medium", audioGen: true, ct),
+        LoadAsync = (_, _, _, ct) => LoadMusicGenFamilyAsync("facebook/audiogen-medium", audioGen: true, ct),
     };
 
     private static string ResolveMusicGenRepo(string modelId)
@@ -88,7 +95,7 @@ public static class MusicModels
         MusicGenPipeline pipeline = new(config, decoder, codec);
         Logs.Info($"[AudioLab][MusicGen] Loaded {repo} ({config.CodecSampleRate} Hz).");
 
-        float[] Synth(IBackend backend, MusicRequest req)
+        MusicAudio Synth(IBackend backend, MusicRequest req)
         {
             int[] tokens = tokenizer.Encode(req.Prompt);
             Tensor t5States = t5.Encode(backend, [tokens], [T5Tokenizer.CreateAttentionMask(tokens)]);
@@ -97,7 +104,8 @@ public static class MusicModels
             try
             {
                 // MusicGen/AudioGen are trained on ≤30 s windows.
-                return pipeline.Synthesize(backend, t5States, seconds: (float)Math.Clamp(req.Duration, 1d, 30d), seed: req.Seed);
+                float[] samples = pipeline.Synthesize(backend, t5States, seconds: (float)Math.Clamp(req.Duration, 1d, 30d), seed: req.Seed);
+                return MusicAudio.Mono(samples);
             }
             finally
             {
@@ -123,6 +131,111 @@ public static class MusicModels
 
     #endregion
 
+    #region ACE-Step 1.5 (user-placed DiT + auto-downloaded VAE & encoder)
+
+    private const int QwenEosId = 151643; // Qwen3-Embedding <|endoftext|>
+    private const string AceStep15VaeRepo = "Comfy-Org/ace_step_1.5_ComfyUI_files";
+    private const string AceStep15VaeFile = "split_files/vae/ace_1.5_vae.safetensors";
+    private const string QwenEmbeddingRepo = "Qwen/Qwen3-Embedding-0.6B";
+    private const string QwenEmbeddingFile = "model.safetensors";
+
+    /// <summary>ACE-Step 1.5 (2B turbo flow-matching music DiT over 25 Hz Oobleck latents → 48 kHz stereo).
+    /// Main DiT checkpoint is user-placed; the Oobleck VAE + Qwen3-Embedding-0.6B encoder auto-download.</summary>
+    public static readonly MusicModelDescriptor AceStep = new()
+    {
+        ManagesOwnWeights = false,
+        CacheKey = (providerId, modelId) => ResolveLocalCheckpoint(providerId, modelId),
+        LoadAsync = (backend, providerId, modelId, ct) => LoadAceStepAsync(backend, ResolveLocalCheckpoint(providerId, modelId), ct),
+    };
+
+    private static async Task<IMusicRunner> LoadAceStepAsync(IBackend backend, string mainPath, CancellationToken ct)
+    {
+        if (!File.Exists(mainPath))
+        {
+            throw new FileNotFoundException(
+                $"ACE-Step 1.5 checkpoint not found: '{mainPath}'. Place the model .safetensors there.", mainPath);
+        }
+        string vaePath = await AudioModelCache.GetAsync(AceStep15VaeRepo, AceStep15VaeFile, ct: ct).ConfigureAwait(false);
+        string qwenPath = await AudioModelCache.GetAsync(QwenEmbeddingRepo, QwenEmbeddingFile, ct: ct).ConfigureAwait(false);
+
+        AceStep15Config config = new();
+        (Dictionary<string, Tensor> weights, SafeTensorsLoader mainLoader) = AceStepCheckpointConverter.LoadModel15(mainPath, castToF32: true);
+        AceStep15Dit dit = new(config);
+        dit.LoadWeights(weights);
+        AceStep15ConditionEncoder conditionEncoder = new(config);
+        conditionEncoder.LoadWeights(weights);
+
+        SafeTensorsLoader vaeLoader = new();
+        vaeLoader.Load(vaePath);
+        OobleckVae vae = new(OobleckConfig.AceStep15);
+        vae.LoadWeights(vaeLoader.GetAllTensors());
+
+        SafeTensorsLoader qwenLoader = new();
+        qwenLoader.Load(qwenPath);
+        LlamaStyleEncoder qwen = new(LlamaStyleEncoderConfig.Qwen3_Embedding_0_6B);
+        qwen.LoadWeights(qwenLoader.GetAllTensors());
+        Qwen3Tokenizer tokenizer = new();
+
+        AceStepPipeline15 pipeline = new(backend, dit, conditionEncoder, vae, config);
+        Logs.Info("[AudioLab][ACE-Step] Loaded 1.5 (text/lyrics-to-music, 48 kHz stereo, turbo 8-step).");
+
+        Tensor EncodeQwen(IBackend b, string text)
+        {
+            IReadOnlyList<int> raw = tokenizer.EncodeRaw(text ?? "");
+            int[] tokens = new int[raw.Count + 1];
+            for (int i = 0; i < raw.Count; i++)
+            {
+                tokens[i] = raw[i];
+            }
+            tokens[^1] = QwenEosId;
+            Tensor batchT = qwen.Encode(b, [tokens]);
+            Tensor sliced = CfgHelper.SliceBatchElement(batchT, 0, tokens.Length, config.TextHiddenDim);
+            batchT.Dispose();
+            return sliced;
+        }
+
+        MusicAudio Synth(IBackend b, MusicRequest req)
+        {
+            string style = string.IsNullOrWhiteSpace(req.Genre) ? "pop" : req.Genre;
+            Tensor textHidden = EncodeQwen(b, style);
+            Tensor lyricHidden = string.IsNullOrWhiteSpace(req.Prompt) ? null : EncodeQwen(b, req.Prompt);
+            b.Sync();
+            b.FreeWeights(qwen.EnumerateWeights());
+            try
+            {
+                (float[] left, float[] right, int _, int _) = pipeline.Generate(
+                    textHidden, lyricHidden, Math.Clamp(req.Duration, 1d, 600d), seed: req.Seed);
+                return MusicAudio.Stereo(left, right);
+            }
+            finally
+            {
+                textHidden.Dispose();
+                lyricHidden?.Dispose();
+            }
+        }
+
+        return new MusicRunner(48_000, Synth, pipeline as IDisposable, qwen, tokenizer, mainLoader, vaeLoader, qwenLoader);
+    }
+
+    #endregion
+
+    #region Local-checkpoint resolution (ACE-Step, YuE)
+
+    /// <summary>Resolves a user-placed checkpoint under the AudioLab model root for the chosen variant.</summary>
+    private static string ResolveLocalCheckpoint(string providerId, string modelId)
+    {
+        AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId)
+            ?? throw new InvalidOperationException($"Unknown audio provider '{providerId}'.");
+        string baseDir = AudioWeights.WeightsDirectory(provider);
+        string variant = (modelId ?? "").Trim();
+        return string.IsNullOrEmpty(variant) ? baseDir : Path.Combine(baseDir, variant);
+    }
+
+    #endregion
+
+    // ENABLE WHEN the engine package ships YueTokenizer (added to HartsyInference.Tokenizers; not in
+    // alpha.28). Then delete the #if false / #endif and uncomment yue_music in AudioEngine.BuildHandlers.
+#if false
     #region YuE (user-placed folder checkpoint)
 
     /// <summary>YuE Stage-1 (m-a-p/YuE-s1-7B-anneal-*) — folder checkpoint + sibling tokenizer.model + xcodec.safetensors.
@@ -130,19 +243,9 @@ public static class MusicModels
     public static readonly MusicModelDescriptor Yue = new()
     {
         ManagesOwnWeights = false,
-        CacheKey = (providerId, modelId) => ResolveYueFolder(providerId, modelId),
-        LoadAsync = (providerId, modelId, ct) => LoadYueAsync(ResolveYueFolder(providerId, modelId), ct),
+        CacheKey = (providerId, modelId) => ResolveLocalCheckpoint(providerId, modelId),
+        LoadAsync = (_, providerId, modelId, ct) => LoadYueAsync(ResolveLocalCheckpoint(providerId, modelId), ct),
     };
-
-    /// <summary>Resolves the YuE checkpoint folder under the AudioLab model root for the chosen variant.</summary>
-    private static string ResolveYueFolder(string providerId, string modelId)
-    {
-        AudioProviderDefinition provider = AudioProviderRegistry.All.FirstOrDefault(p => p.Id == providerId)
-            ?? throw new InvalidOperationException($"Unknown audio provider '{providerId}'.");
-        string baseDir = AudioWeights.WeightsDirectory(provider);
-        string variant = (modelId ?? "").Trim();
-        return string.IsNullOrEmpty(variant) ? baseDir : Path.Combine(baseDir, variant);
-    }
 
     private static Task<IMusicRunner> LoadYueAsync(string folder, CancellationToken ct)
     {
@@ -170,15 +273,14 @@ public static class MusicModels
         YuePipeline pipeline = new(config, stage1, xcodec);
         Logs.Info($"[AudioLab][YuE] Loaded Stage-1 from '{folder}' (16 kHz, vocal-cb0 only — Stage-2 pending).");
 
-        float[] Synth(IBackend backend, MusicRequest req)
+        MusicAudio Synth(IBackend backend, MusicRequest req)
         {
             string genre = string.IsNullOrWhiteSpace(req.Genre) ? "pop" : req.Genre;
             int[] promptIds = tokenizer.EncodeStage1Prompt(genre, req.Prompt);
             int maxFrames = (int)(Math.Clamp(req.Duration, 5d, 300d) * config.FrameRateHz);
-            return pipeline.Synthesize(backend, promptIds, maxFrames: maxFrames, seed: req.Seed);
+            return MusicAudio.Mono(pipeline.Synthesize(backend, promptIds, maxFrames: maxFrames, seed: req.Seed));
         }
 
-        // pipeline.Dispose() disposes the Stage-1 LM; also drop the loaders + tokenizer.
         return Task.FromResult<IMusicRunner>(new MusicRunner(config.SampleRate, Synth, pipeline, s1Loader, cLoader, tokenizer));
     }
 
@@ -195,4 +297,5 @@ public static class MusicModels
     }
 
     #endregion
+#endif
 }

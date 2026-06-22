@@ -80,6 +80,41 @@ public static class AudioIo
         return Convert.ToBase64String(ms.ToArray());
     }
 
+    /// <summary>Encodes a mono (<paramref name="right"/> null) or stereo waveform to a base64 16-bit PCM WAV.</summary>
+    public static string EncodeWavBase64(float[] left, float[] right, int sampleRate)
+    {
+        if (right is null)
+        {
+            return EncodeMonoWavBase64(left, sampleRate);
+        }
+        int frames = Math.Min(left.Length, right.Length);
+        int dataBytes = frames * 2 * sizeof(short);
+        using MemoryStream ms = new();
+        using BinaryWriter w = new(ms, System.Text.Encoding.ASCII, leaveOpen: true);
+        w.Write("RIFF"u8.ToArray());
+        w.Write(36 + dataBytes);
+        w.Write("WAVE"u8.ToArray());
+        w.Write("fmt "u8.ToArray());
+        w.Write(16);                         // fmt chunk size
+        w.Write((short)1);                   // PCM
+        w.Write((short)2);                   // channels
+        w.Write(sampleRate);
+        w.Write(sampleRate * 2 * sizeof(short)); // byte rate
+        w.Write((short)(2 * sizeof(short)));     // block align
+        w.Write((short)16);                  // bits per sample
+        w.Write("data"u8.ToArray());
+        w.Write(dataBytes);
+        for (int i = 0; i < frames; i++)
+        {
+            w.Write(ToPcm16(left[i]));
+            w.Write(ToPcm16(right[i]));
+        }
+        w.Flush();
+        return Convert.ToBase64String(ms.ToArray());
+    }
+
+    private static short ToPcm16(float v) => (short)Math.Clamp((int)MathF.Round(v * 32767f), short.MinValue, short.MaxValue);
+
     /// <summary>Success result for an audio-producing request (TTS / voice-conv / FX / music).</summary>
     public static JObject AudioResult(string audioBase64, string outputFormat, double durationSeconds) => new()
     {

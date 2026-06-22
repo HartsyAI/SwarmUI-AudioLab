@@ -7,7 +7,8 @@ using HartsyInference.Core.Backends;
 namespace Hartsy.Extensions.AudioLab.AudioServices.Music;
 
 /// <summary>Generic text-to-music handler (prompt → synth → base64 WAV), driven by a per-model
-/// <see cref="MusicModelDescriptor"/>. Covers MusicGen, AudioGen, and YuE; runners cached per resolved model.</summary>
+/// <see cref="MusicModelDescriptor"/>. Covers MusicGen, AudioGen, ACE-Step; runners cached per resolved model.
+/// Loading is lazy (needs the compute device), so it happens on first generation, not at install.</summary>
 public sealed class MusicHandler(string providerId, MusicModelDescriptor descriptor) : IAudioHandler
 {
     private readonly ConcurrentDictionary<string, IMusicRunner> _cache = new(StringComparer.Ordinal);
@@ -17,11 +18,13 @@ public sealed class MusicHandler(string providerId, MusicModelDescriptor descrip
 
     public bool ManagesOwnWeights => descriptor.ManagesOwnWeights;
 
-    public async Task EnsureWeightsAsync(string modelId, Action<string> onProgress, CancellationToken cancel)
+    public Task EnsureWeightsAsync(string modelId, Action<string> onProgress, CancellationToken cancel)
     {
-        onProgress("Loading music model...");
-        await GetOrLoadAsync(modelId, cancel).ConfigureAwait(false);
-        onProgress("Ready.");
+        // The full load binds to a compute device, so it runs lazily on first generation.
+        onProgress(descriptor.ManagesOwnWeights
+            ? "Weights download on first generation."
+            : "Place the model checkpoint; loads on first generation.");
+        return Task.CompletedTask;
     }
 
     public async Task<JObject> ProcessAsync(IBackend backend, IReadOnlyDictionary<string, object> args, CancellationToken cancel)
@@ -40,17 +43,17 @@ public sealed class MusicHandler(string providerId, MusicModelDescriptor descrip
         };
         string modelId = AudioIo.Str(args, "__model_id");
 
-        IMusicRunner runner = await GetOrLoadAsync(modelId, cancel).ConfigureAwait(false);
+        IMusicRunner runner = await GetOrLoadAsync(backend, modelId, cancel).ConfigureAwait(false);
         cancel.ThrowIfCancellationRequested();
         long start = Environment.TickCount64;
-        float[] samples = runner.Synthesize(backend, request);
-        if (samples is null || samples.Length == 0)
+        MusicAudio audio = runner.Synthesize(backend, request);
+        if (audio.Left is null || audio.Left.Length == 0)
         {
             return AudioIo.Error("The music model produced no audio.");
         }
-        double duration = samples.Length / (double)runner.SampleRate;
-        Logs.Verbose($"[AudioLab][Music] Generated {duration:0.0}s @ {runner.SampleRate} Hz in {Environment.TickCount64 - start}ms.");
-        return AudioIo.AudioResult(AudioIo.EncodeMonoWavBase64(samples, runner.SampleRate), "wav", duration);
+        double duration = audio.Left.Length / (double)runner.SampleRate;
+        Logs.Verbose($"[AudioLab][Music] Generated {duration:0.0}s @ {runner.SampleRate} Hz ({(audio.Right is null ? "mono" : "stereo")}) in {Environment.TickCount64 - start}ms.");
+        return AudioIo.AudioResult(AudioIo.EncodeWavBase64(audio.Left, audio.Right, runner.SampleRate), "wav", duration);
     }
 
     public void Unload(string modelId)
@@ -62,14 +65,14 @@ public sealed class MusicHandler(string providerId, MusicModelDescriptor descrip
         }
     }
 
-    private async Task<IMusicRunner> GetOrLoadAsync(string modelId, CancellationToken cancel)
+    private async Task<IMusicRunner> GetOrLoadAsync(IBackend backend, string modelId, CancellationToken cancel)
     {
         string key = descriptor.CacheKey(providerId, modelId);
         if (_cache.TryGetValue(key, out IMusicRunner existing))
         {
             return existing;
         }
-        IMusicRunner loaded = await descriptor.LoadAsync(providerId, modelId, cancel).ConfigureAwait(false);
+        IMusicRunner loaded = await descriptor.LoadAsync(backend, providerId, modelId, cancel).ConfigureAwait(false);
         lock (_loadLock)
         {
             if (_cache.TryGetValue(key, out IMusicRunner raced))
