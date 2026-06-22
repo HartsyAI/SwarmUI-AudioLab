@@ -28,12 +28,19 @@ public interface ITtsRunner : IDisposable
     float[] Synthesize(IBackend backend, TtsRequest request);
 }
 
-/// <summary>Wraps any pipeline + a synth delegate, so no per-model runner class is needed.</summary>
-public sealed class TtsRunner(IDisposable pipeline, int sampleRate, Func<IBackend, TtsRequest, float[]> synth) : ITtsRunner
+/// <summary>Wraps a synth delegate + the disposables a loaded model owns (pipeline, and any weight loaders
+/// the model tensors still reference), so no per-model runner class is needed.</summary>
+public sealed class TtsRunner(int sampleRate, Func<IBackend, TtsRequest, float[]> synth, params IDisposable[] disposables) : ITtsRunner
 {
     public int SampleRate => sampleRate;
 
     public float[] Synthesize(IBackend backend, TtsRequest request) => synth(backend, request);
 
-    public void Dispose() => pipeline.Dispose();
+    public void Dispose()
+    {
+        foreach (IDisposable d in disposables)
+        {
+            d?.Dispose();
+        }
+    }
 }

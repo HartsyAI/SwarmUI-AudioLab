@@ -35,6 +35,12 @@ public static class AudioEngine
         // TTS — same pattern. Token-based TTS joins as the engine's text front-ends / tokenizer assets land.
         map["vibevoice_tts"] = new TtsHandler(TtsModels.VibeVoice);
         map["kokoro_tts"] = new TtsHandler(TtsModels.Kokoro);
+        map["bark_tts"] = new TtsHandler(TtsModels.Bark);
+        map["dia_tts"] = new TtsHandler(TtsModels.Dia);
+        // Llama-3 family — wired as if the Llama-3 tokenizer asset is present (engine RequireLlama throws a
+        // clear message until it ships). See TtsModels TODO(llama-asset).
+        map["orpheus_tts"] = new TtsHandler(TtsModels.Orpheus);
+        map["csm_tts"] = new TtsHandler(TtsModels.Csm);
 
         // Music — MusicGen/AudioGen HF-auto-download. YuE is ready (MusicModels.Yue) but gated until the
         // engine package ships YueTokenizer; re-enable this line + the #if false in MusicModels then.
