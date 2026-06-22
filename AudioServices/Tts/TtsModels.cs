@@ -194,7 +194,7 @@ public static class TtsModels
 
     /// <summary>Loads a (possibly sharded) HF safetensors checkpoint, or a PyTorch pickle <c>.bin</c>, into one
     /// merged dict + the loaders to keep alive (the model tensors may reference them).</summary>
-    private static async Task<(IReadOnlyDictionary<string, Tensor> Dict, IDisposable[] Loaders)> LoadCheckpointAsync(string repo, CancellationToken ct)
+    internal static async Task<(IReadOnlyDictionary<string, Tensor> Dict, IDisposable[] Loaders)> LoadCheckpointAsync(string repo, CancellationToken ct)
     {
         try
         {
