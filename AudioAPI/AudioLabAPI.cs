@@ -388,6 +388,7 @@ public static class AudioLabAPI
                 .Select(b => b.AbstractBackend as DynamicAudioBackend)
                 .FirstOrDefault(b => b is not null);
             IReadOnlySet<string> installedIds = backend?.GetInstalledEngineIds() ?? new HashSet<string>();
+            IReadOnlySet<string> weightsMissingIds = backend?.GetWeightsMissingEngineIds() ?? new HashSet<string>();
             bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
             bool dockerEnabled = AudioConfiguration.UseDocker;
 
@@ -431,6 +432,8 @@ public static class AudioLabAPI
                     ["platform_compatible"] = platformCompatible,
                     ["platform_note"] = platformNote,
                     ["installed"] = installedIds.Contains(provider.Id),
+                    // Installed but weights absent on disk (e.g. user freed space) — UI shows a repair prompt.
+                    ["weights_missing"] = weightsMissingIds.Contains(provider.Id),
                     // In-process C# engines have no Python dependencies; only the model weights download.
                     ["in_process"] = !provider.IsApiProvider,
                     ["models"] = models
@@ -486,7 +489,7 @@ public static class AudioLabAPI
             {
                 Logs.Info($"[AudioLab] Install progress: {msg}");
                 ws.SendJson(new JObject { ["info"] = msg }, API.WebsocketTimeout).Wait();
-            });
+            }, Program.GlobalProgramCancel);
 
             if (success)
             {
@@ -505,8 +508,10 @@ public static class AudioLabAPI
         return null;
     }
 
-    /// <summary>Uninstalls an audio engine: removes models from registry and persists the change.</summary>
-    public static async Task<JObject> AudioLabUninstallEngine(Session session, string provider_id)
+    /// <summary>Uninstalls an audio engine: removes models from registry and persists the change. When
+    /// <paramref name="delete_weights"/> is true, also deletes the provider's downloaded weights from disk
+    /// (shared side-model caches are retained).</summary>
+    public static async Task<JObject> AudioLabUninstallEngine(Session session, string provider_id, bool delete_weights = false)
     {
         try
         {
@@ -536,13 +541,16 @@ public static class AudioLabAPI
                 };
             }
 
-            backend.UnregisterEngine(provider_id);
+            backend.UnregisterEngine(provider_id, delete_weights);
 
             return new JObject
             {
                 ["success"] = true,
                 ["provider_id"] = provider_id,
-                ["message"] = $"{provider.Name} removed successfully."
+                ["deleted_weights"] = delete_weights,
+                ["message"] = delete_weights
+                    ? $"{provider.Name} removed and weights deleted."
+                    : $"{provider.Name} removed successfully."
             };
         }
         catch (Exception ex)

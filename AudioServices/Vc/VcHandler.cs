@@ -2,6 +2,9 @@ using System.Collections.Concurrent;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Utils;
 using HartsyInference.Core.Backends;
+using HartsyInference.Audio.Cache;
+using Hartsy.Extensions.AudioLab.AudioProviders;
+using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 
 namespace Hartsy.Extensions.AudioLab.AudioServices.Vc;
 
@@ -21,6 +24,17 @@ public sealed class VcHandler(string providerId, VcModelDescriptor descriptor) :
         onProgress("Loading voice-conversion model...");
         await GetOrLoadAsync(modelId, cancel).ConfigureAwait(false);
         onProgress("Ready.");
+    }
+
+    public IReadOnlyList<string> GetWeightLocations(string modelId)
+    {
+        if (descriptor.ManagesOwnWeights)
+        {
+            string repo = descriptor.CacheKey(providerId, modelId);
+            return string.IsNullOrEmpty(repo) ? [] : [AudioModelCache.GetRepoDirectory(repo)];
+        }
+        AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId);
+        return provider is null ? [] : [AudioWeights.WeightsDirectory(provider)];
     }
 
     public async Task<JObject> ProcessAsync(IBackend backend, IReadOnlyDictionary<string, object> args, CancellationToken cancel)

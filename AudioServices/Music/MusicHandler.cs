@@ -3,6 +3,9 @@ using System.Globalization;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Utils;
 using HartsyInference.Core.Backends;
+using HartsyInference.Audio.Cache;
+using Hartsy.Extensions.AudioLab.AudioProviders;
+using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 
 namespace Hartsy.Extensions.AudioLab.AudioServices.Music;
 
@@ -25,6 +28,20 @@ public sealed class MusicHandler(string providerId, MusicModelDescriptor descrip
             ? "Weights download on first generation."
             : "Place the model checkpoint; loads on first generation.");
         return Task.CompletedTask;
+    }
+
+    public IReadOnlyList<string> GetWeightLocations(string modelId)
+    {
+        // ManagesOwnWeights (MusicGen/AudioGen): CacheKey is the HF repo id → its private cache dir.
+        // Checkpoint providers (ACE-Step/YuE): the provider's dedicated weights directory (where Install
+        // downloads to). The shared ACE-Step VAE / Qwen-embedding caches are intentionally NOT included.
+        if (descriptor.ManagesOwnWeights)
+        {
+            string repo = descriptor.CacheKey(providerId, modelId);
+            return string.IsNullOrEmpty(repo) ? [] : [AudioModelCache.GetRepoDirectory(repo)];
+        }
+        AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId);
+        return provider is null ? [] : [AudioWeights.WeightsDirectory(provider)];
     }
 
     public async Task<JObject> ProcessAsync(IBackend backend, IReadOnlyDictionary<string, object> args, CancellationToken cancel)

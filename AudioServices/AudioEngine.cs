@@ -42,8 +42,8 @@ public static class AudioEngine
         // clear message until it ships). See TtsModels TODO(llama-asset).
         map["orpheus_tts"] = new TtsHandler(TtsModels.Orpheus);
         map["csm_tts"] = new TtsHandler(TtsModels.Csm);
-        map["fishspeech_tts"] = new TtsHandler(FishSpeechModel.Descriptor);
         map["neutts_tts"] = new TtsHandler(NeuTtsModel.Descriptor);
+        map["fishspeech_tts"] = new TtsHandler(FishSpeechModel.Descriptor);
         map["cosyvoice_tts"] = new TtsHandler(CosyVoiceModel.Descriptor);
 
         // Music — MusicGen/AudioGen HF-auto-download. YuE is ready (MusicModels.Yue) but gated until the
@@ -57,6 +57,9 @@ public static class AudioEngine
         map["rvc_clone"] = new VcHandler("rvc_clone", VcModels.Rvc);
         // OpenVoice V2 tone-color transfer (source + target voice → re-voiced source).
         map["openvoice_clone"] = new VcHandler("openvoice_clone", OpenVoiceModel.Descriptor);
+
+        // Audio processing — Demucs stem separation (used by the DAW's "Separate Stems" → returns a stems map).
+        map["demucs_fx"] = new Fx.DemucsHandler();
 
         return map;
     }
@@ -220,6 +223,58 @@ public static class AudioEngine
             try { handler.Unload(modelId); }
             catch (Exception ex) { Logs.Debug($"[AudioLab] Unload('{providerId}','{modelId}') threw: {ex.Message}"); }
         }
+    }
+
+    /// <summary>The provider-private on-disk locations a model occupies (for delete / missing-weights checks).
+    /// Empty when the provider isn't engine-backed. Paths may not exist yet — callers filter by existence.</summary>
+    public static IReadOnlyList<string> GetWeightLocations(string providerId, string modelId)
+    {
+        if (!_handlers.TryGetValue(providerId ?? "", out IAudioHandler handler))
+        {
+            return [];
+        }
+        try { return handler.GetWeightLocations(modelId) ?? []; }
+        catch (Exception ex)
+        {
+            Logs.Debug($"[AudioLab] GetWeightLocations('{providerId}','{modelId}') threw: {ex.Message}");
+            return [];
+        }
+    }
+
+    /// <summary>True if at least one of the model's weight locations exists on disk and is non-empty. Used by
+    /// the reconcile pass to flag "installed but weights missing". A provider with no known locations (e.g. an
+    /// API provider, or one whose handler can't introspect) is treated as present to avoid false negatives.</summary>
+    public static bool WeightsPresent(string providerId, string modelId)
+    {
+        IReadOnlyList<string> locations = GetWeightLocations(providerId, modelId);
+        if (locations.Count == 0)
+        {
+            return true;
+        }
+        foreach (string path in locations)
+        {
+            if (string.IsNullOrEmpty(path))
+            {
+                continue;
+            }
+            try
+            {
+                if (File.Exists(path))
+                {
+                    return true;
+                }
+                // A directory counts only if it actually holds a weight-ish file (an empty dir left by a
+                // half-cleaned cache is "missing"). Cheap heuristic: any file over ~1 MB.
+                if (Directory.Exists(path)
+                    && Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)
+                        .Any(f => new FileInfo(f).Length > 1_000_000))
+                {
+                    return true;
+                }
+            }
+            catch (Exception ex) { Logs.Debug($"[AudioLab] WeightsPresent probe of '{path}' threw: {ex.Message}"); }
+        }
+        return false;
     }
 
     #endregion

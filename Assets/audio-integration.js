@@ -384,7 +384,10 @@ function audioLabBuildEngineCard(engine) {
 
     const cardHeader = createDiv(null, 'audiolab-engine-card-header');
     const status = createDiv(null, 'audiolab-engine-status-dot');
-    if (engine.installed) {
+    if (engine.installed && engine.weights_missing) {
+        status.style.backgroundColor = 'var(--backend-loading, orange)';
+        status.title = 'Installed, but weights are missing on disk — click Repair to re-download';
+    } else if (engine.installed) {
         status.style.backgroundColor = 'var(--backend-running)';
         status.title = 'Installed';
     } else if (!engine.platform_compatible) {
@@ -429,6 +432,14 @@ function audioLabBuildEngineCard(engine) {
         note.innerText = 'Requires Docker';
         footer.appendChild(note);
     } else if (engine.installed) {
+        if (engine.weights_missing) {
+            const repairBtn = document.createElement('button');
+            repairBtn.className = 'basic-button btn-primary';
+            repairBtn.innerText = 'Repair';
+            repairBtn.title = 'Re-download this engine\'s missing weights';
+            repairBtn.addEventListener('click', (e) => { e.stopPropagation(); audioLabRepair(engine); });
+            footer.appendChild(repairBtn);
+        }
         const btn = document.createElement('button');
         btn.className = 'basic-button';
         btn.innerText = 'Remove';
@@ -454,7 +465,7 @@ function audioLabShowInstallModal(engine) {
     const models = engine.models || [];
     const firstModel = models.length > 0 ? models[0] : {};
     const runtimeNoteHtml = engine.in_process === false ? ''
-        : `<p style="color:var(--text-soft);margin-top:0.5em">⚙ Runs in-process on the HartsyInference C# engine — no Python install. The model downloads automatically on first use.</p>`;
+        : `<p style="color:var(--text-soft);margin-top:0.5em">⚙ Runs using the HartsyInference C# engine — the model downloads automatically on first use.</p>`;
 
     let modelsListHtml = '';
     if (models.length > 0) {
@@ -556,17 +567,35 @@ function audioLabDoInstall(engine, modal) {
     });
 }
 
-/** Confirms and uninstalls an engine. */
+/** Confirms and uninstalls an engine, optionally deleting its downloaded weights from disk. */
 function audioLabConfirmUninstall(engine) {
     if (!confirm(`Remove ${engine.name}? Its models will be unregistered from the model browser.`)) {
         return;
     }
-    genericRequest('AudioLabUninstallEngine', { provider_id: engine.id }, data => {
+    // Second prompt: keep or delete the downloaded files. Engine-private weights are removed; shared
+    // side-model caches (used by other installed engines) are retained automatically by the backend.
+    const deleteWeights = confirm(
+        `Also DELETE ${engine.name}'s downloaded weights from disk to free space?\n\n`
+        + `OK = delete the files (you'll re-download to use it again).\n`
+        + `Cancel = keep the files on disk.`);
+    genericRequest('AudioLabUninstallEngine', { provider_id: engine.id, delete_weights: deleteWeights }, data => {
         if (data.success) {
-            doNoticePopover(`${engine.name} removed.`, 'notice-pop-green');
+            doNoticePopover(`${engine.name} removed${data.deleted_weights ? ' (weights deleted)' : ''}.`, 'notice-pop-green');
             audioLabRefreshEngineManager();
         } else {
             showError(`Failed to remove ${engine.name}: ${data.error || 'Unknown error'}`);
+        }
+    });
+}
+
+/** Repairs an engine whose weights are missing: clears the stale registration + any partial files, then
+ * reopens the install flow (which re-downloads). */
+function audioLabRepair(engine) {
+    genericRequest('AudioLabUninstallEngine', { provider_id: engine.id, delete_weights: true }, data => {
+        if (data.success) {
+            audioLabShowInstallModal(engine);
+        } else {
+            showError(`Failed to start repair for ${engine.name}: ${data.error || 'Unknown error'}`);
         }
     });
 }

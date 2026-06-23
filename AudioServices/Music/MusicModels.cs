@@ -76,18 +76,34 @@ public static class MusicModels
     /// <summary>Loads a MusicGen-family combined checkpoint (decoder + EnCodec + T5-base in one file).</summary>
     private static async Task<IMusicRunner> LoadMusicGenFamilyAsync(string repo, bool audioGen, CancellationToken ct)
     {
-        string path = await AudioModelCache.GetAsync(repo, "model.safetensors", ct: ct).ConfigureAwait(false);
+        Dictionary<string, Tensor> decW, codW, t5W;
+        IDisposable decLoader, codLoader, t5Loader;
+        // AudioGen — and MusicGen *large*, whose combined HF file is sharded — load from the AudioCraft single-file
+        // pickles instead: decoder = state_dict.bin, EnCodec = compression_state_dict.bin, T5 = standalone t5-base.
+        bool audioCraft = audioGen || repo.Contains("large", StringComparison.OrdinalIgnoreCase);
+        if (audioCraft)
+        {
+            string decPath = await AudioModelCache.GetAsync(repo, "state_dict.bin", ct: ct).ConfigureAwait(false);
+            string codPath = await AudioModelCache.GetAsync(repo, "compression_state_dict.bin", ct: ct).ConfigureAwait(false);
+            string t5Path = await AudioModelCache.GetAsync("google-t5/t5-base", "pytorch_model.bin", ct: ct).ConfigureAwait(false);
+            (decW, decLoader) = MusicGenCheckpointConverter.LoadDecoderAny(decPath, castToF32: true);
+            (codW, codLoader) = MusicGenCheckpointConverter.LoadEnCodecAny(codPath, castToF32: true);
+            (t5W, t5Loader) = MusicGenCheckpointConverter.LoadTextEncoderAny(t5Path, castToF32: true);
+        }
+        else
+        {
+            // MusicGen small/medium ship one combined file: small = model.safetensors, medium = pytorch_model.bin.
+            string path = await ResolveMusicGenCombinedAsync(repo, ct).ConfigureAwait(false);
+            (decW, decLoader) = MusicGenCheckpointConverter.LoadDecoderAny(path, castToF32: true);
+            (codW, codLoader) = MusicGenCheckpointConverter.LoadEnCodecAny(path, castToF32: true);
+            (t5W, t5Loader) = MusicGenCheckpointConverter.LoadTextEncoderAny(path, castToF32: true);
+        }
 
-        (Dictionary<string, Tensor> decW, var decLoader) = MusicGenCheckpointConverter.LoadDecoder(path, castToF32: true);
         MusicGenConfig config = audioGen ? MusicGenConfig.AudioGen : InferMusicGenSize(decW, repo);
         MusicGenDecoder decoder = new(config);
         decoder.LoadWeights(decW, prefix: "model.decoder");
-
-        (Dictionary<string, Tensor> codW, var codLoader) = MusicGenCheckpointConverter.LoadEnCodec(path, castToF32: true);
         EnCodec codec = new(audioGen ? EnCodecConfig.EnCodec16kHz : EnCodecConfig.EnCodec32kHz);
         codec.LoadWeights(codW);
-
-        (Dictionary<string, Tensor> t5W, var t5Loader) = MusicGenCheckpointConverter.LoadTextEncoder(path, castToF32: true);
         T5TextEncoder t5 = new(T5TextEncoderConfig.T5Base);
         t5.LoadWeights(t5W);
         T5Tokenizer tokenizer = new(maxLength: T5MaxTokens);
@@ -116,6 +132,20 @@ public static class MusicModels
         return new MusicRunner(config.CodecSampleRate, Synth, t5, tokenizer, decLoader, codLoader, t5Loader);
     }
 
+    /// <summary>The MusicGen combined checkpoint: small ships a single <c>model.safetensors</c>; medium ships the
+    /// HF-transformers <c>pytorch_model.bin</c> instead. (Large is sharded — not handled here.)</summary>
+    private static async Task<string> ResolveMusicGenCombinedAsync(string repo, CancellationToken ct)
+    {
+        try
+        {
+            return await AudioModelCache.GetAsync(repo, "model.safetensors", ct: ct).ConfigureAwait(false);
+        }
+        catch (FileNotFoundException)
+        {
+            return await AudioModelCache.GetAsync(repo, "pytorch_model.bin", ct: ct).ConfigureAwait(false);
+        }
+    }
+
     /// <summary>Infers Small/Medium/Large from the decoder's final layer-norm width (1024/1536/2048).</summary>
     private static MusicGenConfig InferMusicGenSize(Dictionary<string, Tensor> decoderWeights, string repo)
     {
@@ -134,13 +164,16 @@ public static class MusicModels
     #region ACE-Step 1.5 (user-placed DiT + auto-downloaded VAE & encoder)
 
     private const int QwenEosId = 151643; // Qwen3-Embedding <|endoftext|>
-    private const string AceStep15VaeRepo = "Comfy-Org/ace_step_1.5_ComfyUI_files";
+    private const string AceStep15Repo = "Comfy-Org/ace_step_1.5_ComfyUI_files";
     private const string AceStep15VaeFile = "split_files/vae/ace_1.5_vae.safetensors";
+    private const string AceStep15TurboFile = "split_files/diffusion_models/acestep_v1.5_turbo.safetensors";
     private const string QwenEmbeddingRepo = "Qwen/Qwen3-Embedding-0.6B";
     private const string QwenEmbeddingFile = "model.safetensors";
 
     /// <summary>ACE-Step 1.5 (2B turbo flow-matching music DiT over 25 Hz Oobleck latents → 48 kHz stereo).
-    /// Main DiT checkpoint is user-placed; the Oobleck VAE + Qwen3-Embedding-0.6B encoder auto-download.</summary>
+    /// The DiT, Oobleck VAE, and Qwen3-Embedding encoder all come from the Comfy-Org ACE-Step 1.5 distribution
+    /// (auto-downloaded). The engine implements the turbo path (8-step Euler, no CFG); a user-placed checkpoint
+    /// in the model folder overrides the downloaded DiT.</summary>
     public static readonly MusicModelDescriptor AceStep = new()
     {
         ManagesOwnWeights = false,
@@ -148,14 +181,13 @@ public static class MusicModels
         LoadAsync = (backend, providerId, modelId, ct) => LoadAceStepAsync(backend, ResolveLocalCheckpoint(providerId, modelId), ct),
     };
 
-    private static async Task<IMusicRunner> LoadAceStepAsync(IBackend backend, string mainPath, CancellationToken ct)
+    private static async Task<IMusicRunner> LoadAceStepAsync(IBackend backend, string localPath, CancellationToken ct)
     {
-        if (!File.Exists(mainPath))
-        {
-            throw new FileNotFoundException(
-                $"ACE-Step 1.5 checkpoint not found: '{mainPath}'. Place the model .safetensors there.", mainPath);
-        }
-        string vaePath = await AudioModelCache.GetAsync(AceStep15VaeRepo, AceStep15VaeFile, ct: ct).ConfigureAwait(false);
+        // A user-placed checkpoint in the model folder wins; otherwise pull the official Comfy-Org turbo DiT.
+        string mainPath = File.Exists(localPath)
+            ? localPath
+            : await AudioModelCache.GetAsync(AceStep15Repo, AceStep15TurboFile, ct: ct).ConfigureAwait(false);
+        string vaePath = await AudioModelCache.GetAsync(AceStep15Repo, AceStep15VaeFile, ct: ct).ConfigureAwait(false);
         string qwenPath = await AudioModelCache.GetAsync(QwenEmbeddingRepo, QwenEmbeddingFile, ct: ct).ConfigureAwait(false);
 
         AceStep15Config config = new();
@@ -228,6 +260,13 @@ public static class MusicModels
             ?? throw new InvalidOperationException($"Unknown audio provider '{providerId}'.");
         string baseDir = AudioWeights.WeightsDirectory(provider);
         string variant = (modelId ?? "").Trim();
+        // Single-file providers (ACE-Step) register the variant→filename map; map to the real .safetensors.
+        // Folder-checkpoint providers (YuE) have no registry entry — fall back to the variant as a subpath.
+        AudioWeightsRegistry.DownloadSpec spec = AudioWeightsRegistry.Resolve(providerId, variant);
+        if (spec is not null)
+        {
+            return Path.Combine(baseDir, spec.FileName);
+        }
         return string.IsNullOrEmpty(variant) ? baseDir : Path.Combine(baseDir, variant);
     }
 

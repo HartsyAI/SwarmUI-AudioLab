@@ -39,7 +39,8 @@ public static class FishSpeechModel
     private const string Repo = "fishaudio/fish-speech-1.5";
     private const string ModelFile = "model.pth";
     private const string CodecFile = "firefly-gan-vq-fsq-8x1024-21hz-generator.pth";
-    private const string TokenizerFile = "tokenizer.json";
+    private const string TokenizerFile = "tokenizer.tiktoken";
+    private const string SpecialTokensFile = "special_tokens.json";
 
     public static readonly TtsModelDescriptor Descriptor = new()
     {
@@ -49,7 +50,10 @@ public static class FishSpeechModel
             // Two separate pickles: DualAR weights + firefly codec weights. Both auto-download on first use.
             string modelPath = await AudioModelCache.GetAsync(Repo, ModelFile, ct: ct).ConfigureAwait(false);
             string codecPath = await AudioModelCache.GetAsync(Repo, CodecFile, ct: ct).ConfigureAwait(false);
+            // The repo ships a tiktoken vocab + a special_tokens.json sibling; FishSpeechTokenizer.Load auto-finds
+            // the sibling (same cache dir), so fetch both.
             string tokenizerPath = await AudioModelCache.GetAsync(Repo, TokenizerFile, ct: ct).ConfigureAwait(false);
+            await AudioModelCache.GetAsync(Repo, SpecialTokensFile, ct: ct).ConfigureAwait(false);
 
             PytorchPickleLoader modelLoader = new();
             modelLoader.Load(modelPath);
@@ -62,7 +66,7 @@ public static class FishSpeechModel
             {
                 throw new InvalidOperationException(
                     $"Fish-Speech tokenizer at '{tokenizerPath}' is missing the '<|im_end|>' stop token — the "
-                    + "DualAR pipeline cannot determine when to stop. Verify the tokenizer.json asset.");
+                    + "DualAR pipeline cannot determine when to stop. Verify the tokenizer asset.");
             }
 
             FishSpeechPipeline pipeline = new(FishSpeechConfig.V1_5);

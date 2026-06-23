@@ -31,6 +31,8 @@ public static class AudioWeightsRegistry
     private static readonly DownloadSpec AceStep15Turbo = new(
         Url: AceStep15Base + "acestep_v1.5_turbo.safetensors",
         FileName: "acestep_v1.5_turbo.safetensors",
+        // TODO: pin the canonical SHA-256 once a known-good copy is on disk (Comfy-Org publishes none here).
+        // Until then AudioWeights.EnsureWeightAsync falls back to a size-floor truncation check.
         Sha256: "");
 
     /// <summary>(providerId → (modelId → spec)). Absent entries mean "engine can't run this variant yet".</summary>

@@ -1,5 +1,6 @@
 using System.IO;
 using Hartsy.Extensions.AudioLab.AudioServices.Tts;
+using HartsyInference.Audio.Cache;
 using HartsyInference.Audio.Models.Kyutai;
 using HartsyInference.Audio.Pipelines;
 using HartsyInference.Tokenizers;
@@ -53,17 +54,25 @@ public static class SttModels
         {
             (System.Collections.Generic.IReadOnlyDictionary<string, HartsyInference.Core.Tensors.Tensor> dict, System.IDisposable[] loaders)
                 = await TtsModels.LoadCheckpointAsync(repo, ct).ConfigureAwait(false);
-            string spm = Path.Combine(Path.GetFullPath(AudioConfiguration.ModelRoot), "kyutai_stt.model");
-            if (!File.Exists(spm))
-            {
-                throw new FileNotFoundException(
-                    $"Kyutai STT needs its SentencePiece text model — place 'kyutai_stt.model' (from the {repo} repo) at '{spm}'.", spm);
-            }
+            bool is1B = repo.ToLowerInvariant().Contains("1b");
+            // The SentencePiece text model isn't shipped in the -trfs repos — fetch it from the original repo.
+            (string spmRepo, string spmFile) = is1B
+                ? ("kyutai/stt-1b-en_fr", "tokenizer_en_fr_audio_8000.model")
+                : ("kyutai/stt-2.6b-en", "tokenizer_en_audio_4000.model");
+            string spm = await AudioModelCache.GetAsync(spmRepo, spmFile, ct: ct).ConfigureAwait(false);
             // 1B (en+fr, vocab 8001, 16 layers) vs 2.6B (en, vocab 4001, 48 layers) — configs differ, pick by repo.
-            KyutaiSttConfig cfg = repo.ToLowerInvariant().Contains("1b") ? KyutaiSttConfig.Stt1B : KyutaiSttConfig.Stt2_6B;
-            // The Kyutai checkpoint bundles the Helium backbone + the Mimi codec; LoadWeights extracts each by prefix.
+            KyutaiSttConfig cfg = is1B ? KyutaiSttConfig.Stt1B : KyutaiSttConfig.Stt2_6B;
+            // The -trfs checkpoint namespaces the Mimi codec under "codec_model."; strip it so the engine's keys match.
+            System.Collections.Generic.Dictionary<string, HartsyInference.Core.Tensors.Tensor> mimi = new();
+            foreach (System.Collections.Generic.KeyValuePair<string, HartsyInference.Core.Tensors.Tensor> kv in dict)
+            {
+                if (kv.Key.StartsWith("codec_model.", System.StringComparison.Ordinal))
+                {
+                    mimi[kv.Key["codec_model.".Length..]] = kv.Value;
+                }
+            }
             KyutaiSttPipeline pipeline = new(cfg);
-            pipeline.LoadWeights(dict, dict);
+            pipeline.LoadWeights(dict, mimi);
             KyutaiSttTokenizer tokenizer = new(spm);
             System.IDisposable[] keep = [pipeline, .. loaders];
             return new SttRunner((backend, audio) => tokenizer.Decode(pipeline.Transcribe(backend, audio)), keep);

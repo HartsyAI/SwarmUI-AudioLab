@@ -88,15 +88,45 @@ public static class AudioWeights
         return true;
     }
 
+    /// <summary>A .safetensors/checkpoint smaller than this is treated as truncated/corrupt when there is no
+    /// canonical hash to verify against. Catches the common "interrupted download left a stub" failure.</summary>
+    private const long MinPlausibleCheckpointBytes = 1_000_000;
+
     /// <summary>Downloads one checkpoint to <paramref name="dir"/> if not already present. Atomic
-    /// (.tmp stage + move) so an interrupted download never masquerades as complete.</summary>
+    /// (.tmp stage + move) so an interrupted download never masquerades as complete. An already-present file
+    /// is integrity-checked (hash when the spec has one, else a size floor); a bad file is deleted and
+    /// re-downloaded rather than silently accepted.</summary>
     public static async Task EnsureWeightAsync(AudioWeightsRegistry.DownloadSpec spec, string dir, Action<string> onProgress, CancellationToken cancel = default)
     {
         string targetPath = Path.Combine(dir, spec.FileName);
         if (File.Exists(targetPath))
         {
-            onProgress?.Invoke($"{spec.FileName} already present.");
-            return;
+            bool ok;
+            if (spec.HasHash)
+            {
+                ok = await FileMatchesHashAsync(targetPath, spec.Sha256, cancel);
+                if (!ok)
+                {
+                    Logs.Warning($"[AudioLab] '{spec.FileName}' failed SHA-256 verification — re-downloading.");
+                }
+            }
+            else
+            {
+                // No canonical hash published — at least reject a clearly-truncated file.
+                long len = new FileInfo(targetPath).Length;
+                ok = len >= MinPlausibleCheckpointBytes;
+                if (!ok)
+                {
+                    Logs.Warning($"[AudioLab] '{spec.FileName}' is implausibly small ({len} bytes) — re-downloading.");
+                }
+            }
+            if (ok)
+            {
+                onProgress?.Invoke($"{spec.FileName} already present.");
+                return;
+            }
+            onProgress?.Invoke($"{spec.FileName} failed integrity check — re-downloading.");
+            try { File.Delete(targetPath); } catch (Exception ex) { Logs.Warning($"[AudioLab] Could not delete bad '{targetPath}': {ex.Message}"); }
         }
         string tmpPath = targetPath + ".tmp";
         if (File.Exists(tmpPath))
@@ -132,6 +162,25 @@ public static class AudioWeights
             }
             Logs.Error($"[AudioLab] Failed to download audio checkpoint '{spec.FileName}': {ex.Message}");
             throw;
+        }
+    }
+
+    /// <summary>Streams the file through SHA-256 and compares (case-insensitive hex) to the expected digest.
+    /// On any read error returns true (don't delete a file we merely failed to read — let load surface it).</summary>
+    private static async Task<bool> FileMatchesHashAsync(string path, string expectedSha256, CancellationToken cancel)
+    {
+        try
+        {
+            await using FileStream fs = File.OpenRead(path);
+            using System.Security.Cryptography.SHA256 sha = System.Security.Cryptography.SHA256.Create();
+            byte[] hash = await sha.ComputeHashAsync(fs, cancel).ConfigureAwait(false);
+            string hex = Convert.ToHexString(hash).ToLowerInvariant();
+            return string.Equals(hex, expectedSha256.Trim().ToLowerInvariant(), StringComparison.Ordinal);
+        }
+        catch (Exception ex)
+        {
+            Logs.Warning($"[AudioLab] Hash check of '{path}' failed to run: {ex.Message}");
+            return true;
         }
     }
 }

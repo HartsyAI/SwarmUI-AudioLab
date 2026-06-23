@@ -25,9 +25,8 @@ public sealed class MusicGenProvider : IAudioProviderSource
 
     #region Models
 
-    // The in-process C# engine implements mono MusicGen (small/medium/large, 32 kHz, size inferred from the
-    // checkpoint). Melody-conditioning and stereo variants are not supported yet — advertising them would
-    // silently fall back to musicgen-small, so list only the three mono sizes the engine actually loads.
+    // MusicGen: small/medium load from a combined file (model.safetensors / pytorch_model.bin); large loads from its
+    // AudioCraft single-file state_dict.bin + compression_state_dict.bin (its combined HF model is sharded).
     private static AudioModelDefinition[] Models =>
     [
         new() { Id = "small", Name = "MusicGen Small", Description = "300M params, fast mono generation", SourceUrl = "https://huggingface.co/facebook/musicgen-small", License = "CC-BY-NC-4.0", EstimatedSize = "~1.2GB", EstimatedVram = "~4GB", EngineConfig = new() { ["model_name"] = "facebook/musicgen-small" } },

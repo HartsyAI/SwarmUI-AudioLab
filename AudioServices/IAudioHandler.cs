@@ -20,6 +20,12 @@ public interface IAudioHandler
     /// model-browser Install button). <paramref name="onProgress"/> receives human-readable status lines.</summary>
     Task EnsureWeightsAsync(string modelId, Action<string> onProgress, CancellationToken cancel);
 
+    /// <summary>Returns the provider-private on-disk locations (directories and/or files) the given model id
+    /// occupies — used to delete weights on uninstall and to detect missing weights. Returns only paths safe
+    /// to remove for THIS provider; shared side-models (e.g. a common text-encoder cache) are intentionally
+    /// excluded. May return paths that don't exist yet (the caller filters by existence).</summary>
+    IReadOnlyList<string> GetWeightLocations(string modelId);
+
     /// <summary>Runs one inference request on the shared compute <paramref name="backend"/> (already
     /// serialized by <see cref="AudioEngine"/> so this never runs concurrently with another audio job).</summary>
     Task<JObject> ProcessAsync(IBackend backend, IReadOnlyDictionary<string, object> args, CancellationToken cancel);

@@ -1,4 +1,5 @@
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Utils;
@@ -54,9 +55,12 @@ public static class TtsModels
         },
     };
 
+    /// <summary>Public-domain CMU Pronouncing Dictionary — the English G2P dictionary, auto-downloaded on first use.</summary>
+    private const string CmudictUrl = "https://raw.githubusercontent.com/cmusphinx/cmudict/master/cmudict.dict";
+
     /// <summary>Kokoro-82M — fast CPU-capable TTS at 24 kHz. Auto-downloads weights + voice packs; uses the
-    /// engine's English <see cref="EnglishG2P"/> (text→IPA). Needs a CMU dictionary (<c>cmudict.dict</c>) in
-    /// the audio model root. Built-in voice (default <c>af_heart</c>).</summary>
+    /// engine's English <see cref="EnglishG2P"/> (text→IPA), backed by the CMU dictionary (<c>cmudict.dict</c>,
+    /// auto-downloaded to the audio model root). Built-in voice (default <c>af_heart</c>).</summary>
     public static readonly TtsModelDescriptor Kokoro = new()
     {
         ResolveRepo = _ => "hexgrad/Kokoro-82M",
@@ -65,15 +69,44 @@ public static class TtsModels
             string cmudict = Path.Combine(Path.GetFullPath(AudioConfiguration.ModelRoot), "cmudict.dict");
             if (!File.Exists(cmudict))
             {
-                throw new FileNotFoundException(
-                    $"Kokoro needs an English G2P dictionary — place the public-domain CMU Pronouncing Dictionary "
-                    + $"('cmudict.dict') at '{cmudict}'.", cmudict);
+                Logs.Info("[AudioLab][Kokoro] Downloading the public-domain CMU Pronouncing Dictionary (cmudict.dict)...");
+                Directory.CreateDirectory(Path.GetDirectoryName(cmudict));
+                await Utilities.DownloadFile(CmudictUrl, cmudict, (_, _, _) => { }).ConfigureAwait(false);
+                Logs.Info("[AudioLab][Kokoro] CMU dictionary ready.");
             }
             EnglishG2P g2p = new(cmudict);
             KokoroPipeline p = await KokoroPipeline.LoadAsync(ct).ConfigureAwait(false);
+            await EnsureKokoroVoiceAsync("af_heart", ct).ConfigureAwait(false);
             return new TtsRunner(24_000, (backend, req) => p.Synthesize(backend, g2p.ToIpa(req.Text), voiceName: "af_heart"), p);
         },
     };
+
+    /// <summary>Ensures a Kokoro voice pack exists as the raw-float32 <c>.bin</c> the engine reads. The HF repo
+    /// ships each voice as a torch-saved <c>.pt</c> (a zip whose single contiguous f32 tensor storage at
+    /// <c>*/data/0</c> is exactly that raw payload), so we fetch it and extract that entry.</summary>
+    private static async Task EnsureKokoroVoiceAsync(string voiceName, CancellationToken ct)
+    {
+        string repoDir = AudioModelCache.GetRepoDirectory("hexgrad/Kokoro-82M");
+        string binPath = Path.Combine(repoDir, "voices", $"{voiceName}.bin");
+        if (File.Exists(binPath))
+        {
+            return;
+        }
+        Logs.Info($"[AudioLab][Kokoro] Fetching voice pack '{voiceName}'...");
+        string ptPath = await AudioModelCache.GetAsync("hexgrad/Kokoro-82M", $"voices/{voiceName}.pt", ct: ct).ConfigureAwait(false);
+        Directory.CreateDirectory(Path.GetDirectoryName(binPath));
+        using ZipArchive zip = ZipFile.OpenRead(ptPath);
+        ZipArchiveEntry storage = zip.Entries.FirstOrDefault(e => e.FullName.Replace('\\', '/').EndsWith("/data/0", StringComparison.Ordinal))
+            ?? throw new InvalidOperationException($"Unexpected Kokoro voice format in '{ptPath}' — no tensor storage entry.");
+        string tmp = binPath + ".tmp";
+        using (Stream src = storage.Open())
+        using (FileStream dst = File.Create(tmp))
+        {
+            await src.CopyToAsync(dst, ct).ConfigureAwait(false);
+        }
+        File.Move(tmp, binPath, overwrite: true);
+        Logs.Info($"[AudioLab][Kokoro] Voice pack '{voiceName}' ready.");
+    }
 
     /// <summary>Bark (suno/bark) — 3-stage GPT cascade + EnCodec 24 kHz. No converter needed: the engine's
     /// Bark stages consume the HF-transformers key naming directly; the bundled codec maps via
@@ -128,15 +161,12 @@ public static class TtsModels
         LoadAsync = async (_, ct) =>
         {
             string modelPath = await AudioModelCache.GetAsync("nari-labs/Dia-1.6B", "model.safetensors", ct: ct).ConfigureAwait(false);
-            string dacPath = Path.Combine(Path.GetFullPath(AudioConfiguration.ModelRoot), "dac_44khz.safetensors");
-            if (!File.Exists(dacPath))
-            {
-                throw new FileNotFoundException(
-                    $"Dia needs the Descript DAC 44 kHz codec — place 'dac_44khz.safetensors' (converted from the descript-audio-codec 44 kHz weights) at '{dacPath}'.", dacPath);
-            }
+            // The Descript DAC 44 kHz codec auto-downloads — the canonical descript .pth has the layout the engine
+            // expects (the HF safetensors mirrors are MLX/HF-reshaped and would not load).
+            string dacPath = await AudioModelCache.GetAsync("descript/descript-audio-codec", "weights.pth", ct: ct).ConfigureAwait(false);
             SafeTensorsLoader modelLoader = new();
             modelLoader.Load(modelPath);
-            SafeTensorsLoader dacLoader = new();
+            PytorchPickleLoader dacLoader = new();
             dacLoader.Load(dacPath);
 
             DiaPipeline pipeline = new(DiaConfig.Dia1_6B);

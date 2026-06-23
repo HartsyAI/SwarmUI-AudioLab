@@ -51,11 +51,6 @@ public static class CosyVoiceModel
             CosyVoicePipeline pipeline = new(cfg, lm, flow, vocoder, speaker, s3);
 
             Qwen2Tokenizer tokenizer = new();
-            MelSpectrogramExtractor mel = new(new MelSpectrogramExtractor.Config(
-                SampleRate: 24_000, NFft: 1920, WinLength: 1920, HopLength: 480, NMels: 80,
-                Fmin: 0.0, Fmax: 8000.0, Norm: MelSpectrogramExtractor.Normalization.None, DropLastStftFrame: false,
-                LogBase: MelSpectrogramExtractor.LogBase.Natural, LogFloor: 1e-5f, DynamicRangeDb: 0f,
-                NormOffset: 0f, NormScale: 1f, PowerSpectrum: false));
             Logs.Info("[AudioLab][CosyVoice] Loaded FunAudioLLM/CosyVoice2-0.5B (Qwen LM + OT-CFM flow + HiFTNet + CAM++ + S3, 24 kHz).");
 
             IDisposable[] keep = [pipeline, llmL, flowL, hiftL, campL, s3L];
@@ -68,27 +63,9 @@ public static class CosyVoiceModel
                 }
                 int[] textTokenIds = [.. tokenizer.EncodeRaw(req.Text)];
                 int[] refTextTokens = string.IsNullOrWhiteSpace(req.RefText) ? [] : [.. tokenizer.EncodeRaw(req.RefText)];
-
-                float[,] m = mel.Compute(req.ReferenceMono24k);
-                int nMels = m.GetLength(0), tFrames = m.GetLength(1);
-                Tensor refMel = new(new TensorShape(1, nMels, tFrames), DType.F32);
-                Span<float> dst = refMel.AsSpan<float>();
-                int idx = 0;
-                for (int a = 0; a < nMels; a++)
-                {
-                    for (int b = 0; b < tFrames; b++)
-                    {
-                        dst[idx++] = m[a, b];
-                    }
-                }
-                try
-                {
-                    return pipeline.Synthesize(backend, textTokenIds, referenceMel: refMel, referenceTextTokens: refTextTokens, seed: req.Seed);
-                }
-                finally
-                {
-                    refMel.Dispose();
-                }
+                // The pipeline derives the S3 mel (128-bin@100Hz), CAM++ fbank, and flow mel from the raw reference itself.
+                return pipeline.Synthesize(backend, textTokenIds, referenceAudio: req.ReferenceMono24k,
+                    referenceSampleRate: 24_000, referenceTextTokens: refTextTokens, seed: req.Seed);
             }, keep);
         },
     };

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Utils;
 using HartsyInference.Core.Backends;
+using HartsyInference.Audio.Cache;
 
 namespace Hartsy.Extensions.AudioLab.AudioServices.Stt;
 
@@ -23,6 +24,12 @@ public sealed class SttHandler(SttModelDescriptor descriptor) : IAudioHandler
         onProgress($"Fetching speech-to-text weights ({repo})...");
         await GetOrLoadAsync(repo, cancel).ConfigureAwait(false);
         onProgress($"Ready ({repo}).");
+    }
+
+    public IReadOnlyList<string> GetWeightLocations(string modelId)
+    {
+        string repo = descriptor.ResolveRepo(modelId);
+        return string.IsNullOrEmpty(repo) ? [] : [AudioModelCache.GetRepoDirectory(repo)];
     }
 
     public async Task<JObject> ProcessAsync(IBackend backend, IReadOnlyDictionary<string, object> args, CancellationToken cancel)
