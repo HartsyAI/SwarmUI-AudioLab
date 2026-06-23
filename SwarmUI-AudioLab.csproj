@@ -16,7 +16,7 @@
   <ItemGroup>
     <PackageReference Include="FFMpegCore" Version="5.4.0" />
     <!-- HartsyInference engine, referenced directly (no dependency on the backend extension). -->
-    <PackageReference Include="HartsyInference" Version="1.0.0-alpha.31" />
+    <PackageReference Include="HartsyInference" Version="1.0.0-alpha.33" />
   </ItemGroup>
 
   <!-- Host-provided packages: compile against them but don't copy their DLLs (avoids duplicate/version-skew).

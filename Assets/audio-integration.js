@@ -453,10 +453,8 @@ function audioLabShowInstallModal(engine) {
 
     const models = engine.models || [];
     const firstModel = models.length > 0 ? models[0] : {};
-    const depNames = engine.dependencies ? engine.dependencies.map(d => d.name) : [];
-    const depListHtml = depNames.length > 0
-        ? `<ul style="margin:0.5em 0;padding-left:1.5em">${depNames.map(d => `<li style="font-size:0.9em">${escapeHtml(d)}</li>`).join('')}</ul>`
-        : '<em>None</em>';
+    const runtimeNoteHtml = engine.in_process === false ? ''
+        : `<p style="color:var(--text-soft);margin-top:0.5em">⚙ Runs in-process on the HartsyInference C# engine — no Python install. The model downloads automatically on first use.</p>`;
 
     let modelsListHtml = '';
     if (models.length > 0) {
@@ -482,8 +480,7 @@ function audioLabShowInstallModal(engine) {
             <p>${escapeHtml(firstModel.description || '')}</p>
             <p style="color:var(--text-soft);margin-top:0.5em"><b>Models to download (${models.length}):</b></p>
             ${modelsListHtml}
-            <p style="color:var(--text-soft);margin-top:0.5em"><b>Dependencies:</b></p>
-            ${depListHtml}
+            ${runtimeNoteHtml}
             <div id="audiolab_install_progress" style="display:none;margin-top:1em">
                 <p style="color:var(--text-soft)"><b>Install Progress:</b></p>
                 <div id="audiolab_install_progress_text" style="font-family:monospace;font-size:0.85em;max-height:150px;overflow-y:auto;padding:0.5em;border:1px solid var(--border-color);border-radius:4px"></div>

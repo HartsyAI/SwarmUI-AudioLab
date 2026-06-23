@@ -14,27 +14,13 @@ public sealed class BarkProvider : IAudioProviderSource
         .WithId("bark_tts")
         .WithName("Bark TTS")
         .WithCategory(AudioCategory.TTS)
-        .WithPythonEngine("tts_bark", "BarkEngine")
         .WithModelPrefix("Bark")
         .WithModelClass("bark_tts", "Bark TTS")
         .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("bark_tts_params")
-        .AddDependencies(Dependencies)
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();
-
-    #region Dependencies
-
-    private static PackageDefinition[] Dependencies =>
-    [
-        new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
-        new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        new() { Name = "bark", InstallName = "bark", ImportName = "bark", Category = "tts" },
-        new() { Name = "transformers>=4.31.0", InstallName = "transformers>=4.31.0", ImportName = "transformers", Category = "tts" }
-    ];
-
-    #endregion
 
     #region Models
 

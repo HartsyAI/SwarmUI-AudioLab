@@ -45,7 +45,6 @@ public static class AudioLabAPI
             API.RegisterAPICall(ProcessTTS, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(ProcessWorkflow, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(GetAllProvidersStatus, false, AudioLabPermissions.PermCheckStatus);
-            API.RegisterAPICall(InstallProviderDependencies, false, AudioLabPermissions.PermManageBackends);
             API.RegisterAPICall(GetInstallationStatus, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(GetInstallationProgress, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(ConvertAudioFormat, false, AudioLabPermissions.PermProcessAudio);
@@ -168,7 +167,7 @@ public static class AudioLabAPI
             {
                 return AudioLab.CreateErrorResponse($"No TTS provider available (requested: '{requestedProvider}')", "no_provider");
             }
-            Logs.Info($"[AudioLab] ProcessTTS: routing to provider '{ttsProvider.Id}' ({ttsProvider.Name}), module={ttsProvider.PythonModule}, class={ttsProvider.PythonEngineClass}");
+            Logs.Info($"[AudioLab] ProcessTTS: routing to provider '{ttsProvider.Id}' ({ttsProvider.Name}).");
 
             Dictionary<string, object> args = new()
             {
@@ -299,8 +298,7 @@ public static class AudioLabAPI
                     ["id"] = provider.Id,
                     ["name"] = provider.Name,
                     ["category"] = provider.Category.ToString(),
-                    ["model_count"] = provider.Models.Count,
-                    ["dependency_count"] = provider.Dependencies.Count
+                    ["model_count"] = provider.Models.Count
                 });
             }
 
@@ -314,39 +312,6 @@ public static class AudioLabAPI
         catch (Exception ex)
         {
             return AudioLab.CreateErrorResponse("Failed to get provider status", "status_error", ex);
-        }
-    }
-
-    /// <summary>Install dependencies for a specific provider.</summary>
-    public static async Task<JObject> InstallProviderDependencies(Session session, JObject input)
-    {
-        try
-        {
-            string providerId = input["provider_id"]?.ToString();
-            if (string.IsNullOrEmpty(providerId))
-            {
-                return AudioLab.CreateErrorResponse("provider_id is required", "missing_provider");
-            }
-
-            AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId);
-            if (provider == null)
-            {
-                return AudioLab.CreateErrorResponse($"Unknown provider: {providerId}", "unknown_provider");
-            }
-
-            // Python pip dependencies are gone — engines run in-process on the HartsyInference C# engine.
-            // "Installing" a provider now downloads its weights via the install (WebSocket) endpoint.
-            await Task.CompletedTask;
-            return new JObject
-            {
-                ["success"] = true,
-                ["provider_id"] = providerId,
-                ["message"] = $"{provider.Name} runs on the in-process C# engine — no Python dependencies to install. Use the Install button to fetch its weights."
-            };
-        }
-        catch (Exception ex)
-        {
-            return AudioLab.CreateErrorResponse("Dependency installation failed", "install_error", ex);
         }
     }
 
@@ -438,17 +403,6 @@ public static class AudioLabAPI
                     platformNote = "Requires Docker on Windows. Enable 'Use Docker' in backend settings.";
                 }
 
-                // Build dependencies list
-                JArray deps = [];
-                foreach (PackageDefinition dep in provider.Dependencies)
-                {
-                    deps.Add(new JObject
-                    {
-                        ["name"] = dep.Name,
-                        ["category"] = dep.Category
-                    });
-                }
-
                 // Build models list
                 JArray models = [];
                 foreach (AudioModelDefinition modelDef in provider.Models)
@@ -477,7 +431,8 @@ public static class AudioLabAPI
                     ["platform_compatible"] = platformCompatible,
                     ["platform_note"] = platformNote,
                     ["installed"] = installedIds.Contains(provider.Id),
-                    ["dependencies"] = deps,
+                    // In-process C# engines have no Python dependencies; only the model weights download.
+                    ["in_process"] = !provider.IsApiProvider,
                     ["models"] = models
                 });
             }

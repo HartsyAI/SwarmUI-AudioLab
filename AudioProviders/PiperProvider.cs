@@ -14,27 +14,13 @@ public sealed class PiperProvider : IAudioProviderSource
         .WithId("piper_tts")
         .WithName("Piper TTS")
         .WithCategory(AudioCategory.TTS)
-        .WithPythonEngine("tts_piper", "PiperEngine")
         .WithModelPrefix("Piper")
         .WithModelClass("piper_tts", "Piper TTS")
         .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("piper_tts_params")
-        .AddDependencies(Dependencies)
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();
-
-    #region Dependencies
-
-    private static PackageDefinition[] Dependencies =>
-    [
-        new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
-        new() { Name = "piper-tts", InstallName = "piper-tts", ImportName = "piper", Category = "tts", EstimatedInstallTimeMinutes = 5 },
-        new() { Name = "onnxruntime>=1.15.0", InstallName = "onnxruntime>=1.15.0", ImportName = "onnxruntime", Category = "core", EstimatedInstallTimeMinutes = 3 },
-        new() { Name = "huggingface_hub", InstallName = "huggingface_hub", ImportName = "huggingface_hub", Category = "tts" }
-    ];
-
-    #endregion
 
     #region Models
 

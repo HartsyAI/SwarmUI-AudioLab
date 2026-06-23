@@ -44,6 +44,7 @@ public static class AudioEngine
         map["csm_tts"] = new TtsHandler(TtsModels.Csm);
         map["fishspeech_tts"] = new TtsHandler(FishSpeechModel.Descriptor);
         map["neutts_tts"] = new TtsHandler(NeuTtsModel.Descriptor);
+        map["cosyvoice_tts"] = new TtsHandler(CosyVoiceModel.Descriptor);
 
         // Music — MusicGen/AudioGen HF-auto-download. YuE is ready (MusicModels.Yue) but gated until the
         // engine package ships YueTokenizer; re-enable this line + the #if false in MusicModels then.
@@ -54,6 +55,8 @@ public static class AudioEngine
 
         // Voice conversion — RVC re-voices a source clip (HuBERT content + YIN F0 + trained voice model).
         map["rvc_clone"] = new VcHandler("rvc_clone", VcModels.Rvc);
+        // OpenVoice V2 tone-color transfer (source + target voice → re-voiced source).
+        map["openvoice_clone"] = new VcHandler("openvoice_clone", OpenVoiceModel.Descriptor);
 
         return map;
     }

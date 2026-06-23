@@ -14,55 +14,14 @@ public sealed class FishSpeechProvider : IAudioProviderSource
         .WithId("fishspeech_tts")
         .WithName("Fish Speech TTS")
         .WithCategory(AudioCategory.TTS)
-        .WithPythonEngine("tts_fishspeech", "FishSpeechEngine")
         .WithModelPrefix("FishSpeech")
         .WithModelClass("fishspeech_tts", "Fish Speech TTS")
         .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("fishspeech_tts_params")
         .AddFeatureFlag("tts_voice_ref")
-        .AddDependencies(Dependencies)
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();
-
-    #region Dependencies
-
-    private static PackageDefinition[] Dependencies =>
-    [
-        new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
-        new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" },
-        new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        // Installed with --no-deps to avoid pulling pinned versions of pydantic, datasets, gradio, etc.
-        new() { Name = "fish-speech", InstallName = "git+https://github.com/fishaudio/fish-speech.git", ImportName = "fish_speech", Category = "tts", CustomInstallArgs = "--no-deps", EstimatedInstallTimeMinutes = 5 },
-        // Explicit runtime dependencies needed by fish-speech inference
-        new() { Name = "transformers>=4.45.2", InstallName = "transformers>=4.45.2", ImportName = "transformers", Category = "tts" },
-        new() { Name = "einops>=0.7.0", InstallName = "einops>=0.7.0", ImportName = "einops", Category = "tts" },
-        new() { Name = "loguru>=0.6.0", InstallName = "loguru>=0.6.0", ImportName = "loguru", Category = "tts" },
-        new() { Name = "tiktoken>=0.8.0", InstallName = "tiktoken>=0.8.0", ImportName = "tiktoken", Category = "tts" },
-        new() { Name = "descript-audio-codec", InstallName = "descript-audio-codec", ImportName = "dac", Category = "tts" },
-        new() { Name = "descript-audiotools", InstallName = "descript-audiotools", ImportName = "audiotools", Category = "tts" },
-        new() { Name = "safetensors", InstallName = "safetensors", ImportName = "safetensors", Category = "tts" },
-        new() { Name = "pydantic>=2.0.0", InstallName = "pydantic>=2.0.0", ImportName = "pydantic", Category = "tts" },
-        new() { Name = "silero-vad", InstallName = "silero-vad", ImportName = "silero_vad", Category = "tts" },
-        new() { Name = "ormsgpack", InstallName = "ormsgpack", ImportName = "ormsgpack", Category = "tts" },
-        new() { Name = "zstandard>=0.22.0", InstallName = "zstandard>=0.22.0", ImportName = "zstandard", Category = "tts" },
-        new() { Name = "einx>=0.2.2", InstallName = "einx>=0.2.2", ImportName = "einx", Category = "tts" },
-        new() { Name = "resampy>=0.4.3", InstallName = "resampy>=0.4.3", ImportName = "resampy", Category = "tts" },
-        new() { Name = "librosa>=0.10.1", InstallName = "librosa>=0.10.1", ImportName = "librosa", Category = "tts", EstimatedInstallTimeMinutes = 5 },
-        new() { Name = "hydra-core>=1.3.2", InstallName = "hydra-core>=1.3.2", ImportName = "hydra", Category = "tts" },
-        new() { Name = "natsort>=8.4.0", InstallName = "natsort>=8.4.0", ImportName = "natsort", Category = "tts" },
-        new() { Name = "rich>=13.5.3", InstallName = "rich>=13.5.3", ImportName = "rich", Category = "tts" },
-        new() { Name = "huggingface_hub", InstallName = "huggingface_hub", ImportName = "huggingface_hub", Category = "tts" },
-        new() { Name = "lightning", InstallName = "lightning", ImportName = "lightning", Category = "tts" },
-        new() { Name = "loralib>=0.1.2", InstallName = "loralib>=0.1.2", ImportName = "loralib", Category = "tts" },
-        new() { Name = "cachetools", InstallName = "cachetools", ImportName = "cachetools", Category = "tts" },
-        new() { Name = "pyrootutils>=1.0.4", InstallName = "pyrootutils>=1.0.4", ImportName = "pyrootutils", Category = "tts" },
-        new() { Name = "pydub", InstallName = "pydub", ImportName = "pydub", Category = "tts" },
-        new() { Name = "opencc-python-reimplemented==0.1.7", InstallName = "opencc-python-reimplemented==0.1.7", ImportName = "opencc", Category = "tts" }
-    ];
-
-    #endregion
 
     #region Models
 

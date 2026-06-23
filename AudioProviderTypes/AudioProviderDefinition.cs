@@ -14,12 +14,6 @@ public sealed class AudioProviderDefinition
     /// <summary>Audio processing category this provider belongs to.</summary>
     public required AudioCategory Category { get; init; }
 
-    /// <summary>Python module name in the engines/ directory (e.g. "tts_chatterbox").</summary>
-    public required string PythonModule { get; init; }
-
-    /// <summary>Python engine class name within the module (e.g. "ChatterboxEngine").</summary>
-    public required string PythonEngineClass { get; init; }
-
     /// <summary>Prefix used in model names for routing (e.g. "Chatterbox/").</summary>
     public required string ModelPrefix { get; init; }
 
@@ -32,13 +26,10 @@ public sealed class AudioProviderDefinition
     /// <summary>Feature flags this provider supports (used for parameter visibility).</summary>
     public required IReadOnlyList<string> FeatureFlags { get; init; }
 
-    /// <summary>Python package dependencies required by this provider.</summary>
-    public required IReadOnlyList<PackageDefinition> Dependencies { get; init; }
-
     /// <summary>Available models for this provider.</summary>
     public required IReadOnlyList<AudioModelDefinition> Models { get; init; }
 
-    /// <summary>Engine group for venv/Docker isolation (e.g. "core", "transformers", "audiocraft", "linux_docker").</summary>
+    /// <summary>Engine group for in-process model grouping (e.g. "main", "audiocraft", "linux_docker").</summary>
     public string EngineGroup { get; init; } = "default";
 
     /// <summary>Whether this provider requires Docker to run (Linux-only engines).</summary>

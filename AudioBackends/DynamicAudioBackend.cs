@@ -623,7 +623,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
     #region Engine Installation and Management
 
-    /// <summary>Installs an engine: creates venv, installs deps, starts server,
+    /// <summary>Installs an engine: fetches its weights via the in-process C# engine,
     /// registers models, and persists the installed state.</summary>
     public async Task<bool> InstallAndRegisterEngine(string providerId, Action<string> onProgress = null)
     {

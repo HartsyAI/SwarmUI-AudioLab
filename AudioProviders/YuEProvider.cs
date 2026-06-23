@@ -14,43 +14,13 @@ public sealed class YuEProvider : IAudioProviderSource
         .WithId("yue_music")
         .WithName("YuE Music")
         .WithCategory(AudioCategory.AudioGeneration)
-        .WithPythonEngine("music_yue", "YuEEngine")
         .WithModelPrefix("YuE")
         .WithModelClass("yue_music", "YuE Music")
         .AddFeatureFlag("audiolab_audiogen")
         .AddFeatureFlag("yue_music_params")
-        .AddDependencies(Dependencies)
         .AddModels(Models)
         .WithEngineGroup("music")
         .Build();
-
-    #region Dependencies
-
-    private static PackageDefinition[] Dependencies =>
-    [
-        new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
-        new() { Name = "torch==2.7.1+cu128", InstallName = "torch==2.7.1+cu128", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu128" },
-        new() { Name = "torchaudio==2.7.1+cu128", InstallName = "torchaudio==2.7.1+cu128", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu128" },
-        new() { Name = "transformers>=4.45.0", InstallName = "transformers>=4.45.0", ImportName = "transformers", Category = "music" },
-        new() { Name = "accelerate>=0.26.0", InstallName = "accelerate>=0.26.0", ImportName = "accelerate", Category = "music" },
-        new() { Name = "bitsandbytes>=0.45.0", InstallName = "bitsandbytes>=0.45.0", ImportName = "bitsandbytes", Category = "music", EstimatedInstallTimeMinutes = 5 },
-        new() { Name = "sentencepiece", InstallName = "sentencepiece", ImportName = "sentencepiece", Category = "music" },
-        new() { Name = "einops>=0.7.0", InstallName = "einops>=0.7.0", ImportName = "einops", Category = "music" },
-        new() { Name = "omegaconf>=2.3.0", InstallName = "omegaconf>=2.3.0", ImportName = "omegaconf", Category = "music" },
-        new() { Name = "scipy>=1.10.1", InstallName = "scipy>=1.10.1", ImportName = "scipy", Category = "music" },
-        new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" },
-        new() { Name = "huggingface_hub", InstallName = "huggingface_hub", ImportName = "huggingface_hub", Category = "music" },
-        new() { Name = "descript-audio-codec", InstallName = "descript-audio-codec", ImportName = "dac", Category = "music", CustomInstallArgs = "--no-deps" },
-        new() { Name = "descript-audiotools>=0.7.2", InstallName = "descript-audiotools>=0.7.2", ImportName = "audiotools", Category = "music", CustomInstallArgs = "--no-deps" },
-        // Explicit deps for descript-audio-codec and descript-audiotools (installed with --no-deps)
-        new() { Name = "argbind", InstallName = "argbind", ImportName = "argbind", Category = "music" },
-        new() { Name = "tqdm", InstallName = "tqdm", ImportName = "tqdm", Category = "core" },
-        new() { Name = "pyloudnorm", InstallName = "pyloudnorm", ImportName = "pyloudnorm", Category = "music" },
-        new() { Name = "julius", InstallName = "julius", ImportName = "julius", Category = "music" },
-        new() { Name = "rich", InstallName = "rich", ImportName = "rich", Category = "music" },
-    ];
-
-    #endregion
 
     #region Models
 

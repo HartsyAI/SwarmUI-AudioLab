@@ -14,29 +14,14 @@ public sealed class ResembleEnhanceProvider : IAudioProviderSource
         .WithId("resemble_enhance_fx")
         .WithName("Resemble Enhance")
         .WithCategory(AudioCategory.AudioProcessing)
-        .WithPythonEngine("fx_resemble_enhance", "ResembleEnhanceEngine")
         .WithModelPrefix("ResembleEnhance")
         .WithModelClass("resemble_enhance_fx", "Resemble Enhance")
         .AddFeatureFlag("audiolab_audioproc")
         .AddFeatureFlag("resemble_enhance_fx_params")
-        .AddDependencies(Dependencies)
         .AddModels(Models)
         .WithEngineGroup("linux_docker")
         .WithRequiresDocker()
         .Build();
-
-    #region Dependencies
-
-    private static PackageDefinition[] Dependencies =>
-    [
-        new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
-        new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        new() { Name = "resemble-enhance", InstallName = "resemble-enhance", ImportName = "resemble_enhance", Category = "audio_fx", EstimatedInstallTimeMinutes = 5 },
-        new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" }
-    ];
-
-    #endregion
 
     #region Models
 

@@ -14,7 +14,6 @@ public sealed class Qwen3TTSProvider : IAudioProviderSource
         .WithId("qwen3_tts")
         .WithName("Qwen3 TTS")
         .WithCategory(AudioCategory.TTS)
-        .WithPythonEngine("tts_qwen3", "Qwen3TTSEngine")
         .WithModelPrefix("Qwen3TTS")
         .WithModelClass("qwen3_tts", "Qwen3 TTS")
         .AddFeatureFlag("audiolab_tts")
@@ -22,34 +21,9 @@ public sealed class Qwen3TTSProvider : IAudioProviderSource
         .AddFeatureFlag("qwen3tts_speaker_params")
         .AddFeatureFlag("qwen3tts_instruct_params")
         .AddFeatureFlag("tts_voice_ref")
-        .AddDependencies(Dependencies)
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();
-
-    #region Dependencies
-
-    private static PackageDefinition[] Dependencies =>
-    [
-        new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
-        new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" },
-        new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        // qwen-tts with --no-deps to avoid pinned transformers==4.57.3 and unnecessary gradio/sox
-        new() { Name = "qwen-tts", InstallName = "qwen-tts", ImportName = "qwen_tts", Category = "tts", EstimatedInstallTimeMinutes = 3, CustomInstallArgs = "--no-deps" },
-        // Explicit runtime dependencies needed by qwen-tts inference
-        new() { Name = "transformers>=4.57.0", InstallName = "transformers>=4.57.0", ImportName = "transformers", Category = "tts" },
-        new() { Name = "accelerate>=1.12.0", InstallName = "accelerate>=1.12.0", ImportName = "accelerate", Category = "tts" },
-        new() { Name = "librosa", InstallName = "librosa", ImportName = "librosa", Category = "tts" },
-        new() { Name = "einops", InstallName = "einops", ImportName = "einops", Category = "tts" },
-        new() { Name = "onnxruntime", InstallName = "onnxruntime", ImportName = "onnxruntime", Category = "tts" },
-        new() { Name = "safetensors", InstallName = "safetensors", ImportName = "safetensors", Category = "tts" },
-        new() { Name = "huggingface_hub", InstallName = "huggingface_hub", ImportName = "huggingface_hub", Category = "tts" },
-        // sox is a hard import in qwen_tts/core/tokenizer_25hz/vq/speech_vq.py; requires SoX system binary on PATH
-        new() { Name = "sox", InstallName = "sox", ImportName = "sox", Category = "tts" }
-    ];
-
-    #endregion
 
     #region Models
 
