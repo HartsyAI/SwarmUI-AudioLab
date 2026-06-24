@@ -728,9 +728,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
             else
             {
                 // Not an API provider and not yet supported by the C# engine: with Python removed there is
-                // no way to run it. Refuse cleanly rather than registering a model that can't generate.
-                Logs.Error($"[AudioLab] {definition.Name} is not yet supported by the in-process C# engine.");
-                onProgress?.Invoke($"{definition.Name} isn't supported by the C# engine yet — it will become installable once engine support lands.");
+                // no way to run it. Refuse cleanly, naming the specific blocker, rather than registering a model
+                // that can't generate.
+                string reason = AudioServices.AudioUnsupportedReasons.Message(definition.Id, definition.Name);
+                Logs.Error($"[AudioLab] {reason}");
+                onProgress?.Invoke(reason);
                 return false;
             }
 

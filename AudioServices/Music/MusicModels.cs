@@ -2,12 +2,14 @@ using System.IO;
 using SwarmUI.Utils;
 using Hartsy.Extensions.AudioLab.AudioProviders;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
+using Hartsy.Extensions.AudioLab.AudioServices.Tts;
 using HartsyInference.Core.Backends;
 using HartsyInference.Core.Tensors;
 using HartsyInference.Audio.Cache;
 using HartsyInference.Audio.Models.Codecs.EnCodec;
 using HartsyInference.Audio.Models.Codecs.Oobleck;
 using HartsyInference.Audio.Models.Codecs.XCodec;
+using HartsyInference.Audio.Models.HeartMula;
 using HartsyInference.Audio.Models.Music;
 using HartsyInference.Audio.Pipelines;
 using HartsyInference.Diffusion.Models.Denoisers;
@@ -330,6 +332,69 @@ public static class MusicModels
         }
         string parent = Path.Combine(Directory.GetParent(folder)?.FullName ?? folder, fileName);
         return File.Exists(parent) ? parent : null;
+    }
+
+    #endregion
+
+    #region HeartMuLa (HeartMuLa-oss-3B — HF auto-download)
+
+    private const string HeartMulaRepo = "HeartMuLa/HeartMuLa-oss-3B";
+    private const string HeartMulaRlRepo = "HeartMuLa/HeartMuLa-RL-oss-3B";
+    private const string HeartCodecRepo = "HeartMuLa/HeartCodec-oss-20260123";
+
+    /// <summary>HeartMuLa-oss-3B (Apache 2.0) — a CSM-shaped music LM (Llama-3B global + Llama-300M depth over an
+    /// 8-codebook grid) whose flow-matching HeartCodec decodes to 48 kHz. Lyrics/prompt → song. The LM
+    /// (sharded ~15.75 GB) and the HeartCodec decoder both auto-download from HuggingFace.
+    ///
+    /// <para><b>Runtime-pending:</b> the engine's HeartCodec + MuQ conditioning are wired but not yet validated
+    /// against the real checkpoints (the LM reuses the verified CSM stack). MuQ style conditioning is omitted
+    /// (unconditional). Generates end-to-end; audible-quality parity is a follow-up. If the HeartCodec repo's
+    /// weight filename differs from the safetensors/pickle names probed here, the codec download will 404 and the
+    /// filename must be adjusted.</para></summary>
+    public static readonly MusicModelDescriptor HeartMula = new()
+    {
+        ManagesOwnWeights = true,
+        CacheKey = (_, modelId) => ResolveHeartMulaRepo(modelId),
+        LoadAsync = (_, _, modelId, ct) => LoadHeartMulaAsync(ResolveHeartMulaRepo(modelId), ct),
+    };
+
+    private static string ResolveHeartMulaRepo(string modelId)
+    {
+        string id = (modelId ?? "").Trim();
+        if (id.Contains('/'))
+        {
+            return id;
+        }
+        return id.Contains("rl", StringComparison.OrdinalIgnoreCase) ? HeartMulaRlRepo : HeartMulaRepo;
+    }
+
+    private static async Task<IMusicRunner> LoadHeartMulaAsync(string repo, CancellationToken ct)
+    {
+        // LM = sharded safetensors (no tokenizer files); codec = a separate flow-matching decoder checkpoint.
+        (IReadOnlyDictionary<string, Tensor> lmW, IDisposable[] lmLoaders) = await TtsModels.LoadCheckpointAsync(repo, ct).ConfigureAwait(false);
+        (IReadOnlyDictionary<string, Tensor> codecW, IDisposable[] codecLoaders) = await TtsModels.LoadCheckpointAsync(HeartCodecRepo, ct).ConfigureAwait(false);
+
+        HeartMulaConfig config = HeartMulaConfig.Oss3B;
+        HeartMulaPipeline pipeline = new(config);
+        pipeline.LoadWeights(lmW);
+        pipeline.LoadCodecWeights(codecW);
+
+        // Lyrics use the Llama-3.2 128k vocab; Qwen2's tokenizer shares that base vocab (no special HeartMuLa asset).
+        Qwen2Tokenizer tokenizer = new();
+        Logs.Info($"[AudioLab][HeartMuLa] Loaded {repo} + {HeartCodecRepo} (CSM-shaped LM + HeartCodec, 48 kHz).");
+
+        MusicAudio Synth(IBackend backend, MusicRequest req)
+        {
+            // Genre/style tag (if any) is folded ahead of the lyrics as a structural marker.
+            string text = string.IsNullOrWhiteSpace(req.Genre) ? req.Prompt : $"[{req.Genre}]\n{req.Prompt}";
+            int[] lyrics = [.. tokenizer.EncodeRaw(text ?? "")];
+            int maxFrames = (int)(Math.Clamp(req.Duration, 1d, 300d) * 12.5); // HeartCodec frame rate = 12.5 Hz
+            float[] samples = pipeline.Generate(backend, lyrics, maxFrames, seed: req.Seed);
+            return MusicAudio.Mono(samples);
+        }
+
+        IDisposable[] keep = [pipeline, .. lmLoaders, .. codecLoaders];
+        return new MusicRunner(pipeline.SampleRate, Synth, keep);
     }
 
     #endregion

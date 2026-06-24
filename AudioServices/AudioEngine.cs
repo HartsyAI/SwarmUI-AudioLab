@@ -45,6 +45,8 @@ public static class AudioEngine
         map["neutts_tts"] = new TtsHandler(NeuTtsModel.Descriptor);
         map["fishspeech_tts"] = new TtsHandler(FishSpeechModel.Descriptor);
         map["cosyvoice_tts"] = new TtsHandler(CosyVoiceModel.Descriptor);
+        // F5-TTS — zero-shot voice clone (DiT + Vocos 24 kHz); reference clip + its transcript required.
+        map["f5_tts"] = new TtsHandler(F5TtsModel.Descriptor);
 
         // Music — MusicGen/AudioGen HF-auto-download. YuE is ready (MusicModels.Yue) but gated until the
         // engine package ships YueTokenizer; re-enable this line + the #if false in MusicModels then.
@@ -52,6 +54,8 @@ public static class AudioEngine
         map["audiogen_sfx"] = new MusicHandler("audiogen_sfx", MusicModels.AudioGen);
         map["acestep_music"] = new MusicHandler("acestep_music", MusicModels.AceStep);
         map["yue_music"] = new MusicHandler("yue_music", MusicModels.Yue);
+        // HeartMuLa-oss-3B — CSM-shaped music LM + flow-matching HeartCodec, 48 kHz (HF auto-download).
+        map["heartlib_music"] = new MusicHandler("heartlib_music", MusicModels.HeartMula);
 
         // Voice conversion — RVC re-voices a source clip (HuBERT content + YIN F0 + trained voice model).
         map["rvc_clone"] = new VcHandler("rvc_clone", VcModels.Rvc);

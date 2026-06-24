@@ -46,8 +46,8 @@ public class AudioServerManager
             return await AudioEngine.ProcessAsync(provider.Id, args, cancelToken);
         }
 
-        // Not an API provider and not yet wired into the in-process engine.
-        return CreateErrorResponse($"{provider.Name} is not yet supported by the in-process C# engine. Support is being added engine-side; this provider will light up automatically once it lands.");
+        // Not an API provider and not yet wired into the in-process engine — name the specific blocker.
+        return CreateErrorResponse(AudioUnsupportedReasons.Message(provider.Id, provider.Name));
     }
 
     /// <summary>Routes an API provider request to its C# handler.</summary>
