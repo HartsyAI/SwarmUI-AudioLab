@@ -14,38 +14,13 @@ public sealed class HeartLibProvider : IAudioProviderSource
         .WithId("heartlib_music")
         .WithName("HeartLib Music")
         .WithCategory(AudioCategory.AudioGeneration)
-        .WithPythonEngine("music_heartlib", "HeartLibEngine")
         .WithModelPrefix("HeartLib")
         .WithModelClass("heartlib_music", "HeartLib Music")
         .AddFeatureFlag("audiolab_audiogen")
         .AddFeatureFlag("heartlib_music_params")
-        .AddDependencies(Dependencies)
         .AddModels(Models)
         .WithEngineGroup("music")
         .Build();
-
-    #region Dependencies
-
-    private static PackageDefinition[] Dependencies =>
-    [
-        new() { Name = "numpy>=2.0.0", InstallName = "numpy>=2.0.0", ImportName = "numpy", Category = "core" },
-        new() { Name = "torch==2.7.1+cu128", InstallName = "torch==2.7.1+cu128", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu128" },
-        new() { Name = "torchaudio==2.7.1+cu128", InstallName = "torchaudio==2.7.1+cu128", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu128" },
-        new() { Name = "torchvision==0.22.1+cu128", InstallName = "torchvision==0.22.1+cu128", ImportName = "torchvision", Category = "pytorch", EstimatedInstallTimeMinutes = 8, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu128" },
-        new() { Name = "transformers>=4.57.0", InstallName = "transformers>=4.57.0", ImportName = "transformers", Category = "ml" },
-        new() { Name = "accelerate", InstallName = "accelerate", ImportName = "accelerate", Category = "ml" },
-        new() { Name = "einops", InstallName = "einops", ImportName = "einops", Category = "ml" },
-        new() { Name = "soundfile", InstallName = "soundfile", ImportName = "soundfile", Category = "core" },
-        new() { Name = "tokenizers>=0.22.0", InstallName = "tokenizers>=0.22.0", ImportName = "tokenizers", Category = "ml" },
-        new() { Name = "torchtune==0.4.0", InstallName = "torchtune==0.4.0", ImportName = "torchtune", Category = "music" },
-        new() { Name = "torchao==0.9.0", InstallName = "torchao==0.9.0", ImportName = "torchao", Category = "music" },
-        new() { Name = "vector-quantize-pytorch", InstallName = "vector-quantize-pytorch", ImportName = "vector_quantize_pytorch", Category = "music" },
-        new() { Name = "tqdm", InstallName = "tqdm", ImportName = "tqdm", Category = "core" },
-        new() { Name = "huggingface_hub", InstallName = "huggingface_hub", ImportName = "huggingface_hub", Category = "core" },
-        new() { Name = "heartlib", InstallName = "git+https://github.com/HeartMuLa/heartlib.git", ImportName = "heartlib", Category = "music", EstimatedInstallTimeMinutes = 5, CustomInstallArgs = "--no-deps" },
-    ];
-
-    #endregion
 
     #region Models
 

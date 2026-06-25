@@ -14,30 +14,13 @@ public sealed class DistilWhisperProvider : IAudioProviderSource
         .WithId("distilwhisper_stt")
         .WithName("Distil-Whisper STT")
         .WithCategory(AudioCategory.STT)
-        .WithPythonEngine("stt_distilwhisper", "DistilWhisperEngine")
         .WithModelPrefix("DistilWhisper")
         .WithModelClass("distilwhisper_stt", "Distil-Whisper STT")
         .AddFeatureFlag("audiolab_stt")
         .AddFeatureFlag("distilwhisper_stt_params")
-        .AddDependencies(Dependencies)
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();
-
-    #region Dependencies
-
-    private static PackageDefinition[] Dependencies =>
-    [
-        new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
-        new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        new() { Name = "torchaudio==2.6.0+cu126", InstallName = "torchaudio==2.6.0+cu126", ImportName = "torchaudio", Category = "pytorch", EstimatedInstallTimeMinutes = 10, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        new() { Name = "transformers>=4.40.0", InstallName = "transformers>=4.40.0", ImportName = "transformers", Category = "stt" },
-        new() { Name = "accelerate>=0.25.0", InstallName = "accelerate>=0.25.0", ImportName = "accelerate", Category = "stt" },
-        new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" },
-        new() { Name = "imageio-ffmpeg", InstallName = "imageio-ffmpeg", ImportName = "imageio_ffmpeg", Category = "stt" }
-    ];
-
-    #endregion
 
     #region Models
 

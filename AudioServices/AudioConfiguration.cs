@@ -78,49 +78,19 @@ public static class AudioConfiguration
     /// <summary>Root directory of the AudioLab extension.</summary>
     public static string ExtensionDirectory { get; set; } = "";
 
-    /// <summary>Directory containing the Python backend scripts.</summary>
-    public static string PythonBackendDirectory => Path.Combine(ExtensionDirectory, "python_backend");
-
     /// <summary>Root directory for audio model storage, centralized under Models/audio/.</summary>
     public static string ModelRoot { get; set; } = "Models/audio";
 
-    /// <summary>Path for HuggingFace model cache (redirected from ~/.cache/huggingface/).</summary>
-    public static string GetHuggingFaceCachePath() => Path.Combine(Path.GetFullPath(ModelRoot), ".cache");
-
     /// <summary>Path for a specific model category (e.g. tts, stt, music).</summary>
     public static string GetModelPath(string category) => Path.Combine(Path.GetFullPath(ModelRoot), category);
-
-    /// <summary>Root directory for per-group Python virtual environments.
-    /// Delegates to VenvManager.VenvRoot which uses a short path on Windows.</summary>
-    public static string VenvRoot => VenvManager.VenvRoot;
 
     #endregion
 
     #region Runtime Settings
 
-    /// <summary>Whether to use Docker for Linux-only engines.</summary>
+    /// <summary>Retained as inert metadata for the engine list UI; Docker-based Linux-only engines are
+    /// no longer used now that inference runs in-process on the C# engine.</summary>
     public static bool UseDocker { get; set; } = false;
 
     #endregion
-
-    /// <summary>Validates the current configuration and logs any issues.</summary>
-    public static bool ValidateConfiguration()
-    {
-        bool isValid = true;
-
-        if (string.IsNullOrEmpty(ExtensionDirectory))
-        {
-            Logs.Error("[AudioLab] Extension directory not set");
-            isValid = false;
-        }
-
-        string voiceProcessorScript = Path.Combine(PythonBackendDirectory, "voice_processor.py");
-        if (!File.Exists(voiceProcessorScript))
-        {
-            Logs.Error($"[AudioLab] Voice processor script not found: {voiceProcessorScript}");
-            isValid = false;
-        }
-
-        return isValid;
-    }
 }

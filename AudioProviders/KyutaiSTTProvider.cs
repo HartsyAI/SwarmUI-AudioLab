@@ -14,27 +14,13 @@ public sealed class KyutaiSTTProvider : IAudioProviderSource
         .WithId("kyutaistt_stt")
         .WithName("Kyutai STT")
         .WithCategory(AudioCategory.STT)
-        .WithPythonEngine("stt_kyutai", "KyutaiSTTEngine")
         .WithModelPrefix("KyutaiSTT")
         .WithModelClass("kyutaistt_stt", "Kyutai STT")
         .AddFeatureFlag("audiolab_stt")
         .AddFeatureFlag("kyutaistt_stt_params")
-        .AddDependencies(Dependencies)
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();
-
-    #region Dependencies
-
-    private static PackageDefinition[] Dependencies =>
-    [
-        new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
-        new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" },
-        new() { Name = "torch>=2.0.0", InstallName = "torch>=2.0.0", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12 },
-        new() { Name = "transformers>=4.53.0", InstallName = "transformers>=4.53.0", ImportName = "transformers", Category = "stt", EstimatedInstallTimeMinutes = 5 }
-    ];
-
-    #endregion
 
     #region Models
 

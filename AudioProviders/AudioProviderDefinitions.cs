@@ -25,10 +25,14 @@ public static class AudioProviderDefinitions
         FishSpeechProvider.Instance,
         Qwen3TTSProvider.Instance,
         PiperProvider.Instance,
+        MeloTTSProvider.Instance,
+        SparkTTSProvider.Instance,
+        StyleTTS2Provider.Instance,
         // Local STT providers
         WhisperProvider.Instance,
         KyutaiSTTProvider.Instance,
         RealtimeSTTProvider.Instance,
+        WhisperStreamingProvider.Instance,
         MoonshineProvider.Instance,
         DistilWhisperProvider.Instance,
         // Local audio generation providers

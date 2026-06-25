@@ -45,7 +45,6 @@ public static class AudioLabAPI
             API.RegisterAPICall(ProcessTTS, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(ProcessWorkflow, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(GetAllProvidersStatus, false, AudioLabPermissions.PermCheckStatus);
-            API.RegisterAPICall(InstallProviderDependencies, false, AudioLabPermissions.PermManageBackends);
             API.RegisterAPICall(GetInstallationStatus, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(GetInstallationProgress, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(ConvertAudioFormat, false, AudioLabPermissions.PermProcessAudio);
@@ -168,7 +167,7 @@ public static class AudioLabAPI
             {
                 return AudioLab.CreateErrorResponse($"No TTS provider available (requested: '{requestedProvider}')", "no_provider");
             }
-            Logs.Info($"[AudioLab] ProcessTTS: routing to provider '{ttsProvider.Id}' ({ttsProvider.Name}), module={ttsProvider.PythonModule}, class={ttsProvider.PythonEngineClass}");
+            Logs.Info($"[AudioLab] ProcessTTS: routing to provider '{ttsProvider.Id}' ({ttsProvider.Name}).");
 
             Dictionary<string, object> args = new()
             {
@@ -299,8 +298,7 @@ public static class AudioLabAPI
                     ["id"] = provider.Id,
                     ["name"] = provider.Name,
                     ["category"] = provider.Category.ToString(),
-                    ["model_count"] = provider.Models.Count,
-                    ["dependency_count"] = provider.Dependencies.Count
+                    ["model_count"] = provider.Models.Count
                 });
             }
 
@@ -317,101 +315,30 @@ public static class AudioLabAPI
         }
     }
 
-    /// <summary>Install dependencies for a specific provider.</summary>
-    public static async Task<JObject> InstallProviderDependencies(Session session, JObject input)
-    {
-        try
-        {
-            string providerId = input["provider_id"]?.ToString();
-            if (string.IsNullOrEmpty(providerId))
-            {
-                return AudioLab.CreateErrorResponse("provider_id is required", "missing_provider");
-            }
-
-            AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId);
-            if (provider == null)
-            {
-                return AudioLab.CreateErrorResponse($"Unknown provider: {providerId}", "unknown_provider");
-            }
-
-            AudioDependencyInstaller installer = new();
-            PythonEnvironmentInfo pythonInfo = await installer.DetectPythonEnvironmentForGroupAsync(provider.EngineGroup);
-            if (pythonInfo?.IsValid != true)
-            {
-                return AudioLab.CreateErrorResponse("Python environment not available. Install Python 3.10+ or ensure python/python3 is on your system PATH.", "python_not_found");
-            }
-
-            bool success = await installer.InstallProviderDependenciesAsync(pythonInfo, provider);
-            return new JObject
-            {
-                ["success"] = success,
-                ["provider_id"] = providerId,
-                ["message"] = success ? $"Dependencies for {provider.Name} installed successfully" : $"Failed to install dependencies for {provider.Name}"
-            };
-        }
-        catch (Exception ex)
-        {
-            return AudioLab.CreateErrorResponse("Dependency installation failed", "install_error", ex);
-        }
-    }
-
-    /// <summary>Get installation status for all providers (checks per-group venvs).</summary>
+    /// <summary>Get install status for all providers. "Installed" now means the provider's models are
+    /// registered (engine-backed or API), reported from the running backend — no Python/venv involved.</summary>
     public static async Task<JObject> GetInstallationStatus(Session session, JObject input)
     {
         try
         {
-            AudioDependencyInstaller installer = new();
-
-            // Check if base Python is available at all
-            string basePython = VenvManager.GetBasePythonPath();
-            bool pythonDetected = basePython != null;
+            await Task.CompletedTask;
+            DynamicAudioBackend backend = Program.Backends.AllBackends.Values
+                .Select(b => b.AbstractBackend as DynamicAudioBackend)
+                .FirstOrDefault(b => b is not null);
+            IReadOnlySet<string> installedIds = backend?.GetInstalledEngineIds() ?? new HashSet<string>();
+            bool engineAvailable = AudioEngine.Available;
 
             JObject providerStatuses = [];
-            // Cache PythonEnvironmentInfo per group to avoid redundant lookups
-            Dictionary<string, PythonEnvironmentInfo> groupEnvCache = [];
-
             foreach (AudioProviderDefinition provider in AudioProviderRegistry.All)
             {
-                if (provider.Dependencies.Count == 0)
-                {
-                    providerStatuses[provider.Id] = true;
-                    continue;
-                }
-
-                string group = provider.EngineGroup;
-
-                // Get or create the PythonEnvironmentInfo for this group
-                if (!groupEnvCache.TryGetValue(group, out PythonEnvironmentInfo groupPython))
-                {
-                    string venvPython = VenvManager.GetVenvPythonPath(group);
-                    if (System.IO.File.Exists(venvPython))
-                    {
-                        groupPython = new PythonEnvironmentInfo
-                        {
-                            PythonPath = venvPython,
-                            OperatingSystem = Environment.OSVersion.ToString(),
-                            IsEmbedded = false,
-                            Version = "detected",
-                        };
-                    }
-                    groupEnvCache[group] = groupPython; // may be null
-                }
-
-                if (groupPython?.IsValid != true)
-                {
-                    providerStatuses[provider.Id] = false;
-                    continue;
-                }
-
-                bool installed = await installer.CheckProviderDependenciesAsync(groupPython, provider);
-                providerStatuses[provider.Id] = installed;
+                providerStatuses[provider.Id] = installedIds.Contains(provider.Id);
             }
 
             return new JObject
             {
                 ["success"] = true,
-                ["python_detected"] = pythonDetected,
-                ["base_python"] = basePython ?? "not found",
+                ["engine_available"] = engineAvailable,
+                ["engine_ready"] = engineAvailable && AudioEngine.EngineReady(),
                 ["providers"] = providerStatuses
             };
         }
@@ -461,6 +388,7 @@ public static class AudioLabAPI
                 .Select(b => b.AbstractBackend as DynamicAudioBackend)
                 .FirstOrDefault(b => b is not null);
             IReadOnlySet<string> installedIds = backend?.GetInstalledEngineIds() ?? new HashSet<string>();
+            IReadOnlySet<string> weightsMissingIds = backend?.GetWeightsMissingEngineIds() ?? new HashSet<string>();
             bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
             bool dockerEnabled = AudioConfiguration.UseDocker;
 
@@ -474,17 +402,6 @@ public static class AudioLabAPI
                 {
                     platformCompatible = false;
                     platformNote = "Requires Docker on Windows. Enable 'Use Docker' in backend settings.";
-                }
-
-                // Build dependencies list
-                JArray deps = [];
-                foreach (PackageDefinition dep in provider.Dependencies)
-                {
-                    deps.Add(new JObject
-                    {
-                        ["name"] = dep.Name,
-                        ["category"] = dep.Category
-                    });
                 }
 
                 // Build models list
@@ -515,7 +432,10 @@ public static class AudioLabAPI
                     ["platform_compatible"] = platformCompatible,
                     ["platform_note"] = platformNote,
                     ["installed"] = installedIds.Contains(provider.Id),
-                    ["dependencies"] = deps,
+                    // Installed but weights absent on disk (e.g. user freed space) — UI shows a repair prompt.
+                    ["weights_missing"] = weightsMissingIds.Contains(provider.Id),
+                    // In-process C# engines have no Python dependencies; only the model weights download.
+                    ["in_process"] = !provider.IsApiProvider,
                     ["models"] = models
                 });
             }
@@ -569,7 +489,7 @@ public static class AudioLabAPI
             {
                 Logs.Info($"[AudioLab] Install progress: {msg}");
                 ws.SendJson(new JObject { ["info"] = msg }, API.WebsocketTimeout).Wait();
-            });
+            }, Program.GlobalProgramCancel);
 
             if (success)
             {
@@ -588,8 +508,10 @@ public static class AudioLabAPI
         return null;
     }
 
-    /// <summary>Uninstalls an audio engine: removes models from registry and persists the change.</summary>
-    public static async Task<JObject> AudioLabUninstallEngine(Session session, string provider_id)
+    /// <summary>Uninstalls an audio engine: removes models from registry and persists the change. When
+    /// <paramref name="delete_weights"/> is true, also deletes the provider's downloaded weights from disk
+    /// (shared side-model caches are retained).</summary>
+    public static async Task<JObject> AudioLabUninstallEngine(Session session, string provider_id, bool delete_weights = false)
     {
         try
         {
@@ -619,13 +541,16 @@ public static class AudioLabAPI
                 };
             }
 
-            backend.UnregisterEngine(provider_id);
+            backend.UnregisterEngine(provider_id, delete_weights);
 
             return new JObject
             {
                 ["success"] = true,
                 ["provider_id"] = provider_id,
-                ["message"] = $"{provider.Name} removed successfully."
+                ["deleted_weights"] = delete_weights,
+                ["message"] = delete_weights
+                    ? $"{provider.Name} removed and weights deleted."
+                    : $"{provider.Name} removed successfully."
             };
         }
         catch (Exception ex)

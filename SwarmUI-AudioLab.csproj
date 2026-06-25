@@ -1,9 +1,35 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <AssemblyName>SwarmExtensionSwarmUI-AudioLab</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Force the floating HartsyInference 'alpha.*' ref to resolve to the latest published version. -->
+    <RestoreNoHttpCache>true</RestoreNoHttpCache>
   </PropertyGroup>
   <Import Project="../../SwarmUI.extension.props" />
+
+  <!-- After the import (which sets it false): copy the engine's private DLLs into our output so the
+       per-extension AssemblyLoadContext can resolve them. -->
+  <PropertyGroup>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="FFMpegCore" Version="5.4.0" />
+    <!-- HartsyInference engine, referenced directly (no dependency on the backend extension). -->
+    <PackageReference Include="HartsyInference" Version="1.0.0-alpha.38" />
+  </ItemGroup>
+
+  <!-- Host-provided packages: compile against them but don't copy their DLLs (avoids duplicate/version-skew).
+       Keep in sync with SwarmUI.deps.props. -->
+  <ItemGroup>
+    <PackageReference Update="FreneticLLC.FreneticUtilities" ExcludeAssets="runtime" />
+    <PackageReference Update="Hardware.Info" ExcludeAssets="runtime" />
+    <PackageReference Update="LiteDB" ExcludeAssets="runtime" />
+    <PackageReference Update="LLamaSharp" ExcludeAssets="runtime" />
+    <PackageReference Update="LLamaSharp.Backend.Cpu" ExcludeAssets="runtime" />
+    <PackageReference Update="LLamaSharp.Backend.Cuda12" ExcludeAssets="runtime" />
+    <PackageReference Update="Newtonsoft.Json" ExcludeAssets="runtime" />
+    <PackageReference Update="SixLabors.ImageSharp" ExcludeAssets="runtime" />
+    <PackageReference Update="SixLabors.ImageSharp.Drawing" ExcludeAssets="runtime" />
   </ItemGroup>
 </Project>

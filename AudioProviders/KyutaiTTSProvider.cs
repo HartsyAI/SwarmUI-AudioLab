@@ -14,28 +14,14 @@ public sealed class KyutaiTTSProvider : IAudioProviderSource
         .WithId("kyutaitts_tts")
         .WithName("Kyutai TTS")
         .WithCategory(AudioCategory.TTS)
-        .WithPythonEngine("tts_kyutai", "KyutaiTTSEngine")
         .WithModelPrefix("KyutaiTTS")
         .WithModelClass("kyutaitts_tts", "Kyutai TTS")
         .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("kyutaitts_tts_params")
         .AddFeatureFlag("tts_voice_ref")
-        .AddDependencies(Dependencies)
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();
-
-    #region Dependencies
-
-    private static PackageDefinition[] Dependencies =>
-    [
-        new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
-        new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" },
-        new() { Name = "torch>=2.0.0", InstallName = "torch>=2.0.0", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12 },
-        new() { Name = "moshi>=0.2.11", InstallName = "moshi>=0.2.11", ImportName = "moshi", Category = "tts", EstimatedInstallTimeMinutes = 8 }
-    ];
-
-    #endregion
 
     #region Models
 

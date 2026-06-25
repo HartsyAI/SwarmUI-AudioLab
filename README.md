@@ -13,15 +13,17 @@ A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeypr
 - **Video + Audio** — Combine audio with video or extract audio from video via ffmpeg
 - **Streaming TTS** — Chunked text-to-speech with auto-play for immediate playback while generating
 - **Generation Cancellation** — Stop Generation and Stop All Generations buttons work for all audio providers
-- **On-Demand Engine Installation** — Install only the engines you need, each in its own Python virtual environment
-- **Docker Support** — Linux-only engines (RVC, GPT-SoVITS, Resemble Enhance, CosyVoice, RealtimeSTT) can run via Docker on Windows
+- **Pure C# Inference (no Python)** — Audio models run in-process via the [HartsyInference](https://www.nuget.org/packages/HartsyInference) engine, hosted by the companion **HartsyInference (Pure C# Inference)** backend extension. No Python, no venvs, no Docker.
+- **On-Demand Weights** — Install only the models you need; the Install button downloads the model's `.safetensors` weights (STT models download themselves on first use)
 
 ## Requirements
 
 - SwarmUI installed and working
-- Python 3.10+ available on your system PATH (used to create per-engine virtual environments)
-- ffmpeg on PATH (for video+audio features)
-- Docker with NVIDIA Container Toolkit (optional, for Linux-only engines on Windows)
+- The **HartsyInference (Pure C# Inference)** backend extension installed and added in Server > Backends (this is the in-process engine AudioLab runs models on)
+- ffmpeg on PATH (for audio decode/encode and video+audio features)
+- A CUDA or Vulkan GPU is recommended for the larger models; several (e.g. Kokoro, Moonshine) are CPU-capable
+
+> **No Python or Docker required.** Earlier versions ran each engine in a Python virtual environment; the audio engines now run as pure C# in-process. The per-engine capability tables below are the coverage roadmap — models light up as the C# engine adds support.
 
 ## Installation
 
@@ -35,7 +37,7 @@ A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeypr
 
 3. In SwarmUI, go to **Server** > **Backends** and add the **Audio Backend**.
 
-4. Open the Generate tab, select an audio model, and use the Install button to install the engine you want. Dependencies are installed automatically into an isolated virtual environment.
+4. Open the Generate tab, select an audio model, and use the Install button to install the model you want. Its weights are downloaded automatically; STT models fetch themselves on first use. Generation runs in-process on the C# engine.
 
 ## Supported Engines
 

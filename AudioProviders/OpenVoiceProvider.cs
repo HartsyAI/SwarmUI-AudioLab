@@ -14,28 +14,13 @@ public sealed class OpenVoiceProvider : IAudioProviderSource
         .WithId("openvoice_clone")
         .WithName("OpenVoice V2")
         .WithCategory(AudioCategory.VoiceConversion)
-        .WithPythonEngine("clone_openvoice", "OpenVoiceEngine")
         .WithModelPrefix("OpenVoice")
         .WithModelClass("openvoice_clone", "OpenVoice V2")
         .AddFeatureFlag("audiolab_clone")
         .AddFeatureFlag("openvoice_clone_params")
-        .AddDependencies(Dependencies)
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();
-
-    #region Dependencies
-
-    private static PackageDefinition[] Dependencies =>
-    [
-        new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
-        new() { Name = "torch==2.6.0+cu126", InstallName = "torch==2.6.0+cu126", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12, CustomInstallArgs = "--extra-index-url https://download.pytorch.org/whl/cu126" },
-        new() { Name = "openvoice", InstallName = "git+https://github.com/myshell-ai/OpenVoice.git", ImportName = "openvoice", Category = "voice_clone", IsGitPackage = true, EstimatedInstallTimeMinutes = 10 },
-        new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" },
-        new() { Name = "librosa>=0.10.0", InstallName = "librosa>=0.10.0", ImportName = "librosa", Category = "voice_clone" }
-    ];
-
-    #endregion
 
     #region Models
 

@@ -14,28 +14,14 @@ public sealed class PocketTTSProvider : IAudioProviderSource
         .WithId("pockettts_tts")
         .WithName("Pocket TTS")
         .WithCategory(AudioCategory.TTS)
-        .WithPythonEngine("tts_pockettts", "PocketTTSEngine")
         .WithModelPrefix("PocketTTS")
         .WithModelClass("pockettts_tts", "Pocket TTS")
         .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("pockettts_tts_params")
         .AddFeatureFlag("tts_voice_ref")
-        .AddDependencies(Dependencies)
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();
-
-    #region Dependencies
-
-    private static PackageDefinition[] Dependencies =>
-    [
-        new() { Name = "numpy>=1.26.0", InstallName = "numpy>=1.26.0", ImportName = "numpy", Category = "core" },
-        new() { Name = "soundfile>=0.12.0", InstallName = "soundfile>=0.12.0", ImportName = "soundfile", Category = "core" },
-        new() { Name = "torch>=2.0.0", InstallName = "torch>=2.0.0", ImportName = "torch", Category = "pytorch", EstimatedInstallTimeMinutes = 12 },
-        new() { Name = "pocket-tts>=1.1.1", InstallName = "pocket-tts>=1.1.1", ImportName = "pocket_tts", Category = "tts", EstimatedInstallTimeMinutes = 3 }
-    ];
-
-    #endregion
 
     #region Models
 

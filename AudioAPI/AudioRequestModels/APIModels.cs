@@ -604,25 +604,6 @@ public class InstallationProgressResponse : BaseResponse
 
 #region Internal Support Models
 
-/// <summary>Python environment information for dependency management.</summary>
-public class PythonEnvironmentInfo
-{
-    /// <summary>Path to the Python executable</summary>
-    public string PythonPath { get; set; } = string.Empty;
-
-    /// <summary>Operating system information</summary>
-    public string OperatingSystem { get; set; } = string.Empty;
-
-    /// <summary>Whether this is SwarmUI's embedded Python</summary>
-    public bool IsEmbedded { get; set; } = false;
-
-    /// <summary>Python version information</summary>
-    public string Version { get; set; } = string.Empty;
-
-    /// <summary>Whether the Python environment is valid and usable</summary>
-    public bool IsValid => !string.IsNullOrEmpty(PythonPath) && File.Exists(PythonPath);
-}
-
 /// <summary>Information about a running process.</summary>
 public class ProcessInfo
 {
@@ -646,34 +627,6 @@ public class ProcessInfo
 
     /// <summary>Backend type this process manages</summary>
     public string BackendType { get; set; } = string.Empty;
-}
-
-/// <summary>Package definition for dependency management.</summary>
-public class PackageDefinition
-{
-    /// <summary>Display name of the package</summary>
-    public string Name { get; set; } = string.Empty;
-
-    /// <summary>Name to use for pip install</summary>
-    public string InstallName { get; set; } = string.Empty;
-
-    /// <summary>Name to use for import checks</summary>
-    public string ImportName { get; set; } = string.Empty;
-
-    /// <summary>Package category (core, pytorch, stt, tts)</summary>
-    public string Category { get; set; } = string.Empty;
-
-    /// <summary>Whether this is a git package</summary>
-    public bool IsGitPackage { get; set; } = false;
-
-    /// <summary>Alternative names to check for</summary>
-    public string[] AlternativeNames { get; set; } = [];
-
-    /// <summary>Estimated installation time in minutes</summary>
-    public int EstimatedInstallTimeMinutes { get; set; } = 2;
-
-    /// <summary>Custom pip install arguments</summary>
-    public string CustomInstallArgs { get; set; } = string.Empty;
 }
 
 /// <summary>Package installation status.</summary>
