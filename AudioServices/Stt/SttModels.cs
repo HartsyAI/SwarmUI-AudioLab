@@ -90,6 +90,25 @@ public static class SttModels
         },
     };
 
+    /// <summary>Whisper Streaming — the same Whisper weights driven through the engine's
+    /// <see cref="WhisperStreamingPipeline"/> (LocalAgreement-2 hypothesis buffer). For AudioLab's request/response
+    /// path we feed the whole clip and flush, so the result equals batch Whisper with the streaming stabilizer; the
+    /// value is the live partial/confirmed API for future real-time callers. Provider id <c>whisperstreaming_stt</c>.</summary>
+    public static readonly SttModelDescriptor WhisperStreaming = new()
+    {
+        ResolveRepo = ResolveWhisperRepo,
+        LoadAsync = async (repo, ct) =>
+        {
+            WhisperPipeline p = await WhisperPipeline.LoadAsync(repo, ct: ct).ConfigureAwait(false);
+            return new SttRunner((backend, audio) =>
+            {
+                using WhisperStreamingPipeline stream = new(p, backend);
+                stream.PushAudio(audio, 16_000);
+                return stream.Finish();
+            }, p);
+        },
+    };
+
     /// <summary>Whisper / distil-whisper model id → HF repo. Full repo ids (with '/') pass through; otherwise
     /// a size/variant token is matched; otherwise a sensible per-family default.</summary>
     private static string ResolveWhisperRepo(string modelId)

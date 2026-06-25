@@ -32,6 +32,8 @@ public static class AudioEngine
         map["distilwhisper_stt"] = whisper; // same pipeline, repo resolved per model id
         map["moonshine_stt"] = new SttHandler(SttModels.Moonshine);
         map["kyutaistt_stt"] = new SttHandler(SttModels.Kyutai);
+        // Whisper Streaming — same Whisper weights via the engine's LocalAgreement-2 streaming pipeline.
+        map["whisperstreaming_stt"] = new SttHandler(SttModels.WhisperStreaming);
 
         // TTS — same pattern. Token-based TTS joins as the engine's text front-ends / tokenizer assets land.
         map["vibevoice_tts"] = new TtsHandler(TtsModels.VibeVoice);
@@ -47,6 +49,22 @@ public static class AudioEngine
         map["cosyvoice_tts"] = new TtsHandler(CosyVoiceModel.Descriptor);
         // F5-TTS — zero-shot voice clone (DiT + Vocos 24 kHz); reference clip + its transcript required.
         map["f5_tts"] = new TtsHandler(F5TtsModel.Descriptor);
+
+        // Newly-wired engine TTS. Real synth where the engine recipe is verified (Qwen3 custom/design, Chatterbox
+        // load); the rest dispatch but throw a precise gate naming the missing engine/front-end piece (see each
+        // descriptor + the engine-work list). Provider ids match AudioProviders/*Provider.cs.
+        map["qwen3_tts"] = new TtsHandler(Qwen3TtsModel.Descriptor);
+        map["chatterbox_tts"] = new TtsHandler(ChatterboxModel.Descriptor);
+        map["kyutaitts_tts"] = new TtsHandler(KyutaiTtsModel.Descriptor);
+        map["piper_tts"] = new TtsHandler(PiperModel.Descriptor);
+        map["melotts_tts"] = new TtsHandler(MeloTtsModel.Descriptor);
+        map["sparktts_tts"] = new TtsHandler(SparkTtsModel.Descriptor);
+        map["pockettts_tts"] = new TtsHandler(PocketTtsModel.Descriptor);
+        map["styletts2_tts"] = new TtsHandler(StyleTts2Model.Descriptor);
+        map["zonos_tts"] = new TtsHandler(ZonosModel.Descriptor);
+        // GPT-SoVITS is a clone-category provider, but it's text+reference→speech, so it rides the TTS handler
+        // (gated until the BERT/reference front-end lands).
+        map["gptsovits_clone"] = new TtsHandler(GptSoVitsModel.Descriptor);
 
         // Music — MusicGen/AudioGen HF-auto-download. YuE is ready (MusicModels.Yue) but gated until the
         // engine package ships YueTokenizer; re-enable this line + the #if false in MusicModels then.
@@ -64,6 +82,8 @@ public static class AudioEngine
 
         // Audio processing — Demucs stem separation (used by the DAW's "Separate Stems" → returns a stems map).
         map["demucs_fx"] = new Fx.DemucsHandler();
+        // Resemble-Enhance — denoise + LCFM enhancer + UnivNet vocoder (input clip → enhanced clip, 44.1 kHz).
+        map["resemble_enhance_fx"] = new Fx.ResembleEnhanceHandler();
 
         return map;
     }
