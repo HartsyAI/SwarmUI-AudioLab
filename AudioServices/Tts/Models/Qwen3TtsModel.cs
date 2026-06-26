@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Threading;
 using SwarmUI.Utils;
 using HartsyInference.Core.Tensors;
+using HartsyInference.Audio.Cache;
 using HartsyInference.Audio.Models.QwenTts;
 using HartsyInference.Audio.Pipelines;
+using HartsyInference.ModelHandler.SafeTensors;
 using HartsyInference.Tokenizers;
 
 namespace Hartsy.Extensions.AudioLab.AudioServices.Tts;
@@ -39,16 +41,23 @@ public static class Qwen3TtsModel
                     + "only the 1.7B preset exists today. Pick a 1.7B model, or add the 0.6B config (see engine-work list).");
             }
 
-            // Single combined checkpoint: each sub-model (talker/mtp/vocoder) slices its own prefix.
-            // VERIFY against the published repo layout if loading fails on a missing key.
-            (IReadOnlyDictionary<string, Tensor> dict, IDisposable[] loaders) = await TtsModels.LoadCheckpointAsync(repo, ct).ConfigureAwait(false);
+            // Two checkpoints: the main model.safetensors carries talker.* (+ MTP under talker.code_predictor.*)
+            // and speaker_encoder.* (ECAPA); the codec lives in speech_tokenizer/model.safetensors (decoder.* =
+            // the vocoder, encoder.* = the reference codec). The talker dict serves the talker AND the MTP; the
+            // codec dict serves the vocoder. (refCodec/ecapa are only needed for voice_clone, which is gated.)
+            string talkerPath = await AudioModelCache.GetAsync(repo, "model.safetensors", ct: ct).ConfigureAwait(false);
+            string codecPath = await AudioModelCache.GetAsync(repo, "speech_tokenizer/model.safetensors", ct: ct).ConfigureAwait(false);
+            SafeTensorsLoader talkerLoader = new(); talkerLoader.Load(talkerPath);
+            SafeTensorsLoader codecLoader = new(); codecLoader.Load(codecPath);
 
             Qwen3TtsPipeline pipeline = new(Qwen3TtsConfig.Default_1_7B);
-            pipeline.LoadWeights(dict, dict, dict);
+            // The talker ships BF16 (loads directly on CUDA); CPU-only synth would need an F32 cast of the talker
+            // dict (engine is F32-only on CPU) — the engine constructs CUDA→Vulkan→CPU, so the GPU path is default.
+            pipeline.LoadWeights(talkerLoader.GetAllTensors(), talkerLoader.GetAllTensors(), codecLoader.GetAllTensors());
             Qwen3Tokenizer tokenizer = new(maxLength: 512);
-            Logs.Info($"[AudioLab][Qwen3-TTS] Loaded {repo} (mode={mode}, 12 Hz talker + MTP + vocoder, 24 kHz).");
+            Logs.Info($"[AudioLab][Qwen3-TTS] Loaded {repo} (mode={mode}, 12 Hz talker + MTP + codec, 24 kHz).");
 
-            IDisposable[] keep = [pipeline, .. loaders];
+            IDisposable[] keep = [pipeline, talkerLoader, codecLoader];
             return new TtsRunner(pipeline.SampleRate, (backend, req) =>
             {
                 int[] textTokens = tokenizer.Encode(req.Text, appendEos: false);
