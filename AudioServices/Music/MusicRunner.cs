@@ -10,6 +10,8 @@ public sealed class MusicRequest
     public string Genre { get; init; } = "";
     public double Duration { get; init; } = 10;
     public int Seed { get; init; }
+    /// <summary>Noise-schedule shift (ACE-Step); null = use the variant/pipeline default.</summary>
+    public double? Shift { get; init; }
 }
 
 /// <summary>Generated audio — mono (Right null) or stereo.</summary>

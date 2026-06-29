@@ -180,7 +180,19 @@ public static class MusicModels
     {
         ManagesOwnWeights = false,
         CacheKey = (providerId, modelId) => ResolveLocalCheckpoint(providerId, modelId),
-        LoadAsync = (backend, providerId, modelId, ct) => LoadAceStepAsync(backend, ResolveLocalCheckpoint(providerId, modelId), ct),
+        LoadAsync = (backend, providerId, modelId, ct) =>
+        {
+            // SFT/Base need the 50-step CFG pipeline the engine's turbo-only path can't run — fail clearly
+            // instead of silently downloading and running the turbo checkpoint in their place.
+            string variant = (modelId ?? "").Trim().ToLowerInvariant();
+            if (variant is "sft" or "base")
+            {
+                throw new NotSupportedException(
+                    "[AudioLab][ACE-Step] The SFT/Base checkpoints require the 50-step CFG pipeline, which the "
+                    + "engine's turbo-only path doesn't implement yet. Pick an ACE-Step 1.5 Turbo variant.");
+            }
+            return LoadAceStepAsync(backend, ResolveLocalCheckpoint(providerId, modelId), ct);
+        },
     };
 
     private static async Task<IMusicRunner> LoadAceStepAsync(IBackend backend, string localPath, CancellationToken ct)
@@ -238,7 +250,8 @@ public static class MusicModels
             try
             {
                 (float[] left, float[] right, int _, int _) = pipeline.Generate(
-                    textHidden, lyricHidden, Math.Clamp(req.Duration, 1d, 600d), seed: req.Seed);
+                    textHidden, lyricHidden, Math.Clamp(req.Duration, 1d, 600d),
+                    shift: req.Shift.HasValue ? (float)req.Shift.Value : null, seed: req.Seed);
                 return MusicAudio.Stereo(left, right);
             }
             finally
@@ -290,8 +303,9 @@ public static class MusicModels
         if (!Directory.Exists(folder))
         {
             throw new DirectoryNotFoundException(
-                $"YuE checkpoint folder not found: '{folder}'. Place the m-a-p/YuE-s1-7B-anneal-* folder there, "
-                + "with sibling 'tokenizer.model' and 'xcodec.safetensors' (from m-a-p/xcodec_mini_infer).");
+                $"YuE checkpoint folder not found: '{folder}'. YuE is a user-placed folder checkpoint (no auto-download): "
+                + "put the m-a-p/YuE-s1-7B-anneal-* folder there. Its 'tokenizer.model' ships inside that folder; also "
+                + "place 'xcodec.safetensors' (converted from m-a-p/xcodec_mini_infer) in or beside it.");
         }
         string tokenizerPath = FindSibling(folder, "tokenizer.model")
             ?? throw new InvalidOperationException($"YuE needs 'tokenizer.model' (mm_tokenizer_v0.2_hf) in or beside '{folder}'.");
@@ -339,7 +353,9 @@ public static class MusicModels
     #region HeartMuLa (HeartMuLa-oss-3B — HF auto-download)
 
     private const string HeartMulaRepo = "HeartMuLa/HeartMuLa-oss-3B";
-    private const string HeartMulaRlRepo = "HeartMuLa/HeartMuLa-RL-oss-3B";
+    private const string HeartMulaHnyRepo = "HeartMuLa/HeartMuLa-oss-3B-happy-new-year";
+    // The dated RL repo is public; the undated "HeartMuLa-RL-oss-3B" is gated (401) — resolve to the dated one.
+    private const string HeartMulaRlRepo = "HeartMuLa/HeartMuLa-RL-oss-3B-20260123";
     private const string HeartCodecRepo = "HeartMuLa/HeartCodec-oss-20260123";
 
     /// <summary>HeartMuLa-oss-3B (Apache 2.0) — a CSM-shaped music LM (Llama-3B global + Llama-300M depth over an
@@ -365,7 +381,10 @@ public static class MusicModels
         {
             return id;
         }
-        return id.Contains("rl", StringComparison.OrdinalIgnoreCase) ? HeartMulaRlRepo : HeartMulaRepo;
+        string lower = id.ToLowerInvariant();
+        if (lower.Contains("rl")) return HeartMulaRlRepo;                      // 3b-rl
+        if (lower.Contains("hny") || lower.Contains("happy")) return HeartMulaHnyRepo; // 3b-hny
+        return HeartMulaRepo;                                                  // 3b-base
     }
 
     private static async Task<IMusicRunner> LoadHeartMulaAsync(string repo, CancellationToken ct)

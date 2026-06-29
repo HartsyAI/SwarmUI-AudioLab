@@ -37,3 +37,4 @@
 /python_backend/engines/__pycache__
 /python_backend/venvs
 /.vs
+nuget.config

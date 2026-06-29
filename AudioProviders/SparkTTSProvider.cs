@@ -24,6 +24,6 @@ public sealed class SparkTTSProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "0.5B", Name = "Spark-TTS 0.5B", Description = "Qwen2.5-0.5B LM + BiCodec, 16 kHz, voice cloning", SourceUrl = "https://huggingface.co/SparkAudio/Spark-TTS-0.5B", License = "Apache 2.0", EstimatedSize = "~1.2GB", EstimatedVram = "~4GB" }
+        new() { Id = "0.5B", Name = "Spark-TTS 0.5B", Description = "Qwen2.5-0.5B LM + BiCodec, 16 kHz, voice cloning", SourceUrl = "https://huggingface.co/SparkAudio/Spark-TTS-0.5B", License = "CC-BY-NC-SA-4.0", EstimatedSize = "~1.2GB", EstimatedVram = "~4GB" }
     ];
 }

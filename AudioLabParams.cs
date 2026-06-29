@@ -266,10 +266,6 @@ public static class AudioLabParams
     public static T2IRegisteredParam<double> CFGIntervalStart;
     /// <summary>CFG application interval end for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<double> CFGIntervalEnd;
-    /// <summary>Output audio normalization toggle for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
-    public static T2IRegisteredParam<string> EnableNormalization;
-    /// <summary>Target loudness in dBFS for ACE-Step normalization. Feature flag: <c>acestep_music_params</c>.</summary>
-    public static T2IRegisteredParam<double> NormalizationDB;
 
     #endregion
 
@@ -319,9 +315,6 @@ public static class AudioLabParams
     #endregion
 
     #region Music — MusicGen (flag: musicgen_music_params)
-
-    /// <summary>Reference melody audio for MusicGen melody conditioning. Feature flag: <c>musicgen_music_params</c>.</summary>
-    public static T2IRegisteredParam<AudioFile> MelodyAudio;
 
     #endregion
 
@@ -988,18 +981,6 @@ public static class AudioLabParams
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
             OrderPriority: 4, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
-        EnableNormalization = T2IParamTypes.Register<string>(new("Normalize Audio",
-            "Normalize output audio to a target loudness level.",
-            "true",
-            GetValues: _ => ["true///Yes (Recommended)", "false///No"],
-            OrderPriority: 5, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
-
-        NormalizationDB = T2IParamTypes.Register<double>(new("Normalization dB",
-            "Target loudness in dBFS when normalization is enabled.\n-14 dB is typical for streaming.",
-            "-14.0",
-            Min: -30.0, Max: 0.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
-            OrderPriority: 6, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
-
         #endregion
 
         #region Music — ACE-Step LM Planner
@@ -1114,14 +1095,6 @@ public static class AudioLabParams
             "0.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
             OrderPriority: -4, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
-
-        #endregion
-
-        #region Music — MusicGen
-        MelodyAudio = T2IParamTypes.Register<AudioFile>(new("Melody Audio",
-            "Reference melody for MusicGen melody conditioning.\nOnly used with the melody model variant.",
-            null,
-            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "musicgen_music_params"));
 
         #endregion
 

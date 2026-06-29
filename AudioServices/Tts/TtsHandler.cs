@@ -63,6 +63,7 @@ public sealed class TtsHandler(TtsModelDescriptor descriptor) : IAudioHandler
         {
             cancel.ThrowIfCancellationRequested();
             ITtsRunner runner = await GetOrLoadAsync(repo, cancel).ConfigureAwait(false);
+            string voice = AudioIo.Str(args, "voice");
             TtsRequest request = new()
             {
                 Text = text,
@@ -71,6 +72,11 @@ public sealed class TtsHandler(TtsModelDescriptor descriptor) : IAudioHandler
                 ReferenceWavPath = refWavPath,
                 ReferenceB64 = refB64,
                 Seed = ReadSeed(args),
+                Voice = string.IsNullOrEmpty(voice) ? null : voice,
+                Speed = ReadDouble(args, "speed"),
+                Exaggeration = ReadDouble(args, "exaggeration"),
+                NfeStep = ReadInt(args, "nfe_step"),
+                CfgScale = ReadDouble(args, "cfg_scale"),
             };
             long start = Environment.TickCount64;
             float[] samples = runner.Synthesize(backend, request);
@@ -121,6 +127,30 @@ public sealed class TtsHandler(TtsModelDescriptor descriptor) : IAudioHandler
             _cache[repo] = loaded;
             return loaded;
         }
+    }
+
+    /// <summary>Reads an optional numeric arg as a double (handles boxed double/int/long/float/string); null if absent.</summary>
+    private static double? ReadDouble(IReadOnlyDictionary<string, object> args, string key)
+    {
+        if (!args.TryGetValue(key, out object v) || v is null)
+        {
+            return null;
+        }
+        return v switch
+        {
+            double d => d,
+            int i => i,
+            long l => l,
+            float f => f,
+            _ => double.TryParse(v.ToString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double p) ? p : null,
+        };
+    }
+
+    /// <summary>Reads an optional numeric arg as an int; null if absent or unparseable.</summary>
+    private static int? ReadInt(IReadOnlyDictionary<string, object> args, string key)
+    {
+        double? d = ReadDouble(args, key);
+        return d.HasValue ? (int)Math.Round(d.Value) : null;
     }
 
     /// <summary>Reads SwarmUI's seed from the engine args (a long; -1 = random) as the int the pipelines take.</summary>

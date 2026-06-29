@@ -74,7 +74,8 @@ public static class ChatterboxModel
                         + "front-end for the voice encoder. Clear the voice reference to use the built-in default voice.");
                 }
                 int[] textTokens = tok.EncodeWithStartStop(req.Text);
-                return pipeline.Synthesize(backend, textTokens, refSpk, cfg.Exaggeration, req.Seed,
+                float exaggeration = req.Exaggeration.HasValue ? (float)req.Exaggeration.Value : cfg.Exaggeration;
+                return pipeline.Synthesize(backend, textTokens, refSpk, exaggeration, req.Seed,
                     flowSpeakerEmbed: flowSpk, t3PromptSpeechTokens: t3Prompt);
             }, keep);
         },

@@ -33,7 +33,7 @@ public sealed class PocketTTSProvider : IAudioProviderSource
             Name = "Pocket TTS",
             Description = "100M parameter TTS. 8 built-in voices, voice cloning from audio files. ~6x real-time on CPU, ~200ms to first chunk.",
             SourceUrl = "https://github.com/kyutai-labs/pocket-tts",
-            License = "MIT",
+            License = "CC-BY-4.0",
             EstimatedSize = "~200MB",
             EstimatedVram = "CPU (no GPU needed)"
         }

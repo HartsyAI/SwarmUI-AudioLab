@@ -39,7 +39,7 @@ public static class OpenVoiceModel
             pipeline.LoadWeights(loader.GetAllTensors());
             Logs.Info("[AudioLab][OpenVoice] Loaded myshell-ai/OpenVoiceV2 tone-color converter (22.05 kHz).");
 
-            return new VcRunner(pipeline.SampleRate, (backend, src, tgt) =>
+            return new VcRunner(pipeline.SampleRate, (backend, src, tgt, _) =>
             {
                 if (tgt is null || tgt.Length == 0)
                 {

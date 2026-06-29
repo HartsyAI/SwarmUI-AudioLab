@@ -72,7 +72,13 @@ public static class F5TtsModel
                 try
                 {
                     return pipeline.Generate(backend, refMel, req.RefText, req.Text,
-                        new F5TtsOptions { Seed = (ulong)req.Seed });
+                        new F5TtsOptions
+                        {
+                            Seed = (ulong)req.Seed,
+                            Steps = req.NfeStep ?? 32,
+                            CfgStrength = req.CfgScale.HasValue ? (float)req.CfgScale.Value : 2.0f,
+                            Speed = req.Speed.HasValue ? (float)req.Speed.Value : 1.0f,
+                        });
                 }
                 finally
                 {

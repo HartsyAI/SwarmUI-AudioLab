@@ -29,7 +29,8 @@ public static class AudioEngine
         // STT — one generic SttHandler per model, each a descriptor (see SttModels).
         SttHandler whisper = new(SttModels.Whisper);
         map["whisper_stt"] = whisper;
-        map["distilwhisper_stt"] = whisper; // same pipeline, repo resolved per model id
+        // Distil shares the Whisper pipeline but needs its own resolver (its model ids omit "distil").
+        map["distilwhisper_stt"] = new SttHandler(SttModels.DistilWhisper);
         map["moonshine_stt"] = new SttHandler(SttModels.Moonshine);
         map["kyutaistt_stt"] = new SttHandler(SttModels.Kyutai);
         // Whisper Streaming — same Whisper weights via the engine's LocalAgreement-2 streaming pipeline.

@@ -77,7 +77,14 @@ public static class TtsModels
             EnglishG2P g2p = new(cmudict);
             KokoroPipeline p = await KokoroPipeline.LoadAsync(ct).ConfigureAwait(false);
             await EnsureKokoroVoiceAsync("af_heart", ct).ConfigureAwait(false);
-            return new TtsRunner(24_000, (backend, req) => p.Synthesize(backend, g2p.ToIpa(req.Text), voiceName: "af_heart"), p);
+            return new TtsRunner(24_000, (backend, req) =>
+            {
+                string voice = string.IsNullOrEmpty(req.Voice) ? "af_heart" : req.Voice;
+                // Fetch the chosen voice pack on first use (af_heart is already ensured at load).
+                EnsureKokoroVoiceAsync(voice, CancellationToken.None).GetAwaiter().GetResult();
+                float speed = req.Speed.HasValue ? (float)req.Speed.Value : 1f;
+                return p.Synthesize(backend, g2p.ToIpa(req.Text), voiceName: voice, speed: speed);
+            }, p);
         },
     };
 

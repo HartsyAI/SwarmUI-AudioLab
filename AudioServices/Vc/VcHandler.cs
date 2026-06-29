@@ -56,8 +56,9 @@ public sealed class VcHandler(string providerId, VcModelDescriptor descriptor) :
         cancel.ThrowIfCancellationRequested();
 
         IVcRunner runner = await GetOrLoadAsync(AudioIo.Str(args, "__model_id"), cancel).ConfigureAwait(false);
+        VcRequest request = new() { PitchShift = ReadDouble(args, "pitch_shift") ?? 0d };
         long start = Environment.TickCount64;
-        float[] audio = runner.Convert(backend, source, target);
+        float[] audio = runner.Convert(backend, source, target, request);
         if (audio is null || audio.Length == 0)
         {
             return AudioIo.Error("The voice-conversion model produced no audio.");
@@ -74,6 +75,23 @@ public sealed class VcHandler(string providerId, VcModelDescriptor descriptor) :
         {
             runner.Dispose();
         }
+    }
+
+    /// <summary>Reads an optional numeric arg as a double (boxed double/int/long/float/string); null if absent.</summary>
+    private static double? ReadDouble(IReadOnlyDictionary<string, object> args, string key)
+    {
+        if (!args.TryGetValue(key, out object v) || v is null)
+        {
+            return null;
+        }
+        return v switch
+        {
+            double d => d,
+            int i => i,
+            long l => l,
+            float f => f,
+            _ => double.TryParse(v.ToString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double p) ? p : null,
+        };
     }
 
     private async Task<IVcRunner> GetOrLoadAsync(string modelId, CancellationToken cancel)

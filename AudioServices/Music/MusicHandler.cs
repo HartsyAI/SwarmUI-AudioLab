@@ -47,16 +47,19 @@ public sealed class MusicHandler(string providerId, MusicModelDescriptor descrip
     public async Task<JObject> ProcessAsync(IBackend backend, IReadOnlyDictionary<string, object> args, CancellationToken cancel)
     {
         string prompt = AudioIo.Str(args, "prompt");
-        if (string.IsNullOrWhiteSpace(prompt))
+        string genre = AudioIo.Str(args, "genre");
+        // ACE-Step puts the style in genre and (optional) lyrics in prompt, so either alone is enough.
+        if (string.IsNullOrWhiteSpace(prompt) && string.IsNullOrWhiteSpace(genre))
         {
             return AudioIo.Error("No prompt supplied to generate music.");
         }
         MusicRequest request = new()
         {
             Prompt = prompt,
-            Genre = AudioIo.Str(args, "genre"),
+            Genre = genre,
             Duration = ParseDouble(args, "duration", 10d),
             Seed = (int)ParseDouble(args, "seed", 0d),
+            Shift = args.ContainsKey("shift") ? ParseDouble(args, "shift", 3.0) : null,
         };
         string modelId = AudioIo.Str(args, "__model_id");
 

@@ -24,14 +24,30 @@ public sealed class SttModelDescriptor
 /// <summary>STT model registry — each entry wires a pipeline to the generic handler.</summary>
 public static class SttModels
 {
-    /// <summary>OpenAI Whisper + distil-whisper (same <see cref="WhisperPipeline"/>, different repos).</summary>
+    /// <summary>Maps an <see cref="SttRequest"/> to the engine's Whisper decode options (language + translate task).</summary>
+    private static WhisperOptions ToWhisperOptions(SttRequest req)
+        => new() { Language = string.IsNullOrEmpty(req?.Language) ? null : req.Language, Translate = req?.Translate ?? false };
+
+    /// <summary>OpenAI Whisper (<see cref="WhisperPipeline"/>). Honors language + translate task.</summary>
     public static readonly SttModelDescriptor Whisper = new()
     {
         ResolveRepo = ResolveWhisperRepo,
         LoadAsync = async (repo, ct) =>
         {
             WhisperPipeline p = await WhisperPipeline.LoadAsync(repo, ct: ct).ConfigureAwait(false);
-            return new SttRunner((backend, audio) => p.TranscribeAudio(backend, audio, 16_000), p);
+            return new SttRunner((backend, audio, req) => p.TranscribeAudio(backend, audio, 16_000, ToWhisperOptions(req)), p);
+        },
+    };
+
+    /// <summary>distil-whisper (same <see cref="WhisperPipeline"/>, but resolves to the distil-whisper/* repos —
+    /// the model ids it receives ("large-v3" etc.) don't contain "distil", so it needs its own resolver).</summary>
+    public static readonly SttModelDescriptor DistilWhisper = new()
+    {
+        ResolveRepo = ResolveDistilWhisperRepo,
+        LoadAsync = async (repo, ct) =>
+        {
+            WhisperPipeline p = await WhisperPipeline.LoadAsync(repo, ct: ct).ConfigureAwait(false);
+            return new SttRunner((backend, audio, req) => p.TranscribeAudio(backend, audio, 16_000, ToWhisperOptions(req)), p);
         },
     };
 
@@ -75,7 +91,8 @@ public static class SttModels
             pipeline.LoadWeights(dict, mimi);
             KyutaiSttTokenizer tokenizer = new(spm);
             System.IDisposable[] keep = [pipeline, .. loaders];
-            return new SttRunner((backend, audio) => tokenizer.Decode(pipeline.Transcribe(backend, audio)), keep);
+            // Kyutai STT has no language/task tokens — the request's language/translate are ignored.
+            return new SttRunner((backend, audio, _) => tokenizer.Decode(pipeline.Transcribe(backend, audio)), keep);
         },
     };
 
@@ -86,7 +103,8 @@ public static class SttModels
         LoadAsync = async (repo, ct) =>
         {
             MoonshinePipeline p = await MoonshinePipeline.LoadAsync(repo, ct: ct).ConfigureAwait(false);
-            return new SttRunner((backend, audio) => p.TranscribeAudio(backend, audio, 16_000), p);
+            // Moonshine has no language/task tokens — the request's language/translate are ignored.
+            return new SttRunner((backend, audio, _) => p.TranscribeAudio(backend, audio, 16_000), p);
         },
     };
 
@@ -100,9 +118,9 @@ public static class SttModels
         LoadAsync = async (repo, ct) =>
         {
             WhisperPipeline p = await WhisperPipeline.LoadAsync(repo, ct: ct).ConfigureAwait(false);
-            return new SttRunner((backend, audio) =>
+            return new SttRunner((backend, audio, req) =>
             {
-                using WhisperStreamingPipeline stream = new(p, backend);
+                using WhisperStreamingPipeline stream = new(p, backend, ToWhisperOptions(req));
                 stream.PushAudio(audio, 16_000);
                 return stream.Finish();
             }, p);
@@ -121,20 +139,34 @@ public static class SttModels
         string lower = id.ToLowerInvariant();
         if (lower.Contains("distil"))
         {
-            if (lower.Contains("v3.5")) return "distil-whisper/distil-large-v3.5"; // before v3 (v3.5 contains "v3")
-            if (lower.Contains("v3")) return "distil-whisper/distil-large-v3";
-            if (lower.Contains("v2")) return "distil-whisper/distil-large-v2";
-            if (lower.Contains("medium")) return "distil-whisper/distil-medium.en";
-            if (lower.Contains("small")) return "distil-whisper/distil-small.en";
-            return "distil-whisper/distil-large-v3.5";
+            return ResolveDistilWhisperRepo(id);
         }
-        if (lower.Contains("large") && lower.Contains("turbo")) return "openai/whisper-large-v3-turbo";
+        // "turbo" is the provider's id for large-v3-turbo and has no "large" substring — match it first.
+        if (lower.Contains("turbo")) return "openai/whisper-large-v3-turbo";
         if (lower.Contains("large")) return lower.Contains("v2") ? "openai/whisper-large-v2" : "openai/whisper-large-v3";
         if (lower.Contains("medium")) return "openai/whisper-medium";
         if (lower.Contains("small")) return "openai/whisper-small";
         if (lower.Contains("tiny")) return "openai/whisper-tiny";
         if (lower.Contains("base")) return "openai/whisper-base";
         return "openai/whisper-base";
+    }
+
+    /// <summary>distil-whisper model id → HF repo. The distil provider's ids are bare ("large-v3", "large-v3.5"),
+    /// so unlike <see cref="ResolveWhisperRepo"/> this always resolves to the distil-whisper/* family.</summary>
+    private static string ResolveDistilWhisperRepo(string modelId)
+    {
+        string id = (modelId ?? "").Trim();
+        if (id.Contains('/'))
+        {
+            return id;
+        }
+        string lower = id.ToLowerInvariant();
+        if (lower.Contains("v3.5")) return "distil-whisper/distil-large-v3.5"; // before v3 (v3.5 contains "v3")
+        if (lower.Contains("v2")) return "distil-whisper/distil-large-v2";
+        if (lower.Contains("medium")) return "distil-whisper/distil-medium.en";
+        if (lower.Contains("small")) return "distil-whisper/distil-small.en";
+        if (lower.Contains("v3")) return "distil-whisper/distil-large-v3";
+        return "distil-whisper/distil-large-v3.5";
     }
 
     /// <summary>Moonshine model id → HF repo (only tiny/base exist upstream).</summary>

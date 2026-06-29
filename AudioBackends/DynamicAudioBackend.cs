@@ -1227,8 +1227,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "acestep_music":
-                // Core DiT params (acestep_music_params)
-                args["lyrics"] = input.TryGet(AudioLabParams.Lyrics, out string ly) ? ly : "[Instrumental]";
+                // ACE-Step semantics: the main Prompt is the style/genre, the dedicated Lyrics param is the lyrics.
+                // The engine's music handler maps genre→style and prompt→lyrics, so route them accordingly here
+                // (overriding the category-level args["prompt"] = main prompt set above).
+                args["genre"] = input.Get(T2IParamTypes.Prompt, "");
+                args["prompt"] = input.TryGet(AudioLabParams.Lyrics, out string ly) ? ly : "[Instrumental]";
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long aceSeed) ? aceSeed : -1L;
                 args["infer_step"] = input.TryGet(AudioLabParams.InferStep, out int infStep) ? infStep : 8;
                 args["guidance_scale"] = input.TryGet(AudioLabParams.ACEGuidanceScale, out double aceGuide) ? aceGuide : 7.0;
@@ -1243,8 +1246,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["use_adg"] = input.TryGet(AudioLabParams.UseADG, out string aceAdg) ? aceAdg : "false";
                 args["cfg_interval_start"] = input.TryGet(AudioLabParams.CFGIntervalStart, out double aceCfgS) ? aceCfgS : 0.0;
                 args["cfg_interval_end"] = input.TryGet(AudioLabParams.CFGIntervalEnd, out double aceCfgE) ? aceCfgE : 1.0;
-                args["enable_normalization"] = input.TryGet(AudioLabParams.EnableNormalization, out string aceNorm) ? aceNorm : "true";
-                args["normalization_db"] = input.TryGet(AudioLabParams.NormalizationDB, out double aceNormDb) ? aceNormDb : -14.0;
                 // LM planner params (acestep_lm_params) — TODO: integrate with SwarmUI AbstractLLMBackend
                 args["lm_model"] = input.TryGet(AudioLabParams.ACELMModel, out string aceLm) ? aceLm : "none";
                 args["thinking"] = input.TryGet(AudioLabParams.Thinking, out string aceThink) ? aceThink : "true";
@@ -1271,11 +1272,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["cover_noise_strength"] = input.TryGet(AudioLabParams.CoverNoiseStrength, out double aceCovNs) ? aceCovNs : 0.0;
                 break;
 
-            case "musicgen_music":
-                string melodyRef = GetBase64Audio(input, AudioLabParams.MelodyAudio);
-                if (!string.IsNullOrEmpty(melodyRef))
-                    args["reference_audio"] = melodyRef;
-                break;
 
             case "yue_music":
                 args["lyrics"] = input.TryGet(AudioLabParams.YuELyrics, out string yueLy) ? yueLy : "";

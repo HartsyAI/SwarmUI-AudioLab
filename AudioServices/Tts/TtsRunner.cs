@@ -26,6 +26,23 @@ public sealed class TtsRequest
     /// <summary>Raw base64 of the voice reference (whatever the user uploaded), or null. Lets a descriptor
     /// decode the reference at whatever sample rate its codec needs (e.g. NeuTTS encodes at 16 kHz).</summary>
     public string ReferenceB64 { get; init; }
+
+    // --- Optional per-model knobs (populated from the UI params; honored only by pipelines that accept them). ---
+
+    /// <summary>Built-in voice name (Kokoro voice pack, etc.); null/empty = the model's default.</summary>
+    public string Voice { get; init; }
+
+    /// <summary>Speaking-rate multiplier (Kokoro, F5); null = the model default.</summary>
+    public double? Speed { get; init; }
+
+    /// <summary>Chatterbox expressiveness; null = the config default.</summary>
+    public double? Exaggeration { get; init; }
+
+    /// <summary>F5 flow-matching steps (NFE); null = the model default.</summary>
+    public int? NfeStep { get; init; }
+
+    /// <summary>Classifier-free guidance strength (F5 CfgStrength, etc.); null = the model default.</summary>
+    public double? CfgScale { get; init; }
 }
 
 /// <summary>A loaded TTS model reduced to: text (+ optional voice reference) → mono PCM at <see cref="SampleRate"/>.</summary>

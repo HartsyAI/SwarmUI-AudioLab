@@ -4,10 +4,12 @@ using Hartsy.Extensions.AudioLab.AudioProviders;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using HartsyInference.Core.Backends;
 using HartsyInference.Core.Tensors;
+using HartsyInference.Audio.Cache;
 using HartsyInference.Audio.Dsp;
 using HartsyInference.Audio.Models.Hubert;
 using HartsyInference.Audio.Models.Rvc;
 using HartsyInference.Audio.Pipelines;
+using HartsyInference.ModelHandler.PyTorch;
 using HartsyInference.ModelHandler.SafeTensors;
 
 namespace Hartsy.Extensions.AudioLab.AudioServices.Vc;
@@ -33,6 +35,11 @@ public sealed class VcModelDescriptor
 public static class VcModels
 {
     private const string ContentVecFile = "contentvec.safetensors";
+    // ContentVec content encoder. There is no upstream "contentvec.safetensors"; the canonical artifact is the
+    // HF-transformers HubertModel at lengyue233/content-vec-best (pytorch_model.bin, MIT) — its keys match the
+    // engine's Hubert layout exactly (verified), so the conversion is a pickle→safetensors passthrough.
+    private const string ContentVecRepo = "lengyue233/content-vec-best";
+    private const string ContentVecSourceFile = "pytorch_model.bin";
 
     /// <summary>RVC v2 (40 kHz) — user-placed voice model + a shared ContentVec encoder. Re-voices the source
     /// audio in the model's voice (speaker id 0).</summary>
@@ -59,7 +66,7 @@ public static class VcModels
         return File.Exists(withExt) ? withExt : direct; // 'direct' is used in the not-found message
     }
 
-    private static Task<IVcRunner> LoadRvcAsync(string rvcModelPath, CancellationToken ct)
+    private static async Task<IVcRunner> LoadRvcAsync(string rvcModelPath, CancellationToken ct)
     {
         if (!File.Exists(rvcModelPath))
         {
@@ -67,11 +74,7 @@ public static class VcModels
                 $"RVC voice model not found: '{rvcModelPath}'. Place the RVC voice .safetensors (converted from the .pth) there.", rvcModelPath);
         }
         string contentVec = Path.Combine(Path.GetFullPath(AudioConfiguration.ModelRoot), ContentVecFile);
-        if (!File.Exists(contentVec))
-        {
-            throw new FileNotFoundException(
-                $"RVC needs the ContentVec/HuBERT content encoder — place '{ContentVecFile}' at '{contentVec}'.", contentVec);
-        }
+        await EnsureContentVecAsync(contentVec, ct).ConfigureAwait(false);
 
         Hubert hubert = new(HubertConfig.ChineseHubertBase);
         SafeTensorsLoader hubLoader = new();
@@ -86,11 +89,38 @@ public static class VcModels
         Logs.Info($"[AudioLab][RVC] Loaded voice '{Path.GetFileName(rvcModelPath)}' (40 kHz; ContentVec + YIN F0).");
         // Loaders kept alive for the runner's lifetime (the model tensors reference them); freed on Unload.
         // RVC carries the target voice in its trained weights — the target argument is unused.
-        return Task.FromResult<IVcRunner>(
-            new VcRunner(rvc.SampleRate, (backend, src, _) => ConvertRvc(backend, hubert, rvc, src), hubLoader, rvcLoader, rvc));
+        return new VcRunner(rvc.SampleRate, (backend, src, _, req) => ConvertRvc(backend, hubert, rvc, src, req.PitchShift), hubLoader, rvcLoader, rvc);
     }
 
-    private static float[] ConvertRvc(IBackend backend, Hubert hubert, RvcPipeline rvc, float[] source16k)
+    /// <summary>Ensures the shared ContentVec encoder exists as <c>contentvec.safetensors</c>. There is no upstream
+    /// file by that name, so on first use we fetch the HF-transformers ContentVec (<see cref="ContentVecRepo"/>,
+    /// MIT) and re-save its pickle state dict as safetensors — its keys already match the engine's Hubert layout,
+    /// so it's a straight passthrough (no remapping).</summary>
+    private static async Task EnsureContentVecAsync(string contentVecPath, CancellationToken ct)
+    {
+        if (File.Exists(contentVecPath))
+        {
+            return;
+        }
+        Logs.Info($"[AudioLab][RVC] ContentVec encoder missing — fetching {ContentVecRepo} and converting to {ContentVecFile}...");
+        string binPath = await AudioModelCache.GetAsync(ContentVecRepo, ContentVecSourceFile, ct: ct).ConfigureAwait(false);
+        PytorchPickleLoader loader = new();
+        try
+        {
+            loader.Load(binPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(contentVecPath));
+            string tmp = contentVecPath + ".tmp";
+            SafeTensorsWriter.Save(tmp, loader.GetAllTensors());
+            File.Move(tmp, contentVecPath, overwrite: true);
+        }
+        finally
+        {
+            loader.Dispose();
+        }
+        Logs.Info($"[AudioLab][RVC] {ContentVecFile} ready.");
+    }
+
+    private static float[] ConvertRvc(IBackend backend, Hubert hubert, RvcPipeline rvc, float[] source16k, double pitchSemitones)
     {
         int tPcm = source16k.Length;
         Tensor pcm = new(new TensorShape(1, 1, tPcm), DType.F32);
@@ -101,6 +131,10 @@ public static class VcModels
         {
             int contentT = (int)content.Shape[2];
             float[] f0 = F0Estimator.EstimateYin(source16k, 16_000, hopSize: 320); // 50 Hz, same grid as the content frames
+            if (pitchSemitones != 0d)
+            {
+                f0 = RvcPitch.Shift(f0, (float)pitchSemitones);
+            }
             return rvc.Convert(backend, content, AlignF0(f0, contentT), sid: 0);
         }
         finally

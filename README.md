@@ -59,7 +59,7 @@ A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeypr
 | CSM | No | Yes | ~4.5 GB | 1B params, multi-turn conversational speech |
 | VibeVoice | Optional | Yes | 3–16 GB | 3 sizes (0.5B–7B), multi-speaker, up to 90 min long-form |
 | Zonos | Optional | Yes | ~4 GB | Emotion control, transformer and hybrid variants (EN/JP/CN/FR/DE) |
-| CosyVoice | Optional | Yes | ~8 GB | Ultra-low latency streaming, multilingual (Docker required on Windows) |
+| CosyVoice | Optional | Yes | ~8 GB | Ultra-low latency streaming, multilingual |
 | NeuTTS | Required | Yes | ~2 GB | 0.5B params, instant voice cloning, CPU-capable |
 
 ### Speech-to-Text (5 Providers, 14 Models)
@@ -70,7 +70,7 @@ A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeypr
 | Kyutai STT | 1B (en+fr), 2.6B (en) | 3–6 GB | Auto capitalization/punctuation, 1B has voice activity detection |
 | Distil-Whisper | large-v3, large-v3.5 | ~2 GB | 6x faster than Whisper large-v3 |
 | Moonshine | base, tiny | ~1 GB / CPU | Lightweight, CPU-capable |
-| RealtimeSTT | default | ~2 GB | Real-time streaming with wake word detection (Docker required on Windows) |
+| RealtimeSTT | default | ~2 GB | Real-time streaming with wake word detection (not yet runnable on the C# engine — use Whisper) |
 
 ### Audio Generation (3 Providers, 17 Models)
 
@@ -88,21 +88,21 @@ These engines transform voice characteristics. **RVC and OpenVoice** are post-pr
 
 | Engine | Type | VRAM | Notes |
 | --- | --- | --- | --- |
-| RVC V2 | Audio → Audio | ~4 GB | Re-voices existing audio using a trained .pth voice model. Pitch shift, F0 extraction (RMVPE/PM/Harvest/CREPE). Docker required on Windows. |
+| RVC V2 | Audio → Audio | ~4 GB | Re-voices existing audio using a trained voice model (.safetensors). Pitch shift; F0 via YIN today (RMVPE/Harvest/PM coming). ContentVec encoder auto-downloads. |
 | OpenVoice V2 | Audio → Audio | ~2 GB | Transfers the tone/style of a reference voice onto existing audio. Zero-shot (no model training, just a wav clip). |
-| GPT-SoVITS | Text → Audio | ~4 GB | Generates new speech from text in a cloned voice using ~1 min reference audio. CJK + English. Docker required on Windows. |
+| GPT-SoVITS | Text → Audio | ~4 GB | Generates new speech from text in a cloned voice using a reference clip + its transcript. English today (CJK pending). |
 
 ### Audio Processing (2 Providers, 5 Models)
 
 | Engine | Models | VRAM | Notes |
 | --- | --- | --- | --- |
 | Demucs | htdemucs, htdemucs_ft, htdemucs_6s | ~2 GB | Source separation (vocals, drums, bass, other; 6-stem variant adds guitar + piano) |
-| Resemble Enhance | denoise, enhance | ~2 GB | Speech denoising and super-resolution to 44.1 kHz, Docker required on Windows |
+| Resemble Enhance | denoise, enhance | ~2 GB | Speech denoising and super-resolution to 44.1 kHz (engine support pending — DeepSpeed checkpoint loader) |
 
 ## Usage
 
-1. **Add the Audio Backend** — Go to Server > Backends and add "Audio Backend". Configure Docker if needed.
-2. **Install an Engine** — In the Generate tab, browse the audio models and click Install for the engine you want. The extension creates a virtual environment and installs all dependencies automatically. Progress streams in real time via WebSocket.
+1. **Add the Audio Backend** — Go to Server > Backends and add "Audio Backend".
+2. **Install an Engine** — In the Generate tab, browse the audio models and click Install for the engine you want. The extension downloads the model's weights and runs it in-process on the C# engine — no virtual environment, no pip, no Python. Progress streams in real time via WebSocket. (STT models and several others fetch their weights on first use.)
 3. **Select a Model** — Choose an installed audio model from the model selector.
 4. **Set Parameters** — The sidebar shows relevant parameter groups (TTS, STT, Audio Generation, Voice Conversion, Audio Processing) based on the selected model.
 5. **Generate** — Enter your prompt and click Generate. Audio output appears in the output area with a waveform player.
@@ -177,13 +177,12 @@ All endpoints require authentication and use SwarmUI's permission system.
 
 | Endpoint | Method | Description |
 | --- | --- | --- |
-| `AudioLabListEngines` | GET | List all engines with install status, models, dependencies, and Docker requirements |
-| `AudioLabInstallEngine` | POST (WS) | Install engine with real-time WebSocket progress streaming |
-| `AudioLabUninstallEngine` | POST | Remove engine from registry (does not delete venv) |
+| `AudioLabListEngines` | GET | List all engines with install status, models, and metadata |
+| `AudioLabInstallEngine` | POST (WS) | Install an engine (download weights) with real-time WebSocket progress streaming |
+| `AudioLabUninstallEngine` | POST | Remove engine from registry (optionally delete its weights) |
 | `GetAllProvidersStatus` | GET | List all registered providers with metadata |
-| `GetInstallationStatus` | GET | Check Python availability and per-provider install status |
-| `GetInstallationProgress` | GET | Poll real-time installation progress (percentage, current package) |
-| `InstallProviderDependencies` | POST | Install pip dependencies for a provider |
+| `GetInstallationStatus` | GET | Per-provider install status |
+| `GetInstallationProgress` | GET | Poll real-time installation/download progress |
 
 ### Audio Format Conversion
 
@@ -203,7 +202,7 @@ All endpoints require authentication and use SwarmUI's permission system.
 | Permission | Level | Covers |
 | --- | --- | --- |
 | `audio_process` | Power Users | ProcessAudio, ProcessTTS, ProcessSTT, ProcessWorkflow, CombineVideoAudio, ExtractAudioFromVideo, ConvertAudioFormat |
-| `audio_manage_backends` | Power Users | InstallProviderDependencies, AudioLabInstallEngine, AudioLabUninstallEngine |
+| `audio_manage_backends` | Power Users | AudioLabInstallEngine, AudioLabUninstallEngine |
 | `audio_check_status` | Power Users | GetAllProvidersStatus, GetInstallationStatus, GetInstallationProgress, AudioLabListEngines |
 
 ## Architecture
@@ -211,117 +210,86 @@ All endpoints require authentication and use SwarmUI's permission system.
 ```
 SwarmUI-AudioLab/
 ├── AudioLab.cs                          # Extension entry point
-├── AudioLabParams.cs                    # T2I parameter registration
+├── AudioLabParams.cs                    # T2I parameter registration + BuildEngineArgs param→engine mapping
 ├── AudioAPI/
 │   ├── AudioLabAPI.cs                   # API endpoints (process, install, status)
+│   ├── AudioParameters.cs               # Shared parameter helpers
+│   ├── AudioProgressTracking.cs         # Install/generation progress
 │   └── VideoAudioEndpoints.cs           # Video+audio combining/extraction via ffmpeg
 ├── AudioBackends/
-│   └── DynamicAudioBackend.cs           # Unified backend, model routing, streaming, cancellation
+│   └── DynamicAudioBackend.cs           # Unified routing backend (model routing, streaming, cancellation, install)
 ├── AudioProviders/
 │   ├── AudioProviderDefinitions.cs      # Provider registry (auto-discovers all IAudioProviderSource)
-│   ├── ChatterboxProvider.cs            # One file per engine (14 TTS + 4 STT + 2 MusicGen + ...)
-│   ├── KokoroProvider.cs
-│   ├── FishSpeechProvider.cs
-│   ├── Qwen3TTSProvider.cs
-│   └── ...                              # 26 provider files total
+│   ├── KokoroProvider.cs                # One file per provider — engine-backed (Kokoro, Chatterbox, ACE-Step, …)
+│   ├── ElevenLabsTTSProvider.cs         #   and cloud-API providers (ElevenLabs, Azure, OpenAI, …)
+│   └── ...                              # ~56 provider files total
 ├── AudioProviderTypes/
 │   ├── AudioCategory.cs                 # TTS, STT, AudioGeneration, VoiceConversion, AudioProcessing
 │   ├── AudioProviderDefinition.cs       # Provider definition schema
+│   ├── AudioModelDefinition.cs          # Per-model metadata (id, license, source URL, size, VRAM)
 │   ├── AudioProviderDefinitionBuilder.cs # Fluent builder for provider definitions
 │   └── IAudioProviderSource.cs          # Provider interface
-├── AudioServices/
-│   ├── AudioServerManager.cs            # Python server lifecycle, HTTP client, cancel support
-│   ├── AudioDependencyInstaller.cs      # pip dependency management
-│   └── VenvManager.cs                   # Per-engine-group virtual environments
+├── AudioServices/                       # The in-process C# inference layer (HartsyInference engine)
+│   ├── AudioEngine.cs                   # Dispatch table: provider id → handler; owns the compute device
+│   ├── AudioWeights.cs / AudioWeightsRegistry.cs # Download URLs + on-disk weight resolution
+│   ├── AudioServerManager.cs            # Routes a request to the engine (or a cloud API handler)
+│   ├── AudioUnsupportedReasons.cs       # Precise "not runnable yet" messages
+│   ├── Tts/  Stt/  Music/  Vc/  Fx/     # Per-category handlers + model descriptors
+│   │   └── Models/                      #   one descriptor per model (repo + how to load + how to synth)
+│   └── ApiHandlers/                     # Cloud-API providers (Azure, Google, Suno, Udio, …)
 ├── Assets/
 │   ├── audio-core.js                    # Frontend UI (engine browser, param groups)
 │   ├── audio-api.js                     # API client (backend communication)
 │   ├── audio-player.js                  # Waveform player (WaveSurfer.js)
-│   ├── audio-editor.js                  # Audio editor modal (delegates to DAW)
-│   ├── audio-daw.js                     # DAW orchestrator (modal, transport, state, playback, undo/redo, export)
-│   ├── audio-daw-track.js              # Track class (header UI, clip lane, drag-drop, WaveSurfer rendering)
-│   ├── audio-daw-timeline.js           # Timeline ruler (canvas, beat grid, zoom, loop markers, playhead)
-│   ├── audio-daw-mixer.js              # Mixer panel (per-track faders, pan, mute/solo, master bus)
+│   ├── audio-daw*.js                    # DAW editor (orchestrator, tracks, timeline, mixer)
 │   ├── audio-integration.js             # SwarmUI integration hooks
-│   ├── audio-lab.css                    # Styling (theme-aware, uses CSS custom properties)
+│   ├── audio-lab.css                    # Styling (theme-aware)
 │   └── lib/                             # WaveSurfer, Crunker, Timeline, Minimap plugins
-├── python_backend/
-│   ├── audio_server.py                  # Threaded HTTP server with /process, /cancel, /download endpoints
-│   ├── engine_registry.py               # Engine discovery and caching
-│   ├── engines/
-│   │   ├── base_engine.py               # Base class (model download, cancellation, audio encoding)
-│   │   ├── tts_chatterbox.py            # One file per engine
-│   │   ├── tts_kokoro.py
-│   │   ├── tts_fishspeech.py
-│   │   ├── tts_qwen3.py
-│   │   ├── stt_whisper.py
-│   │   ├── music_acestep.py
-│   │   ├── clone_rvc.py
-│   │   ├── fx_demucs.py
-│   │   ├── sfx_audiogen.py
-│   │   └── ...                          # 26 engine files total
-│   └── docker/
-│       ├── Dockerfile
-│       └── docker-compose.yml
 └── README.md
 ```
 
-The extension follows a three-layer architecture:
+The extension follows a two-layer architecture (no Python, no separate server process):
 
-- **C# layer** registers providers with a fluent builder API, manages the backend lifecycle, routes generation requests by model prefix, handles parameter mapping, and manages cancellation tokens.
-- **Python layer** runs a threaded HTTP server (Python's built-in `http.server` with `ThreadingMixIn`) per engine group, keeping models loaded in GPU memory between requests. Each engine extends `BaseAudioEngine` and is loaded on-demand. The server supports concurrent request handling (allowing `/cancel` to arrive while `/process` is running).
+- **C# layer** registers providers with a fluent builder API, manages the routing backend lifecycle, routes generation requests by model prefix, maps UI parameters to engine arguments (`BuildEngineArgs`), and runs inference **in-process** via the [HartsyInference](https://www.nuget.org/packages/HartsyInference) engine. `AudioEngine` holds a dispatch table from provider id to a per-category handler (TTS/STT/Music/VC/FX); each handler drives a per-model descriptor that knows the model's HuggingFace repo and how to load + run it. Cloud-API providers route through `ApiHandlers/` instead. Weights download and cache to the Audio Model Root; pipelines stay resident in GPU/CPU memory between requests.
 - **Frontend** adds audio parameter groups to the Generate tab sidebar, provides a waveform-based audio player via WaveSurfer.js, and integrates with SwarmUI's generation lifecycle (model selection, parameter visibility, streaming playback, cancellation).
-
-### Engine Groups
-
-Engines are organized into groups that share a Python virtual environment:
-
-| Group | Engines | Notes |
-| --- | --- | --- |
-| `main` | 20 providers (Kokoro, Pocket TTS, Kyutai TTS, Piper, F5, Fish Speech, Qwen3, Bark, NeuTTS, Orpheus, Dia, CSM, VibeVoice, Zonos, Whisper, Kyutai STT, Distil-Whisper, Moonshine, Demucs, OpenVoice) | Shared venv, most engines |
-| `chatterbox` | Chatterbox | Isolated due to dependency conflicts |
-| `audiocraft` | MusicGen, AudioGen | Shared AudioCraft dependencies |
-| `acestep` | ACE-Step | Isolated venv |
-| `linux_docker` | CosyVoice, RealtimeSTT, RVC, GPT-SoVITS, Resemble Enhance | Docker containers on Windows, native venv on Linux |
 
 ### Cancellation
 
-Cancellation is built into all 26 engines through a three-layer system:
+When the user clicks Stop Generation, SwarmUI fires the session's `InterruptToken`. The C# layer observes it and cancels in two ways:
 
-1. **Infrastructure** — When the user clicks Stop Generation, SwarmUI fires the session's `InterruptToken`. The C# layer detects this, cancels the HTTP request, and sends a `/cancel/{id}` request to the Python server. The server marks the result as cancelled.
-2. **Cooperative** — Engines with iterative processing loops (Fish Speech, Kokoro, Piper, CosyVoice, Zonos, Qwen3) call `self.is_cancelled()` periodically for fast mid-inference cancellation.
-3. **Session** — Both "Stop Generation" (current session) and "Stop All Generations" (all sessions) work automatically through the same token mechanism.
+1. **Infrastructure** — the in-process generation call is passed the cancellation token; the engine aborts at the next checkpoint and the result is discarded.
+2. **Cooperative** — pipelines with iterative loops check the token periodically for fast mid-inference cancellation.
+
+Both "Stop Generation" (current session) and "Stop All Generations" (all sessions) work through the same token mechanism. For single-shot calls (e.g. Bark), the computation may finish before the cancel arrives — the result is still discarded.
 
 ## Backend Settings
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| Use Docker | `false` | Enable Docker for Linux-only engines on Windows |
-| Audio Model Root | `Models/audio` | Storage path for downloaded audio models |
-| Timeout Seconds | `300` | Max wait time per audio generation request |
-| Debug Mode | `false` | Enable verbose Python server logging |
+| Audio Model Root | `Models/audio` | Storage path for downloaded audio model weights |
+| Auto Redownload Missing Weights | `true` | If a model's weights are missing at generation time (e.g. deleted to free space), re-download them automatically; when off, generation refuses with a clear message |
+| Debug Mode | `false` | Enable verbose audio engine logging |
+| Use Docker | `false` | Legacy flag from the old Python backend; the C# engine runs in-process and does not use it |
 
 ## Troubleshooting
 
-**Engine install fails:**
-- Ensure Python 3.10+ is on your system PATH (`python --version` or `python3 --version`)
+**Engine install / weight download fails:**
 - Check that you have a stable internet connection for downloading model weights
 - Check the SwarmUI server logs for detailed error output
+- Some models aren't runnable on the C# engine yet — the install/generate error names the exact missing piece
 
 **Gated model access denied:**
 - Some models (e.g., certain Fish Speech or Qwen3 variants) require accepting a license agreement on HuggingFace
 - Go to the model's HuggingFace page, accept the agreement, then set your HuggingFace token in SwarmUI: Server > User Settings > API Keys
 - Get a token at https://huggingface.co/settings/tokens (needs "Read" permission)
 
-**Docker engines not available on Windows:**
-- Enable "Use Docker" in the Audio Backend settings
-- Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) with WSL2 backend
-- Install [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) for GPU support
+**A model says "not runnable in the C# engine yet":**
+- That model's pipeline exists but is missing a specific prerequisite (a tokenizer asset, phonemizer, or confirmed weight layout). The message names it. Pick another model in the same category in the meantime.
 
 **No audio output:**
 - Verify the engine is installed (check the model browser for audio models)
 - Check that the Audio Backend is running (Server > Backends)
-- Look at the SwarmUI server logs for Python errors
+- Look at the SwarmUI server logs for `[AudioLab]` errors
 
 **Video+audio features not working:**
 - Install ffmpeg and ensure it is on your system PATH

@@ -40,6 +40,9 @@ public sealed class SttHandler(SttModelDescriptor descriptor) : IAudioHandler
             return AudioIo.Error("No audio supplied to transcribe (the STT audio input is empty).");
         }
         string language = AudioIo.Str(args, "language", "en");
+        // "task" comes from the Whisper provider (transcribe | translate); other STT providers don't set it.
+        bool translate = string.Equals(AudioIo.Str(args, "task", "transcribe"), "translate", StringComparison.OrdinalIgnoreCase);
+        SttRequest request = new() { Language = language, Translate = translate };
         string repo = descriptor.ResolveRepo(AudioIo.Str(args, "__model_id"));
 
         // Decode to the 16 kHz mono the pipelines want (they would resample anyway; hand them 16k directly).
@@ -52,7 +55,7 @@ public sealed class SttHandler(SttModelDescriptor descriptor) : IAudioHandler
 
         ISttRunner runner = await GetOrLoadAsync(repo, cancel).ConfigureAwait(false);
         long start = Environment.TickCount64;
-        string text = runner.Transcribe(backend, audio);
+        string text = runner.Transcribe(backend, audio, request);
         Logs.Verbose($"[AudioLab][STT] Transcribed {audio.Length / 16000.0:0.0}s via {repo} in {Environment.TickCount64 - start}ms.");
         return AudioIo.TranscriptionResult(text?.Trim() ?? "", language);
     }
