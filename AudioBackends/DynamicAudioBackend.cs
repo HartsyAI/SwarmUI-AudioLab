@@ -347,7 +347,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
         // Missing-weights handling: when auto-redownload is OFF, refuse up front. When ON (default), actually
         // fetch the requested model's weights now (await) and only proceed if they land — the old "fall through
         // and hope the engine self-heals" only worked for HF-cache models, not AudioLab-managed weights.
-        if (!provider.IsApiProvider && !AudioEngine.WeightsPresent(provider.Id, modelDef?.Id))
+        // ManagesOwnWeights providers (HeartMuLa etc.) download lazily from the HF cache inside their LoadAsync,
+        // so on-disk WeightsPresent is always false pre-first-gen — fall through and let the loader fetch them.
+        if (!provider.IsApiProvider && !AudioEngine.ProviderManagesOwnWeights(provider.Id) && !AudioEngine.WeightsPresent(provider.Id, modelDef?.Id))
         {
             _weightsMissing[provider.Id] = 0;
             if (!Settings.AutoRedownloadMissingWeights)
