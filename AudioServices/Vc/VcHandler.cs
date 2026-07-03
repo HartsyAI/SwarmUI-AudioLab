@@ -77,6 +77,17 @@ public sealed class VcHandler(string providerId, VcModelDescriptor descriptor) :
         }
     }
 
+    public void UnloadAll()
+    {
+        foreach (string key in _cache.Keys)
+        {
+            if (_cache.TryRemove(key, out IVcRunner runner))
+            {
+                runner.Dispose();
+            }
+        }
+    }
+
     /// <summary>Reads an optional numeric arg as a double (boxed double/int/long/float/string); null if absent.</summary>
     private static double? ReadDouble(IReadOnlyDictionary<string, object> args, string key)
     {

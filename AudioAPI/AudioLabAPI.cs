@@ -123,6 +123,7 @@ public static class AudioLabAPI
                 ["language"] = request.Language
             };
 
+            long sttStart = Environment.TickCount64;
             JObject result = await AudioServerManager.Instance.ProcessAsync(sttProvider, args);
 
             if (result["success"]?.Value<bool>() == true)
@@ -133,7 +134,7 @@ public static class AudioLabAPI
                     Transcription = result["text"]?.ToString() ?? "",
                     Confidence = result["confidence"]?.Value<float>() ?? 0f,
                     Language = request.Language,
-                    ProcessingTime = result["processing_time"]?.Value<double>() ?? 0,
+                    ProcessingTime = (Environment.TickCount64 - sttStart) / 1000.0,
                     SessionId = session.ID
                 };
                 return response.ToJObject();
@@ -177,6 +178,7 @@ public static class AudioLabAPI
                 ["volume"] = request.Volume
             };
 
+            long ttsStart = Environment.TickCount64;
             JObject result = await AudioServerManager.Instance.ProcessAsync(ttsProvider, args);
 
             if (result["success"]?.Value<bool>() == true)
@@ -190,7 +192,7 @@ public static class AudioLabAPI
                     Language = request.Language,
                     Volume = request.Volume,
                     Duration = result["duration"]?.Value<double>() ?? 0,
-                    ProcessingTime = result["processing_time"]?.Value<double>() ?? 0,
+                    ProcessingTime = (Environment.TickCount64 - ttsStart) / 1000.0,
                     SessionId = session.ID
                 };
                 return response.ToJObject();
@@ -453,9 +455,11 @@ public static class AudioLabAPI
         }
     }
 
-    /// <summary>Installs an audio engine via WebSocket with streaming progress.
+    /// <summary>Installs an audio engine via WebSocket with streaming progress. Optional
+    /// <paramref name="model_id"/> installs one specific model's weights (variants are distinct multi-GB
+    /// checkpoints); without it the provider's default model set is fetched.
     /// Follows the DoModelDownloadWS pattern: WebSocket parameter auto-detected by API framework.</summary>
-    public static async Task<JObject> AudioLabInstallEngine(Session session, WebSocket ws, string provider_id)
+    public static async Task<JObject> AudioLabInstallEngine(Session session, WebSocket ws, string provider_id, string model_id = null)
     {
         try
         {
@@ -479,7 +483,9 @@ public static class AudioLabAPI
                 return null;
             }
 
-            if (backend.GetInstalledEngineIds().Contains(provider_id))
+            // A provider being installed doesn't mean THIS model's weights exist (per-model checkpoints) —
+            // only short-circuit the no-model-id form.
+            if (string.IsNullOrEmpty(model_id) && backend.GetInstalledEngineIds().Contains(provider_id))
             {
                 await ws.SendJson(new JObject { ["success"] = true, ["message"] = $"{provider.Name} is already installed." }, API.WebsocketTimeout);
                 return null;
@@ -489,7 +495,7 @@ public static class AudioLabAPI
             {
                 Logs.Info($"[AudioLab] Install progress: {msg}");
                 ws.SendJson(new JObject { ["info"] = msg }, API.WebsocketTimeout).Wait();
-            }, Program.GlobalProgramCancel);
+            }, Program.GlobalProgramCancel, model_id);
 
             if (success)
             {

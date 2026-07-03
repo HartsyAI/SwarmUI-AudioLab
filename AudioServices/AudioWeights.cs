@@ -68,12 +68,17 @@ public static class AudioWeights
         }
     }
 
-    /// <summary>Ensures every engine-runnable checkpoint for a provider is on disk, downloading the missing
-    /// ones. Returns true if the provider has at least one registered checkpoint and all resolved; false if
-    /// nothing is registered (caller should surface a "place the file manually" message).</summary>
-    public static async Task<bool> EnsureProviderWeightsAsync(AudioProviderDefinition provider, Action<string> onProgress, CancellationToken cancel = default)
+    /// <summary>Ensures the engine-runnable checkpoint files are on disk, downloading the missing ones.
+    /// When <paramref name="modelId"/> is given, only THAT model's file set downloads (variants are distinct
+    /// multi-GB checkpoints now — installing a whole provider would pull tens of GB); without it, every
+    /// registered file for the provider is ensured (legacy behavior). Returns true if anything was
+    /// registered and all files resolved; false if nothing is registered (caller should surface a
+    /// "place the file manually" message).</summary>
+    public static async Task<bool> EnsureProviderWeightsAsync(AudioProviderDefinition provider, Action<string> onProgress, CancellationToken cancel = default, string modelId = null)
     {
-        IReadOnlyCollection<AudioWeightsRegistry.DownloadSpec> specs = AudioWeightsRegistry.DistinctFor(provider.Id);
+        IReadOnlyCollection<AudioWeightsRegistry.DownloadSpec> specs = string.IsNullOrEmpty(modelId)
+            ? AudioWeightsRegistry.DistinctFor(provider.Id)
+            : AudioWeightsRegistry.SpecsFor(provider.Id, modelId);
         if (specs.Count == 0)
         {
             return false;

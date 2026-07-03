@@ -6,6 +6,7 @@ using Hartsy.Extensions.AudioLab.AudioServices.Tts;
 using HartsyInference.Core.Backends;
 using HartsyInference.Core.Tensors;
 using HartsyInference.Audio.Cache;
+using HartsyInference.Audio.Frontends;
 using HartsyInference.Audio.Models.Codecs.EnCodec;
 using HartsyInference.Audio.Models.Codecs.Oobleck;
 using HartsyInference.Audio.Models.Codecs.XCodec;
@@ -18,6 +19,7 @@ using HartsyInference.Diffusion.Models.TextEncoders;
 using HartsyInference.Diffusion.Pipelines;
 using HartsyInference.Diffusion.Utilities;
 using HartsyInference.ModelHandler.CheckpointConverters;
+using HartsyInference.ModelHandler.PyTorch;
 using HartsyInference.ModelHandler.SafeTensors;
 using HartsyInference.Tokenizers;
 
@@ -113,8 +115,9 @@ public static class MusicModels
         MusicGenPipeline pipeline = new(config, decoder, codec);
         Logs.Info($"[AudioLab][MusicGen] Loaded {repo} ({config.CodecSampleRate} Hz).");
 
-        MusicAudio Synth(IBackend backend, MusicRequest req)
+        MusicAudio Synth(IBackend backend, MusicRequest req, CancellationToken ct)
         {
+            ct.ThrowIfCancellationRequested();
             int[] tokens = tokenizer.Encode(req.Prompt);
             Tensor t5States = t5.Encode(backend, [tokens], [T5Tokenizer.CreateAttentionMask(tokens)]);
             backend.Sync();
@@ -180,35 +183,57 @@ public static class MusicModels
     {
         ManagesOwnWeights = false,
         CacheKey = (providerId, modelId) => ResolveLocalCheckpoint(providerId, modelId),
-        LoadAsync = (backend, providerId, modelId, ct) =>
-        {
-            // SFT/Base need the 50-step CFG pipeline the engine's turbo-only path can't run — fail clearly
-            // instead of silently downloading and running the turbo checkpoint in their place.
-            string variant = (modelId ?? "").Trim().ToLowerInvariant();
-            if (variant is "sft" or "base")
-            {
-                throw new NotSupportedException(
-                    "[AudioLab][ACE-Step] The SFT/Base checkpoints require the 50-step CFG pipeline, which the "
-                    + "engine's turbo-only path doesn't implement yet. Pick an ACE-Step 1.5 Turbo variant.");
-            }
-            return LoadAceStepAsync(backend, ResolveLocalCheckpoint(providerId, modelId), ct);
-        },
+        LoadAsync = (backend, providerId, modelId, ct) => LoadAceStepAsync(backend, providerId, modelId, ct),
     };
 
-    private static async Task<IMusicRunner> LoadAceStepAsync(IBackend backend, string localPath, CancellationToken ct)
+    private static async Task<IMusicRunner> LoadAceStepAsync(IBackend backend, string providerId, string modelId, CancellationToken ct)
     {
-        // A user-placed checkpoint in the model folder wins; otherwise pull the official Comfy-Org turbo DiT.
-        string mainPath = File.Exists(localPath)
-            ? localPath
-            : await AudioModelCache.GetAsync(AceStep15Repo, AceStep15TurboFile, ct: ct).ConfigureAwait(false);
+        // A user-placed/registry checkpoint in the model folder wins. If the variant's file is missing but
+        // registered, self-heal by downloading THAT variant's file set (weights + config + silence latent);
+        // only unregistered ids fall back to the legacy Comfy-Org turbo DiT.
+        string localPath = ResolveLocalCheckpoint(providerId, modelId);
+        // Migration: the legacy Comfy-Org filename is byte-identical to the official bundle turbo
+        // (same upstream LFS sha256) — rename instead of re-downloading 4.8GB.
+        if (!File.Exists(localPath) && (modelId ?? "").Trim().Equals("turbo", StringComparison.OrdinalIgnoreCase))
+        {
+            string legacy = Path.Combine(Path.GetDirectoryName(localPath)!, "acestep_v1.5_turbo.safetensors");
+            if (File.Exists(legacy))
+            {
+                Logs.Info($"[AudioLab][ACE-Step] Migrating legacy turbo checkpoint filename → '{Path.GetFileName(localPath)}'.");
+                File.Move(legacy, localPath);
+            }
+        }
+        string mainPath;
+        if (File.Exists(localPath))
+        {
+            mainPath = localPath;
+        }
+        else if (AudioWeightsRegistry.SpecsFor(providerId, (modelId ?? "").Trim()).Length > 0)
+        {
+            AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId);
+            Logs.Info($"[AudioLab][ACE-Step] '{modelId}' weights missing — downloading this variant's file set.");
+            await AudioWeights.EnsureProviderWeightsAsync(provider, msg => Logs.Info($"[AudioLab][ACE-Step] {msg}"), ct, (modelId ?? "").Trim()).ConfigureAwait(false);
+            mainPath = localPath;
+        }
+        else
+        {
+            mainPath = await AudioModelCache.GetAsync(AceStep15Repo, AceStep15TurboFile, ct: ct).ConfigureAwait(false);
+        }
         string vaePath = await AudioModelCache.GetAsync(AceStep15Repo, AceStep15VaeFile, ct: ct).ConfigureAwait(false);
         string qwenPath = await AudioModelCache.GetAsync(QwenEmbeddingRepo, QwenEmbeddingFile, ct: ct).ConfigureAwait(false);
 
-        AceStep15Config config = new();
-        (Dictionary<string, Tensor> weights, SafeTensorsLoader mainLoader) = AceStepCheckpointConverter.LoadModel15(mainPath, castToF32: true);
+        // Sidecar config.json (downloaded with the variant) drives dims + is_turbo; absent = 2B turbo defaults.
+        string sidecarConfig = Path.ChangeExtension(mainPath, null) + ".config.json";
+        AceStep15Config config = File.Exists(sidecarConfig)
+            ? AceStep15Config.FromJson(await File.ReadAllTextAsync(sidecarConfig, ct).ConfigureAwait(false))
+            : new();
+        // Keep bf16 residency (upstream's inference dtype; ~half the host RAM + PCIe streaming — XL would
+        // not fit as F32). Host-read tensors are EnsureF32'd selectively inside the models.
+        (Dictionary<string, Tensor> weights, SafeTensorsLoader mainLoader) = AceStepCheckpointConverter.LoadModel15(mainPath, castToF32: false);
         AceStep15Dit dit = new(config);
         dit.LoadWeights(weights);
-        AceStep15ConditionEncoder conditionEncoder = new(config);
+        // The condition side runs at encoder width (XL: 2048 under a 2560 decoder; identity for 2B).
+        AceStep15ConditionEncoder conditionEncoder = new(config.EncoderVariant());
         conditionEncoder.LoadWeights(weights);
 
         SafeTensorsLoader vaeLoader = new();
@@ -223,36 +248,131 @@ public static class MusicModels
         Qwen3Tokenizer tokenizer = new();
 
         AceStepPipeline15 pipeline = new(backend, dit, conditionEncoder, vae, config);
-        Logs.Info("[AudioLab][ACE-Step] Loaded 1.5 (text/lyrics-to-music, 48 kHz stereo, turbo 8-step).");
-
-        Tensor EncodeQwen(IBackend b, string text)
+        LoadAceStepSilenceLatent(pipeline, Path.GetDirectoryName(mainPath));
+        // 5 Hz code detokenizer (LM-planner hints → 25 Hz latents); weights ride in the same checkpoint.
+        AceStep15AudioDetokenizer detokenizer = new(config);
+        detokenizer.LoadWeights(weights);
+        AceStepPlannerHolder plannerHolder = new();
+        // The learned CFG uncond row ships in every checkpoint; base/sft need it (turbo keeps CFG off).
+        if (weights.TryGetValue("null_condition_emb", out Tensor nullEmb))
         {
-            IReadOnlyList<int> raw = tokenizer.EncodeRaw(text ?? "");
-            int[] tokens = new int[raw.Count + 1];
-            for (int i = 0; i < raw.Count; i++)
+            Tensor copy = new(nullEmb.Shape, DType.F32);
+            unsafe
             {
-                tokens[i] = raw[i];
+                Tensor f32 = nullEmb.DType == DType.F32 ? nullEmb : nullEmb.CastTo(DType.F32);
+                Buffer.MemoryCopy((void*)f32.DataPointer, (void*)copy.DataPointer, f32.Shape.ElementCount * 4, f32.Shape.ElementCount * 4);
+                if (!ReferenceEquals(f32, nullEmb)) f32.Dispose();
             }
+            pipeline.SetNullConditionEmb(copy);
+        }
+        (int defaultSteps, float defaultShift) = AceStepVariantDefaults(modelId);
+        Logs.Info($"[AudioLab][ACE-Step] Loaded 1.5 '{modelId}' ({(config.IsTurbo ? "turbo" : "CFG")}, 48 kHz stereo, default {defaultSteps} steps, shift {defaultShift}).");
+
+        // <|endoftext|> is a special token: tokenize the surrounding text separately (via the HF-exact Qwen BPE)
+        // and splice the id in. The Qwen3-Embedding tokenizer's post-processor then appends one more
+        // <|endoftext|> to every sequence — replicate that terminal EOS too.
+        int[] TokenizeWithEos(string body, string tail = "")
+        {
+            int[] raw = AudioTextFrontend.Qwen3Ids(body ?? "");
+            int[] tailIds = tail.Length == 0 ? [] : AudioTextFrontend.Qwen3Ids(tail);
+            int[] tokens = new int[raw.Length + 1 + tailIds.Length + 1];
+            raw.CopyTo(tokens, 0);
+            tokens[raw.Length] = QwenEosId;
+            tailIds.CopyTo(tokens, raw.Length + 1);
             tokens[^1] = QwenEosId;
+            return tokens;
+        }
+
+        // Text/caption branch: full Qwen3-Embedding forward → last_hidden_state (upstream infer_text_embeddings).
+        Tensor EncodeQwenText(IBackend b, int[] tokens)
+        {
             Tensor batchT = qwen.Encode(b, [tokens]);
             Tensor sliced = CfgHelper.SliceBatchElement(batchT, 0, tokens.Length, config.TextHiddenDim);
             batchT.Dispose();
             return sliced;
         }
 
-        MusicAudio Synth(IBackend b, MusicRequest req)
+        // Lyric branch: embedding-table lookup ONLY — upstream infer_lyric_embeddings uses
+        // text_encoder.embed_tokens, NOT a transformer forward.
+        Tensor EmbedQwenLyrics(int[] tokens)
         {
-            string style = string.IsNullOrWhiteSpace(req.Genre) ? "pop" : req.Genre;
-            Tensor textHidden = EncodeQwen(b, style);
-            Tensor lyricHidden = string.IsNullOrWhiteSpace(req.Prompt) ? null : EncodeQwen(b, req.Prompt);
+            Tensor batchT = qwen.LookupEmbeddings(tokens);
+            Tensor sliced = CfgHelper.SliceBatchElement(batchT, 0, tokens.Length, config.TextHiddenDim);
+            batchT.Dispose();
+            return sliced;
+        }
+
+        MusicAudio Synth(IBackend b, MusicRequest req, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            double duration = Math.Clamp(req.Duration, 1d, 600d);
+            // Upstream SFT_GEN_PROMPT: "# Instruction\n{instr}\n\n# Caption\n{caption}\n\n# Metas\n{metas}<|endoftext|>\n"
+            // with the text2music instruction and a 4-line metas block. The DiT is trained on THIS format —
+            // a bare style string is out-of-distribution.
+            string caption = string.IsNullOrWhiteSpace(req.Genre) ? "pop" : req.Genre;
+            string metas =
+                $"- bpm: {(req.Bpm?.ToString() ?? "N/A")}\n" +
+                $"- timesignature: {(string.IsNullOrWhiteSpace(req.TimeSignature) ? "N/A" : req.TimeSignature)}\n" +
+                $"- keyscale: {(string.IsNullOrWhiteSpace(req.KeyScale) ? "N/A" : req.KeyScale)}\n" +
+                $"- duration: {(int)duration} seconds\n";
+            string textPrompt = $"# Instruction\nFill the audio semantic mask based on the given conditions:\n\n# Caption\n{caption}\n\n# Metas\n{metas}";
+            Tensor textHidden = EncodeQwenText(b, TokenizeWithEos(textPrompt, tail: "\n"));
+            // Upstream _format_lyrics: "# Languages\n{lang}\n\n# Lyric\n{lyrics}<|endoftext|>" ("[Instrumental]"
+            // is the upstream convention for no vocals and goes through the same template).
+            string language = string.IsNullOrWhiteSpace(req.VocalLanguage) ? "en" : req.VocalLanguage;
+            string lyrics = string.IsNullOrWhiteSpace(req.Prompt) ? "[Instrumental]" : req.Prompt;
+            Tensor lyricHidden = EmbedQwenLyrics(TokenizeWithEos($"# Languages\n{language}\n\n# Lyric\n{lyrics}"));
             b.Sync();
             b.FreeWeights(qwen.EnumerateWeights());
             try
             {
-                (float[] left, float[] right, int _, int _) = pipeline.Generate(
-                    textHidden, lyricHidden, Math.Clamp(req.Duration, 1d, 600d),
-                    shift: req.Shift.HasValue ? (float)req.Shift.Value : null, seed: req.Seed);
-                return MusicAudio.Stereo(left, right);
+                // Optional 5 Hz LM planner: caption+lyrics → FSQ codes → detokenized 25 Hz lmHints.
+                Tensor lmHints = null;
+                bool lmThink = false;
+                string lmKind = (req.LmModel ?? "").Trim().ToLowerInvariant();
+                if (lmKind is not ("" or "none" or "disabled"))
+                {
+                    AceStepLmPlanner planner = plannerHolder.GetOrLoad(lmKind);
+                    lmThink = req.Thinking;
+                    (int[] codes, string _) = planner.Plan(b, caption, lyrics, duration, new AceStepPlannerOptions
+                    {
+                        Thinking = req.Thinking,
+                        Temperature = (float)req.LmTemperature,
+                        CfgScale = (float)req.LmCfgScale,
+                        TopK = req.LmTopK,
+                        TopP = (float)req.LmTopP,
+                        NegativePrompt = req.LmNegativePrompt ?? "",
+                        Seed = req.Seed,
+                    }, ct);
+                    b.Sync();
+                    b.FreeWeights(planner.EnumerateWeights());
+                    Tensor raw = detokenizer.Decode(b, codes);   // [1, codes·5, 64]
+                    lmHints = FitHints(raw, config.FrameCount(duration), config.LatentChannels);
+                }
+                AceStep15GenerateOptions opts = new()
+                {
+                    Shift = req.Shift.HasValue ? (float)req.Shift.Value : defaultShift,
+                    Seed = req.Seed,
+                    InferSteps = req.InferSteps ?? defaultSteps,
+                    // The pipeline clamps guidance to 1.0 on turbo configs itself (upstream behavior).
+                    GuidanceScale = req.CfgScale.HasValue ? (float)req.CfgScale.Value : 7f,
+                    UseAdg = req.UseAdg,
+                    CfgIntervalStart = (float)req.CfgIntervalStart,
+                    CfgIntervalEnd = (float)req.CfgIntervalEnd,
+                    InferMethod = string.IsNullOrWhiteSpace(req.InferMethod) ? "ode" : req.InferMethod,
+                    // Upstream DCW scalers flip with LM-think state (dcw_defaults.py).
+                    DcwScaler = lmHints is not null && lmThink ? 0.02f : 0.05f,
+                    DcwHighScaler = lmHints is not null && lmThink ? 0.06f : 0.02f,
+                };
+                try
+                {
+                    (float[] left, float[] right, int _, int _) = pipeline.Generate(textHidden, lyricHidden, duration, opts, lmHints: lmHints);
+                    return MusicAudio.Stereo(left, right);
+                }
+                finally
+                {
+                    lmHints?.Dispose();
+                }
             }
             finally
             {
@@ -261,7 +381,114 @@ public static class MusicModels
             }
         }
 
-        return new MusicRunner(48_000, Synth, pipeline as IDisposable, qwen, tokenizer, mainLoader, vaeLoader, qwenLoader);
+        return new MusicRunner(48_000, Synth, pipeline as IDisposable, detokenizer, plannerHolder, qwen, tokenizer, mainLoader, vaeLoader, qwenLoader);
+    }
+
+    /// <summary>Lazily loads/caches the 5 Hz LM planner ("0.6b"/"4b" — anything containing "4b" picks the big
+    /// one) from the official HF repos via the shared model cache. Disposed with the runner.</summary>
+    private sealed class AceStepPlannerHolder : IDisposable
+    {
+        private AceStepLmPlanner _planner;
+        private string _kind = "";
+        private readonly List<IDisposable> _loaders = [];
+
+        public AceStepLmPlanner GetOrLoad(string kind)
+        {
+            string want = kind.Contains("4b") ? "4b" : "0.6b";
+            if (_planner is not null && _kind == want)
+            {
+                return _planner;
+            }
+            _planner?.Dispose();
+            string repo = want == "4b" ? "ACE-Step/acestep-5Hz-lm-4B" : "ACE-Step/acestep-5Hz-lm-0.6B";
+            Logs.Info($"[AudioLab][ACE-Step] Loading 5Hz LM planner '{repo}'...");
+            (IReadOnlyDictionary<string, Tensor> w, IDisposable[] loaders) =
+                TtsModels.LoadCheckpointAsync(repo, CancellationToken.None).ConfigureAwait(false).GetAwaiter().GetResult();
+            _loaders.AddRange(loaders);
+            _planner = new AceStepLmPlanner(want == "4b" ? AceStepLmPlanner.Config4B : AceStepLmPlanner.Config0_6B, w);
+            _kind = want;
+            return _planner;
+        }
+
+        public void Dispose()
+        {
+            _planner?.Dispose();
+            foreach (IDisposable l in _loaders) l.Dispose();
+        }
+    }
+
+    /// <summary>Crops/pads detokenized hints <c>[1, T, 64]</c> to the pipeline's exact frame count
+    /// (upstream crops to src length; short hints repeat the final frame).</summary>
+    private static Tensor FitHints(Tensor raw, int frames, int latCh)
+    {
+        int t = (int)raw.Shape[1];
+        if (t == frames)
+        {
+            return raw;
+        }
+        Tensor outT = new(new TensorShape(1, frames, latCh), DType.F32);
+        unsafe
+        {
+            float* sp = (float*)raw.DataPointer;
+            float* dp = (float*)outT.DataPointer;
+            for (int i = 0; i < frames; i++)
+            {
+                long src = (long)Math.Min(i, t - 1) * latCh;
+                Buffer.MemoryCopy(sp + src, dp + (long)i * latCh, latCh * 4, latCh * 4);
+            }
+        }
+        raw.Dispose();
+        return outT;
+    }
+
+    /// <summary>Per-variant inference defaults, mirroring upstream <c>get_ui_control_config</c>:
+    /// turbo family 8 steps (shift 3 except the shift-1 checkpoint); sft 50 / base 32 steps at shift 1.</summary>
+    private static (int Steps, float Shift) AceStepVariantDefaults(string modelId)
+    {
+        string v = (modelId ?? "").Trim().ToLowerInvariant();
+        if (v.Contains("shift1")) return (8, 1f);
+        if (v == "sft" || v.EndsWith("-sft")) return (50, 1f);
+        if (v == "base" || v.EndsWith("-base")) return (32, 1f);
+        return (8, 3f);   // turbo / turbo-shift3 / turbo-continuous / xl-turbo
+    }
+
+    /// <summary>Loads the shipped <c>silence_latent.pt</c> (fp32 [1, 64, 15000]) from the weights dir into the
+    /// pipeline's src-latent slot — transposed to per-frame rows [T, 64], matching upstream's
+    /// <c>torch.load(...).transpose(1, 2)</c>. Absent file = keep the VAE-recompute fallback.</summary>
+    private static void LoadAceStepSilenceLatent(AceStepPipeline15 pipeline, string weightsDir)
+    {
+        try
+        {
+            string path = Path.Combine(weightsDir ?? "", "acestep-v15-silence_latent.pt");
+            if (!File.Exists(path))
+            {
+                return;
+            }
+            using PytorchPickleLoader loader = new();
+            loader.Load(path);
+            Tensor raw = loader.GetAllTensors().Values.FirstOrDefault()
+                ?? throw new InvalidDataException("silence_latent.pt contained no tensor.");
+            Tensor f32 = raw.DType == DType.F32 ? raw : raw.CastTo(DType.F32);
+            // [1, 64, T] → rows [T, 64].
+            int ch = (int)f32.Shape[1];
+            int t = (int)f32.Shape[2];
+            Tensor rows = new(new TensorShape(t, ch), DType.F32);
+            unsafe
+            {
+                float* sp = (float*)f32.DataPointer;
+                float* dp = (float*)rows.DataPointer;
+                for (int c = 0; c < ch; c++)
+                    for (int i = 0; i < t; i++)
+                        dp[(long)i * ch + c] = sp[(long)c * t + i];
+            }
+            if (!ReferenceEquals(f32, raw)) f32.Dispose();
+            pipeline.SetSilenceLatent(rows);
+            Logs.Info($"[AudioLab][ACE-Step] Loaded shipped silence latent ({t} frames).");
+        }
+        catch (Exception ex)
+        {
+            Logs.Warning($"[AudioLab][ACE-Step] Could not load silence_latent.pt ({ex.Message}) — using VAE recompute.");
+        }
     }
 
     #endregion
@@ -325,8 +552,9 @@ public static class MusicModels
         YuePipeline pipeline = new(config, stage1, xcodec);
         Logs.Info($"[AudioLab][YuE] Loaded Stage-1 from '{folder}' (16 kHz, vocal-cb0 only — Stage-2 pending).");
 
-        MusicAudio Synth(IBackend backend, MusicRequest req)
+        MusicAudio Synth(IBackend backend, MusicRequest req, CancellationToken ct)
         {
+            ct.ThrowIfCancellationRequested();
             string genre = string.IsNullOrWhiteSpace(req.Genre) ? "pop" : req.Genre;
             int[] promptIds = tokenizer.EncodeStage1Prompt(genre, req.Prompt);
             int maxFrames = (int)(Math.Clamp(req.Duration, 5d, 300d) * config.FrameRateHz);
@@ -393,22 +621,39 @@ public static class MusicModels
         (IReadOnlyDictionary<string, Tensor> lmW, IDisposable[] lmLoaders) = await TtsModels.LoadCheckpointAsync(repo, ct).ConfigureAwait(false);
         (IReadOnlyDictionary<string, Tensor> codecW, IDisposable[] codecLoaders) = await TtsModels.LoadCheckpointAsync(HeartCodecRepo, ct).ConfigureAwait(false);
 
+        // Upstream inference dtypes: LM bf16 (halves the per-frame weight streaming too), codec f32.
+        Dictionary<string, Tensor> lmBf = new(lmW.Count);
+        foreach ((string k, Tensor t) in lmW) lmBf[k] = t.DType == DType.F32 ? t.CastTo(DType.BF16) : t;
+
         HeartMulaConfig config = HeartMulaConfig.Oss3B;
         HeartMulaPipeline pipeline = new(config);
-        pipeline.LoadWeights(lmW);
+        pipeline.LoadWeights(lmBf);
         pipeline.LoadCodecWeights(codecW);
 
-        // Lyrics use the Llama-3.2 128k vocab; Qwen2's tokenizer shares that base vocab (no special HeartMuLa asset).
-        Qwen2Tokenizer tokenizer = new();
         Logs.Info($"[AudioLab][HeartMuLa] Loaded {repo} + {HeartCodecRepo} (CSM-shaped LM + HeartCodec, 48 kHz).");
 
-        MusicAudio Synth(IBackend backend, MusicRequest req)
+        MusicAudio Synth(IBackend backend, MusicRequest req, CancellationToken ct)
         {
-            // Genre/style tag (if any) is folded ahead of the lyrics as a structural marker.
-            string text = string.IsNullOrWhiteSpace(req.Genre) ? req.Prompt : $"[{req.Genre}]\n{req.Prompt}";
-            int[] lyrics = [.. tokenizer.EncodeRaw(text ?? "")];
+            ct.ThrowIfCancellationRequested();
+            // Upstream prompt layout: [<tag>genre</tag>, MuQ row (pipeline-injected), lyrics] — Llama-3 BPE,
+            // each text section lowercased + BOS/EOS-wrapped (AudioTextFrontend reproduces upstream preprocess).
+            int[] tags = AudioTextFrontend.HeartMulaTags(req.Genre ?? "");
+            int[] lyrics = AudioTextFrontend.HeartMulaLyrics(req.Prompt ?? "");
             int maxFrames = (int)(Math.Clamp(req.Duration, 1d, 300d) * 12.5); // HeartCodec frame rate = 12.5 Hz
-            float[] samples = pipeline.Generate(backend, lyrics, maxFrames, seed: req.Seed);
+            // Per-frame progress + cancellation: the AR decode is the long pole. Log the first few frames then every
+            // 5, so the log visibly ticks (silence here reads as "stuck" even when it's just slow).
+            void OnFrame(int done, int total)
+            {
+                if (done <= 3 || done % 5 == 0 || done == total)
+                {
+                    Logs.Info($"[AudioLab][HeartMuLa] Frame {done}/{total} ({done / 12.5:0.0}s of audio).");
+                }
+            }
+            float[] samples = pipeline.Generate(backend, lyrics, maxFrames, seed: req.Seed,
+                temperature: req.Temperature.HasValue ? (float)req.Temperature.Value : null,
+                topK: req.TopK,
+                cfgScale: req.CfgScale.HasValue ? (float)req.CfgScale.Value : null,
+                cancel: ct, onFrame: OnFrame, tagsTokens: tags);
             return MusicAudio.Mono(samples);
         }
 

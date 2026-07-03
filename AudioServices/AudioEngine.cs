@@ -200,6 +200,7 @@ public static class AudioEngine
         await _genLock.WaitAsync(cancel).ConfigureAwait(false);
         try
         {
+            EvictOthersUnderMemoryPressure(providerId);
             return await handler.ProcessAsync(backend, args, cancel).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancel.IsCancellationRequested)
@@ -213,8 +214,91 @@ public static class AudioEngine
         }
         finally
         {
+            // Post-generation device hygiene: drop leftover GPU activations and return pool-reserved-but-free
+            // blocks to the driver. Cached (promoted) weights stay resident, so warm latency is unaffected —
+            // without this, finished generations left multi-GB of dead activations + pool reservations on the
+            // card (observed: Dia idling at 10.3GB VRAM).
+            try
+            {
+                backend.FreeActivations();
+                backend.TrimMemoryPool();
+            }
+            catch (Exception ex)
+            {
+                Logs.Warning($"[AudioLab] Post-generation GPU cleanup failed: {ex.Message}");
+            }
             _genLock.Release();
         }
+    }
+
+    /// <summary>Provider that ran most recently — switches trigger the memory-pressure eviction check.</summary>
+    private static string _lastProviderId;
+
+    /// <summary>Free-host-RAM floor (KiB) below which switching providers evicts every OTHER provider's resident
+    /// pipelines first. Runners otherwise accumulate across providers (each holds multi-GB F32 weight copies)
+    /// until the kernel OOM-kills the process — observed at 21.8 GB RSS on a 32 GB box, and again at 11.5 GB
+    /// with a desktop session (IDE/browser) sharing the machine: the box, not just this process, must stay
+    /// healthy, so the floor is generous. Override via HARTSY_AUDIO_EVICT_BELOW_GB.</summary>
+    private static readonly long EvictBelowAvailableKb =
+        (long.TryParse(Environment.GetEnvironmentVariable("HARTSY_AUDIO_EVICT_BELOW_GB"), out long gb) && gb > 0 ? gb : 14L) * 1024 * 1024;
+
+    /// <summary>When switching to a different provider with low free host RAM, drops every other provider's
+    /// resident pipelines (runner Dispose also releases their auto-promoted GPU weights). Same-provider repeat
+    /// requests never evict, so warm generation stays warm.</summary>
+    private static void EvictOthersUnderMemoryPressure(string providerId)
+    {
+        if (string.Equals(_lastProviderId, providerId, StringComparison.Ordinal))
+        {
+            return;
+        }
+        long availableKb = ReadAvailableMemoryKb();
+        // VRAM pressure counts too: a prior provider's promoted weights can hold most of the card
+        // (Dia leaves ~10GB resident on a 12GB GPU) and the next model then OOMs at load.
+        long freeVramBytes = _backend?.FreeMemoryBytes() ?? 0;
+        bool hostLow = availableKb > 0 && availableKb < EvictBelowAvailableKb;
+        bool vramLow = freeVramBytes > 0 && freeVramBytes < 3L * 1024 * 1024 * 1024;
+        if (hostLow || vramLow)
+        {
+            Logs.Info($"[AudioLab] Memory pressure (host {availableKb / 1024 / 1024.0:0.0} GB free, VRAM {freeVramBytes / 1024.0 / 1024 / 1024:0.0} GB free) — unloading other providers' resident audio models before loading '{providerId}'.");
+            foreach (KeyValuePair<string, IAudioHandler> kv in _handlers)
+            {
+                if (!string.Equals(kv.Key, providerId, StringComparison.Ordinal))
+                {
+                    try { kv.Value.UnloadAll(); }
+                    catch (Exception ex) { Logs.Warning($"[AudioLab] UnloadAll failed for '{kv.Key}': {ex.Message}"); }
+                }
+            }
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            // Disposing the runners drops host references, but their auto-promoted GPU weights sit in the
+            // backend's device weight-cache and are only freed lazily (per-tensor finalizer queue drained on
+            // the compute thread) — so without this the card stays ~full across a provider switch and the next
+            // model OOMs on load (observed: whisper variants left 1.1GB free, then ACE-Step died requesting
+            // 0.3MB). FreeAllDeviceMemory synchronously clears the weight/cast/activation caches and trims the
+            // pool. Safe here: the incoming provider isn't loaded yet, so nothing live is cached.
+            try { _backend?.FreeAllDeviceMemory(); }
+            catch (Exception ex) { Logs.Warning($"[AudioLab] FreeAllDeviceMemory on eviction failed: {ex.Message}"); }
+        }
+        _lastProviderId = providerId;
+    }
+
+    /// <summary>MemAvailable from /proc/meminfo in KiB, or 0 when unavailable (non-Linux → no eviction).</summary>
+    private static long ReadAvailableMemoryKb()
+    {
+        try
+        {
+            foreach (string line in File.ReadLines("/proc/meminfo"))
+            {
+                if (line.StartsWith("MemAvailable:", StringComparison.Ordinal))
+                {
+                    string[] parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    return long.TryParse(parts[1], out long kb) ? kb : 0;
+                }
+            }
+        }
+        catch (Exception) { }
+        return 0;
     }
 
     /// <summary>Ensures the provider/model weights are present (drives AudioLab's Install button).</summary>
@@ -226,6 +310,9 @@ public static class AudioEngine
         }
         try
         {
+            // The prefetch load below materializes a full pipeline — clear other providers' residents first
+            // if RAM is tight (this exact path OOM-killed the process during a NeuTTS install).
+            EvictOthersUnderMemoryPressure(providerId);
             await handler.EnsureWeightsAsync(modelId, onProgress ?? (_ => { }), cancel).ConfigureAwait(false);
             return new JObject { ["success"] = true };
         }

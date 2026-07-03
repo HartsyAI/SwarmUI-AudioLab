@@ -710,55 +710,187 @@ const AudioDaw = (() => {
         container.appendChild(section);
     }
 
-    /** Render the Stems controls (model picker + separate button) when Demucs is installed. */
+    // Stem sets each Demucs model produces (names match what the backend returns).
+    const STEM_MODELS = {
+        htdemucs: { label: 'HTDemucs — 4 stems', stems: ['vocals', 'drums', 'bass', 'other'] },
+        htdemucs_ft: { label: 'HTDemucs Fine-tuned — 4 stems (best quality)', stems: ['vocals', 'drums', 'bass', 'other'] },
+        htdemucs_6s: { label: 'HTDemucs 6-stem — adds guitar + piano', stems: ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'] }
+    };
+
+    // Track colors per stem name (+ the synthesized "instrumental" combine track).
+    const STEM_COLORS = {
+        vocals: '#cc5de8', drums: '#ff922b', bass: '#22b8cf',
+        other: '#82c91e', guitar: '#ffd43b', piano: '#4a9eff', instrumental: '#20c997'
+    };
+
+    // Output presets. `plan(stems)` → [{name, parts}]; a `parts` list longer than 1 is summed into one track.
+    const STEM_PRESETS = [
+        { id: 'split', label: 'Full split — every stem as its own track', plan: (s) => s.map(x => ({ name: x, parts: [x] })) },
+        { id: 'karaoke', label: 'Karaoke — vocals + combined instrumental', plan: (s) => [{ name: 'vocals', parts: ['vocals'] }, { name: 'instrumental', parts: s.filter(x => x !== 'vocals') }] },
+        { id: 'acapella', label: 'Acapella — vocals only', plan: (s) => [{ name: 'vocals', parts: ['vocals'] }] },
+        { id: 'instrumental', label: 'Instrumental — everything except vocals', plan: (s) => [{ name: 'instrumental', parts: s.filter(x => x !== 'vocals') }] },
+        { id: 'custom', label: 'Custom — pick stems below', plan: null }
+    ];
+
+    function capStem(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+    /** Stems a non-custom preset includes, for the (read-only) checkbox display. */
+    function presetInvolved(presetId, stems) {
+        switch (presetId) {
+            case 'acapella': return ['vocals'];
+            case 'instrumental': return stems.filter(s => s !== 'vocals');
+            case 'split':
+            case 'karaoke': return stems.slice();
+            default: return stems.slice();
+        }
+    }
+
+    /** Render the Stems controls: model + output preset + per-stem selection + separate button. */
     function renderStemsControls(section) {
         const controls = createDiv(null, 'daw-stems-controls');
 
-        // Model picker
+        // --- Model picker ---
         const modelRow = createDiv(null, 'daw-stems-model-row');
         const modelLabel = document.createElement('label');
-        modelLabel.style.cssText = 'font-size:0.8rem;color:var(--text);white-space:nowrap;';
+        modelLabel.className = 'daw-stems-ctl-label';
         modelLabel.textContent = 'Model:';
         const modelSelect = document.createElement('select');
-        modelSelect.style.cssText = 'padding:0.2rem 0.4rem;border:1px solid var(--shadow);border-radius:0.25rem;background:var(--background);color:var(--text);font-size:0.8rem;';
-        const models = [
-            { id: 'htdemucs', label: 'HTDemucs — 4 stems (vocals, drums, bass, other)' },
-            { id: 'htdemucs_ft', label: 'HTDemucs Fine-tuned — 4 stems (best quality)' },
-            { id: 'htdemucs_6s', label: 'HTDemucs 6-stem — vocals, drums, bass, guitar, piano, other' }
-        ];
-        for (const m of models) {
+        modelSelect.className = 'daw-stems-select';
+        for (const [id, def] of Object.entries(STEM_MODELS)) {
             const opt = document.createElement('option');
-            opt.value = m.id;
-            opt.textContent = m.label;
+            opt.value = id;
+            opt.textContent = def.label;
             modelSelect.appendChild(opt);
         }
         modelRow.appendChild(modelLabel);
         modelRow.appendChild(modelSelect);
         controls.appendChild(modelRow);
 
-        // Selected clip info + separate button
+        // --- Output preset picker ---
+        const presetRow = createDiv(null, 'daw-stems-model-row');
+        const presetLabel = document.createElement('label');
+        presetLabel.className = 'daw-stems-ctl-label';
+        presetLabel.textContent = 'Output:';
+        const presetSelect = document.createElement('select');
+        presetSelect.className = 'daw-stems-select';
+        for (const p of STEM_PRESETS) {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = p.label;
+            presetSelect.appendChild(opt);
+        }
+        presetRow.appendChild(presetLabel);
+        presetRow.appendChild(presetSelect);
+        controls.appendChild(presetRow);
+
+        // --- Per-stem checkboxes (editable only in Custom mode; read-only preview otherwise) ---
+        const stemsRow = createDiv(null, 'daw-stems-checks');
+        controls.appendChild(stemsRow);
+
+        const getStems = () => STEM_MODELS[modelSelect.value].stems;
+        let customSel = new Set(getStems());
+
+        function rebuildStemChecks() {
+            stemsRow.innerHTML = '';
+            const stems = getStems();
+            const custom = presetSelect.value === 'custom';
+            const sel = new Set(custom ? [...customSel].filter(s => stems.includes(s)) : presetInvolved(presetSelect.value, stems));
+
+            const hint = createDiv(null, 'daw-stems-checks-hint');
+            hint.textContent = custom ? 'Choose which stems become tracks:' : 'Included stems:';
+            stemsRow.appendChild(hint);
+
+            const grid = createDiv(null, 'daw-stems-check-grid');
+            for (const s of stems) {
+                const lbl = document.createElement('label');
+                lbl.className = 'daw-stems-check' + (custom ? '' : ' is-locked');
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.checked = sel.has(s);
+                cb.disabled = !custom;
+                cb.addEventListener('change', () => {
+                    if (cb.checked) customSel.add(s); else customSel.delete(s);
+                });
+                const dot = document.createElement('span');
+                dot.className = 'daw-stems-dot';
+                dot.style.background = STEM_COLORS[s] || 'var(--text-soft)';
+                lbl.appendChild(cb);
+                lbl.appendChild(dot);
+                lbl.appendChild(document.createTextNode(' ' + capStem(s)));
+                grid.appendChild(lbl);
+            }
+            stemsRow.appendChild(grid);
+        }
+
+        modelSelect.addEventListener('change', () => { customSel = new Set(getStems()); rebuildStemChecks(); });
+        presetSelect.addEventListener('change', rebuildStemChecks);
+        rebuildStemChecks();
+
+        // Turns the current control state into the output plan the separator executes.
+        function buildPlan() {
+            const stems = getStems();
+            if (presetSelect.value === 'custom') {
+                return stems.filter(s => customSel.has(s)).map(s => ({ name: s, parts: [s] }));
+            }
+            return STEM_PRESETS.find(p => p.id === presetSelect.value).plan(stems);
+        }
+
+        // --- Selected clip info + separate button ---
         const selectedClip = findClipById(state.selectedClipId);
         const actionRow = createDiv(null, 'daw-stems-action-row');
 
         if (selectedClip) {
             const clipInfo = createSpan(null);
-            clipInfo.style.cssText = 'font-size:0.8rem;color:var(--text-soft);';
-            clipInfo.innerHTML = `Selected: <strong style="color:var(--text);">${escapeHtml(selectedClip.clip.name)}</strong> (${formatTimePrecise(selectedClip.clip.duration)}s)`;
+            clipInfo.className = 'daw-stems-clipinfo';
+            clipInfo.innerHTML = `Selected: <strong>${escapeHtml(selectedClip.clip.name)}</strong> (${formatTimePrecise(selectedClip.clip.duration)}s)`;
             actionRow.appendChild(clipInfo);
 
             const sepBtn = document.createElement('button');
-            sepBtn.className = 'basic-button btn-sm';
+            sepBtn.className = 'basic-button btn-sm daw-stems-go';
             sepBtn.textContent = 'Separate Stems';
             sepBtn.addEventListener('click', () => {
-                doSeparateStems(selectedClip.clip, selectedClip.track, modelSelect.value);
+                const outputs = buildPlan();
+                if (!outputs.length) {
+                    if (typeof doNoticePopover === 'function') doNoticePopover('Select at least one stem', 'notice-pop-yellow');
+                    return;
+                }
+                doSeparateStems(selectedClip.clip, selectedClip.track, { modelName: modelSelect.value, outputs });
             });
             actionRow.appendChild(sepBtn);
         } else {
-            actionRow.innerHTML = '<span style="color:var(--text-soft);font-size:0.8rem;">Select a clip to separate into stems</span>';
+            actionRow.innerHTML = '<span class="daw-stems-clipinfo">Select a clip to separate into stems</span>';
         }
 
         controls.appendChild(actionRow);
         section.appendChild(controls);
+    }
+
+    /** Select a clip and jump to the Stems tab so its options can be configured before separating. */
+    function openStemsForClip(clip, track) {
+        if (!clip) return;
+        state.selectedClipId = clip.id;
+        if (track) state.selectedTrackId = track.id;
+        activeBottomTab = 'stems';
+        updateTrackSelection();
+        buildBottomPanel();
+        renderAllTracks();
+    }
+
+    /** Sum several equal-length stem AudioBuffers into one WAV blob (used for Karaoke/Instrumental combines). */
+    function sumBuffersToWav(buffers) {
+        const ref = buffers[0];
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const out = ctx.createBuffer(ref.numberOfChannels, ref.length, ref.sampleRate);
+        for (let ch = 0; ch < ref.numberOfChannels; ch++) {
+            const dst = out.getChannelData(ch);
+            for (const buf of buffers) {
+                const src = buf.getChannelData(Math.min(ch, buf.numberOfChannels - 1));
+                const n = Math.min(dst.length, src.length);
+                for (let i = 0; i < n; i++) dst[i] += src[i];
+            }
+        }
+        ctx.close();
+        return audioBufferToWav(out);
     }
 
     /** Apply a clip's audio data to a SwarmUI model parameter input. */
@@ -1224,7 +1356,7 @@ const AudioDaw = (() => {
                 clip.muted = !clip.muted;
                 renderAllTracks();
             }},
-            { label: 'Separate Stems (Demucs)', action: () => doSeparateStems(clip, track) }
+            { label: 'Separate Stems… (Demucs)', action: () => openStemsForClip(clip, track) }
         ];
 
         for (const item of items) {
@@ -1447,11 +1579,14 @@ const AudioDaw = (() => {
         }
     }
 
-    async function doSeparateStems(clip, track, modelName = 'htdemucs') {
+    async function doSeparateStems(clip, track, options = null) {
         if (!clip || !clip.blob) {
             if (typeof doNoticePopover === 'function') doNoticePopover('No clip to separate', 'notice-pop-yellow');
             return;
         }
+
+        const modelName = options?.modelName || 'htdemucs';
+        let outputs = options?.outputs || null; // [{name, parts:[stem...]}]; null = full split of whatever comes back
 
         const overlay = showDawLoadingOverlay('Separating stems... this may take a moment');
 
@@ -1465,40 +1600,50 @@ const AudioDaw = (() => {
                 }
             });
 
-            hideDawLoadingOverlay(overlay);
-
             if (!result.success || !result.stems) {
                 throw new Error(result.error || 'Stem separation failed');
             }
 
+            const available = result.metadata?.stem_names || Object.keys(result.stems);
+            if (!outputs) outputs = available.map(s => ({ name: s, parts: [s] }));
+
+            // Materialize each requested output track — single-part outputs pass through, multi-part outputs
+            // (e.g. instrumental) are summed client-side from the one separation pass. Done while the overlay is up.
+            const built = [];
+            for (const out of outputs) {
+                const parts = out.parts.filter(p => result.stems[p]);
+                if (!parts.length) continue;
+                let blob;
+                if (parts.length === 1) {
+                    blob = AudioLabCore.base64ToBlob(result.stems[parts[0]], 'audio/wav');
+                } else {
+                    const buffers = [];
+                    for (const p of parts) {
+                        buffers.push(await AudioLabCore.decodeToBuffer(AudioLabCore.base64ToBlob(result.stems[p], 'audio/wav')));
+                    }
+                    blob = sumBuffersToWav(buffers);
+                }
+                built.push({ name: out.name, blob });
+            }
+
+            hideDawLoadingOverlay(overlay);
+
+            if (!built.length) throw new Error('No stems were produced for the chosen output');
+
             pushUndo();
 
-            const stemNames = result.metadata?.stem_names || Object.keys(result.stems);
-            const stemColors = {
-                vocals: '#cc5de8',
-                drums: '#ff922b',
-                bass: '#22b8cf',
-                other: '#82c91e',
-                guitar: '#ffd43b',
-                piano: '#4a9eff'
-            };
-
-            for (const stemName of stemNames) {
-                const stemB64 = result.stems[stemName];
-                if (!stemB64) continue;
-
-                const stemBlob = AudioLabCore.base64ToBlob(stemB64, 'audio/wav');
+            for (const b of built) {
                 const newTrack = addTrack({
-                    name: `${stemName.charAt(0).toUpperCase() + stemName.slice(1)} — ${clip.name}`,
-                    color: stemColors[stemName] || undefined
+                    name: `${capStem(b.name)} — ${clip.name}`,
+                    color: STEM_COLORS[b.name] || undefined
                 });
-                await addClipToTrack(newTrack, stemBlob, {
-                    name: stemName,
+                await addClipToTrack(newTrack, b.blob, {
+                    name: b.name,
                     startTime: clip.startTime
                 });
             }
 
-            // Mute the original clip so stems are heard instead
+            // Mute the original clip so the new stem tracks are heard instead
             clip.muted = true;
 
             updateTotalDuration();
@@ -1506,7 +1651,7 @@ const AudioDaw = (() => {
             updateBottomPanel();
 
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover(`Separated into ${stemNames.length} stems`, 'notice-pop-green');
+                doNoticePopover(`Separated into ${built.length} track${built.length > 1 ? 's' : ''}`, 'notice-pop-green');
             }
         } catch (err) {
             hideDawLoadingOverlay(overlay);

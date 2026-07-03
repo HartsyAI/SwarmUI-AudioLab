@@ -69,6 +69,17 @@ public sealed class SttHandler(SttModelDescriptor descriptor) : IAudioHandler
         }
     }
 
+    public void UnloadAll()
+    {
+        foreach (string key in _cache.Keys)
+        {
+            if (_cache.TryRemove(key, out ISttRunner runner))
+            {
+                runner.Dispose();
+            }
+        }
+    }
+
     /// <summary>Loads (downloading on first use) and caches the runner for a repo. Thread-safe; the
     /// double-check keeps two concurrent callers from loading the same repo twice.</summary>
     private async Task<ISttRunner> GetOrLoadAsync(string repo, CancellationToken cancel)

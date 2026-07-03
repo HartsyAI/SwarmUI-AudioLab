@@ -1189,5 +1189,75 @@
     display: flex;
     align-items: center;
     gap: 0.75rem;
+    margin-top: 0.15rem;
+}
+
+.daw-stems-ctl-label {
+    font-size: 0.8rem;
+    color: var(--text);
+    white-space: nowrap;
+    min-width: 3.2rem;
+}
+
+.daw-stems-select {
+    flex: 1;
+    padding: 0.2rem 0.4rem;
+    border: 1px solid var(--shadow);
+    border-radius: 0.25rem;
+    background: var(--background);
+    color: var(--text);
+    font-size: 0.8rem;
+}
+
+.daw-stems-checks {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.daw-stems-checks-hint {
+    font-size: 0.75rem;
+    color: var(--text-soft);
+}
+
+.daw-stems-check-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.9rem;
+}
+
+.daw-stems-check {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.8rem;
+    color: var(--text);
+    cursor: pointer;
+}
+
+.daw-stems-check.is-locked {
+    opacity: 0.7;
+    cursor: default;
+}
+
+.daw-stems-dot {
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 50%;
+    display: inline-block;
+    flex: 0 0 auto;
+}
+
+.daw-stems-clipinfo {
+    font-size: 0.8rem;
+    color: var(--text-soft);
+}
+
+.daw-stems-clipinfo strong {
+    color: var(--text);
+}
+
+.daw-stems-go {
+    margin-left: auto;
 }
 

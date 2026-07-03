@@ -880,9 +880,9 @@ public static class AudioLabParams
 
 
         InferStep = T2IParamTypes.Register<int>(new("Infer Steps",
-            "Number of diffusion inference steps.\nTurbo models: 8. SFT/Base models: 50.",
-            "8",
-            Min: 1, Max: 200, Step: 1, ViewType: ParamViewType.SLIDER,
+            "Number of diffusion inference steps.\n0 = model default (turbo: 8, SFT: 50, Base: 32).",
+            "0",
+            Min: 0, Max: 200, Step: 1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         ACEGuidanceScale = T2IParamTypes.Register<double>(new("ACE Guidance",
@@ -952,9 +952,9 @@ public static class AudioLabParams
             OrderPriority: -1, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         ACEShift = T2IParamTypes.Register<double>(new("Shift",
-            "Noise schedule shift factor.\nHigher values increase generation diversity.",
-            "3.0",
-            Min: 1.0, Max: 5.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
+            "Noise schedule shift factor.\n0 = model default (turbo: 3, shift1 variant: 1, SFT/Base: 1). Turbo snaps to 1/2/3.",
+            "0",
+            Min: 0, Max: 5.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
             OrderPriority: 0, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         InferMethod = T2IParamTypes.Register<string>(new("Infer Method",
@@ -1171,8 +1171,8 @@ public static class AudioLabParams
             OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params"));
 
         HeartLibCFGScale = T2IParamTypes.Register<double>(new("HeartLib CFG Scale",
-            "Classifier-free guidance strength.\nHigher = stronger adherence to tags/lyrics. Lower = more creative variation.",
-            "1.5",
+            "Classifier-free guidance strength.\nHigher = stronger adherence to tags/lyrics. Lower = more creative variation.\n1.0 disables CFG — roughly 2x faster (skips the unconditional pass).",
+            "1.0",
             Min: 0.1, Max: 10.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params"));
 

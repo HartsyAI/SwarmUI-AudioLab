@@ -78,6 +78,18 @@ public sealed class DemucsHandler : IAudioHandler
         }
     }
 
+    public void UnloadAll()
+    {
+        foreach (string key in _cache.Keys)
+        {
+            if (_cache.TryRemove(key, out Loaded loaded))
+            {
+                loaded.Pipeline.Dispose();
+                loaded.Loader.Dispose();
+            }
+        }
+    }
+
     private Loaded GetOrLoad(string modelName)
     {
         string path = ResolvePath(modelName);
@@ -97,13 +109,27 @@ public sealed class DemucsHandler : IAudioHandler
                     $"Demucs weights not found: '{path}'. Place the htdemucs checkpoint (.th or .safetensors) there.", path);
             }
             (IReadOnlyDictionary<string, Tensor> dict, IDisposable loader) = LoadDict(path);
-            DemucsPipeline pipeline = new(new HtDemucsConfig());
+            HtDemucsConfig cfg = ConfigFor(modelName);
+            DemucsPipeline pipeline = new(cfg);
             pipeline.LoadWeights(dict);
-            Logs.Info($"[AudioLab][Demucs] Loaded '{Path.GetFileName(path)}' (4 stems, 44.1 kHz).");
+            Logs.Info($"[AudioLab][Demucs] Loaded '{Path.GetFileName(path)}' ({cfg.NumSources} stems, 44.1 kHz).");
             Loaded loaded = new(pipeline, loader);
             _cache[path] = loaded;
             return loaded;
         }
+    }
+
+    /// <summary>Selects the checkpoint's architecture config from its model name: the 6-stem variant
+    /// (htdemucs_6s) adds guitar+piano and MUST use the 6-source config, else the final decoder shape
+    /// mismatches the weights on load. htdemucs and htdemucs_ft share the 4-source config.</summary>
+    private static HtDemucsConfig ConfigFor(string modelName)
+    {
+        string v = (modelName ?? "").Trim().ToLowerInvariant();
+        if (v.Contains("6s"))
+        {
+            return HtDemucsConfig.Htdemucs6s;
+        }
+        return v.Contains("_ft") || v.EndsWith("ft") ? HtDemucsConfig.HtdemucsFt : HtDemucsConfig.Htdemucs;
     }
 
     private static (IReadOnlyDictionary<string, Tensor>, IDisposable) LoadDict(string path)

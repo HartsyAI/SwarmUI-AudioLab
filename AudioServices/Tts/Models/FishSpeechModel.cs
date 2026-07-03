@@ -78,8 +78,11 @@ public static class FishSpeechModel
             // disposable. The pickle loaders are kept alive because the loaded F32 tensors reference their buffers.
             return new TtsRunner(pipeline.SampleRate, (backend, req) =>
             {
-                string prompt = $"{FishSpeechTokenizer.ImStart}user\n{req.Text}{FishSpeechTokenizer.ImEnd}"
-                    + $"{FishSpeechTokenizer.ImStart}assistant\n{FishSpeechTokenizer.AudioStart}";
+                // Upstream v1.5 template (system turn + <|voice|> assistant opener). <|audio_start|> is NOT in
+                // the 1.5 vocab — it BPE-encodes as literal text and degrades generation.
+                string prompt = $"{FishSpeechTokenizer.ImStart}system\nSpeak out the provided text.{FishSpeechTokenizer.ImEnd}"
+                    + $"{FishSpeechTokenizer.ImStart}user\n{req.Text}{FishSpeechTokenizer.ImEnd}"
+                    + $"{FishSpeechTokenizer.ImStart}assistant\n{FishSpeechTokenizer.Voice}";
                 int[] tokens = tokenizer.Encode(prompt);
                 return pipeline.Synthesize(backend, tokens, endToken: tokenizer.ImEndId, seed: req.Seed);
             }, pipeline, modelLoader, codecLoader);

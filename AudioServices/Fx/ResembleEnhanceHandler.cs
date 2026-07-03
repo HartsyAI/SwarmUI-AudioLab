@@ -87,4 +87,6 @@ public sealed class ResembleEnhanceHandler : IAudioHandler
             foreach (IDisposable d in loaded.Loaders) { d?.Dispose(); }
         }
     }
+
+    public void UnloadAll() => Unload(null);
 }

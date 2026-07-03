@@ -72,7 +72,8 @@ public sealed class TtsHandler(TtsModelDescriptor descriptor) : IAudioHandler
                 ReferenceWavPath = refWavPath,
                 ReferenceB64 = refB64,
                 Seed = ReadSeed(args),
-                Voice = string.IsNullOrEmpty(voice) ? null : voice,
+                // "default" is the API layer's placeholder (ProcessTTS's voice default), not a real voice name.
+                Voice = string.IsNullOrEmpty(voice) || voice.Equals("default", StringComparison.OrdinalIgnoreCase) ? null : voice,
                 Speed = ReadDouble(args, "speed"),
                 Exaggeration = ReadDouble(args, "exaggeration"),
                 NfeStep = ReadInt(args, "nfe_step"),
@@ -105,6 +106,17 @@ public sealed class TtsHandler(TtsModelDescriptor descriptor) : IAudioHandler
         if (_cache.TryRemove(repo, out ITtsRunner runner))
         {
             runner.Dispose();
+        }
+    }
+
+    public void UnloadAll()
+    {
+        foreach (string key in _cache.Keys)
+        {
+            if (_cache.TryRemove(key, out ITtsRunner runner))
+            {
+                runner.Dispose();
+            }
         }
     }
 

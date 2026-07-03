@@ -16,9 +16,9 @@ namespace Hartsy.Extensions.AudioLab.AudioServices.Tts;
 /// HF repo + mode (see <see cref="Qwen3TTSProvider"/> EngineConfig): <c>*-Base</c> → voice_clone,
 /// <c>*-CustomVoice</c> → custom_voice (preset speakers), <c>*-VoiceDesign</c> → voice_design (instruct text).
 ///
-/// <para><b>Verified modes:</b> custom_voice + voice_design (engine-confirmed). <b>Gated:</b> voice_clone is the
-/// engine's "structural/ICL path pending real-weights validation" (<see cref="Qwen3TtsPipeline.SynthesizeVoiceClone"/>),
-/// and only the 1.7B <see cref="Qwen3TtsConfig.Default_1_7B"/> preset exists today — the 0.6B config is engine-pending.
+/// <para><b>Verified modes:</b> custom_voice + voice_design (engine-confirmed), on both the 1.7B and 0.6B presets
+/// (<see cref="Qwen3TtsConfig.Default_1_7B"/>/<see cref="Qwen3TtsConfig.Default_0_6B"/>). <b>Gated:</b> voice_clone
+/// is the engine's "structural/ICL path pending real-weights validation" (<see cref="Qwen3TtsPipeline.SynthesizeVoiceClone"/>).
 /// Text is Qwen BPE via the engine's <see cref="Qwen3Tokenizer"/>.</para></summary>
 public static class Qwen3TtsModel
 {
@@ -34,12 +34,7 @@ public static class Qwen3TtsModel
         {
             string repo = ResolveRepo(modelId);
             string mode = ResolveMode(modelId);
-            if (repo.Contains("0.6B", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new NotSupportedException(
-                    "[AudioLab][Qwen3-TTS] The 0.6B variant needs a Qwen3TtsConfig.Default_0_6B preset in the engine — "
-                    + "only the 1.7B preset exists today. Pick a 1.7B model, or add the 0.6B config (see engine-work list).");
-            }
+            bool is0_6B = repo.Contains("0.6B", StringComparison.OrdinalIgnoreCase);
 
             // Two checkpoints: the main model.safetensors carries talker.* (+ MTP under talker.code_predictor.*)
             // and speaker_encoder.* (ECAPA); the codec lives in speech_tokenizer/model.safetensors (decoder.* =
@@ -50,7 +45,7 @@ public static class Qwen3TtsModel
             SafeTensorsLoader talkerLoader = new(); talkerLoader.Load(talkerPath);
             SafeTensorsLoader codecLoader = new(); codecLoader.Load(codecPath);
 
-            Qwen3TtsPipeline pipeline = new(Qwen3TtsConfig.Default_1_7B);
+            Qwen3TtsPipeline pipeline = new(is0_6B ? Qwen3TtsConfig.Default_0_6B : Qwen3TtsConfig.Default_1_7B);
             // The talker ships BF16 (loads directly on CUDA); CPU-only synth would need an F32 cast of the talker
             // dict (engine is F32-only on CPU) — the engine constructs CUDA→Vulkan→CPU, so the GPU path is default.
             pipeline.LoadWeights(talkerLoader.GetAllTensors(), talkerLoader.GetAllTensors(), codecLoader.GetAllTensors());

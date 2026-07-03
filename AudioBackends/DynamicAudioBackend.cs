@@ -656,8 +656,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
     #region Engine Installation and Management
 
     /// <summary>Installs an engine: fetches its weights via the in-process C# engine,
-    /// registers models, and persists the installed state.</summary>
-    public async Task<bool> InstallAndRegisterEngine(string providerId, Action<string> onProgress = null, CancellationToken cancel = default)
+    /// registers models, and persists the installed state. When <paramref name="modelId"/> is given, only
+    /// that model's file set downloads (multi-GB variants are distinct checkpoints — never pull them all).</summary>
+    public async Task<bool> InstallAndRegisterEngine(string providerId, Action<string> onProgress = null, CancellationToken cancel = default, string modelId = null)
     {
         AudioProviderDefinition definition = AudioProviderRegistry.GetById(providerId);
         if (definition == null)
@@ -686,7 +687,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     // must bind a compute device to download (music) no-op here and fetch on first generation.
                     onProgress?.Invoke($"Downloading weights for {definition.Name} (in-process C# engine)...");
                     HashSet<string> fetched = new(StringComparer.Ordinal);
-                    foreach (AudioModelDefinition modelDef in definition.Models)
+                    // With a model_id, prefetch only that variant — each can be its own multi-GB weight set
+                    // (Whisper alone has 7); a bare provider install prefetches the full registered set.
+                    IEnumerable<AudioModelDefinition> modelsToFetch = string.IsNullOrEmpty(modelId)
+                        ? definition.Models
+                        : definition.Models.Where(m => string.Equals(m.Id, modelId, StringComparison.OrdinalIgnoreCase));
+                    foreach (AudioModelDefinition modelDef in modelsToFetch)
                     {
                         cancel.ThrowIfCancellationRequested();
                         // Dedup models that share one weight set (e.g. multiple voices of one TTS repo).
@@ -710,9 +716,16 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 }
                 else
                 {
-                    // Checkpoint providers (music): fetch the .safetensors now.
-                    onProgress?.Invoke($"Downloading weights for {definition.Name} (in-process C# engine)...");
-                    bool registered = await AudioWeights.EnsureProviderWeightsAsync(definition, msg => onProgress?.Invoke(msg), cancel);
+                    // Checkpoint providers (music): fetch the .safetensors now. With a model id, only that
+                    // variant's files; a bare provider install pulls the DEFAULT model's set instead of every
+                    // registered variant (each is a distinct multi-GB checkpoint).
+                    string installModel = modelId;
+                    if (string.IsNullOrEmpty(installModel))
+                    {
+                        installModel = definition.Models.FirstOrDefault(m => AudioWeightsRegistry.SpecsFor(definition.Id, m.Id).Length > 0)?.Id;
+                    }
+                    onProgress?.Invoke($"Downloading weights for {definition.Name}{(installModel is null ? "" : $" ({installModel})")} (in-process C# engine)...");
+                    bool registered = await AudioWeights.EnsureProviderWeightsAsync(definition, msg => onProgress?.Invoke(msg), cancel, installModel);
                     if (!registered)
                     {
                         onProgress?.Invoke($"No auto-download is registered for {definition.Name} yet — place its .safetensors in {AudioWeights.WeightsDirectory(definition)} to enable it.");
@@ -1233,7 +1246,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["genre"] = input.Get(T2IParamTypes.Prompt, "");
                 args["prompt"] = input.TryGet(AudioLabParams.Lyrics, out string ly) ? ly : "[Instrumental]";
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long aceSeed) ? aceSeed : -1L;
-                args["infer_step"] = input.TryGet(AudioLabParams.InferStep, out int infStep) ? infStep : 8;
+                args["infer_step"] = input.TryGet(AudioLabParams.InferStep, out int infStep) ? infStep : 0;   // 0 = model default
                 args["guidance_scale"] = input.TryGet(AudioLabParams.ACEGuidanceScale, out double aceGuide) ? aceGuide : 7.0;
                 args["instrumental"] = input.TryGet(AudioLabParams.Instrumental, out string aceInst) ? aceInst : "false";
                 args["bpm"] = input.TryGet(AudioLabParams.BPM, out int aceBpm) ? aceBpm : 120;
@@ -1241,7 +1254,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     args["key_scale"] = aceKey;
                 args["time_signature"] = input.TryGet(AudioLabParams.TimeSignature, out string aceTs) ? aceTs : "4";
                 args["vocal_language"] = input.TryGet(AudioLabParams.VocalLanguage, out string aceVl) ? aceVl : "en";
-                args["shift"] = input.TryGet(AudioLabParams.ACEShift, out double aceShift) ? aceShift : 3.0;
+                args["shift"] = input.TryGet(AudioLabParams.ACEShift, out double aceShift) ? aceShift : 0.0;   // 0 = model default
                 args["infer_method"] = input.TryGet(AudioLabParams.InferMethod, out string aceIm) ? aceIm : "ode";
                 args["use_adg"] = input.TryGet(AudioLabParams.UseADG, out string aceAdg) ? aceAdg : "false";
                 args["cfg_interval_start"] = input.TryGet(AudioLabParams.CFGIntervalStart, out double aceCfgS) ? aceCfgS : 0.0;

@@ -59,14 +59,39 @@ public sealed class MusicHandler(string providerId, MusicModelDescriptor descrip
             Genre = genre,
             Duration = ParseDouble(args, "duration", 10d),
             Seed = (int)ParseDouble(args, "seed", 0d),
-            Shift = args.ContainsKey("shift") ? ParseDouble(args, "shift", 3.0) : null,
+            // Sentinel 0 = "model default" for shift/steps (per-variant defaults live in the model loaders).
+            Shift = ParseDouble(args, "shift", 0d) > 0 ? ParseDouble(args, "shift", 0d) : null,
+            InferSteps = ParseDouble(args, "infer_step", 0d) > 0 ? (int)ParseDouble(args, "infer_step", 0d) : null,
+            // HeartMuLa sends "cfg_scale"; ACE-Step sends "guidance_scale" — one CFG knob per provider.
+            CfgScale = args.ContainsKey("cfg_scale") ? ParseDouble(args, "cfg_scale", 1.5)
+                : args.ContainsKey("guidance_scale") ? ParseDouble(args, "guidance_scale", 7.0) : null,
+            // ACE-Step base/sft CFG controls.
+            InferMethod = AudioIo.Str(args, "infer_method"),
+            UseAdg = AudioIo.Str(args, "use_adg").Equals("true", StringComparison.OrdinalIgnoreCase),
+            CfgIntervalStart = ParseDouble(args, "cfg_interval_start", 0d),
+            CfgIntervalEnd = ParseDouble(args, "cfg_interval_end", 1d),
+            // ACE-Step 5 Hz LM planner controls.
+            LmModel = AudioIo.Str(args, "lm_model"),
+            Thinking = !AudioIo.Str(args, "thinking").Equals("false", StringComparison.OrdinalIgnoreCase),
+            LmTemperature = ParseDouble(args, "lm_temperature", 0.85),
+            LmCfgScale = ParseDouble(args, "lm_cfg_scale", 2.0),
+            LmTopK = (int)ParseDouble(args, "lm_top_k", 0d),
+            LmTopP = ParseDouble(args, "lm_top_p", 0.9),
+            LmNegativePrompt = AudioIo.Str(args, "lm_negative_prompt"),
+            Temperature = args.ContainsKey("temperature") ? ParseDouble(args, "temperature", 1.0) : null,
+            TopK = args.ContainsKey("topk") ? (int)ParseDouble(args, "topk", 50) : null,
+            // ACE-Step prompt-template metas (upstream SFT_GEN_PROMPT "# Metas" block + lyric language header).
+            Bpm = args.ContainsKey("bpm") ? (int)ParseDouble(args, "bpm", 120) : null,
+            KeyScale = AudioIo.Str(args, "key_scale"),
+            TimeSignature = AudioIo.Str(args, "time_signature"),
+            VocalLanguage = AudioIo.Str(args, "vocal_language"),
         };
         string modelId = AudioIo.Str(args, "__model_id");
 
         IMusicRunner runner = await GetOrLoadAsync(backend, modelId, cancel).ConfigureAwait(false);
         cancel.ThrowIfCancellationRequested();
         long start = Environment.TickCount64;
-        MusicAudio audio = runner.Synthesize(backend, request);
+        MusicAudio audio = runner.Synthesize(backend, request, cancel);
         if (audio.Left is null || audio.Left.Length == 0)
         {
             return AudioIo.Error("The music model produced no audio.");
@@ -82,6 +107,17 @@ public sealed class MusicHandler(string providerId, MusicModelDescriptor descrip
         if (_cache.TryRemove(key, out IMusicRunner runner))
         {
             runner.Dispose();
+        }
+    }
+
+    public void UnloadAll()
+    {
+        foreach (string key in _cache.Keys)
+        {
+            if (_cache.TryRemove(key, out IMusicRunner runner))
+            {
+                runner.Dispose();
+            }
         }
     }
 

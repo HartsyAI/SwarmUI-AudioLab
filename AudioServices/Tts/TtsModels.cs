@@ -181,7 +181,19 @@ public static class TtsModels
             Logs.Info("[AudioLab][Dia] Loaded nari-labs/Dia-1.6B (byte-level dialogue TTS, 44.1 kHz).");
 
             return new TtsRunner(44_100,
-                (backend, req) => pipeline.Generate(backend, AudioTextFrontend.DiaBytes(req.Text), seed: req.Seed),
+                (backend, req) =>
+                {
+                    // Dia was trained on [S1]/[S2]-tagged dialogue; untagged text degenerates into repetition loops.
+                    string text = req.Text.Contains("[S", StringComparison.Ordinal) ? req.Text : $"[S1] {req.Text}";
+                    // The checkpoint itself degenerates to silence on short prompts (verified against upstream
+                    // PyTorch, which does the same; nari-labs recommends text worth ~5-20s of speech).
+                    if (text.Length < 120)
+                    {
+                        Logs.Warning($"[AudioLab][Dia] Prompt is very short ({text.Length} chars) — Dia-1.6B tends to "
+                            + "produce silence below ~2 sentences (upstream behaves the same). Use longer dialogue-style text.");
+                    }
+                    return pipeline.Generate(backend, AudioTextFrontend.DiaBytes(text), seed: req.Seed);
+                },
                 pipeline, modelLoader, dacLoader);
         },
     };

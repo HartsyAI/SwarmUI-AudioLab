@@ -32,4 +32,9 @@ public interface IAudioHandler
 
     /// <summary>Drops the resident pipeline for the given model id to free VRAM/RAM.</summary>
     void Unload(string modelId);
+
+    /// <summary>Drops every resident pipeline this handler holds. Called by <see cref="AudioEngine"/> under
+    /// host-memory pressure before loading a different provider — without this, runners accumulate across
+    /// providers until the process is OOM-killed. Default no-op for stateless handlers.</summary>
+    void UnloadAll() { }
 }
