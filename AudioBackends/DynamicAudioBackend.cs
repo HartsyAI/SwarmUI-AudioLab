@@ -64,9 +64,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// <summary>Settings for the dynamic audio backend.</summary>
     public class DynamicAudioSettings : AutoConfiguration
     {
-        [ConfigComment("Enable Docker for Linux-only engines (ACE-Step, RVC, GPT-SoVITS, Resemble-Enhance, CosyVoice, RealtimeSTT). Requires Docker with NVIDIA Container Toolkit.")]
-        public bool UseDocker = false;
-
         [ConfigComment("Audio model storage path. Models are cached here instead of ~/.cache/huggingface/.")]
         public string AudioModelRoot = "Models/audio";
 
@@ -109,8 +106,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
     private HashSet<string> InstalledEngines { get; set; } = [];
 
     /// <summary>Installed provider IDs whose weights are missing on disk, per the last reconcile pass.
-    /// These are surfaced in the UI as "weights missing" — never auto-uninstalled.</summary>
-    private readonly HashSet<string> _weightsMissing = new(StringComparer.Ordinal);
+    /// These are surfaced in the UI as "weights missing" — never auto-uninstalled. Concurrent because it's
+    /// read on the API thread and written from reconcile, generation, and the background redownload.</summary>
+    private readonly ConcurrentDictionary<string, byte> _weightsMissing = new(StringComparer.Ordinal);
+
+    /// <summary>Provider IDs with an auto-redownload currently in flight — guards the startup (reconcile) and
+    /// on-demand (generation) redownload paths from racing/duplicating a fetch for the same engine.</summary>
+    private readonly ConcurrentDictionary<string, byte> _redownloading = new(StringComparer.Ordinal);
 
     /// <summary>Path to the installed engines config file.</summary>
     private static string InstalledEnginesConfigPath => Path.Combine(Program.DataDir, "AudioLabInstalledEngines.json");
@@ -138,7 +140,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
         RemoteModels.Clear();
         Program.ModelRefreshEvent -= ReRegisterModelsAfterRefresh;
 
-        AudioConfiguration.UseDocker = Settings.UseDocker;
         if (!string.IsNullOrEmpty(Settings.AudioModelRoot))
         {
             AudioConfiguration.ModelRoot = Settings.AudioModelRoot;
@@ -157,9 +158,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     continue;
                 }
 
-                if (definition.RequiresDocker && RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && !Settings.UseDocker)
+                // Legacy Docker/Python engines aren't ported to the in-process C# engine, so they can't run
+                // in this build — skip them rather than register a provider that would fail on use.
+                if (definition.RequiresDocker)
                 {
-                    Logs.Warning($"[AudioLab] {definition.Name} requires Docker on Windows. Enable 'Use Docker' in settings.");
+                    Logs.Warning($"[AudioLab] {definition.Name} is a legacy Docker-based engine, not available in the in-process build — skipping.");
                     continue;
                 }
 
@@ -196,6 +199,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 UpdateRemoteModels();
             }
             ReconcileWeights();
+            HealMissingWeightsInBackground();
             Program.ModelRefreshEvent += ReRegisterModelsAfterRefresh;
 
             // No Python servers / Docker to start — inference runs in-process on the HartsyInference
@@ -340,12 +344,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
         AudioProviderDefinition provider = meta.Definition;
         AudioModelDefinition modelDef = GetModelDefinition(modelName, provider);
 
-        // Missing-weights handling: when auto-redownload is OFF, refuse up front rather than letting the
-        // engine silently re-pull. When ON (default), fall through — the engine self-heals on load (HF cache
-        // re-download / ACE-Step HF fallback). Either way, keep the reconcile state honest for the UI.
+        // Missing-weights handling: when auto-redownload is OFF, refuse up front. When ON (default), actually
+        // fetch the requested model's weights now (await) and only proceed if they land — the old "fall through
+        // and hope the engine self-heals" only worked for HF-cache models, not AudioLab-managed weights.
         if (!provider.IsApiProvider && !AudioEngine.WeightsPresent(provider.Id, modelDef?.Id))
         {
-            _weightsMissing.Add(provider.Id);
+            _weightsMissing[provider.Id] = 0;
             if (!Settings.AutoRedownloadMissingWeights)
             {
                 Logs.Warning($"[AudioLab] '{provider.Name}' weights missing and auto-redownload disabled — refusing generation.");
@@ -356,11 +360,21 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 });
                 return;
             }
-            Logs.Info($"[AudioLab] '{provider.Name}' weights missing — auto-redownloading on load.");
+            Logs.Info($"[AudioLab] '{provider.Name}' weights missing — auto-redownloading '{modelDef?.Id ?? "default"}' before generating…");
+            bool restored = await TryAutoRedownloadWeights(provider.Id, modelDef?.Id, msg => Logs.Info($"[AudioLab] {msg}"));
+            if (!restored || !AudioEngine.WeightsPresent(provider.Id, modelDef?.Id))
+            {
+                takeOutput(new JObject
+                {
+                    ["error"] = $"{provider.Name} weights are missing and could not be re-downloaded automatically. Check the server logs, then reinstall it from the Audio backend settings."
+                });
+                return;
+            }
+            _weightsMissing.TryRemove(provider.Id, out _);
         }
         else
         {
-            _weightsMissing.Remove(provider.Id);
+            _weightsMissing.TryRemove(provider.Id, out _);
         }
 
         if (provider.Category == AudioCategory.TTS
@@ -916,15 +930,100 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
     }
 
+    /// <summary>Deletes a single model's weights while leaving the engine installed and the model registered
+    /// in the browser (its row flips back to "install"; generation would auto-redownload as usual). Skips any
+    /// location still referenced by a sibling model of the same provider or by another installed provider —
+    /// so shared files (e.g. ACE-Step's shared config / silence latent) survive. Best-effort, never throws.</summary>
+    public void DeleteModelWeights(string providerId, string modelId)
+    {
+        AudioProviderDefinition definition = AudioProviderRegistry.GetById(providerId);
+        if (definition is null)
+        {
+            return;
+        }
+        HashSet<string> mine = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string loc in AudioEngine.GetWeightLocations(providerId, modelId))
+        {
+            if (!string.IsNullOrEmpty(loc))
+            {
+                try { mine.Add(Path.GetFullPath(loc)); } catch { /* unparseable path — skip */ }
+            }
+        }
+        if (mine.Count == 0)
+        {
+            Logs.Info($"[AudioLab] No deletable weight locations known for '{providerId}/{modelId}' — nothing removed.");
+            return;
+        }
+        // Release any resident pipeline holding this model's files before deleting.
+        AudioEngine.Unload(providerId, modelId);
+
+        // Locations still needed by a sibling model of THIS provider, or by any other installed provider.
+        HashSet<string> stillNeeded = new(StringComparer.OrdinalIgnoreCase);
+        foreach (AudioModelDefinition sibling in definition.Models)
+        {
+            if (string.Equals(sibling.Id, modelId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            foreach (string loc in AudioEngine.GetWeightLocations(providerId, sibling.Id))
+            {
+                if (!string.IsNullOrEmpty(loc))
+                {
+                    try { stillNeeded.Add(Path.GetFullPath(loc)); } catch { /* skip */ }
+                }
+            }
+        }
+        foreach (string otherId in InstalledEngines)
+        {
+            if (string.Equals(otherId, providerId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            foreach (string loc in WeightLocationsForProvider(otherId, AudioProviderRegistry.GetById(otherId)))
+            {
+                stillNeeded.Add(loc);
+            }
+        }
+        foreach (string path in mine)
+        {
+            if (stillNeeded.Contains(path))
+            {
+                Logs.Info($"[AudioLab] Retained shared weights (still used by another model/engine): {path}");
+                continue;
+            }
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                    Logs.Info($"[AudioLab] Deleted weight file: {path}");
+                }
+                else if (Directory.Exists(path))
+                {
+                    Directory.Delete(path, recursive: true);
+                    Logs.Info($"[AudioLab] Deleted weight directory: {path}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logs.Warning($"[AudioLab] Could not delete weights at '{path}': {ex.Message}");
+            }
+        }
+        ReconcileWeights();
+        Program.ModelRefreshEvent?.Invoke();
+        Logs.Info($"[AudioLab] Removed weights for '{definition.Name}' model '{modelId}'.");
+    }
+
     /// <summary>Returns the set of currently installed engine IDs.</summary>
     public IReadOnlySet<string> GetInstalledEngineIds() => InstalledEngines;
 
     /// <summary>Returns the installed provider IDs flagged "weights missing" by the last reconcile pass.</summary>
-    public IReadOnlySet<string> GetWeightsMissingEngineIds() => _weightsMissing;
+    public IReadOnlySet<string> GetWeightsMissingEngineIds() => _weightsMissing.Keys.ToHashSet();
 
-    /// <summary>Recomputes which installed providers have no weights on disk. Records state for the UI only —
+    /// <summary>Recomputes which installed providers have no weights on disk. Records state for the UI —
     /// NEVER auto-uninstalls (a missing file is recoverable: the user may have freed space, unmounted a drive,
-    /// etc.). API providers and providers whose handler can't introspect locations are treated as present.</summary>
+    /// etc.). When AutoRedownloadMissingWeights is ON, kicks off a background re-download for each flagged
+    /// engine so a restart heals itself. API providers are treated as present.</summary>
     private void ReconcileWeights()
     {
         _weightsMissing.Clear();
@@ -947,9 +1046,70 @@ public class DynamicAudioBackend : AbstractT2IBackend
             }
             if (!anyPresent)
             {
-                _weightsMissing.Add(providerId);
+                _weightsMissing[providerId] = 0;
                 Logs.Warning($"[AudioLab] Installed engine '{def.Name}' has no weights on disk — flagged for repair (not auto-uninstalled).");
             }
+        }
+    }
+
+    /// <summary>With auto-redownload ON, fetches each currently-flagged engine's default weight set in the
+    /// background so a restart heals itself. Called at startup only — NOT from <see cref="ReconcileWeights"/>,
+    /// which also runs right after a deliberate delete (we must not re-download what the user just removed).</summary>
+    private void HealMissingWeightsInBackground()
+    {
+        if (!Settings.AutoRedownloadMissingWeights)
+        {
+            return;
+        }
+        foreach (string providerId in _weightsMissing.Keys.ToList())
+        {
+            string pid = providerId;
+            _ = Task.Run(async () =>
+            {
+                Logs.Info($"[AudioLab] Auto-redownloading missing weights for '{pid}' in the background…");
+                bool ok = await TryAutoRedownloadWeights(pid, null, msg => Logs.Info($"[AudioLab] {msg}"));
+                Logs.Info(ok
+                    ? $"[AudioLab] Background auto-redownload complete for '{pid}'."
+                    : $"[AudioLab] Background auto-redownload failed for '{pid}' — left flagged for manual repair.");
+            });
+        }
+    }
+
+    /// <summary>Re-downloads a provider's missing weights via the installer, guarded by <see cref="_redownloading"/>
+    /// so the startup and on-demand paths never fetch the same engine twice. Clears the weights-missing flag on
+    /// success. Returns true if weights are present afterwards. <paramref name="modelId"/> null = default set.</summary>
+    private async Task<bool> TryAutoRedownloadWeights(string providerId, string modelId, Action<string> onProgress)
+    {
+        if (!_redownloading.TryAdd(providerId, 0))
+        {
+            // Another path is already fetching this engine — wait for it instead of starting a duplicate.
+            while (_redownloading.ContainsKey(providerId))
+            {
+                await Task.Delay(500, Program.GlobalProgramCancel);
+            }
+            return string.IsNullOrEmpty(modelId)
+                ? !_weightsMissing.ContainsKey(providerId)
+                : AudioEngine.WeightsPresent(providerId, modelId);
+        }
+        try
+        {
+            bool ok = await InstallAndRegisterEngine(providerId, onProgress, Program.GlobalProgramCancel, modelId);
+            AudioProviderDefinition def = AudioProviderRegistry.GetById(providerId);
+            bool anyPresent = def is not null && def.Models.Any(m => AudioEngine.WeightsPresent(providerId, m.Id));
+            if (anyPresent)
+            {
+                _weightsMissing.TryRemove(providerId, out _);
+            }
+            return ok && anyPresent;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] Auto-redownload of '{providerId}' failed: {ex.Message}");
+            return false;
+        }
+        finally
+        {
+            _redownloading.TryRemove(providerId, out _);
         }
     }
 
@@ -1113,7 +1273,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
             case AudioCategory.AudioGeneration:
                 args["prompt"] = input.Get(T2IParamTypes.Prompt, "");
-                args["duration"] = input.TryGet(AudioLabParams.Duration, out double genDur) ? genDur : 30.0;
+                // Prefer the CORE Swarm audio param (what Swarm users + the HartsyInference ACE-Step path use);
+                // fall back to AudioLab's own "Max Duration" for existing AudioLab-UI workflows, then 30s.
+                args["duration"] = input.TryGet(T2IParamTypes.Text2AudioDuration, out double coreDur) ? coreDur
+                    : input.TryGet(AudioLabParams.Duration, out double genDur) ? genDur : 30.0;
                 // Shared AudioCraft sampling (audiocraft_sampling flag)
                 if (input.TryGet(AudioLabParams.GuidanceScale, out double genGuidance))
                     args["cfg_coef"] = genGuidance;
@@ -1249,11 +1412,17 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["infer_step"] = input.TryGet(AudioLabParams.InferStep, out int infStep) ? infStep : 0;   // 0 = model default
                 args["guidance_scale"] = input.TryGet(AudioLabParams.ACEGuidanceScale, out double aceGuide) ? aceGuide : 7.0;
                 args["instrumental"] = input.TryGet(AudioLabParams.Instrumental, out string aceInst) ? aceInst : "false";
-                args["bpm"] = input.TryGet(AudioLabParams.BPM, out int aceBpm) ? aceBpm : 120;
-                if (input.TryGet(AudioLabParams.KeyScale, out string aceKey) && !string.IsNullOrEmpty(aceKey))
-                    args["key_scale"] = aceKey;
-                args["time_signature"] = input.TryGet(AudioLabParams.TimeSignature, out string aceTs) ? aceTs : "4";
-                args["vocal_language"] = input.TryGet(AudioLabParams.VocalLanguage, out string aceVl) ? aceVl : "en";
+                // Prefer the CORE Swarm audio params (what Swarm users expect + the HartsyInference ACE-Step path
+                // reads); fall back to AudioLab's own params for existing AudioLab-UI workflows.
+                args["bpm"] = input.TryGet(T2IParamTypes.Text2AudioBPM, out long coreBpm) ? (int)coreBpm
+                    : input.TryGet(AudioLabParams.BPM, out int aceBpm) ? aceBpm : 120;
+                string keyScale = input.TryGet(T2IParamTypes.Text2AudioKeyScale, out string coreKey) && !string.IsNullOrEmpty(coreKey) ? coreKey
+                    : input.TryGet(AudioLabParams.KeyScale, out string aceKey) ? aceKey : null;
+                if (!string.IsNullOrEmpty(keyScale)) args["key_scale"] = keyScale;
+                args["time_signature"] = input.TryGet(T2IParamTypes.Text2AudioTimeSignature, out string coreTs) && !string.IsNullOrEmpty(coreTs) ? coreTs
+                    : input.TryGet(AudioLabParams.TimeSignature, out string aceTs) ? aceTs : "4";
+                args["vocal_language"] = input.TryGet(T2IParamTypes.Text2AudioLanguage, out string coreLang) && !string.IsNullOrEmpty(coreLang) ? coreLang
+                    : input.TryGet(AudioLabParams.VocalLanguage, out string aceVl) ? aceVl : "en";
                 args["shift"] = input.TryGet(AudioLabParams.ACEShift, out double aceShift) ? aceShift : 0.0;   // 0 = model default
                 args["infer_method"] = input.TryGet(AudioLabParams.InferMethod, out string aceIm) ? aceIm : "ode";
                 args["use_adg"] = input.TryGet(AudioLabParams.UseADG, out string aceAdg) ? aceAdg : "false";

@@ -39,7 +39,7 @@ public static class TtsModels
     /// requires a 24 kHz voice reference. The pipeline hardcodes its HF repo, so the model id is ignored.</summary>
     public static readonly TtsModelDescriptor VibeVoice = new()
     {
-        ResolveRepo = _ => "vibevoice/VibeVoice-1.5B",
+        ResolveRepo = _ => "microsoft/VibeVoice-1.5B",
         LoadAsync = async (_, ct) =>
         {
             VibeVoicePipeline p = await VibeVoicePipeline.LoadAsync(ct).ConfigureAwait(false);
@@ -198,43 +198,48 @@ public static class TtsModels
         },
     };
 
-    /// <summary>Orpheus TTS (canopylabs/orpheus-3b-0.1-ft) — Llama-3.2-3B LM + SNAC 24 kHz. Llama BPE of
+    /// <summary>Orpheus TTS — Llama-3.2-3B LM + SNAC 24 kHz. Llama BPE of
     /// <c>"{voice}: {text}"</c> via <see cref="AudioTextFrontend.OrpheusText"/> (default voice <c>tara</c>).
-    /// TODO(llama-asset): OrpheusText uses the engine's Llama-3 tokenizer — it throws a clear message until the
-    /// llama3 vocab/merges asset is embedded; wired here as if present.</summary>
+    /// Weights from <c>unsloth/orpheus-3b-0.1-ft</c> — a non-gated mirror of the license-gated
+    /// <c>canopylabs/orpheus-3b-0.1-ft</c> (same finetune, verified standard Llama-3.2 key layout), so no
+    /// HF_TOKEN is needed. TODO(llama-asset): OrpheusText uses the engine's Llama-3 tokenizer — it throws a
+    /// clear message until the llama3 vocab/merges asset is embedded; wired here as if present.</summary>
     public static readonly TtsModelDescriptor Orpheus = new()
     {
-        ResolveRepo = _ => "canopylabs/orpheus-3b-0.1-ft",
+        ResolveRepo = _ => "unsloth/orpheus-3b-0.1-ft",
         LoadAsync = async (_, ct) =>
         {
-            (IReadOnlyDictionary<string, Tensor> backbone, IDisposable[] bbLoaders) = await LoadCheckpointAsync("canopylabs/orpheus-3b-0.1-ft", ct).ConfigureAwait(false);
+            (IReadOnlyDictionary<string, Tensor> backbone, IDisposable[] bbLoaders) = await LoadCheckpointAsync("unsloth/orpheus-3b-0.1-ft", ct).ConfigureAwait(false);
             (IReadOnlyDictionary<string, Tensor> snac, IDisposable[] snacLoaders) = await LoadCheckpointAsync("hubertsiuzdak/snac_24khz", ct).ConfigureAwait(false);
             OrpheusPipeline pipeline = new(OrpheusConfig.Orpheus3B);
             pipeline.LoadWeights(backbone, snac);
-            Logs.Info("[AudioLab][Orpheus] Loaded canopylabs/orpheus-3b-0.1-ft (Llama-3.2-3B + SNAC 24 kHz).");
+            Logs.Info("[AudioLab][Orpheus] Loaded unsloth/orpheus-3b-0.1-ft (Llama-3.2-3B + SNAC 24 kHz).");
             IDisposable[] keep = [pipeline, .. bbLoaders, .. snacLoaders];
             return new TtsRunner(pipeline.SampleRate,
                 (backend, req) => pipeline.Synthesize(backend, AudioTextFrontend.OrpheusText(req.Text), seed: req.Seed), keep);
         },
     };
 
-    /// <summary>Sesame CSM-1B (sesame/csm-1b) — dual-transformer conversational TTS + Mimi 24 kHz. Plain
-    /// Llama-3 BPE of the text via <see cref="AudioTextFrontend.CsmText"/>.
+    /// <summary>Sesame CSM-1B — dual-transformer conversational TTS + Mimi 24 kHz. Plain
+    /// Llama-3 BPE of the text via <see cref="AudioTextFrontend.CsmText"/>. Weights from <c>nielsr/csm-1b</c>
+    /// — a non-gated mirror of the license-gated <c>sesame/csm-1b</c> (verified byte-identical original-format
+    /// layout: <c>backbone.*</c>/<c>decoder.*</c>/<c>text_embeddings.weight</c>, 187 tensors), so no HF_TOKEN is
+    /// needed. NOT the transformers <c>CSMModel</c> re-export, whose keys the engine loader wouldn't match.
     /// TODO(llama-asset): CsmText uses the engine's Llama-3 tokenizer — throws a clear message until the
     /// llama3 asset is embedded; wired here as if present.</summary>
     public static readonly TtsModelDescriptor Csm = new()
     {
-        ResolveRepo = _ => "sesame/csm-1b",
+        ResolveRepo = _ => "nielsr/csm-1b",
         LoadAsync = async (_, ct) =>
         {
-            (IReadOnlyDictionary<string, Tensor> modelDict, IDisposable[] mLoaders) = await LoadCheckpointAsync("sesame/csm-1b", ct).ConfigureAwait(false);
+            (IReadOnlyDictionary<string, Tensor> modelDict, IDisposable[] mLoaders) = await LoadCheckpointAsync("nielsr/csm-1b", ct).ConfigureAwait(false);
             (IReadOnlyDictionary<string, Tensor> mimiDict, IDisposable[] miLoaders) = await LoadCheckpointAsync("kyutai/mimi", ct).ConfigureAwait(false);
             CsmModel model = new(CsmConfig.V1B);
             model.LoadWeights(modelDict);
             Mimi mimi = new(MimiConfig.Mimi24kHz);
             mimi.LoadWeights(mimiDict);
             CsmPipeline pipeline = new(CsmConfig.V1B, model, mimi);
-            Logs.Info("[AudioLab][CSM] Loaded sesame/csm-1b (dual-transformer + Mimi 24 kHz).");
+            Logs.Info("[AudioLab][CSM] Loaded nielsr/csm-1b (dual-transformer + Mimi 24 kHz).");
             IDisposable[] keep = [pipeline, .. mLoaders, .. miLoaders];
             return new TtsRunner(24_000,
                 (backend, req) => pipeline.Synthesize(backend, AudioTextFrontend.CsmText(req.Text), seed: req.Seed), keep);

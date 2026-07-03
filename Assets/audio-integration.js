@@ -440,9 +440,20 @@ function audioLabBuildEngineCard(engine) {
             repairBtn.addEventListener('click', (e) => { e.stopPropagation(); audioLabRepair(engine); });
             footer.appendChild(repairBtn);
         }
+        // Checkpoint engines can hold several variants — let the user add/remove individual models.
+        const perModel = !engine.self_managed && !engine.is_api_provider && (engine.models || []).length > 1;
+        if (perModel) {
+            const manageBtn = document.createElement('button');
+            manageBtn.className = 'basic-button btn-primary';
+            manageBtn.innerText = 'Manage';
+            manageBtn.title = 'Install or remove individual models';
+            manageBtn.addEventListener('click', (e) => { e.stopPropagation(); audioLabShowInstallModal(engine); });
+            footer.appendChild(manageBtn);
+        }
         const btn = document.createElement('button');
         btn.className = 'basic-button';
         btn.innerText = 'Remove';
+        btn.title = 'Remove the whole engine and all its models';
         btn.addEventListener('click', (e) => { e.stopPropagation(); audioLabConfirmUninstall(engine); });
         footer.appendChild(btn);
     } else {
@@ -457,15 +468,20 @@ function audioLabBuildEngineCard(engine) {
     return card;
 }
 
-/** Shows the install confirmation modal for an engine. */
+/** Shows the install/manage modal for an engine. Checkpoint engines (non-API, non-self-managed) get a
+ * per-model table with an Install/Remove button per variant plus Download All; API/self-managed engines
+ * keep the simpler whole-engine confirm flow (their weights fetch on first use). */
 function audioLabShowInstallModal(engine) {
     const existingModal = document.getElementById('audiolab_install_modal');
     if (existingModal) existingModal.remove();
 
     const models = engine.models || [];
     const firstModel = models.length > 0 ? models[0] : {};
-    const runtimeNoteHtml = engine.in_process === false ? ''
-        : `<p style="color:var(--text-soft);margin-top:0.5em">⚙ Runs using the HartsyInference C# engine — the model downloads automatically on first use.</p>`;
+    // Per-model install only applies where the extension actually downloads discrete checkpoints.
+    const perModel = !engine.self_managed && !engine.is_api_provider && models.length > 0;
+    const runtimeNoteHtml = engine.self_managed
+        ? `<p style="color:var(--text-soft);margin-top:0.5em">⚙ Runs on the HartsyInference C# engine — these models download automatically on first use, no install needed.</p>`
+        : (engine.in_process === false ? '' : `<p style="color:var(--text-soft);margin-top:0.5em">⚙ Runs on the HartsyInference C# engine — each model you install downloads its weights to disk.</p>`);
 
     let modelsListHtml = '';
     if (models.length > 0) {
@@ -477,54 +493,303 @@ function audioLabShowInstallModal(engine) {
             if (m.estimated_size) details.push(m.estimated_size);
             if (m.estimated_vram) details.push(m.estimated_vram + ' VRAM');
             if (m.license) details.push(m.license);
-            return `<tr>
+            const actionCells = perModel
+                ? `<td class="audiolab-model-status" data-model-status></td>
+                   <td class="audiolab-model-action" style="text-align:right" data-model-action></td>`
+                : '';
+            return `<tr data-model-id="${escapeHtml(m.id)}">
                 <td style="padding:3px 8px 3px 0">${sourceLink}</td>
-                <td style="padding:3px 0;color:var(--text-soft);font-size:0.85em">${escapeHtml(details.join(' | '))}</td>
+                <td style="padding:3px 8px 3px 0;color:var(--text-soft);font-size:0.85em">${escapeHtml(details.join(' | '))}</td>
+                ${actionCells}
             </tr>`;
         }).join('');
-        modelsListHtml = `<table style="width:100%;margin:0.3em 0">${modelRows}</table>`;
+        modelsListHtml = `<table style="width:100%;margin:0.3em 0" id="audiolab_install_models">${modelRows}</table>`;
     }
 
+    const heading = perModel
+        ? `<b>Models (${models.length})</b> — install only what you need:`
+        : `<b>Models to download (${models.length}):</b>`;
     const bodyHtml = `
         <div class="modal-body">
             <p><b>${escapeHtml(engine.name)}</b></p>
             <p>${escapeHtml(firstModel.description || '')}</p>
-            <p style="color:var(--text-soft);margin-top:0.5em"><b>Models to download (${models.length}):</b></p>
+            <p style="color:var(--text-soft);margin-top:0.5em">${heading}</p>
             ${modelsListHtml}
             ${runtimeNoteHtml}
             <div id="audiolab_install_progress" style="display:none;margin-top:1em">
-                <p style="color:var(--text-soft)"><b>Install Progress:</b></p>
+                <p style="color:var(--text-soft)"><b>Progress:</b></p>
                 <div id="audiolab_install_progress_text" style="font-family:monospace;font-size:0.85em;max-height:150px;overflow-y:auto;padding:0.5em;border:1px solid var(--border-color);border-radius:4px"></div>
             </div>
         </div>`;
 
-    const footerHtml = `
-        <div class="modal-footer">
+    const footerHtml = perModel
+        ? `<div class="modal-footer">
+            <button class="btn btn-primary basic-button" id="audiolab_install_downloadall_btn">Download All</button>
+            <button class="btn btn-secondary basic-button" id="audiolab_install_cancel_btn">Close</button>
+        </div>`
+        : `<div class="modal-footer">
             <button class="btn btn-primary basic-button" id="audiolab_install_confirm_btn">Install</button>
             <button class="btn btn-secondary basic-button" id="audiolab_install_cancel_btn">Cancel</button>
         </div>`;
 
-    const html = modalHeader('audiolab_install_modal', `Install ${escapeHtml(engine.name)}`)
-        + bodyHtml + footerHtml + modalFooter();
+    const title = perModel && engine.installed ? `Manage ${escapeHtml(engine.name)}` : `Install ${escapeHtml(engine.name)}`;
+    const html = modalHeader('audiolab_install_modal', title) + bodyHtml + footerHtml + modalFooter();
 
     const wrapper = document.createElement('div');
     wrapper.innerHTML = html;
     document.body.appendChild(wrapper.firstElementChild);
 
     const modal = document.getElementById('audiolab_install_modal');
-    const confirmBtn = document.getElementById('audiolab_install_confirm_btn');
     const cancelBtn = document.getElementById('audiolab_install_cancel_btn');
-
-    confirmBtn.addEventListener('click', () => audioLabDoInstall(engine, modal));
     cancelBtn.addEventListener('click', () => {
         $(modal).modal('hide');
         setTimeout(() => modal.remove(), 300);
     });
 
+    if (perModel) {
+        for (const m of models) {
+            const row = modal.querySelector(`tr[data-model-id="${cssEscape(m.id)}"]`);
+            if (row) audioLabRenderModelRow(engine, m, row);
+        }
+        // The primary footer button flips between "Download All" and "Remove All" based on how many models
+        // are installed — so once everything's installed you get a Remove All instead of a dead Download All.
+        audioLabUpdateManageFooter(engine);
+    }
+    else {
+        const confirmBtn = document.getElementById('audiolab_install_confirm_btn');
+        confirmBtn.addEventListener('click', () => audioLabDoInstall(engine, modal));
+    }
+
     $(modal).modal('show');
 }
 
-/** Executes the install flow for an engine via WebSocket with streaming progress. */
+/** CSS.escape shim (some older embedded browsers lack it) for building attribute selectors from model ids. */
+function cssEscape(value) {
+    if (window.CSS && CSS.escape) return CSS.escape(value);
+    return String(value).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+}
+
+/** Renders the status + action cells of one per-model row to reflect its current installed state. */
+function audioLabRenderModelRow(engine, model, row) {
+    const statusCell = row.querySelector('[data-model-status]');
+    const actionCell = row.querySelector('[data-model-action]');
+    if (!statusCell || !actionCell) return;
+    statusCell.innerHTML = '';
+    actionCell.innerHTML = '';
+    if (model.installed) {
+        const badge = document.createElement('span');
+        badge.className = 'audiolab-model-installed';
+        badge.innerText = '✓ Installed';
+        statusCell.appendChild(badge);
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'basic-button audiolab-model-btn';
+        removeBtn.innerText = 'Remove';
+        removeBtn.title = 'Delete this model\'s weights from disk';
+        removeBtn.addEventListener('click', () => audioLabRemoveModel(engine, model, row));
+        actionCell.appendChild(removeBtn);
+    }
+    else {
+        const installBtn = document.createElement('button');
+        installBtn.className = 'basic-button btn-primary audiolab-model-btn';
+        installBtn.innerText = 'Install';
+        // Refresh the footer after a single install so it flips to Remove All once the last model lands.
+        installBtn.addEventListener('click', async () => { await audioLabInstallModel(engine, model, row); audioLabUpdateManageFooter(engine); });
+        actionCell.appendChild(installBtn);
+    }
+}
+
+/** Shows the shared progress area and returns its text element. */
+function audioLabShowProgress(initialLine) {
+    const area = document.getElementById('audiolab_install_progress');
+    const text = document.getElementById('audiolab_install_progress_text');
+    if (area) area.style.display = 'block';
+    if (text && initialLine) { text.innerText += initialLine + '\n'; text.scrollTop = text.scrollHeight; }
+    return text;
+}
+
+/** Installs one model's weights via WebSocket with streaming progress. Resolves true on success,
+ * false on error (so Download All can sequence and keep going). */
+function audioLabInstallModel(engine, model, row) {
+    const actionCell = row.querySelector('[data-model-action]');
+    const statusCell = row.querySelector('[data-model-status]');
+    if (actionCell) actionCell.innerHTML = '';
+    if (statusCell) statusCell.innerHTML = '<span class="audiolab-model-installing">Installing…</span>';
+    const progressText = audioLabShowProgress(`Installing ${model.name}…`);
+
+    return new Promise(resolve => {
+        makeWSRequest('AudioLabInstallEngine', { provider_id: engine.id, model_id: model.id }, data => {
+            if (data.info) {
+                if (progressText) { progressText.innerText += data.info + '\n'; progressText.scrollTop = progressText.scrollHeight; }
+            }
+            else if (data.success) {
+                if (progressText) { progressText.innerText += `${model.name} installed.\n`; progressText.scrollTop = progressText.scrollHeight; }
+                model.installed = true;
+                audioLabRenderModelRow(engine, model, row);
+                audioLabRefreshEngineManager();
+                resolve(true);
+            }
+            else if (data.error) {
+                if (progressText) { progressText.innerText += `Error: ${data.error}\n`; progressText.scrollTop = progressText.scrollHeight; }
+                audioLabRenderModelRow(engine, model, row);
+                showError(`Failed to install ${model.name}: ${data.error}`);
+                resolve(false);
+            }
+        }, 0, e => {
+            if (progressText) { progressText.innerText += `Connection error: ${e}\n`; }
+            audioLabRenderModelRow(engine, model, row);
+            showError(`Failed to install ${model.name}: ${e}`);
+            resolve(false);
+        });
+    });
+}
+
+/** Deletes one model's weights from disk (no confirm), updating its row. Resolves true on success so
+ * Remove All can sequence and keep going. */
+function audioLabDoRemoveModel(engine, model, row) {
+    return new Promise(resolve => {
+        genericRequest('AudioLabUninstallEngine', { provider_id: engine.id, model_id: model.id, delete_weights: true }, data => {
+            if (data.success) {
+                model.installed = false;
+                if (row) audioLabRenderModelRow(engine, model, row);
+                resolve(true);
+            } else {
+                showError(`Failed to remove ${model.name}: ${data.error || 'Unknown error'}`);
+                resolve(false);
+            }
+        }, 0, e => { showError(`Failed to remove ${model.name}: ${e}`); resolve(false); });
+    });
+}
+
+/** Deletes one model's weights from disk, leaving the engine installed. */
+async function audioLabRemoveModel(engine, model, row) {
+    if (!confirm(`Delete ${model.name}'s weights from disk?\n\nThe model stays listed and re-downloads if you use it again.`)) {
+        return;
+    }
+    if (await audioLabDoRemoveModel(engine, model, row)) {
+        doNoticePopover(`${model.name} weights removed.`, 'notice-pop-green');
+        audioLabUpdateManageFooter(engine);
+        audioLabRefreshEngineManager();
+    }
+}
+
+/** Installs every not-yet-installed model via the server-side bulk endpoint (AudioLabInstallAllModels),
+ * streaming progress into the shared box and flipping each model's row as it completes. */
+function audioLabDownloadAll(engine, modal, button) {
+    const pending = (engine.models || []).filter(m => !m.installed);
+    if (pending.length === 0) {
+        doNoticePopover(`All ${engine.name} models are already installed.`, 'notice-pop-green');
+        return;
+    }
+    // Mark every pending row as installing up front (the server installs them in sequence).
+    for (const m of pending) {
+        const row = modal.querySelector(`tr[data-model-id="${cssEscape(m.id)}"]`);
+        const statusCell = row && row.querySelector('[data-model-status]');
+        const actionCell = row && row.querySelector('[data-model-action]');
+        if (actionCell) actionCell.innerHTML = '';
+        if (statusCell) statusCell.innerHTML = '<span class="audiolab-model-installing">Installing…</span>';
+    }
+    button.disabled = true;
+    button.innerText = 'Downloading…';
+    const progressText = audioLabShowProgress(`Installing all ${engine.name} models…`);
+    const flipRow = (modelId, installed) => {
+        const model = (engine.models || []).find(m => m.id === modelId);
+        const row = modal.querySelector(`tr[data-model-id="${cssEscape(modelId)}"]`);
+        if (model) model.installed = installed;
+        if (model && row) audioLabRenderModelRow(engine, model, row);
+    };
+    makeWSRequest('AudioLabInstallAllModels', { provider_id: engine.id }, data => {
+        if (data.info) {
+            if (progressText) { progressText.innerText += data.info + '\n'; progressText.scrollTop = progressText.scrollHeight; }
+            if (data.model_done) flipRow(data.model_id, true);
+            else if (data.model_failed) flipRow(data.model_id, false);
+        }
+        else if (data.success) {
+            button.disabled = false;
+            button.innerText = 'Download All';
+            doNoticePopover(data.message || `Installed ${engine.name} models.`, data.installed === data.total ? 'notice-pop-green' : 'notice-pop-red');
+            audioLabUpdateManageFooter(engine);
+            audioLabRefreshEngineManager();
+        }
+        else if (data.error) {
+            button.disabled = false;
+            button.innerText = 'Download All';
+            if (progressText) { progressText.innerText += `Error: ${data.error}\n`; }
+            showError(data.error);
+            // Re-render rows to whatever their real state is now.
+            for (const m of pending) { const row = modal.querySelector(`tr[data-model-id="${cssEscape(m.id)}"]`); if (row) audioLabRenderModelRow(engine, m, row); }
+            audioLabUpdateManageFooter(engine);
+        }
+    }, 0, e => {
+        button.disabled = false;
+        button.innerText = 'Download All';
+        showError(`Install-all failed: ${e}`);
+        for (const m of pending) { const row = modal.querySelector(`tr[data-model-id="${cssEscape(m.id)}"]`); if (row) audioLabRenderModelRow(engine, m, row); }
+        audioLabUpdateManageFooter(engine);
+    });
+}
+
+/** Removes every installed model via the server-side bulk endpoint (AudioLabRemoveAllModels). One bulk
+ * confirm, then flips each removed model's row from the authoritative removed_ids list. */
+function audioLabRemoveAll(engine, modal, button) {
+    const models = (engine.models || []).filter(m => m.installed);
+    if (models.length === 0) {
+        doNoticePopover(`No ${engine.name} models are installed.`, 'notice-pop-green');
+        return;
+    }
+    if (!confirm(`Remove all ${models.length} installed ${engine.name} model(s)?\n\nTheir weights are deleted from disk; they re-download if used again.`)) {
+        return;
+    }
+    button.disabled = true;
+    button.innerText = 'Removing…';
+    genericRequest('AudioLabRemoveAllModels', { provider_id: engine.id }, data => {
+        button.disabled = false;
+        if (data.success) {
+            for (const id of (data.removed_ids || [])) {
+                const model = (engine.models || []).find(m => m.id === id);
+                const row = modal.querySelector(`tr[data-model-id="${cssEscape(id)}"]`);
+                if (model) model.installed = false;
+                if (model && row) audioLabRenderModelRow(engine, model, row);
+            }
+            doNoticePopover(data.message || `Removed ${engine.name} models.`, data.removed === data.total ? 'notice-pop-green' : 'notice-pop-red');
+        } else {
+            showError(data.error || 'Remove all failed');
+        }
+        audioLabUpdateManageFooter(engine);
+        audioLabRefreshEngineManager();
+    }, 0, e => {
+        button.disabled = false;
+        showError(`Remove all failed: ${e}`);
+        audioLabUpdateManageFooter(engine);
+    });
+}
+
+/** Flips the primary footer button between Download All (something's missing) and Remove All (everything
+ * installed), re-binding its click handler. Cloning the node strips the previous listener so handlers can't
+ * stack. No-op outside the per-model manage modal (button absent). */
+function audioLabUpdateManageFooter(engine) {
+    const oldBtn = document.getElementById('audiolab_install_downloadall_btn');
+    if (!oldBtn) return;
+    const modal = document.getElementById('audiolab_install_modal');
+    const models = engine.models || [];
+    const allInstalled = models.length > 0 && models.every(m => m.installed);
+    // Shallow clone (drops children + listeners); keep id so future lookups still find it.
+    const btn = oldBtn.cloneNode(false);
+    btn.id = 'audiolab_install_downloadall_btn';
+    oldBtn.parentNode.replaceChild(btn, oldBtn);
+    if (allInstalled) {
+        btn.className = 'btn btn-danger basic-button';
+        btn.innerText = 'Remove All';
+        btn.title = 'Delete every installed model\'s weights from disk';
+        btn.addEventListener('click', () => audioLabRemoveAll(engine, modal, btn));
+    } else {
+        btn.className = 'btn btn-primary basic-button';
+        btn.innerText = 'Download All';
+        btn.title = '';
+        btn.addEventListener('click', () => audioLabDownloadAll(engine, modal, btn));
+    }
+}
+
+/** Executes the whole-engine install flow via WebSocket with streaming progress (API/self-managed engines). */
 function audioLabDoInstall(engine, modal) {
     const confirmBtn = document.getElementById('audiolab_install_confirm_btn');
     const cancelBtn = document.getElementById('audiolab_install_cancel_btn');

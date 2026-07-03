@@ -85,12 +85,4 @@ public static class AudioConfiguration
     public static string GetModelPath(string category) => Path.Combine(Path.GetFullPath(ModelRoot), category);
 
     #endregion
-
-    #region Runtime Settings
-
-    /// <summary>Retained as inert metadata for the engine list UI; Docker-based Linux-only engines are
-    /// no longer used now that inference runs in-process on the C# engine.</summary>
-    public static bool UseDocker { get; set; } = false;
-
-    #endregion
 }

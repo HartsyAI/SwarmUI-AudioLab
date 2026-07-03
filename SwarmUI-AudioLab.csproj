@@ -5,8 +5,10 @@
     <!-- Force the floating HartsyInference 'alpha.*' ref to resolve to the latest published version. -->
     <RestoreNoHttpCache>true</RestoreNoHttpCache>
     <!-- Engine source toggle (same pattern as SwarmUI-LLMAssistant): false = published NuGet;
-         -p:UseLocalHartsy=true = prebuilt local SharpInference DLLs (engine debugging). -->
-    <UseLocalHartsy Condition="'$(UseLocalHartsy)' == ''">false</UseLocalHartsy>
+         true = prebuilt local SharpInference DLLs. Temporarily defaulted true because the committed
+         MusicModels.cs uses the engine's new AceStepLmPlanner, which no published NuGet contains yet
+         (only the local SharpInference build has it). Revert to false once alpha.45+ ships with it. -->
+    <UseLocalHartsy Condition="'$(UseLocalHartsy)' == ''">true</UseLocalHartsy>
     <HartsyRepo Condition="'$(HartsyRepo)' == ''">$(MSBuildThisFileDirectory)../../../../SharpInference</HartsyRepo>
   </PropertyGroup>
   <Import Project="../../SwarmUI.extension.props" />

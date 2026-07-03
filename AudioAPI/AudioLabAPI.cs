@@ -50,7 +50,9 @@ public static class AudioLabAPI
             API.RegisterAPICall(ConvertAudioFormat, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(AudioLabListEngines, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(AudioLabInstallEngine, true, AudioLabPermissions.PermManageBackends);
+            API.RegisterAPICall(AudioLabInstallAllModels, true, AudioLabPermissions.PermManageBackends);
             API.RegisterAPICall(AudioLabUninstallEngine, true, AudioLabPermissions.PermManageBackends);
+            API.RegisterAPICall(AudioLabRemoveAllModels, true, AudioLabPermissions.PermManageBackends);
         }
         catch (Exception ex)
         {
@@ -391,20 +393,20 @@ public static class AudioLabAPI
                 .FirstOrDefault(b => b is not null);
             IReadOnlySet<string> installedIds = backend?.GetInstalledEngineIds() ?? new HashSet<string>();
             IReadOnlySet<string> weightsMissingIds = backend?.GetWeightsMissingEngineIds() ?? new HashSet<string>();
-            bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-            bool dockerEnabled = AudioConfiguration.UseDocker;
 
             JArray engines = [];
             foreach (AudioProviderDefinition provider in AudioProviderRegistry.All)
             {
-                // Platform compatibility check
-                bool platformCompatible = true;
-                string platformNote = "";
-                if (provider.RequiresDocker && isWindows && !dockerEnabled)
-                {
-                    platformCompatible = false;
-                    platformNote = "Requires Docker on Windows. Enable 'Use Docker' in backend settings.";
-                }
+                // Legacy Docker/Python engines aren't ported to the in-process C# engine, so they can't run in
+                // this build — surface them as incompatible instead of installable.
+                bool platformCompatible = !provider.RequiresDocker;
+                string platformNote = provider.RequiresDocker
+                    ? "Legacy Docker-based engine — not available in the in-process build."
+                    : "";
+
+                // Self-managed (HF auto-download) providers fetch weights on first use, so per-model
+                // presence is meaningless — the UI shows "Downloads on first use" instead of install buttons.
+                bool selfManaged = AudioEngine.ProviderManagesOwnWeights(provider.Id);
 
                 // Build models list
                 JArray models = [];
@@ -418,7 +420,9 @@ public static class AudioLabAPI
                         ["source_url"] = modelDef.SourceUrl,
                         ["license"] = modelDef.License,
                         ["estimated_size"] = modelDef.EstimatedSize,
-                        ["estimated_vram"] = modelDef.EstimatedVram
+                        ["estimated_vram"] = modelDef.EstimatedVram,
+                        // Per-model: are this variant's weights on disk? (API/self-managed report true.)
+                        ["installed"] = provider.IsApiProvider || AudioEngine.WeightsPresent(provider.Id, modelDef.Id)
                     });
                 }
 
@@ -438,6 +442,8 @@ public static class AudioLabAPI
                     ["weights_missing"] = weightsMissingIds.Contains(provider.Id),
                     // In-process C# engines have no Python dependencies; only the model weights download.
                     ["in_process"] = !provider.IsApiProvider,
+                    // Weights fetched on first use — no explicit per-model install/remove for this engine.
+                    ["self_managed"] = selfManaged,
                     ["models"] = models
                 });
             }
@@ -516,8 +522,9 @@ public static class AudioLabAPI
 
     /// <summary>Uninstalls an audio engine: removes models from registry and persists the change. When
     /// <paramref name="delete_weights"/> is true, also deletes the provider's downloaded weights from disk
-    /// (shared side-model caches are retained).</summary>
-    public static async Task<JObject> AudioLabUninstallEngine(Session session, string provider_id, bool delete_weights = false)
+    /// (shared side-model caches are retained). When <paramref name="model_id"/> is given, only that one
+    /// variant's weights are deleted — the engine stays installed and its other models are untouched.</summary>
+    public static async Task<JObject> AudioLabUninstallEngine(Session session, string provider_id, bool delete_weights = false, string model_id = null)
     {
         try
         {
@@ -547,6 +554,25 @@ public static class AudioLabAPI
                 };
             }
 
+            // Per-model remove: delete just this variant's weights, leave the engine installed.
+            if (!string.IsNullOrEmpty(model_id))
+            {
+                AudioModelDefinition modelDef = provider.Models.FirstOrDefault(m => string.Equals(m.Id, model_id, StringComparison.OrdinalIgnoreCase));
+                if (modelDef == null)
+                {
+                    return AudioLab.CreateErrorResponse($"Unknown model '{model_id}' for provider {provider.Name}", "unknown_model");
+                }
+                backend.DeleteModelWeights(provider_id, model_id);
+                return new JObject
+                {
+                    ["success"] = true,
+                    ["provider_id"] = provider_id,
+                    ["model_id"] = model_id,
+                    ["deleted_weights"] = true,
+                    ["message"] = $"{modelDef.Name} weights removed."
+                };
+            }
+
             backend.UnregisterEngine(provider_id, delete_weights);
 
             return new JObject
@@ -562,6 +588,106 @@ public static class AudioLabAPI
         catch (Exception ex)
         {
             return AudioLab.CreateErrorResponse($"Engine uninstall failed: {ex.Message}", "uninstall_error", ex);
+        }
+    }
+
+    /// <summary>Installs every not-yet-present model for a provider, streaming progress over the WebSocket.
+    /// Skips models whose weights are already on disk. This is the server-side "Download All" — the UI and
+    /// API testers call it instead of looping <see cref="AudioLabInstallEngine"/> per model.</summary>
+    public static async Task<JObject> AudioLabInstallAllModels(Session session, WebSocket ws, string provider_id)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(provider_id))
+            {
+                await ws.SendJson(new JObject { ["error"] = "provider_id is required" }, API.WebsocketTimeout);
+                return null;
+            }
+            AudioProviderDefinition provider = AudioProviderRegistry.GetById(provider_id);
+            if (provider == null)
+            {
+                await ws.SendJson(new JObject { ["error"] = $"Unknown provider: {provider_id}" }, API.WebsocketTimeout);
+                return null;
+            }
+            DynamicAudioBackend backend = Program.Backends.RunningBackendsOfType<DynamicAudioBackend>().FirstOrDefault();
+            if (backend == null)
+            {
+                await ws.SendJson(new JObject { ["error"] = "Audio backend is not running. Add and enable the Audio Backend first." }, API.WebsocketTimeout);
+                return null;
+            }
+            List<AudioModelDefinition> pending = provider.Models
+                .Where(m => !(provider.IsApiProvider || AudioEngine.WeightsPresent(provider.Id, m.Id)))
+                .ToList();
+            if (pending.Count == 0)
+            {
+                await ws.SendJson(new JObject { ["success"] = true, ["provider_id"] = provider_id, ["installed"] = 0, ["total"] = 0, ["message"] = $"All {provider.Name} models are already installed." }, API.WebsocketTimeout);
+                return null;
+            }
+            int ok = 0;
+            foreach (AudioModelDefinition model in pending)
+            {
+                await ws.SendJson(new JObject { ["info"] = $"Installing {model.Name}…" }, API.WebsocketTimeout);
+                bool success = await backend.InstallAndRegisterEngine(provider_id,
+                    msg => ws.SendJson(new JObject { ["info"] = msg }, API.WebsocketTimeout).Wait(),
+                    Program.GlobalProgramCancel, model.Id);
+                if (success)
+                {
+                    ok++;
+                    await ws.SendJson(new JObject { ["info"] = $"{model.Name} installed.", ["model_id"] = model.Id, ["model_done"] = true }, API.WebsocketTimeout);
+                }
+                else
+                {
+                    await ws.SendJson(new JObject { ["info"] = $"Failed to install {model.Name}.", ["model_id"] = model.Id, ["model_failed"] = true }, API.WebsocketTimeout);
+                }
+            }
+            await ws.SendJson(new JObject { ["success"] = true, ["provider_id"] = provider_id, ["installed"] = ok, ["total"] = pending.Count, ["message"] = $"Installed {ok}/{pending.Count} {provider.Name} models." }, API.WebsocketTimeout);
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] Install-all failed: {ex}");
+            await ws.SendJson(new JObject { ["error"] = $"Install-all failed: {ex.Message}" }, API.WebsocketTimeout);
+        }
+        return null;
+    }
+
+    /// <summary>Deletes the weights of every installed model for a provider (the engine stays installed).
+    /// Server-side "Remove All". Fast (disk deletes only), so it's a plain call rather than a WebSocket.</summary>
+    public static async Task<JObject> AudioLabRemoveAllModels(Session session, string provider_id)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(provider_id))
+            {
+                return AudioLab.CreateErrorResponse("provider_id is required", "missing_provider");
+            }
+            AudioProviderDefinition provider = AudioProviderRegistry.GetById(provider_id);
+            if (provider == null)
+            {
+                return AudioLab.CreateErrorResponse($"Unknown provider: {provider_id}", "unknown_provider");
+            }
+            DynamicAudioBackend backend = Program.Backends.RunningBackendsOfType<DynamicAudioBackend>().FirstOrDefault();
+            if (backend == null)
+            {
+                return AudioLab.CreateErrorResponse("Audio backend is not running.", "no_backend");
+            }
+            List<AudioModelDefinition> present = provider.Models
+                .Where(m => !provider.IsApiProvider && AudioEngine.WeightsPresent(provider.Id, m.Id))
+                .ToList();
+            if (present.Count == 0)
+            {
+                return new JObject { ["success"] = true, ["provider_id"] = provider_id, ["removed"] = 0, ["total"] = 0, ["message"] = $"No {provider.Name} models are installed." };
+            }
+            JArray removedIds = [];
+            foreach (AudioModelDefinition model in present)
+            {
+                try { backend.DeleteModelWeights(provider_id, model.Id); removedIds.Add(model.Id); }
+                catch (Exception ex) { Logs.Warning($"[AudioLab] Failed to remove {model.Name}: {ex.Message}"); }
+            }
+            return new JObject { ["success"] = true, ["provider_id"] = provider_id, ["removed"] = removedIds.Count, ["total"] = present.Count, ["removed_ids"] = removedIds, ["message"] = $"Removed {removedIds.Count}/{present.Count} {provider.Name} models." };
+        }
+        catch (Exception ex)
+        {
+            return AudioLab.CreateErrorResponse($"Remove-all failed: {ex.Message}", "remove_all_error", ex);
         }
     }
 

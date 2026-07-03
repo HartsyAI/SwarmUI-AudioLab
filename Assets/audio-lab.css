@@ -216,6 +216,12 @@
     opacity: 0.5;
 }
 
+/* ===== PER-MODEL INSTALL TABLE (install/manage modal) ===== */
+#audiolab_install_models td { padding: 4px 8px 4px 0; vertical-align: middle; }
+#audiolab_install_models .audiolab-model-btn { padding: 0.15em 0.7em; font-size: 0.8em; }
+.audiolab-model-installed { color: var(--backend-running); font-size: 0.85em; white-space: nowrap; }
+.audiolab-model-installing { color: var(--text-soft); font-size: 0.85em; white-space: nowrap; }
+
 /* ===== AUDIO LAB MODAL ===== */
 #audiolab_modal .modal-dialog { max-width: 850px; }
 #audiolab_modal .modal-body { padding: 1rem; }

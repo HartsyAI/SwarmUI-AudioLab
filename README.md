@@ -14,7 +14,7 @@ A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeypr
 - **Streaming TTS** — Chunked text-to-speech with auto-play for immediate playback while generating
 - **Generation Cancellation** — Stop Generation and Stop All Generations buttons work for all audio providers
 - **Pure C# Inference (no Python)** — Audio models run in-process via the [HartsyInference](https://www.nuget.org/packages/HartsyInference) engine, hosted by the companion **HartsyInference (Pure C# Inference)** backend extension. No Python, no venvs, no Docker.
-- **On-Demand Weights** — Install only the models you need; the Install button downloads the model's `.safetensors` weights (STT models download themselves on first use)
+- **On-Demand Weights** — Install only the models you need. Multi-variant engines (e.g. ACE-Step's 9 checkpoints) expose a per-model Install/Remove button plus a **Download All** option, so you can grab just `turbo` instead of every variant. STT and other self-managed models download themselves on first use.
 
 ## Requirements
 
@@ -37,7 +37,7 @@ A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeypr
 
 3. In SwarmUI, go to **Server** > **Backends** and add the **Audio Backend**.
 
-4. Open the Generate tab, select an audio model, and use the Install button to install the model you want. Its weights are downloaded automatically; STT models fetch themselves on first use. Generation runs in-process on the C# engine.
+4. In **Server** > **Backends**, expand the Audio Backend card and click an engine to open its install panel. Install individual models with their per-model **Install** button (or **Download All** for the whole set); multi-variant engines let you install/remove one checkpoint at a time. Weights download automatically; self-managed models (e.g. Whisper) fetch themselves on first use. Generation runs in-process on the C# engine.
 
 ## Supported Engines
 
@@ -102,7 +102,7 @@ These engines transform voice characteristics. **RVC and OpenVoice** are post-pr
 ## Usage
 
 1. **Add the Audio Backend** — Go to Server > Backends and add "Audio Backend".
-2. **Install an Engine** — In the Generate tab, browse the audio models and click Install for the engine you want. The extension downloads the model's weights and runs it in-process on the C# engine — no virtual environment, no pip, no Python. Progress streams in real time via WebSocket. (STT models and several others fetch their weights on first use.)
+2. **Install Models** — In Server > Backends, open the Audio Backend's engine panel and click an engine. Install the specific models you want with their per-model **Install** button, or click **Download All** to fetch the whole set; installed models show a **Remove** button that deletes just that variant's weights. The extension downloads weights and runs in-process on the C# engine — no virtual environment, no pip, no Python. Progress streams in real time via WebSocket. (Self-managed models fetch their weights on first use.)
 3. **Select a Model** — Choose an installed audio model from the model selector.
 4. **Set Parameters** — The sidebar shows relevant parameter groups (TTS, STT, Audio Generation, Voice Conversion, Audio Processing) based on the selected model.
 5. **Generate** — Enter your prompt and click Generate. Audio output appears in the output area with a waveform player.
