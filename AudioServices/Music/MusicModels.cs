@@ -118,7 +118,12 @@ public static class MusicModels
         MusicAudio Synth(IBackend backend, MusicRequest req, CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
-            int[] tokens = tokenizer.Encode(req.Prompt);
+            // Real-length ids + </s>, NO padding: the MusicGen decoder cross-attention has no encoder mask, so padded
+            // T5 rows would swamp the text conditioning. HF appends EOS and masks pad — real-length+EOS is equivalent.
+            IReadOnlyList<int> rawIds = tokenizer.EncodeRaw(req.Prompt);
+            int[] tokens = new int[rawIds.Count + 1];
+            for (int i = 0; i < rawIds.Count; i++) tokens[i] = rawIds[i];
+            tokens[rawIds.Count] = T5Tokenizer.EosTokenId;
             Tensor t5States = t5.Encode(backend, [tokens], [T5Tokenizer.CreateAttentionMask(tokens)]);
             backend.Sync();
             backend.FreeWeights(t5.EnumerateWeights());
@@ -540,7 +545,9 @@ public static class MusicModels
             ?? throw new InvalidOperationException($"YuE needs 'xcodec.safetensors' (converted from m-a-p/xcodec_mini_infer) in or beside '{folder}'.");
 
         YueConfig config = YueConfig.V1;
-        (Dictionary<string, Tensor> s1W, IDisposable s1Loader) = YueCheckpointConverter.LoadStage1(folder, castToF32: true);
+        YueTokenizer tokenizer = new(tokenizerPath);
+        (Dictionary<string, Tensor> s1W, IDisposable s1Loader) = YueCheckpointConverter.LoadStage1(folder, castToF32: false);   // 7B: bf16 source
+        YueCheckpointConverter.QuantizeLmWeights(s1W, DType.Q4_K);   // 14 GB bf16 → ~3.5 GB Q4_K: fits resident + fast dp4a GEMV decode
         YueStage1Lm stage1 = new(config);
         stage1.LoadWeights(s1W, prefix: "model");
 
@@ -548,9 +555,20 @@ public static class MusicModels
         XCodec xcodec = new(XCodecConfig.XCodec16kHz);
         xcodec.LoadWeights(cW);
 
-        YueTokenizer tokenizer = new(tokenizerPath);
-        YuePipeline pipeline = new(config, stage1, xcodec);
-        Logs.Info($"[AudioLab][YuE] Loaded Stage-1 from '{folder}' (16 kHz, vocal-cb0 only — Stage-2 pending).");
+        // Stage-2 residual upsampler (predicts codebooks 1-7 from Stage-1's cb0) — optional sibling 's2'/'stage2' folder.
+        string? s2Folder = FindSiblingFolder(folder, "s2") ?? FindSiblingFolder(folder, "stage2");
+        YueStage2Lm? stage2 = null;
+        IDisposable? s2Loader = null;
+        if (s2Folder is not null)
+        {
+            (Dictionary<string, Tensor> s2W, IDisposable ld) = YueCheckpointConverter.LoadStage2(s2Folder, castToF32: false);   // bf16 source
+            YueCheckpointConverter.QuantizeLmWeights(s2W, DType.Q4_K);   // Q4_K: 1B fully resident + fast dp4a GEMV for the 8×/frame decode
+            s2Loader = ld;
+            stage2 = new YueStage2Lm(config, tokenizer.Soa, tokenizer.Stage1, tokenizer.Stage2);
+            stage2.LoadWeights(s2W, prefix: "model");
+        }
+        YuePipeline pipeline = new(config, stage1, xcodec, stage2);
+        Logs.Info($"[AudioLab][YuE] Loaded Stage-1{(stage2 is not null ? " + Stage-2 (full 8-codebook)" : " (vocal-cb0 only — no s2 folder)")} from '{folder}' (16 kHz).");
 
         MusicAudio Synth(IBackend backend, MusicRequest req, CancellationToken ct)
         {
@@ -561,7 +579,10 @@ public static class MusicModels
             return MusicAudio.Mono(pipeline.Synthesize(backend, promptIds, maxFrames: maxFrames, seed: req.Seed));
         }
 
-        return Task.FromResult<IMusicRunner>(new MusicRunner(config.SampleRate, Synth, pipeline, s1Loader, cLoader, tokenizer));
+        IDisposable[] disposables = s2Loader is not null
+            ? [pipeline, s1Loader, cLoader, s2Loader, tokenizer]
+            : [pipeline, s1Loader, cLoader, tokenizer];
+        return Task.FromResult<IMusicRunner>(new MusicRunner(config.SampleRate, Synth, disposables));
     }
 
     /// <summary>Finds a file inside the checkpoint folder, then one directory up (so variants can share one copy).</summary>
@@ -574,6 +595,15 @@ public static class MusicModels
         }
         string parent = Path.Combine(Directory.GetParent(folder)?.FullName ?? folder, fileName);
         return File.Exists(parent) ? parent : null;
+    }
+
+    /// <summary>Directory analog of <see cref="FindSibling"/>: a subfolder of the checkpoint, then one level up.</summary>
+    private static string FindSiblingFolder(string folder, string name)
+    {
+        string inside = Path.Combine(folder, name);
+        if (Directory.Exists(inside)) return inside;
+        string parent = Path.Combine(Directory.GetParent(folder)?.FullName ?? folder, name);
+        return Directory.Exists(parent) ? parent : null;
     }
 
     #endregion

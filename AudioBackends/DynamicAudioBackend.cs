@@ -1458,7 +1458,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
 
             case "yue_music":
-                args["lyrics"] = input.TryGet(AudioLabParams.YuELyrics, out string yueLy) ? yueLy : "";
+                // YuE semantics (mirror ACE-Step): main Prompt = genre/style tags → genre; the dedicated
+                // Lyrics param = lyrics → prompt. EncodeStage1Prompt(genre, prompt) consumes them in that order.
+                args["genre"] = input.Get(T2IParamTypes.Prompt, "");
+                args["prompt"] = input.TryGet(AudioLabParams.YuELyrics, out string yueLy) ? yueLy : "";
                 args["max_new_tokens"] = input.TryGet(AudioLabParams.YuEMaxTokens, out int yueTokens) ? yueTokens : 3000;
                 args["quantization"] = input.TryGet(AudioLabParams.YuEQuantization, out string yueQuant) ? yueQuant : "fp16";
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long yueSeed) ? yueSeed : -1L;
@@ -1470,7 +1473,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "heartlib_music":
-                args["lyrics"] = input.TryGet(AudioLabParams.HeartLibLyrics, out string hlLy) ? hlLy : "";
+                // HeartMuLa semantics (mirror ACE-Step): main Prompt = vocal-style tags → genre; the dedicated
+                // Lyrics param = lyrics → prompt. MusicHandler maps genre→HeartMulaTags, prompt→HeartMulaLyrics.
+                args["genre"] = input.Get(T2IParamTypes.Prompt, "");
+                args["prompt"] = input.TryGet(AudioLabParams.HeartLibLyrics, out string hlLy) ? hlLy : "";
                 args["cfg_scale"] = input.TryGet(AudioLabParams.HeartLibCFGScale, out double hlCfg) ? hlCfg : 1.5;
                 args["temperature"] = input.TryGet(AudioLabParams.HeartLibTemperature, out double hlTemp) ? hlTemp : 1.0;
                 args["topk"] = input.TryGet(AudioLabParams.HeartLibTopK, out int hlTopK) ? hlTopK : 50;
