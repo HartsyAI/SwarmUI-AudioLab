@@ -9,6 +9,7 @@ using HartsyInference.Audio.Cache;
 using HartsyInference.Audio.Frontends;
 using HartsyInference.Audio.Models.Codecs.EnCodec;
 using HartsyInference.Audio.Models.Codecs.Oobleck;
+using HartsyInference.Audio.Models.Codecs.Vocos;
 using HartsyInference.Audio.Models.Codecs.XCodec;
 using HartsyInference.Audio.Models.HeartMula;
 using HartsyInference.Audio.Models.Music;
@@ -567,8 +568,24 @@ public static class MusicModels
             stage2 = new YueStage2Lm(config, tokenizer.Soa, tokenizer.Stage1, tokenizer.Stage2);
             stage2.LoadWeights(s2W, prefix: "model");
         }
-        YuePipeline pipeline = new(config, stage1, xcodec, stage2);
-        Logs.Info($"[AudioLab][YuE] Loaded Stage-1{(stage2 is not null ? " + Stage-2 (full 8-codebook)" : " (vocal-cb0 only — no s2 folder)")} from '{folder}' (16 kHz).");
+        // Per-stem Vocos vocoders — YuE's real 44.1 kHz output (converted decoders/decoder_131000.pth = vocal,
+        // decoder_151000.pth = instrumental). When present, decode goes latent→Vocos→44.1 kHz instead of the 16 kHz
+        // x-codec draft (which buries/roughens the vocals). Optional: falls back to the draft if not placed.
+        string? vocalVocPath = FindSibling(folder, "vocal_vocoder.safetensors");
+        string? instVocPath = FindSibling(folder, "inst_vocoder.safetensors");
+        VocosDecoder? vocalVoc = null, instVoc = null;
+        IDisposable? vVocLoader = null, iVocLoader = null;
+        if (vocalVocPath is not null && instVocPath is not null)
+        {
+            (Dictionary<string, Tensor> vW, SafeTensorsLoader vL) = YueCheckpointConverter.LoadVocoder(vocalVocPath);
+            vVocLoader = vL; vocalVoc = new VocosDecoder(); vocalVoc.LoadWeights(vW);
+            (Dictionary<string, Tensor> iW, SafeTensorsLoader iL) = YueCheckpointConverter.LoadVocoder(instVocPath);
+            iVocLoader = iL; instVoc = new VocosDecoder(); instVoc.LoadWeights(iW);
+        }
+
+        YuePipeline pipeline = new(config, stage1, xcodec, stage2, vocalVoc, instVoc);
+        Logs.Info($"[AudioLab][YuE] Loaded Stage-1{(stage2 is not null ? " + Stage-2 (full 8-codebook)" : " (vocal-cb0 only — no s2 folder)")}"
+            + $"{(vocalVoc is not null ? " + Vocos vocoders (44.1 kHz)" : " (16 kHz x-codec draft — no vocoders)")} from '{folder}'.");
 
         MusicAudio Synth(IBackend backend, MusicRequest req, CancellationToken ct)
         {
@@ -579,10 +596,12 @@ public static class MusicModels
             return MusicAudio.Mono(pipeline.Synthesize(backend, promptIds, maxFrames: maxFrames, seed: req.Seed));
         }
 
-        IDisposable[] disposables = s2Loader is not null
-            ? [pipeline, s1Loader, cLoader, s2Loader, tokenizer]
-            : [pipeline, s1Loader, cLoader, tokenizer];
-        return Task.FromResult<IMusicRunner>(new MusicRunner(config.SampleRate, Synth, disposables));
+        List<IDisposable> disposables = [pipeline, s1Loader, cLoader, tokenizer];
+        if (s2Loader is not null) disposables.Add(s2Loader);
+        if (vVocLoader is not null) disposables.Add(vVocLoader);
+        if (iVocLoader is not null) disposables.Add(iVocLoader);
+        // pipeline.OutputSampleRate = 44.1 kHz with vocoders, else the 16 kHz x-codec draft.
+        return Task.FromResult<IMusicRunner>(new MusicRunner(pipeline.OutputSampleRate, Synth, [.. disposables]));
     }
 
     /// <summary>Finds a file inside the checkpoint folder, then one directory up (so variants can share one copy).</summary>
