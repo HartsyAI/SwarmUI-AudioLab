@@ -873,7 +873,13 @@ public static class AudioLabParams
 
         #region Music — ACE-Step Core
         Lyrics = T2IParamTypes.Register<string>(new("Lyrics",
-            "Song lyrics for ACE-Step generation.\nUse [Instrumental] for instrumental-only tracks.\nSupports section tags like [Verse], [Chorus], [Bridge].",
+            "Song lyrics for ACE-Step. Put one section tag on its own line, then that section's lines under it:\n"
+            + "  [verse] [chorus] [bridge] [intro] [outro]\n"
+            + "Use [Instrumental] (or leave empty) for an instrumental-only track.\n\n"
+            + "GENRE / STYLE goes in the main Prompt box (NOT here), as COMMA-separated tags —\n"
+            + "genre, mood, instruments, vocals, tempo. Example:\n"
+            + "  pop, electronic, upbeat, female vocals, catchy melody, 120 bpm\n\n"
+            + "EXAMPLE lyrics:\n  [Verse]\n  first verse lines\n  [Chorus]\n  the hook",
             "[Instrumental]",
             ViewType: ParamViewType.PROMPT,
             OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
@@ -1100,8 +1106,17 @@ public static class AudioLabParams
 
         #region Music — YuE
         YuELyrics = T2IParamTypes.Register<string>(new("YuE Lyrics",
-            "Song lyrics for YuE music generation.\nUse section markers: [verse], [chorus], [bridge], [outro].\nEach section generates a segment of the song.",
+            "Song lyrics for YuE. Structure them with SECTION MARKERS — each becomes its own generated segment:\n"
+            + "  [verse] [chorus] [bridge] [intro] [outro]\n"
+            + "Put one section tag on its own line, then that section's lines under it. Required — un-tagged\n"
+            + "lyrics are treated as a single verse and tend to drift.\n\n"
+            + "GENRE / STYLE goes in the main Prompt box (NOT here), as SPACE-separated tags (NO commas),\n"
+            + "recommended order: genre, instrument, mood, gender, timbre. Example:\n"
+            + "  inspiring female uplifting pop airy vocal electronic bright vocal\n"
+            + "Include a gender tag (male / female) for vocals; more descriptive tags = better adherence.\n\n"
+            + "EXAMPLE lyrics:\n  [verse]\n  first verse lines\n  [chorus]\n  the hook",
             "",
+            ViewType: ParamViewType.PROMPT,
             OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
 
         YuEMaxTokens = T2IParamTypes.Register<int>(new("Max Tokens",
@@ -1162,6 +1177,8 @@ public static class AudioLabParams
             + "  - All text is lowercased internally, capitalization doesn't matter.\n"
             + "  - No inline controls for emphasis, yelling, pauses, or dynamics.\n"
             + "  - Vocal style is controlled globally via tags (Prompt), not lyrics.\n\n"
+            + "GENRE / STYLE goes in the main Prompt box (NOT here) — genre, mood, instruments, and vocal\n"
+            + "  style tags, e.g. 'pop, energetic, female vocal, bright synths, driving drums'.\n\n"
             + "EXAMPLE:\n"
             + "  [Intro]\n  <||>\n  [Verse]\n  your lyrics here\n  [Prechorus]\n  building up\n"
             + "  [Chorus]\n  main hook\n  [Verse]\n  second verse\n  [Bridge]\n  bridge lyrics\n"

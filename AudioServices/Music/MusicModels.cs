@@ -591,9 +591,18 @@ public static class MusicModels
         {
             ct.ThrowIfCancellationRequested();
             string genre = string.IsNullOrWhiteSpace(req.Genre) ? "pop" : req.Genre;
-            int[] promptIds = tokenizer.EncodeStage1Prompt(genre, req.Prompt);
+            // Segment-by-segment Stage-1 (infer.py): head prompt + one prompt per [label] section, each injecting
+            // its own lyrics. Fall back to a single unstructured segment when the lyrics carry no [label] markers.
+            int[] headIds = tokenizer.EncodeStage1Head(genre, req.Prompt);
+            IReadOnlyList<string> segments = tokenizer.Stage1Segments(req.Prompt);
+            List<int[]> segmentPrompts = new(Math.Max(segments.Count, 1));
+            for (int i = 0; i < segments.Count; i++)
+                segmentPrompts.Add(tokenizer.EncodeSegmentPrompt(segments[i], isFirst: i == 0));
+            if (segmentPrompts.Count == 0)
+                segmentPrompts.Add(tokenizer.EncodeSegmentPrompt(req.Prompt ?? "", isFirst: true));
             int maxFrames = (int)(Math.Clamp(req.Duration, 5d, 300d) * config.FrameRateHz);
-            return MusicAudio.Mono(pipeline.Synthesize(backend, promptIds, maxFrames: maxFrames, seed: req.Seed));
+            int perSeg = Math.Max(config.FrameRateHz, maxFrames / segmentPrompts.Count);   // split the budget across segments
+            return MusicAudio.Mono(pipeline.Synthesize(backend, headIds, segmentPrompts, maxFramesPerSegment: perSeg, seed: req.Seed));
         }
 
         List<IDisposable> disposables = [pipeline, s1Loader, cLoader, tokenizer];
