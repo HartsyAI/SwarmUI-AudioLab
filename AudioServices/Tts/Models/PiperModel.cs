@@ -1,21 +1,30 @@
 using System;
 using SwarmUI.Utils;
+using HartsyInference.Audio.Pipelines;
 
 namespace Hartsy.Extensions.AudioLab.AudioServices.Tts;
 
-/// <summary>Piper (VITS) — CPU TTS at 22.05 kHz. Provider id <c>piper_tts</c>. The engine's
-/// <c>PiperPipeline</c> is implemented, but driving it needs two pieces the extension/engine don't ship yet:
-/// an <b>espeak-ng phonemizer</b> (text → espeak phonemes) and each voice's <b>phoneme_id_map</b> (phoneme →
-/// id), plus a loader for Piper's <c>.onnx</c>/JSON voice format into the engine's tensor dict. Wired as a
-/// dispatchable model that fails with a clear message until those land (see engine-work list).</summary>
+/// <summary>Piper (VITS) — CPU TTS at 22.05 kHz. Provider id <c>piper_tts</c>. Self-contained: the engine
+/// <see cref="PiperPipeline"/> bundles the pure-C# espeak-ng phonemizer (<c>EspeakPhonemizer.FromCache</c>) and
+/// reads each voice's <c>phoneme_id_map</c> + espeak language straight from the Piper <c>.onnx.json</c>, so no
+/// external front-end is needed. The engine VITS path is validated against onnxruntime (corr 0.9998). Not
+/// zero-shot — no voice reference required.</summary>
 public static class PiperModel
 {
+    /// <summary>Default English voice. The voice's <c>.onnx</c> + <c>.onnx.json</c> auto-download from
+    /// <c>rhasspy/piper-voices</c> on first use.</summary>
+    private const string DefaultVoice = "en_US-lessac-medium";
+
     public static readonly TtsModelDescriptor Descriptor = new()
     {
         ResolveRepo = _ => "rhasspy/piper-voices",
-        LoadAsync = (_, _) => throw new NotSupportedException(
-            "[AudioLab][Piper] Not runnable yet: needs (1) an espeak-ng phonemizer, (2) the voice phoneme_id_map, "
-            + "and (3) a Piper .onnx/JSON → tensor loader. The engine PiperPipeline (VitsConfig.PiperMedium) is ready; "
-            + "these front-end/format pieces are the gap. See engine-work list."),
+        LoadAsync = async (_, ct) =>
+        {
+            PiperPipeline pipeline = await PiperPipeline.LoadAsync(DefaultVoice, ct: ct).ConfigureAwait(false);
+            Logs.Info($"[AudioLab][Piper] Loaded rhasspy/piper-voices {DefaultVoice} (VITS 22.05 kHz, bundled espeak-ng phonemizer).");
+            return new TtsRunner(pipeline.SampleRate,
+                (backend, req) => pipeline.SynthesizeText(backend, req.Text, seed: req.Seed),
+                pipeline);
+        },
     };
 }

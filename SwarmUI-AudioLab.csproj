@@ -26,7 +26,7 @@
   <!-- RELEASE: the published meta-package (default). -->
   <ItemGroup Condition="'$(UseLocalHartsy)' != 'true'">
     <!-- HartsyInference engine, referenced directly (no dependency on the backend extension). -->
-    <PackageReference Include="HartsyInference" Version="1.0.0-alpha.43" />
+    <PackageReference Include="HartsyInference" Version="1.0.0-alpha.45" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs (NOT ProjectReferences — see SwarmUI-LLMAssistant.csproj

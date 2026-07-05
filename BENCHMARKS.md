@@ -12,6 +12,78 @@ already on disk. VRAM/RSS are whole-process peaks sampled at 4 Hz during the cal
 
 > Status legend: ✅ works + verified · ⚠️ works with caveats · ⛔ gated (engine piece pending, clean error) · ❌ broken (bug)
 
+## 2026-07-05 Re-test pass (API-driven via `GenerateText2Image`, outputs saved to UI history)
+
+Driven through the **standard SwarmUI generate flow** (`GenerateText2Image`, model = the audio
+model, prompt = the text) so every output lands in `Output/local/raw/...` and shows in the UI —
+then Whisper-transcribed (`base.en`/`small.en`) and compared to the input. `sim` = normalized
+word-sequence similarity (1.0 = exact). Reference clip for cloning models = a real 5s voice clip
+(`~/Downloads/speech.mp3`). Rig as above (RTX 3060 12GB), engine = current `master` build (git `22050819`).
+
+**Headline:** every **installed** TTS engine generates intelligible, matching speech — none fail at
+the "won't generate" level. Prior "most failed" reproduced as (a) a **stale deployed DLL** (fixed by
+rebuild — restart ≠ rebuild) and (b) F5/VibeVoice **refusing without a required voice reference** (by design).
+
+### Installed TTS — all verified working this pass
+
+| Provider | Model | Status | Wall (s) | Dur | RMS | sim | Ear / notes |
+|---|---|---|---|---|---|---|---|
+| bark_tts | default | ⚠️ | 55 | 4.8s | 1475 | 0.94 | intelligible but **staticy/robotic** (user). "quick *ground* fox" |
+| kokoro_tts | default | ✅ | **2.5** | 2.6s | 1200 | ~0.9 | clean, fast, good volume ("As she sells seashells…") |
+| chatterbox_tts | default | ✅ | **9.3** | 2.4s | 2794 | 0.94 | fast, good; default voice only (ref cloning gated) |
+| dia_tts | 1.6b | ⚠️ | **347** | 20s | 3579 | — | correct words but **loops the phrase**; unusably slow |
+| f5_tts | v1-base | ⚠️ | 226 | 4.1s | 1276 | 0.97 | Whisper decodes it, but **audibly a slow distorted robot** (user). Needs ref+ref-text |
+| fishspeech_tts | fish-speech-1.5 | ⚠️ | **8.1** | 4.5s | **222** | 0.97 | great vocals but **~10× too quiet** (user + RMS 222 vs 1500–7800) |
+| neutts_tts | air | ⚠️ | 50 | 4.7s | 7861 | 0.85 | decent, slightly robotic; **appends trailing garble** ("Blackface") → EOS bug. Default voice only |
+| vibevoice_tts | 1.5b | ⚠️ | 70 | 3–12s | — | 0.87 / fail | **reference/length-sensitive**: good on short ref (0.87); with clean 5s ref + short target it **rambled 12s of unrelated text** ("This is you, pal…"). It's a long-form model — short prompts destabilize it |
+
+### Remaining TTS engines — install-time gate re-confirmed (clean refusal, server stayed up)
+
+Installed via `AudioLabInstallEngine`; each refuses at weight-prefetch with a **specific** message
+(no crash, no OOM). All consistent with the prior pass's ⛔/❌.
+
+| Provider | Model | Status | Exact gate reason (from server log) |
+|---|---|---|---|
+| melotts_tts | english-v3 | ⛔ | needs espeak phonemizer **+ tone/language id streams + BERT feature encoder** ([1024,T]&[768,T]) |
+| kyutaitts_tts | 1.6b-en-fr | ❌ | loader requests `pytorch_model.bin`; repo ships `dsm_tts_*.safetensors` |
+| piper_tts | default | ⛔ | needs espeak-ng **+ voice phoneme_id_map + .onnx/JSON loader** |
+| zonos_tts | transformer | ⛔ | needs a precomputed conditioning prefix (espeak phones + speaker/emotion/rate) + uncond counterpart |
+| sparktts_tts | 0.5B | ⛔ | `SparkTtsConfig` token offsets + BiCodec decoder keys checkpoint-reconciliation-pending |
+| cosyvoice_tts | 2-0.5b | ⛔ | engine text front-end pending |
+| pockettts_tts | default | ⛔ | placeholder (zero) config dims + SentencePiece tokenizer asset not wired |
+| styletts2_tts | libritts | ⛔ | no unified `LoadWeights` for the Kokoro submodules from the LibriTTS checkpoint |
+
+> **Correction to the earlier "espeak now works → unblocks Piper/Zonos/MeloTTS" note:** espeak *is*
+> present (NeuTTS uses it), but it is **not sufficient** for any of these three — MeloTTS still needs
+> tone/lang streams + BERT features, Piper still needs the phoneme_id_map + ONNX loader, Zonos still
+> needs the full conditioning-prefix front-end. They remain ⛔.
+
+### Not load-verified this session (wired + un-gated, blocked by host RAM)
+
+| Provider | Model | Status | Why not run |
+|---|---|---|---|
+| orpheus_tts | 3b | ⏸ reverify-blocked | un-gated mirror downloaded-on-demand; **~12 GB F32 host footprint** > available host RAM this session |
+| csm_tts | 1b | ⏸ reverify-blocked | un-gated mirror; **~4 GB F32 host footprint** > available host RAM this session |
+
+### Host-RAM / OOM finding (engine architecture)
+
+During this pass the OS **SIGKILL'd the whole SwarmUI process** once (right after a VibeVoice gen) and
+host RAM repeatedly sat at 1–2 GB free with swap 100% full. Two compounding causes:
+
+1. **Engine keeps a full F32 copy of each loaded model's weights resident in host RAM** — the
+   safetensors/pickle loaders are held alive because the tensors reference their buffers, and GPU
+   promotion then makes a *second* copy in VRAM. So host RAM ≈ Σ(resident model F32 weights). A 3B
+   model ≈ 12 GB host before it even reaches the GPU. *(This is the user-flagged "RAM should never hit
+   0 — we're not properly using the GPU" issue: after promotion the host copy should be freed / the
+   file mmap'd read-only, so weights live on the GPU, not twice.)*
+2. **System-level pressure independent of AudioLab:** a runaway **`xdg-dbus-proxy` holding ~7.5 GB**
+   (plus Plex ~1.5 GB, Firefox ~1 GB, RustDesk ~0.6 GB) left ~1 GB free before any model loaded, so
+   SwarmUI became the OOM-killer's target. Fresh SwarmUI itself is only ~750 MB.
+
+Net: the extension *does* evict other providers before a load (MemAvailable<10 GB guard), but that
+can't help when a single model's F32 host copy alone exceeds free RAM. Freeing the host weight copy
+after GPU promotion is the durable fix; a less RAM-starved desktop unblocks Orpheus/CSM verification.
+
 ## Engine/extension fixes made during this pass
 
 | Fix | Where | Effect |
