@@ -84,6 +84,10 @@ const AudioDawTrack = (() => {
             color: opts.color || TRACK_COLORS[(id - 1) % TRACK_COLORS.length],
             height: opts.height || 100,
             collapsed: false,
+            fx: [],                                  // ordered [{type, enabled, params}] insert chain
+            automation: { volume: [], pan: [] },     // sorted [{t, v}] envelopes
+            automationVisible: false,
+            automationParam: 'volume',
             // Runtime DOM refs (not serialized)
             headerEl: null,
             laneEl: null,
@@ -238,6 +242,18 @@ const AudioDawTrack = (() => {
             knob.classList.add('daw-track-pan-knob');
             controls.appendChild(knob);
         }
+
+        // Automation lane toggle
+        const autoBtn = document.createElement('button');
+        autoBtn.className = 'daw-track-btn' + (track.automationVisible ? ' active-solo' : '');
+        autoBtn.dataset.role = 'automation';
+        autoBtn.textContent = 'A';
+        autoBtn.title = 'Show/hide automation lane';
+        autoBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (callbacks.onAutomationToggle) callbacks.onAutomationToggle(track);
+        });
+        controls.appendChild(autoBtn);
 
         header.appendChild(controls);
 
@@ -576,6 +592,175 @@ const AudioDawTrack = (() => {
         }
     }
 
+    const AUTO_LANE_H = 40;
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+
+    /** Value<->y mapping per automation param. */
+    function autoToY(param, v) {
+        return param === 'volume' ? AUTO_LANE_H * (1 - v / 2) : AUTO_LANE_H * (1 - (v + 1) / 2);
+    }
+    function autoFromY(param, y) {
+        const n = 1 - Math.max(0, Math.min(AUTO_LANE_H, y)) / AUTO_LANE_H;
+        return param === 'volume' ? Math.max(0, Math.min(2, n * 2)) : Math.max(-1, Math.min(1, n * 2 - 1));
+    }
+
+    /**
+     * Build (or rebuild) a track's automation sub-lane: an SVG breakpoint editor.
+     * Click empty = add point (snapped); drag handle = move; double-click handle = delete.
+     * callbacks: { snapTime, onAutomationGestureStart(track), onAutomationChange(track) }
+     */
+    function buildAutomationLane(track, zoom, callbacks) {
+        const lane = createDiv(null, 'daw-automation-lane');
+        lane.dataset.trackId = track.id;
+        track.autoLaneEl = lane;
+        renderAutomationLane(track, zoom, callbacks);
+        return lane;
+    }
+
+    function renderAutomationLane(track, zoom, callbacks) {
+        const lane = track.autoLaneEl;
+        if (!lane) return;
+        lane.innerHTML = '';
+        const param = track.automationParam || 'volume';
+        const points = track.automation[param];
+        const svg = document.createElementNS(SVG_NS, 'svg');
+        svg.setAttribute('height', AUTO_LANE_H);
+        svg.setAttribute('width', '100%');
+        svg.classList.add('daw-automation-svg');
+
+        // Identity baseline (v=1 for volume, 0 offset for pan)
+        const base = document.createElementNS(SVG_NS, 'line');
+        const baseY = autoToY(param, param === 'volume' ? 1 : 0);
+        base.setAttribute('x1', 0);
+        base.setAttribute('x2', '100%');
+        base.setAttribute('y1', baseY);
+        base.setAttribute('y2', baseY);
+        base.classList.add('daw-automation-baseline');
+        svg.appendChild(base);
+
+        let segmentDragged = false; // suppress the click-to-add that follows a segment drag
+
+        if (points.length) {
+            const poly = document.createElementNS(SVG_NS, 'polyline');
+            const pts = points.map(p => `${p.t * zoom},${autoToY(param, p.v)}`);
+            // extend flat to lane edges
+            poly.setAttribute('points',
+                `0,${autoToY(param, points[0].v)} ` + pts.join(' ') + ` 100000,${autoToY(param, points[points.length - 1].v)}`);
+            poly.classList.add('daw-automation-line');
+            svg.appendChild(poly);
+
+            // One-gesture section edit: grab the line between two points and pull it up/down
+            poly.addEventListener('pointerdown', (e) => {
+                if (e.button !== 0) return;
+                e.stopPropagation();
+                e.preventDefault();
+                poly.setPointerCapture(e.pointerId);
+                const rect = svg.getBoundingClientRect();
+                const t = (e.clientX - rect.left) / currentZoom;
+                // bracketing points (grabbing before the first / after the last drags that one point)
+                let left = null, right = null;
+                for (const p of points) {
+                    if (p.t <= t) left = p; else { right = p; break; }
+                }
+                const targets = [left, right].filter(Boolean);
+                const startVals = targets.map(p => p.v);
+                const startY = e.clientY;
+                let moved = false;
+                const range = param === 'volume' ? 2 : 2; // full lane height spans this much value
+                const onMove = (me) => {
+                    if (!moved) {
+                        moved = true;
+                        segmentDragged = true;
+                        if (callbacks.onAutomationGestureStart) callbacks.onAutomationGestureStart(track);
+                    }
+                    const dv = (startY - me.clientY) / AUTO_LANE_H * range;
+                    targets.forEach((p, i) => {
+                        p.v = param === 'volume'
+                            ? Math.max(0, Math.min(2, startVals[i] + dv))
+                            : Math.max(-1, Math.min(1, startVals[i] + dv));
+                    });
+                    renderAutomationLane(track, currentZoom, callbacks);
+                };
+                const onUp = (ue) => {
+                    try { poly.releasePointerCapture(ue.pointerId); } catch (_) {}
+                    poly.removeEventListener('pointermove', onMove);
+                    poly.removeEventListener('pointerup', onUp);
+                    if (moved && callbacks.onAutomationChange) callbacks.onAutomationChange(track);
+                    setTimeout(() => { segmentDragged = false; }, 0);
+                };
+                poly.addEventListener('pointermove', onMove);
+                poly.addEventListener('pointerup', onUp);
+            });
+        }
+
+        const sortPoints = () => points.sort((a, b) => a.t - b.t);
+
+        points.forEach((pt) => {
+            const dot = document.createElementNS(SVG_NS, 'circle');
+            dot.setAttribute('cx', pt.t * zoom);
+            dot.setAttribute('cy', autoToY(param, pt.v));
+            dot.setAttribute('r', 4);
+            dot.classList.add('daw-automation-dot');
+            dot.addEventListener('dblclick', (e) => {
+                e.stopPropagation();
+                if (callbacks.onAutomationGestureStart) callbacks.onAutomationGestureStart(track);
+                const i = points.indexOf(pt);
+                if (i >= 0) points.splice(i, 1);
+                renderAutomationLane(track, currentZoom, callbacks);
+                if (callbacks.onAutomationChange) callbacks.onAutomationChange(track);
+            });
+            dot.addEventListener('pointerdown', (e) => {
+                if (e.button !== 0) return;
+                e.stopPropagation();
+                e.preventDefault();
+                dot.setPointerCapture(e.pointerId);
+                let moved = false;
+                const rect = svg.getBoundingClientRect();
+                const onMove = (me) => {
+                    if (!moved) {
+                        moved = true;
+                        if (callbacks.onAutomationGestureStart) callbacks.onAutomationGestureStart(track);
+                    }
+                    let t = (me.clientX - rect.left) / currentZoom;
+                    if (callbacks.snapTime) t = callbacks.snapTime(t);
+                    pt.t = Math.max(0, t);
+                    pt.v = autoFromY(param, me.clientY - rect.top);
+                    dot.setAttribute('cx', pt.t * currentZoom);
+                    dot.setAttribute('cy', autoToY(param, pt.v));
+                };
+                const onUp = (ue) => {
+                    dot.releasePointerCapture(ue.pointerId);
+                    dot.removeEventListener('pointermove', onMove);
+                    dot.removeEventListener('pointerup', onUp);
+                    if (moved) {
+                        sortPoints();
+                        renderAutomationLane(track, currentZoom, callbacks);
+                        if (callbacks.onAutomationChange) callbacks.onAutomationChange(track);
+                    }
+                };
+                dot.addEventListener('pointermove', onMove);
+                dot.addEventListener('pointerup', onUp);
+            });
+            svg.appendChild(dot);
+        });
+
+        // Click empty space to add a point (line clicks are segment drags, handled above)
+        svg.addEventListener('click', (e) => {
+            if (segmentDragged) return;
+            if (e.target !== svg && e.target !== base) return;
+            const rect = svg.getBoundingClientRect();
+            let t = (e.clientX - rect.left) / currentZoom;
+            if (callbacks.snapTime) t = callbacks.snapTime(t);
+            if (callbacks.onAutomationGestureStart) callbacks.onAutomationGestureStart(track);
+            points.push({ t: Math.max(0, t), v: autoFromY(param, e.clientY - rect.top) });
+            sortPoints();
+            renderAutomationLane(track, currentZoom, callbacks);
+            if (callbacks.onAutomationChange) callbacks.onAutomationChange(track);
+        });
+
+        lane.appendChild(svg);
+    }
+
     /**
      * Destroy all WaveSurfer instances in a track and clean up DOM.
      */
@@ -587,6 +772,7 @@ const AudioDawTrack = (() => {
         track.clipElements.clear();
         if (track.headerEl) { track.headerEl.remove(); track.headerEl = null; }
         if (track.laneEl) { track.laneEl.remove(); track.laneEl = null; }
+        if (track.autoLaneEl) { track.autoLaneEl.remove(); track.autoLaneEl = null; }
     }
 
     /**
@@ -603,6 +789,14 @@ const AudioDawTrack = (() => {
             armed: track.armed,
             color: track.color,
             height: track.height,
+            // Deep copies: undo snapshots must never alias the live objects
+            fx: track.fx.map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } })),
+            automation: {
+                volume: track.automation.volume.map(p => ({ ...p })),
+                pan: track.automation.pan.map(p => ({ ...p }))
+            },
+            automationVisible: track.automationVisible,
+            automationParam: track.automationParam,
             clips: track.clips.map(c => ({
                 id: c.id,
                 blobKey: c.blobKey,
@@ -651,6 +845,8 @@ const AudioDawTrack = (() => {
         buildClipLane,
         renderClips,
         syncHeaderControls,
+        buildAutomationLane,
+        renderAutomationLane,
         updateZoom,
         destroyTrack,
         serializeTrack,

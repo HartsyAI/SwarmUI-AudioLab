@@ -5,10 +5,10 @@
     <!-- Force the floating HartsyInference 'alpha.*' ref to resolve to the latest published version. -->
     <RestoreNoHttpCache>true</RestoreNoHttpCache>
     <!-- Engine source toggle (same pattern as SwarmUI-LLMAssistant): false = published NuGet;
-         true = prebuilt local HartsyInference engine DLLs. Temporarily defaulted true because the committed
-         MusicModels.cs uses the engine's new AceStepLmPlanner, which no published NuGet contains yet
-         (only the local HartsyInference build has it). Revert to false once alpha.45+ ships with it. -->
-    <UseLocalHartsy Condition="'$(UseLocalHartsy)' == ''">true</UseLocalHartsy>
+         true = prebuilt local HartsyInference engine DLLs (local engine dev only — the HartsyRepo
+         sibling checkout below doesn't exist for end users, so this MUST default false or every
+         install without a local engine checkout fails with "no reference to HartsyInference"). -->
+    <UseLocalHartsy Condition="'$(UseLocalHartsy)' == ''">false</UseLocalHartsy>
     <HartsyRepo Condition="'$(HartsyRepo)' == ''">$(MSBuildThisFileDirectory)../../../../HartsyInference</HartsyRepo>
   </PropertyGroup>
   <Import Project="../../SwarmUI.extension.props" />
@@ -23,10 +23,15 @@
     <PackageReference Include="FFMpegCore" Version="5.4.0" />
   </ItemGroup>
 
-  <!-- RELEASE: the published meta-package (default). -->
+  <!-- RELEASE: the published meta-package. Was temporarily split into 10 direct sub-package
+       references (alpha.45) because the meta-package's own publish step didn't exist yet — it was
+       a manual, easily-forgotten `dotnet pack`+push that had been stuck at alpha.44 for weeks. Fixed
+       2026-07-09: "HartsyInference" is now packed via a real project (src/HartsyInference.Meta in
+       the engine repo) wired into publish-nuget.yml, so it publishes automatically on every push
+       like every other package. Verified via a from-scratch restore against nuget.org only
+       (cleared sources, fresh package cache) — not just checking the version index. -->
   <ItemGroup Condition="'$(UseLocalHartsy)' != 'true'">
-    <!-- HartsyInference engine, referenced directly (no dependency on the backend extension). -->
-    <PackageReference Include="HartsyInference" Version="1.0.0-alpha.45" />
+    <PackageReference Include="HartsyInference" Version="1.0.0-alpha.46" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs (NOT ProjectReferences — see SwarmUI-LLMAssistant.csproj

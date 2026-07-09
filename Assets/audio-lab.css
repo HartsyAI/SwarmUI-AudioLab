@@ -1771,3 +1771,152 @@
     border-radius: 0.3rem;
     background: color-mix(in srgb, var(--yellow) 8%, transparent);
 }
+
+/* ===== FX TAB (per-track insert chain) ===== */
+.daw-bottom-tab-content[data-tab="fx"] { max-height: 260px; }
+.daw-fx-row { display: flex; gap: 0.4rem; padding: 0.4rem; overflow-x: auto; align-items: stretch; }
+.daw-fx-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.35rem 0.45rem;
+    min-width: 9rem;
+    background: color-mix(in srgb, var(--text) 4%, transparent);
+    border: 1px solid var(--shadow);
+    border-radius: 0.3rem;
+    flex-shrink: 0;
+}
+.daw-fx-card.fx-disabled { opacity: 0.55; }
+.daw-fx-card-head { display: flex; align-items: center; gap: 0.35rem; }
+.daw-fx-card-title { font-size: 0.75rem; font-weight: 600; color: var(--text); flex: 1; }
+.daw-fx-card-btns { display: flex; gap: 0.15rem; }
+.daw-fx-mini-btn {
+    background: transparent;
+    border: 1px solid var(--shadow);
+    border-radius: 0.2rem;
+    color: var(--text-soft);
+    font-size: 0.6rem;
+    padding: 0.1rem 0.25rem;
+    cursor: pointer;
+}
+.daw-fx-mini-btn:hover:not(:disabled) { color: var(--emphasis); border-color: var(--emphasis); }
+.daw-fx-mini-btn:disabled { opacity: 0.3; cursor: default; }
+.daw-fx-knobs { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.daw-fx-knob-col { display: flex; flex-direction: column; align-items: center; gap: 0.1rem; width: 2.6rem; }
+.daw-fx-knob-label { font-size: 0.55rem; letter-spacing: 0.05em; color: var(--text-soft); }
+.daw-fx-knob-val { font-size: 0.55rem; font-family: var(--font-monospace, monospace); color: var(--text); }
+.daw-fx-extra { display: flex; align-items: center; gap: 0.3rem; }
+.daw-fx-select {
+    padding: 0.1rem 0.2rem;
+    border: 1px solid var(--shadow);
+    border-radius: 0.2rem;
+    background: var(--background);
+    color: var(--text);
+    font-size: 0.65rem;
+}
+.daw-fx-add-card { justify-content: center; align-items: center; border-style: dashed; background: transparent; }
+
+/* ===== AUTOMATION LANES ===== */
+.daw-automation-lane {
+    position: relative;
+    height: 40px;
+    border-bottom: 1px solid var(--shadow);
+    background: color-mix(in srgb, var(--emphasis) 3%, transparent);
+    cursor: crosshair;
+}
+.daw-automation-svg { display: block; width: 100%; height: 40px; overflow: visible; }
+.daw-automation-baseline { stroke: color-mix(in srgb, var(--text-soft) 30%, transparent); stroke-dasharray: 3 3; }
+.daw-automation-line { fill: none; stroke: var(--emphasis); stroke-width: 1.5; }
+.daw-automation-dot { fill: var(--emphasis); stroke: var(--background); stroke-width: 1; cursor: grab; }
+.daw-automation-dot:hover { r: 5; }
+.daw-automation-head {
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0 0.4rem;
+    border-bottom: 1px solid var(--shadow);
+    background: color-mix(in srgb, var(--emphasis) 3%, transparent);
+}
+
+/* ===== BEAT SEQUENCER ===== */
+.daw-beats-panel { display: flex; flex-direction: column; gap: 0.4rem; padding: 0.5rem; }
+.daw-bottom-tab-content[data-tab="beats"] { max-height: 300px; }
+.daw-beats-grid { display: flex; flex-direction: column; gap: 0.25rem; }
+.daw-beats-lane { display: flex; align-items: center; gap: 0.35rem; }
+.daw-beats-lane-name {
+    width: 7rem;
+    font-size: 0.7rem;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 0;
+}
+.daw-beats-lane-gain { width: 3.5rem; accent-color: var(--emphasis); }
+.daw-beats-swing { width: 4rem; accent-color: var(--emphasis); }
+.daw-beats-steps { display: flex; gap: 2px; flex-wrap: nowrap; overflow-x: auto; }
+.daw-beats-step {
+    width: 1.35rem;
+    height: 1.35rem;
+    flex-shrink: 0;
+    border: 1px solid var(--shadow);
+    border-radius: 0.2rem;
+    background: color-mix(in srgb, var(--text) 5%, transparent);
+    cursor: pointer;
+    padding: 0;
+}
+.daw-beats-step.beat-head { border-color: color-mix(in srgb, var(--text-soft) 60%, transparent); }
+.daw-beats-step:hover { border-color: var(--emphasis); }
+.daw-beats-step.on { background: var(--emphasis); border-color: var(--emphasis); }
+
+/* ===== SOUND PALETTE DOCK ===== */
+.daw-palette {
+    position: absolute;
+    top: 3.2rem;
+    right: 0.5rem;
+    bottom: 0.5rem;
+    width: 20rem;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.6rem;
+    background: var(--background);
+    border: 1px solid var(--border-color);
+    border-radius: 0.4rem;
+    box-shadow: 0 8px 28px color-mix(in srgb, var(--black) 45%, transparent);
+}
+.daw-palette-head { display: flex; justify-content: space-between; align-items: center; color: var(--text); }
+.daw-palette-opts { display: flex; gap: 0.3rem; align-items: center; }
+.daw-palette-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0.4rem; }
+.daw-palette-card {
+    padding: 0.4rem;
+    border: 1px solid var(--shadow);
+    border-radius: 0.3rem;
+    background: color-mix(in srgb, var(--text) 3%, transparent);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+.daw-palette-card-label { font-size: 0.7rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.daw-palette-audio { width: 100%; height: 2rem; }
+.daw-palette-actions { display: flex; gap: 0.3rem; }
+.daw-btn-palette.active { background: var(--emphasis); color: var(--background); border-color: var(--emphasis); }
+
+/* Master loudness readout + clip latch */
+.daw-master-lufs {
+    font-size: 0.6rem;
+    font-family: var(--font-monospace, monospace);
+    color: var(--text-soft);
+    min-width: 3.6rem;
+}
+.daw-master-clip {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1px solid var(--shadow);
+    background: transparent;
+    cursor: pointer;
+}
+.daw-master-clip.lit { background: var(--red); border-color: var(--red); box-shadow: 0 0 6px var(--red); }

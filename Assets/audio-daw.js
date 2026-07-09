@@ -48,6 +48,8 @@ const AudioDaw = (() => {
         return {
             tracks: [],
             masterVolume: 1.0,
+            masterLimiterEnabled: true,
+            beatPattern: { steps: 16, swing: 0, lanes: [] },
             bpm: 120,
             timeSignature: [4, 4],
             currentTime: 0,
@@ -145,6 +147,8 @@ const AudioDaw = (() => {
         modalEl.classList.add('daw-mode');
 
         modalEl.addEventListener('keydown', handleKeyboard);
+        // Browser tabs die without warning — flush the autosave on page close too
+        window.addEventListener('beforeunload', () => flushAutosave());
         // Bootstrap hides on ESC/backdrop without going through close() — always tear down here
         $(modalEl).on('hidden.bs.modal', () => {
             flushAutosave(); // snapshot before teardown so the session is resumable
@@ -329,6 +333,12 @@ const AudioDaw = (() => {
             state.bpm = parseInt(e.target.value) || 120;
             if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
             updateLaneGrid();
+            if (playback && typeof AudioDawFx !== 'undefined') {
+                for (const [id, chain] of playback.chains) {
+                    const tr = state.tracks.find(t => t.id === id);
+                    if (tr) AudioDawFx.syncDelayTimes(chain.fxChain, tr.fx, state.bpm, playback.ctx.currentTime);
+                }
+            }
         });
         const bpmGroup = createDiv(null, 'daw-transport-bpm-group');
         bpmGroup.appendChild(bpmInputEl);
@@ -382,6 +392,14 @@ const AudioDaw = (() => {
         });
         transportEl.appendChild(snapBtn);
 
+        // Sound Palette toggle
+        const palBtn = document.createElement('button');
+        palBtn.className = 'daw-transport-btn daw-btn-text daw-btn-palette';
+        palBtn.textContent = 'SOUNDS';
+        palBtn.title = 'Sound Palette — generate SFX/loops on demand (audition, then add)';
+        palBtn.addEventListener('click', () => togglePalette(palBtn));
+        transportEl.appendChild(palBtn);
+
         // Master volume + meter cluster
         const masterGroup = createDiv(null, 'daw-transport-master');
         const masterLbl = createSpan(null, 'daw-transport-master-label');
@@ -413,6 +431,13 @@ const AudioDaw = (() => {
         masterGroup.appendChild(masterLbl);
         masterGroup.appendChild(masterSlider);
         masterGroup.appendChild(masterMeter);
+        const lufs = createSpan(null, 'daw-master-lufs');
+        lufs.textContent = '-\u221E LU';
+        masterGroup.appendChild(lufs);
+        const clipDot = createSpan(null, 'daw-master-clip');
+        clipDot.title = 'Master clip indicator — click to reset';
+        clipDot.addEventListener('click', () => clipDot.classList.remove('lit'));
+        masterGroup.appendChild(clipDot);
         transportEl.appendChild(masterGroup);
 
         // Zoom slider
@@ -444,6 +469,7 @@ const AudioDaw = (() => {
         projBtn.addEventListener('click', (e) => showProjectMenu(e));
         footerEl.appendChild(projBtn);
         quickAppendButton(footerEl, 'Import Audio', importAudioToTrack, ' basic-button', 'Import audio files (each file gets its own track)');
+        quickAppendButton(footerEl, 'Add from Outputs', (e) => showOutputsPicker(e), ' basic-button', 'Add a previously generated audio output as a new track');
 
         // Spacer
         const spacer = createDiv(null, 'daw-footer-spacer');
@@ -512,6 +538,13 @@ const AudioDaw = (() => {
 
     let activeBottomTab = 'clip-editor';
 
+    function switchBottomTab(id) {
+        activeBottomTab = id;
+        if (!bottomPanelEl) return;
+        bottomPanelEl.querySelectorAll('.daw-bottom-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
+        bottomPanelEl.querySelectorAll('.daw-bottom-tab-content').forEach(c => c.hidden = c.dataset.tab !== id);
+    }
+
     function buildBottomPanel() {
         if (!bottomPanelEl) return;
         bottomPanelEl.innerHTML = '';
@@ -522,6 +555,8 @@ const AudioDaw = (() => {
             { id: 'clip-editor', icon: '&#x2702;', label: 'Clip Editor' },
             { id: 'mixer', icon: '&#x1F39A;', label: 'Mixer' },
             { id: 'stems', icon: '&#x1F3BC;', label: 'Stems' },
+            { id: 'fx', icon: '&#x1F39B;', label: 'FX' },
+            { id: 'beats', icon: '&#x1F941;', label: 'Beats' },
             { id: 'generate', icon: '&#x2728;', label: 'Generate' },
             { id: 'apply-model', icon: '&#x279C;', label: 'Apply to Model' }
         ];
@@ -557,6 +592,19 @@ const AudioDaw = (() => {
         stemsContent.hidden = activeBottomTab !== 'stems';
         bottomPanelEl.appendChild(stemsContent);
 
+        // FX tab content
+        const fxContent = createDiv(null, 'daw-bottom-tab-content');
+        fxContent.dataset.tab = 'fx';
+        fxContent.hidden = activeBottomTab !== 'fx';
+        bottomPanelEl.appendChild(fxContent);
+
+        // Beats tab content — built ONCE per open (step toggles mutate state directly)
+        const beatsContent = createDiv(null, 'daw-bottom-tab-content');
+        beatsContent.dataset.tab = 'beats';
+        beatsContent.hidden = activeBottomTab !== 'beats';
+        bottomPanelEl.appendChild(beatsContent);
+        renderBeatsPanel(beatsContent);
+
         // Generate tab content — built ONCE per open (not in updateBottomPanel) so
         // typed prompts survive selection-driven panel refreshes
         const generateContent = createDiv(null, 'daw-bottom-tab-content');
@@ -572,6 +620,98 @@ const AudioDaw = (() => {
         bottomPanelEl.appendChild(applyContent);
 
         updateBottomPanel();
+    }
+
+    // One undo snapshot per FX knob gesture (continuous onChange events)
+    let fxUndoTimer = null;
+    function fxGestureUndo() {
+        if (fxUndoTimer) clearTimeout(fxUndoTimer);
+        else pushUndo();
+        fxUndoTimer = setTimeout(() => { fxUndoTimer = null; }, 800);
+    }
+
+    function fxPanelCallbacks() {
+        return {
+            masterLimiterEnabled: state.masterLimiterEnabled,
+            showMenu: (e, items) => dawMenu(e, items),
+            onPresetApplied: () => updateBottomPanel(), // refresh knob positions/readouts
+            onSaveChain: (track, e) => {
+                if (!track.fx.length) {
+                    if (typeof doNoticePopover === 'function') doNoticePopover('Add some effects first', 'notice-pop-yellow');
+                    return;
+                }
+                const name = prompt('Chain name:', 'My Chain');
+                if (!name || !name.trim()) return;
+                const chains = JSON.parse(localStorage.getItem('audiolab_fx_chains') || '{}');
+                chains[name.trim()] = track.fx.map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));
+                localStorage.setItem('audiolab_fx_chains', JSON.stringify(chains));
+                if (typeof doNoticePopover === 'function') doNoticePopover(`Chain "${name.trim()}" saved`, 'notice-pop-green');
+            },
+            onLoadChain: (track, e) => {
+                const chains = JSON.parse(localStorage.getItem('audiolab_fx_chains') || '{}');
+                const names = Object.keys(chains);
+                if (!names.length) {
+                    if (typeof doNoticePopover === 'function') doNoticePopover('No saved chains yet — build one and hit Save Chain', 'notice-pop-yellow');
+                    return;
+                }
+                dawMenu(e, names.map(n => ({
+                    label: n,
+                    action: () => {
+                        pushUndo();
+                        track.fx = chains[n].map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));
+                        rebuildTrackFx(track);
+                        updateBottomPanel();
+                    }
+                })));
+            },
+            onParamChange: (track, fx, index) => {
+                fxGestureUndo();
+                const chain = playback?.chains.get(track.id);
+                if (chain?.fxChain) {
+                    AudioDawFx.applyEffectParams(chain.fxChain, index, fx, playback.ctx.currentTime,
+                        { bpm: state.bpm, ctx: playback.ctx });
+                }
+            },
+            onToggle: (track, fx, index) => {
+                pushUndo();
+                const chain = playback?.chains.get(track.id);
+                if (chain?.fxChain) {
+                    AudioDawFx.setEffectEnabled(chain.fxChain, index, fx, playback.ctx.currentTime);
+                }
+            },
+            onAdd: (track, type) => {
+                pushUndo();
+                const fx = AudioDawFx.createEffectState(type);
+                if (!fx) return;
+                track.fx.push(fx);
+                rebuildTrackFx(track);
+                updateBottomPanel();
+            },
+            onRemove: (track, index) => {
+                pushUndo();
+                track.fx.splice(index, 1);
+                rebuildTrackFx(track);
+                updateBottomPanel();
+            },
+            onMove: (track, index, dir) => {
+                const j = index + dir;
+                if (j < 0 || j >= track.fx.length) return;
+                pushUndo();
+                [track.fx[index], track.fx[j]] = [track.fx[j], track.fx[index]];
+                rebuildTrackFx(track);
+                updateBottomPanel();
+            },
+            onMasterLimiter: (enabled) => {
+                state.masterLimiterEnabled = enabled;
+                // Master path topology change: cleanly restart the graph if playing
+                if (state.isPlaying) {
+                    const P = currentTimelineTime();
+                    stopPlayback();
+                    state.currentTime = P;
+                    startPlayback();
+                }
+            }
+        };
     }
 
     function updateBottomPanel() {
@@ -744,6 +884,12 @@ const AudioDaw = (() => {
         if (stemsContent) {
             stemsContent.innerHTML = '';
             renderStemsPanel(stemsContent);
+        }
+
+        // Update FX tab
+        const fxContent = bottomPanelEl.querySelector('.daw-bottom-tab-content[data-tab="fx"]');
+        if (fxContent && typeof AudioDawFx !== 'undefined') {
+            AudioDawFx.renderFxPanel(fxContent, getSelectedTrack(), fxPanelCallbacks());
         }
 
         // Update Apply to Model tab
@@ -1405,11 +1551,18 @@ const AudioDaw = (() => {
         const offlineCtx = new OfflineAudioContext(2, totalSamples, sampleRate);
         const masterGain = offlineCtx.createGain();
         masterGain.gain.value = state.masterVolume;
-        masterGain.connect(offlineCtx.destination);
+        let masterOut = masterGain;
+        if (state.masterLimiterEnabled && typeof AudioDawFx !== 'undefined') {
+            const lim = AudioDawFx.buildMasterLimiter(offlineCtx);
+            masterGain.connect(lim);
+            masterOut = lim;
+        }
+        masterOut.connect(offlineCtx.destination);
         const soloActive = hasSoloTracks();
         for (const track of state.tracks) {
             if (track.muted || (soloActive && !track.soloed)) continue; // no point rendering silence
             const chain = buildTrackChain(offlineCtx, track, masterGain);
+            scheduleTrackAutomation(chain, track, { t0Ctx: 0, t0Timeline: 0, windowEnd: state.totalDuration, fresh: true });
             for (const clip of track.clips) {
                 if (clip.muted) continue;
                 scheduleClip(offlineCtx, chain.trackGain, clip,
@@ -1548,6 +1701,10 @@ const AudioDaw = (() => {
             },
             onRename: () => {},
             onRecolor: (track, e) => showTrackColorMenu(track, e),
+            onAutomationToggle: (track) => {
+                track.automationVisible = !track.automationVisible;
+                renderAllTracks();
+            },
             onRemove: (track) => {
                 if (state.tracks.length <= 1) return; // keep at least one track
                 pushUndo();
@@ -1612,6 +1769,32 @@ const AudioDaw = (() => {
             clipLanesEl.appendChild(lane);
 
             AudioDawTrack.renderClips(track, state.zoom, clipCallbacks, state.selectedClipId);
+
+            if (track.automationVisible) {
+                const autoCallbacks = {
+                    snapTime: (t) => snapTime(t),
+                    onAutomationGestureStart: () => pushUndo(),
+                    onAutomationChange: (tr) => rescheduleTrackAutomation(tr)
+                };
+                clipLanesEl.appendChild(AudioDawTrack.buildAutomationLane(track, state.zoom, autoCallbacks));
+                // Matching header spacer keeps headers aligned; hosts the param picker
+                const spacer = createDiv(null, 'daw-automation-head');
+                const sel = document.createElement('select');
+                sel.className = 'daw-fx-select';
+                for (const p of ['volume', 'pan']) {
+                    const opt = document.createElement('option');
+                    opt.value = p;
+                    opt.textContent = p === 'volume' ? 'Volume' : 'Pan';
+                    sel.appendChild(opt);
+                }
+                sel.value = track.automationParam || 'volume';
+                sel.addEventListener('change', () => {
+                    track.automationParam = sel.value;
+                    AudioDawTrack.renderAutomationLane(track, state.zoom, autoCallbacks);
+                });
+                spacer.appendChild(sel);
+                trackHeadersEl.appendChild(spacer);
+            }
         }
 
         // "+ Add Track" affordance at the bottom of the header column
@@ -1643,7 +1826,7 @@ const AudioDaw = (() => {
         // Set min-width of clip lanes to match total duration
         const minWidth = Math.max(state.totalDuration * state.zoom + 200, clipLanesEl?.clientWidth || 0);
         if (clipLanesEl) {
-            clipLanesEl.querySelectorAll('.daw-track-lane').forEach(lane => {
+            clipLanesEl.querySelectorAll('.daw-track-lane, .daw-automation-lane').forEach(lane => {
                 lane.style.minWidth = minWidth + 'px';
             });
         }
@@ -1684,22 +1867,104 @@ const AudioDaw = (() => {
     function buildTrackChain(ctx, track, masterGain) {
         const trackGain = ctx.createGain();
         trackGain.gain.value = computeTrackGain(track);
+        // Insert FX after the static fader; volAuto carries the volume envelope so
+        // live fader moves and automation ramps never fight over one AudioParam.
+        const fxChain = (typeof AudioDawFx !== 'undefined')
+            ? AudioDawFx.buildFxChain(ctx, track.fx, { bpm: state.bpm }) : null;
+        const volAuto = ctx.createGain();
+        volAuto.gain.value = 1;
+        if (fxChain) {
+            trackGain.connect(fxChain.input);
+            fxChain.output.connect(volAuto);
+        } else {
+            trackGain.connect(volAuto);
+        }
         let trackPan = null;
         if (ctx.createStereoPanner) {
             trackPan = ctx.createStereoPanner();
             trackPan.pan.value = track.pan || 0;
-            trackGain.connect(trackPan);
+            volAuto.connect(trackPan);
             trackPan.connect(masterGain);
         } else {
-            trackGain.connect(masterGain);
+            volAuto.connect(masterGain);
         }
         let analyser = null;
         if (typeof OfflineAudioContext === 'undefined' || !(ctx instanceof OfflineAudioContext)) {
             analyser = ctx.createAnalyser();
             analyser.fftSize = 512;
-            (trackPan || trackGain).connect(analyser); // parallel tap, no audio output
+            (trackPan || volAuto).connect(analyser); // parallel tap, no audio output
         }
-        return { trackGain, trackPan, analyser };
+        return { trackGain, fxChain, volAuto, trackPan, analyser };
+    }
+
+    /** Fully disconnect one track chain (incl. FX feedback loops, which otherwise persist). */
+    function disposeChain(chain) {
+        try { chain.trackGain.disconnect(); } catch (_) {}
+        if (typeof AudioDawFx !== 'undefined') AudioDawFx.disposeFxChain(chain.fxChain);
+        try { chain.volAuto.disconnect(); } catch (_) {}
+        if (chain.trackPan) { try { chain.trackPan.disconnect(); } catch (_) {} }
+        if (chain.analyser) { try { chain.analyser.disconnect(); } catch (_) {} }
+    }
+
+    /** Topology change on a track's FX (add/remove/reorder): rebuild its chain live. */
+    function rebuildTrackFx(track) {
+        if (!playback) return;
+        const chain = playback.chains.get(track.id);
+        if (chain) {
+            disposeChain(chain);
+            playback.chains.delete(track.id);
+        }
+        resyncPlayback(); // lazily recreates the chain during rescheduling
+    }
+
+    /** Schedule volume/pan envelopes onto a chain using the same origin math as clips. */
+    function scheduleTrackAutomation(chain, track, { t0Ctx, t0Timeline, windowEnd = Infinity, fresh = true }) {
+        if (typeof AudioDawFx === 'undefined') return;
+        const auto = track.automation || {};
+        if (auto.volume?.length) {
+            AudioDawFx.scheduleEnvelope(chain.volAuto.gain, auto.volume, { t0Ctx, t0Timeline, windowEnd, fresh });
+        }
+        if (chain.trackPan && auto.pan?.length) {
+            AudioDawFx.scheduleEnvelope(chain.trackPan.pan, auto.pan, {
+                t0Ctx, t0Timeline, windowEnd, fresh,
+                transform: (v) => Math.max(-1, Math.min(1, (track.pan || 0) + v))
+            });
+        }
+    }
+
+    /** Live envelope edit: re-anchor + re-ramp this track's automation from the current position. */
+    function rescheduleTrackAutomation(track) {
+        if (!playback || typeof AudioDawFx === 'undefined') return;
+        const chain = playback.chains.get(track.id);
+        if (!chain) return;
+        const now = playback.ctx.currentTime;
+        const P = currentTimelineTime();
+        const W = playback.loop ? state.loopEnd : Infinity;
+        const auto = track.automation;
+        if (auto.volume.length) {
+            AudioDawFx.scheduleEnvelope(chain.volAuto.gain, auto.volume,
+                { t0Ctx: now, t0Timeline: P, windowEnd: W, fresh: true });
+        } else {
+            try { chain.volAuto.gain.cancelScheduledValues(now); } catch (_) {}
+            chain.volAuto.gain.setTargetAtTime(1, now, 0.015);
+        }
+        if (chain.trackPan) {
+            const xf = (v) => Math.max(-1, Math.min(1, (track.pan || 0) + v));
+            if (auto.pan.length) {
+                AudioDawFx.scheduleEnvelope(chain.trackPan.pan, auto.pan,
+                    { t0Ctx: now, t0Timeline: P, windowEnd: W, fresh: true, transform: xf });
+            } else {
+                try { chain.trackPan.pan.cancelScheduledValues(now); } catch (_) {}
+                chain.trackPan.pan.setTargetAtTime(track.pan || 0, now, 0.015);
+            }
+        }
+        // Re-queue the pre-scheduled loop iteration the fresh cancel wiped
+        if (playback.loop?.nextIterScheduled) {
+            scheduleTrackAutomation(chain, track, {
+                t0Ctx: playback.loop.nextWrapCtxTime, t0Timeline: state.loopStart,
+                windowEnd: state.loopEnd, fresh: false
+            });
+        }
     }
 
     // ===== LEVEL METERS =====
@@ -1714,6 +1979,19 @@ const AudioDaw = (() => {
             if (v > peak) peak = v;
         }
         return peak;
+    }
+
+    // Slow RMS average for the loudness readout (~LUFS, no K-weighting)
+    let loudnessEma = 0;
+
+    function readRms(analyser) {
+        analyser.getByteTimeDomainData(meterBuf);
+        let sum = 0;
+        for (let i = 0; i < analyser.fftSize; i++) {
+            const v = (meterBuf[i] - 128) / 128;
+            sum += v * v;
+        }
+        return Math.sqrt(sum / analyser.fftSize);
     }
 
     // Peak-hold state per meter: key -> { peak, heldAt }
@@ -1762,6 +2040,20 @@ const AudioDaw = (() => {
             if (strip) {
                 strip.fill.style.height = (level * 100) + '%';
                 strip.peak.style.bottom = (peak * 100).toFixed(1) + '%';
+            }
+            // ~Loudness readout (slow RMS EMA; not true K-weighted LUFS but tracks it usefully)
+            const rms = readRms(playback.masterAnalyser);
+            loudnessEma = loudnessEma * 0.95 + rms * 0.05;
+            const lufsEl = transportEl?.querySelector('.daw-master-lufs');
+            if (lufsEl) {
+                const db = loudnessEma > 1e-5 ? (20 * Math.log10(loudnessEma)).toFixed(1) : '-\u221E';
+                lufsEl.textContent = db + ' LU';
+                lufsEl.title = 'Approximate loudness (RMS). Streaming targets sit around -14.';
+            }
+            // Clip latch: lights when the master pins, click to reset
+            if (level >= 0.985) {
+                const clipDot = transportEl?.querySelector('.daw-master-clip');
+                if (clipDot) clipDot.classList.add('lit');
             }
         }
     }
@@ -1848,6 +2140,7 @@ const AudioDaw = (() => {
                 chain = buildTrackChain(ctx, track, playback.masterGain);
                 playback.chains.set(track.id, chain);
             }
+            scheduleTrackAutomation(chain, track, { t0Ctx, t0Timeline: P, windowEnd, fresh: iteration === 0 });
             for (const clip of track.clips) {
                 const nodes = scheduleClip(ctx, chain.trackGain, clip, { t0Ctx, t0Timeline: P, windowEnd });
                 if (!nodes) continue;
@@ -1871,7 +2164,25 @@ const AudioDaw = (() => {
             const chain = playback.chains.get(track.id);
             if (!chain) continue;
             chain.trackGain.gain.setTargetAtTime(computeTrackGain(track), now, 0.015);
-            if (chain.trackPan) chain.trackPan.pan.setTargetAtTime(track.pan || 0, now, 0.015);
+            const panEnv = track.automation?.pan;
+            if (chain.trackPan && !(panEnv?.length)) {
+                chain.trackPan.pan.setTargetAtTime(track.pan || 0, now, 0.015);
+            }
+            else if (chain.trackPan && panEnv?.length && typeof AudioDawFx !== 'undefined') {
+                // Envelope active: re-anchor + re-ramp instead of fighting scheduled ramps
+                const xf = (v) => Math.max(-1, Math.min(1, (track.pan || 0) + v));
+                const P = currentTimelineTime();
+                AudioDawFx.scheduleEnvelope(chain.trackPan.pan, panEnv, {
+                    t0Ctx: now, t0Timeline: P,
+                    windowEnd: playback.loop ? state.loopEnd : Infinity, fresh: true, transform: xf
+                });
+                if (playback.loop?.nextIterScheduled) {
+                    AudioDawFx.scheduleEnvelope(chain.trackPan.pan, panEnv, {
+                        t0Ctx: playback.loop.nextWrapCtxTime, t0Timeline: state.loopStart,
+                        windowEnd: state.loopEnd, fresh: false, transform: xf
+                    });
+                }
+            }
         }
     }
 
@@ -1934,17 +2245,24 @@ const AudioDaw = (() => {
 
         const masterGain = ctx.createGain();
         masterGain.gain.value = state.masterVolume;
-        masterGain.connect(ctx.destination);
+        let masterLimiter = null;
+        let masterOut = masterGain;
+        if (state.masterLimiterEnabled && typeof AudioDawFx !== 'undefined') {
+            masterLimiter = AudioDawFx.buildMasterLimiter(ctx);
+            masterGain.connect(masterLimiter);
+            masterOut = masterLimiter;
+        }
+        masterOut.connect(ctx.destination);
         const masterAnalyser = ctx.createAnalyser();
         masterAnalyser.fftSize = 512;
-        masterGain.connect(masterAnalyser);
+        masterOut.connect(masterAnalyser); // meter shows post-limiter level
 
         const P = state.currentTime;
         const t0Ctx = ctx.currentTime + START_EPSILON;
         // Loop is suppressed while recording (a take shouldn't wrap onto itself)
         const loopArmed = !recording && state.loopEnabled && state.loopEnd > state.loopStart && P < state.loopEnd;
         playback = {
-            ctx, masterGain, masterAnalyser,
+            ctx, masterGain, masterLimiter, masterAnalyser,
             chains: new Map(),
             liveClips: [],
             baseCtxTime: t0Ctx,
@@ -2019,11 +2337,10 @@ const AudioDaw = (() => {
             try { n.clipGain.disconnect(); } catch (_) {}
         }
         for (const chain of playback.chains.values()) {
-            try { chain.trackGain.disconnect(); } catch (_) {}
-            if (chain.trackPan) { try { chain.trackPan.disconnect(); } catch (_) {} }
-            if (chain.analyser) { try { chain.analyser.disconnect(); } catch (_) {} }
+            disposeChain(chain);
         }
         try { playback.masterGain.disconnect(); } catch (_) {}
+        if (playback.masterLimiter) { try { playback.masterLimiter.disconnect(); } catch (_) {} }
         playback = null;
         resetMeters();
     }
@@ -2061,8 +2378,7 @@ const AudioDaw = (() => {
         const liveIds = new Set(state.tracks.map(t => t.id));
         for (const [id, chain] of playback.chains) {
             if (!liveIds.has(id)) {
-                try { chain.trackGain.disconnect(); } catch (_) {}
-                if (chain.trackPan) { try { chain.trackPan.disconnect(); } catch (_) {} }
+                disposeChain(chain);
                 playback.chains.delete(id);
             }
         }
@@ -2301,6 +2617,44 @@ const AudioDaw = (() => {
         setTimeout(() => document.addEventListener('click', closeMenu, true), 0);
     }
 
+    /** Pick a recent audio file from the user's Swarm output history and add it as a track. */
+    async function showOutputsPicker(e) {
+        try {
+            const result = await AudioLabAPI.callAPI('ListImages', { path: '', depth: 3, sortBy: 'Date' });
+            const files = (result.files || [])
+                .map(f => f.src || f.image || f.name || f)
+                .filter(f => typeof f === 'string' && typeof isAudioExt === 'function' && isAudioExt(f))
+                .slice(0, 20);
+            if (!files.length) {
+                if (typeof doNoticePopover === 'function') doNoticePopover('No audio files in your outputs yet', 'notice-pop-yellow');
+                return;
+            }
+            dawMenu(e, files.map(f => ({
+                label: f.split('/').pop(),
+                action: async () => {
+                    const overlay = showDawLoadingOverlay('Loading output...');
+                    try {
+                        const url = f.startsWith('View/') || f.startsWith('Output/') ? '/' + f : `/View/${f}`;
+                        const blob = await fetchAsBlob(url);
+                        pushUndo();
+                        const track = addTrack({ name: f.split('/').pop().replace(/\.[^.]+$/, '').slice(0, 20) });
+                        await addClipToTrack(track, blob, { name: f.split('/').pop(), startTime: snapTime(state.currentTime) });
+                        updateTotalDuration();
+                        renderAllTracks();
+                        updateBottomPanel();
+                        resyncPlayback();
+                    } catch (err) {
+                        console.error('[AudioDaw] Add from outputs failed:', err);
+                        if (typeof doNoticePopover === 'function') doNoticePopover('Failed to load output: ' + err.message, 'notice-pop-red');
+                    }
+                    hideDawLoadingOverlay(overlay);
+                }
+            })));
+        } catch (err) {
+            if (typeof doNoticePopover === 'function') doNoticePopover('Failed to list outputs: ' + err.message, 'notice-pop-red');
+        }
+    }
+
     // ===== CLIP CONTEXT MENU =====
 
     function showClipContextMenu(e, clip, track) {
@@ -2313,7 +2667,8 @@ const AudioDaw = (() => {
                 applyClipGain(clip);
                 renderAllTracks();
             }},
-            { label: 'Separate Stems… (Demucs)', action: () => openStemsForClip(clip, track) }
+            { label: 'Separate Stems… (Demucs)', action: () => openStemsForClip(clip, track) },
+            { label: `Conform to ${state.bpm} BPM…`, action: () => conformClipToBpm(clip, track) }
         ]);
     }
 
@@ -2865,6 +3220,14 @@ const AudioDaw = (() => {
             track.muted = ts.muted;
             track.soloed = ts.soloed;
             track.armed = ts.armed;
+            track.fx = (ts.fx || []).filter(f => typeof AudioDawFx === 'undefined' || AudioDawFx.FX_DEFS[f.type])
+                .map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));
+            track.automation = {
+                volume: (ts.automation?.volume || []).map(p => ({ ...p })),
+                pan: (ts.automation?.pan || []).map(p => ({ ...p }))
+            };
+            track.automationVisible = !!ts.automationVisible;
+            track.automationParam = ts.automationParam || 'volume';
 
             for (const cs of ts.clips) {
                 const stored = blobStore.get(cs.blobKey);
@@ -2894,6 +3257,576 @@ const AudioDaw = (() => {
         resyncPlayback();
     }
 
+    /**
+     * Estimate tempo from an AudioBuffer: onset-energy autocorrelation over 60-200 BPM.
+     * Good enough to prefill the conform dialog ("drop a sample and it just fits").
+     */
+    function detectBpm(buffer) {
+        try {
+            const ch = buffer.getChannelData(0);
+            const hop = 512;
+            const frames = Math.floor(ch.length / hop);
+            if (frames < 64) return null;
+            const energy = new Float32Array(frames);
+            for (let i = 0; i < frames; i++) {
+                let s = 0;
+                const base = i * hop;
+                for (let j = 0; j < hop; j++) s += ch[base + j] * ch[base + j];
+                energy[i] = s;
+            }
+            const nov = new Float32Array(frames);
+            for (let i = 1; i < frames; i++) nov[i] = Math.max(0, energy[i] - energy[i - 1]);
+            const fps = buffer.sampleRate / hop;
+            let best = 0, bestBpm = null;
+            for (let bpm = 60; bpm <= 200; bpm += 0.5) {
+                const lag = Math.round(fps * 60 / bpm);
+                if (lag < 1 || lag >= frames) continue;
+                let corr = 0;
+                for (let i = 0; i + lag < frames; i++) corr += nov[i] * nov[i + lag];
+                corr /= (frames - lag);
+                if (corr > best) { best = corr; bestBpm = bpm; }
+            }
+            return bestBpm;
+        } catch (_) { return null; }
+    }
+
+    /**
+     * Tempo-match a clip to the project BPM via the server's ffmpeg time-stretch.
+     * Source BPM is auto-detected (onset autocorrelation) and confirmable; pitch is preserved.
+     */
+    async function conformClipToBpm(clip, track) {
+        const guess = clip.decodedBuffer ? detectBpm(clip.decodedBuffer) : null;
+        const src = prompt(
+            `Source BPM of "${clip.name}"? It will be stretched to ${state.bpm} BPM (pitch preserved).` +
+            (guess ? `\n\nDetected: ~${guess} BPM` : ''),
+            guess || state.bpm);
+        if (!src) return;
+        const srcBpm = parseFloat(src);
+        if (!srcBpm || srcBpm < 20 || srcBpm > 400) {
+            if (typeof doNoticePopover === 'function') doNoticePopover('Enter a BPM between 20 and 400', 'notice-pop-yellow');
+            return;
+        }
+        const rate = state.bpm / srcBpm;
+        if (Math.abs(rate - 1) < 0.001) {
+            if (typeof doNoticePopover === 'function') doNoticePopover('Clip is already at project tempo', 'notice-pop-green');
+            return;
+        }
+        const overlay = showDawLoadingOverlay(`Stretching ${srcBpm} → ${state.bpm} BPM...`);
+        try {
+            const base64 = await AudioLabCore.readAsBase64(clip.blob);
+            const result = await AudioLabAPI.callAPI('AudioLabTimeStretch', { audio_data: base64, rate });
+            if (!result.success || !result.audio_data) throw new Error(result.error || 'Stretch returned no audio');
+            const blob = AudioLabCore.base64ToBlob(result.audio_data, 'audio/wav');
+            pushUndo();
+            const newClip = AudioDawTrack.createClip(blob, {
+                name: clip.name + ` @${state.bpm}bpm`,
+                startTime: clip.startTime,
+                color: clip.color
+            });
+            await AudioDawTrack.decodeClip(newClip);
+            blobStore.set(newClip.blobKey, { blob, decodedBuffer: newClip.decodedBuffer });
+            newClip.gain = clip.gain;
+            const idx = track.clips.indexOf(clip);
+            if (idx >= 0) track.clips.splice(idx, 1, newClip);
+            const entry = track.clipElements.get(clip.id);
+            if (entry?.ws) entry.ws.destroy();
+            if (entry?.el) entry.el.remove();
+            track.clipElements.delete(clip.id);
+            state.selectedClipId = newClip.id;
+            updateTotalDuration();
+            renderAllTracks();
+            updateBottomPanel();
+            resyncPlayback();
+            if (typeof doNoticePopover === 'function') doNoticePopover('Clip conformed to project tempo', 'notice-pop-green');
+        } catch (err) {
+            console.error('[AudioDaw] Conform failed:', err);
+            if (typeof doNoticePopover === 'function') doNoticePopover('Tempo conform failed: ' + err.message, 'notice-pop-red');
+        }
+        hideDawLoadingOverlay(overlay);
+    }
+
+    // ===== BEAT SEQUENCER =====
+    // Sample-based 16/32-step grid. Pads are one-shots (generated via audiogen_sfx,
+    // imported, or taken from a clip); patterns render to BPM-locked clips on tracks.
+
+    let beatAudition = null; // live looping source while auditioning
+
+    function stopBeatAudition() {
+        if (!beatAudition) return;
+        try { beatAudition.stop(); } catch (_) {}
+        try { beatAudition.disconnect(); } catch (_) {}
+        beatAudition = null;
+        const btn = bottomPanelEl?.querySelector('.daw-beats-audition');
+        if (btn) btn.textContent = '\u25B6 Audition';
+    }
+
+    async function ensurePadBuffer(lane) {
+        const stored = blobStore.get(lane.blobKey);
+        if (!stored) return null;
+        if (!stored.decodedBuffer) {
+            stored.decodedBuffer = await AudioLabCore.decodeToBuffer(stored.blob);
+        }
+        return stored.decodedBuffer;
+    }
+
+    /** Render the pattern offline. Length = repeats x pattern + 1s tail, BPM-locked by construction. */
+    async function renderBeatPatternBuffer(repeats = 1) {
+        const p = state.beatPattern;
+        const stepDur = 60 / state.bpm / 4; // 16th notes
+        const patternDur = stepDur * p.steps;
+        const sr = 44100;
+        const ctx = new OfflineAudioContext(2, Math.ceil((patternDur * repeats + 1) * sr), sr);
+        for (const lane of p.lanes) {
+            const buffer = await ensurePadBuffer(lane);
+            if (!buffer) continue;
+            const gain = ctx.createGain();
+            gain.gain.value = lane.gain ?? 1;
+            gain.connect(ctx.destination);
+            for (let r = 0; r < repeats; r++) {
+                for (let i = 0; i < p.steps; i++) {
+                    if (!lane.steps[i]) continue;
+                    const swing = (i % 2 === 1) ? stepDur * (p.swing || 0) : 0;
+                    const src = ctx.createBufferSource();
+                    src.buffer = buffer;
+                    src.connect(gain);
+                    src.start(r * patternDur + i * stepDur + swing);
+                }
+            }
+        }
+        return await ctx.startRendering();
+    }
+
+    function patternHasHits() {
+        return state.beatPattern.lanes.some(l => l.steps.some(Boolean));
+    }
+
+    async function toggleBeatAudition(btn) {
+        if (beatAudition) { stopBeatAudition(); return; }
+        if (!patternHasHits()) {
+            if (typeof doNoticePopover === 'function') doNoticePopover('Program some steps first', 'notice-pop-yellow');
+            return;
+        }
+        btn.textContent = 'Rendering…';
+        try {
+            const buffer = await renderBeatPatternBuffer(1);
+            const ctx = getAudioContext();
+            if (ctx.state === 'suspended') { try { await ctx.resume(); } catch (_) {} }
+            const src = ctx.createBufferSource();
+            src.buffer = buffer;
+            src.loop = true;
+            src.loopStart = 0;
+            src.loopEnd = (60 / state.bpm / 4) * state.beatPattern.steps;
+            src.connect(ctx.destination);
+            src.start();
+            beatAudition = src;
+            btn.textContent = '\u25A0 Stop';
+        } catch (err) {
+            btn.textContent = '\u25B6 Audition';
+            console.error('[AudioDaw] Beat audition failed:', err);
+        }
+    }
+
+    async function renderBeatsToTrack(repeats) {
+        if (!patternHasHits()) {
+            if (typeof doNoticePopover === 'function') doNoticePopover('Program some steps first', 'notice-pop-yellow');
+            return;
+        }
+        stopBeatAudition();
+        const overlay = showDawLoadingOverlay('Rendering beat...');
+        try {
+            const buffer = await renderBeatPatternBuffer(repeats);
+            const blob = audioBufferToWav(buffer);
+            pushUndo();
+            const track = addTrack({ name: `Beat ${state.bpm}bpm` });
+            await addClipToTrack(track, blob, { name: `beat-${state.bpm}bpm-x${repeats}`, startTime: snapTime(state.currentTime) });
+            updateTotalDuration();
+            renderAllTracks();
+            updateBottomPanel();
+            resyncPlayback();
+            if (typeof doNoticePopover === 'function') doNoticePopover('Beat rendered to a new track', 'notice-pop-green');
+        } catch (err) {
+            console.error('[AudioDaw] Beat render failed:', err);
+            if (typeof doNoticePopover === 'function') doNoticePopover('Beat render failed: ' + err.message, 'notice-pop-red');
+        }
+        hideDawLoadingOverlay(overlay);
+    }
+
+    function newBeatLane(name, blobKey) {
+        return { name, blobKey, gain: 1, steps: Array(state.beatPattern.steps).fill(false) };
+    }
+
+    async function addBeatPadBlob(name, blob, container) {
+        const blobKey = `beatpad-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        blobStore.set(blobKey, { blob, decodedBuffer: await AudioLabCore.decodeToBuffer(blob) });
+        state.beatPattern.lanes.push(newBeatLane(name, blobKey));
+        renderBeatsPanel(container);
+        scheduleAutosave();
+    }
+
+    /** Beats tab UI. Rebuilt only on structural changes (lanes add/remove, steps count). */
+    function renderBeatsPanel(container) {
+        container.innerHTML = '';
+        stopBeatAudition();
+        const p = state.beatPattern;
+        const panel = createDiv(null, 'daw-beats-panel');
+        container.appendChild(panel);
+
+        // Header controls
+        const head = createDiv(null, 'daw-stems-model-row');
+        const stepsSel = document.createElement('select');
+        stepsSel.className = 'daw-fx-select';
+        for (const n of [16, 32]) {
+            const opt = document.createElement('option');
+            opt.value = n; opt.textContent = `${n} steps`;
+            stepsSel.appendChild(opt);
+        }
+        stepsSel.value = p.steps;
+        stepsSel.addEventListener('change', () => {
+            const n = parseInt(stepsSel.value);
+            p.steps = n;
+            for (const lane of p.lanes) {
+                lane.steps = Array.from({ length: n }, (_, i) => !!lane.steps[i]);
+            }
+            renderBeatsPanel(container);
+        });
+        head.appendChild(stepsSel);
+
+        const swingLbl = createSpan(null, 'daw-fx-knob-label');
+        swingLbl.textContent = 'Swing';
+        const swing = document.createElement('input');
+        swing.type = 'range';
+        swing.min = '0'; swing.max = '0.6'; swing.step = '0.05';
+        swing.value = p.swing || 0;
+        swing.className = 'daw-beats-swing';
+        swing.addEventListener('input', () => { p.swing = parseFloat(swing.value); });
+        head.appendChild(swingLbl);
+        head.appendChild(swing);
+
+        const auditionBtn = document.createElement('button');
+        auditionBtn.className = 'basic-button btn-sm daw-beats-audition';
+        auditionBtn.textContent = '\u25B6 Audition';
+        auditionBtn.addEventListener('click', () => toggleBeatAudition(auditionBtn));
+        head.appendChild(auditionBtn);
+
+        const repeatsSel = document.createElement('select');
+        repeatsSel.className = 'daw-fx-select';
+        for (const n of [1, 2, 4, 8]) {
+            const opt = document.createElement('option');
+            opt.value = n; opt.textContent = `\u00D7${n}`;
+            repeatsSel.appendChild(opt);
+        }
+        repeatsSel.value = '4';
+        repeatsSel.title = 'Pattern repeats to render';
+        head.appendChild(repeatsSel);
+
+        const renderBtn = document.createElement('button');
+        renderBtn.className = 'basic-button btn-sm btn-primary daw-stems-go';
+        renderBtn.textContent = 'Render to Track';
+        renderBtn.addEventListener('click', () => renderBeatsToTrack(parseInt(repeatsSel.value)));
+        head.appendChild(renderBtn);
+        panel.appendChild(head);
+
+        // Lane grid
+        const grid = createDiv(null, 'daw-beats-grid');
+        p.lanes.forEach((lane, li) => {
+            const row = createDiv(null, 'daw-beats-lane');
+            const name = createSpan(null, 'daw-beats-lane-name');
+            name.textContent = lane.name;
+            name.title = lane.name;
+            row.appendChild(name);
+            const prev = document.createElement('button');
+            prev.className = 'daw-fx-mini-btn';
+            prev.innerHTML = '&#x25B6;';
+            prev.title = 'Preview pad';
+            prev.addEventListener('click', async () => {
+                const buffer = await ensurePadBuffer(lane);
+                if (!buffer) return;
+                const ctx = getAudioContext();
+                if (ctx.state === 'suspended') { try { await ctx.resume(); } catch (_) {} }
+                const s = ctx.createBufferSource();
+                s.buffer = buffer;
+                s.connect(ctx.destination);
+                s.start();
+            });
+            row.appendChild(prev);
+            const gainSl = document.createElement('input');
+            gainSl.type = 'range';
+            gainSl.min = '0'; gainSl.max = '1.5'; gainSl.step = '0.05';
+            gainSl.value = lane.gain ?? 1;
+            gainSl.className = 'daw-beats-lane-gain';
+            gainSl.title = 'Pad gain';
+            gainSl.addEventListener('input', () => { lane.gain = parseFloat(gainSl.value); });
+            row.appendChild(gainSl);
+            const del = document.createElement('button');
+            del.className = 'daw-fx-mini-btn';
+            del.innerHTML = '&#x2715;';
+            del.title = 'Remove lane';
+            del.addEventListener('click', () => {
+                p.lanes.splice(li, 1);
+                renderBeatsPanel(container);
+            });
+            row.appendChild(del);
+            const stepsWrap = createDiv(null, 'daw-beats-steps');
+            for (let i = 0; i < p.steps; i++) {
+                const cell = document.createElement('button');
+                cell.className = 'daw-beats-step' + (lane.steps[i] ? ' on' : '') + (i % 4 === 0 ? ' beat-head' : '');
+                cell.addEventListener('click', () => {
+                    lane.steps[i] = !lane.steps[i];
+                    cell.classList.toggle('on', lane.steps[i]);
+                    scheduleAutosave();
+                });
+                stepsWrap.appendChild(cell);
+            }
+            row.appendChild(stepsWrap);
+            grid.appendChild(row);
+        });
+        panel.appendChild(grid);
+
+        // Add-pad row
+        const addRow = createDiv(null, 'daw-stems-action-row');
+        const promptInput = document.createElement('input');
+        promptInput.type = 'text';
+        promptInput.className = 'daw-generate-reftext';
+        promptInput.placeholder = 'Describe a one-shot: "punchy kick drum", "tight snare", "closed hi-hat"...';
+        addRow.appendChild(promptInput);
+        const genBtn = document.createElement('button');
+        genBtn.className = 'basic-button btn-sm';
+        genBtn.textContent = 'Generate Pad';
+        genBtn.addEventListener('click', async () => {
+            const prompt = promptInput.value.trim();
+            if (!prompt) {
+                if (typeof doNoticePopover === 'function') doNoticePopover('Describe the sound first', 'notice-pop-yellow');
+                return;
+            }
+            genBtn.disabled = true;
+            genBtn.textContent = 'Generating…';
+            try {
+                const result = await AudioLabAPI.callAPI('ProcessAudio', {
+                    provider_id: 'audiogen_sfx',
+                    args: { prompt, duration: 1, seed: Math.floor(Math.random() * 1e9) }
+                });
+                if (!result.success || !result.audio_data) throw new Error(result.error || 'No audio returned');
+                await addBeatPadBlob(prompt.slice(0, 18), AudioLabCore.base64ToBlob(result.audio_data, 'audio/wav'), container);
+            } catch (err) {
+                console.error('[AudioDaw] Pad generation failed:', err);
+                if (typeof doNoticePopover === 'function') doNoticePopover('Pad generation failed: ' + err.message, 'notice-pop-red');
+                genBtn.disabled = false;
+                genBtn.textContent = 'Generate Pad';
+            }
+        });
+        addRow.appendChild(genBtn);
+        const importBtn = document.createElement('button');
+        importBtn.className = 'basic-button btn-sm';
+        importBtn.textContent = 'Import Pad';
+        importBtn.addEventListener('click', () => {
+            const inp = document.createElement('input');
+            inp.type = 'file';
+            inp.accept = 'audio/*';
+            inp.onchange = async () => {
+                if (inp.files[0]) await addBeatPadBlob(inp.files[0].name.replace(/\.[^.]+$/, ''), inp.files[0], container);
+            };
+            inp.click();
+        });
+        addRow.appendChild(importBtn);
+        const clipBtn = document.createElement('button');
+        clipBtn.className = 'basic-button btn-sm';
+        clipBtn.textContent = 'From Selected Clip';
+        clipBtn.addEventListener('click', () => {
+            const sel = findClipById(state.selectedClipId);
+            if (!sel) {
+                if (typeof doNoticePopover === 'function') doNoticePopover('Select a clip first', 'notice-pop-yellow');
+                return;
+            }
+            state.beatPattern.lanes.push(newBeatLane(sel.clip.name.slice(0, 18), sel.clip.blobKey));
+            renderBeatsPanel(container);
+        });
+        addRow.appendChild(clipBtn);
+        panel.appendChild(addRow);
+    }
+
+    // ===== SOUND PALETTE =====
+    // Floating dock: prompt -> N candidate sounds -> audition -> add to track / beat pad / variation.
+    // Results are session-only until added (then their blob enters blobStore).
+
+    let paletteEl = null;
+    let paletteResults = []; // [{blob, url, prompt, seed, type}]
+
+    function togglePalette(btn) {
+        if (paletteEl) {
+            paletteEl.remove();
+            paletteEl = null;
+            btn?.classList.remove('active');
+            return;
+        }
+        btn?.classList.add('active');
+        paletteEl = createDiv(null, 'daw-palette');
+        const body = modalEl?.querySelector('.daw-body');
+        (body || document.body).appendChild(paletteEl);
+        renderPalette();
+    }
+
+    function paletteEngineFor(type) {
+        if (type === 'sfx') return { id: 'audiogen_sfx', args: (prompt, dur, seed) => ({ prompt, duration: dur, seed }) };
+        // loops/music: ACE-Step with tempo/key hints from the transport
+        return {
+            id: 'acestep_music',
+            args: (prompt, dur, seed) => ({
+                prompt, genre: prompt, duration: dur, seed,
+                bpm: state.bpm, time_signature: state.timeSignature.join('/')
+            })
+        };
+    }
+
+    async function paletteGenerate(prompt, type, duration, count) {
+        const jobs = [];
+        for (let i = 0; i < count; i++) {
+            const seed = Math.floor(Math.random() * 1e9);
+            const eng = paletteEngineFor(type);
+            jobs.push(AudioLabAPI.callAPI('ProcessAudio', { provider_id: eng.id, args: eng.args(prompt, duration, seed) })
+                .then(r => ({ r, seed }))
+                .catch(err => ({ r: { success: false, error: err.message }, seed })));
+        }
+        const done = await Promise.all(jobs);
+        const out = [];
+        for (const { r, seed } of done) {
+            if (r.success && r.audio_data) {
+                const blob = AudioLabCore.base64ToBlob(r.audio_data, 'audio/wav');
+                out.push({ blob, url: URL.createObjectURL(blob), prompt, seed, type });
+            }
+        }
+        return out;
+    }
+
+    function renderPalette() {
+        if (!paletteEl) return;
+        paletteEl.innerHTML = '';
+        const head = createDiv(null, 'daw-palette-head');
+        head.innerHTML = '<strong>Sound Palette</strong>';
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'daw-fx-mini-btn';
+        closeBtn.innerHTML = '&#x2715;';
+        closeBtn.addEventListener('click', () => togglePalette(transportEl?.querySelector('.daw-btn-palette')));
+        head.appendChild(closeBtn);
+        paletteEl.appendChild(head);
+
+        const promptInput = document.createElement('textarea');
+        promptInput.className = 'daw-generate-text';
+        promptInput.rows = 2;
+        promptInput.placeholder = 'Describe a sound: "rain on a tin roof", "808 bass loop, dark trap"...';
+        paletteEl.appendChild(promptInput);
+
+        const optsRow = createDiv(null, 'daw-palette-opts');
+        const typeSel = document.createElement('select');
+        typeSel.className = 'daw-fx-select';
+        for (const [v, l] of [['sfx', 'SFX'], ['loop', 'Loop / Music']]) {
+            const opt = document.createElement('option');
+            opt.value = v; opt.textContent = l;
+            typeSel.appendChild(opt);
+        }
+        const durSel = document.createElement('select');
+        durSel.className = 'daw-fx-select';
+        for (const d of [1, 2, 4, 8, 16]) {
+            const opt = document.createElement('option');
+            opt.value = d; opt.textContent = d + 's';
+            durSel.appendChild(opt);
+        }
+        durSel.value = '4';
+        const countSel = document.createElement('select');
+        countSel.className = 'daw-fx-select';
+        for (const c of [1, 2, 3]) {
+            const opt = document.createElement('option');
+            opt.value = c; opt.textContent = '\u00D7' + c;
+            countSel.appendChild(opt);
+        }
+        countSel.value = '2';
+        const goBtn = document.createElement('button');
+        goBtn.className = 'basic-button btn-sm btn-primary';
+        goBtn.textContent = 'Generate';
+        goBtn.addEventListener('click', async () => {
+            const prompt = promptInput.value.trim();
+            if (!prompt) return;
+            goBtn.disabled = true;
+            goBtn.textContent = 'Generating…';
+            try {
+                const results = await paletteGenerate(prompt, typeSel.value, parseInt(durSel.value), parseInt(countSel.value));
+                if (!results.length && typeof doNoticePopover === 'function') {
+                    doNoticePopover('Generation returned nothing — check the engine is installed', 'notice-pop-red');
+                }
+                paletteResults.unshift(...results);
+                paletteResults = paletteResults.slice(0, 12);
+                renderPalette();
+                const pi = paletteEl.querySelector('.daw-generate-text');
+                if (pi) pi.value = prompt;
+            } finally {
+                goBtn.disabled = false;
+                goBtn.textContent = 'Generate';
+            }
+        });
+        optsRow.appendChild(typeSel);
+        optsRow.appendChild(durSel);
+        optsRow.appendChild(countSel);
+        optsRow.appendChild(goBtn);
+        paletteEl.appendChild(optsRow);
+
+        const list = createDiv(null, 'daw-palette-list');
+        for (const res of paletteResults) {
+            const card = createDiv(null, 'daw-palette-card');
+            const label = createDiv(null, 'daw-palette-card-label');
+            label.textContent = res.prompt.slice(0, 40);
+            label.title = `${res.prompt} (seed ${res.seed})`;
+            card.appendChild(label);
+            const audio = document.createElement('audio');
+            audio.controls = true;
+            audio.src = res.url;
+            audio.className = 'daw-palette-audio';
+            card.appendChild(audio);
+            const actions = createDiv(null, 'daw-palette-actions');
+            const addBtn = document.createElement('button');
+            addBtn.className = 'basic-button btn-sm';
+            addBtn.textContent = '+ Track';
+            addBtn.addEventListener('click', async () => {
+                pushUndo();
+                const track = addTrack({ name: res.prompt.slice(0, 16) });
+                await addClipToTrack(track, res.blob, { name: res.prompt.slice(0, 24), startTime: snapTime(state.currentTime) });
+                updateTotalDuration();
+                renderAllTracks();
+                updateBottomPanel();
+                resyncPlayback();
+            });
+            actions.appendChild(addBtn);
+            const padBtn = document.createElement('button');
+            padBtn.className = 'basic-button btn-sm';
+            padBtn.textContent = '+ Pad';
+            padBtn.title = 'Add as a beat sequencer pad';
+            padBtn.addEventListener('click', async () => {
+                const beatsTab = bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="beats"]');
+                if (beatsTab) {
+                    await addBeatPadBlob(res.prompt.slice(0, 18), res.blob, beatsTab);
+                    switchBottomTab('beats');
+                }
+            });
+            actions.appendChild(padBtn);
+            const varBtn = document.createElement('button');
+            varBtn.className = 'basic-button btn-sm';
+            varBtn.innerHTML = '&#x267B;';
+            varBtn.title = 'Generate a variation (same prompt, new seed)';
+            varBtn.addEventListener('click', async () => {
+                varBtn.disabled = true;
+                const results = await paletteGenerate(res.prompt, res.type, Math.max(1, Math.round(res.blob.size / (44100 * 4 * 2))) || 4, 1);
+                paletteResults.unshift(...results);
+                paletteResults = paletteResults.slice(0, 12);
+                renderPalette();
+            });
+            actions.appendChild(varBtn);
+            card.appendChild(actions);
+            list.appendChild(card);
+        }
+        if (!paletteResults.length) {
+            list.innerHTML = '<div class="daw-stems-clipinfo" style="padding:0.5rem;">Generated sounds appear here — audition, then add to a track or beat pad.</div>';
+        }
+        paletteEl.appendChild(list);
+    }
+
     // ===== PROJECT PERSISTENCE =====
     // IndexedDB (AudioDawStore) holds a crash-safe autosave slot; explicit saves go
     // to the server per-user via AudioLabSaveProject/LoadProject/ListProjects.
@@ -2906,12 +3839,18 @@ const AudioDaw = (() => {
 
     function serializeProject() {
         return {
-            version: 1,
+            version: 2,
             bpm: state.bpm,
+            masterLimiterEnabled: state.masterLimiterEnabled,
             timeSignature: state.timeSignature,
             masterVolume: state.masterVolume,
             rulerMode: state.rulerMode,
             snapEnabled: state.snapEnabled,
+            beatPattern: {
+                steps: state.beatPattern.steps,
+                swing: state.beatPattern.swing,
+                lanes: state.beatPattern.lanes.map(l => ({ name: l.name, blobKey: l.blobKey, gain: l.gain, steps: [...l.steps] }))
+            },
             tracks: state.tracks.map(t => AudioDawTrack.serializeTrack(t))
         };
     }
@@ -2925,6 +3864,12 @@ const AudioDaw = (() => {
                     const stored = blobStore.get(clip.blobKey);
                     if (stored) blobs.set(clip.blobKey, stored.blob);
                 }
+            }
+        }
+        for (const lane of state.beatPattern.lanes) {
+            if (!blobs.has(lane.blobKey)) {
+                const stored = blobStore.get(lane.blobKey);
+                if (stored) blobs.set(lane.blobKey, stored.blob);
             }
         }
         return blobs;
@@ -2943,6 +3888,19 @@ const AudioDaw = (() => {
         state.masterVolume = project.masterVolume ?? 1.0;
         state.rulerMode = project.rulerMode || 'time';
         state.snapEnabled = project.snapEnabled !== false;
+        state.masterLimiterEnabled = project.masterLimiterEnabled !== false;
+        if (project.beatPattern) {
+            state.beatPattern = {
+                steps: project.beatPattern.steps || 16,
+                swing: project.beatPattern.swing || 0,
+                lanes: (project.beatPattern.lanes || []).map(l => ({ name: l.name, blobKey: l.blobKey, gain: l.gain ?? 1, steps: [...(l.steps || [])] }))
+            };
+            for (const lane of state.beatPattern.lanes) {
+                if (!blobStore.has(lane.blobKey) && blobs.has(lane.blobKey)) {
+                    blobStore.set(lane.blobKey, { blob: blobs.get(lane.blobKey), decodedBuffer: null });
+                }
+            }
+        }
         blobStore.clear();
 
         for (const ts of project.tracks || []) {
@@ -2952,6 +3910,14 @@ const AudioDaw = (() => {
             track.muted = !!ts.muted;
             track.soloed = !!ts.soloed;
             track.armed = !!ts.armed;
+            track.fx = (ts.fx || []).filter(f => typeof AudioDawFx === 'undefined' || AudioDawFx.FX_DEFS[f.type])
+                .map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));
+            track.automation = {
+                volume: (ts.automation?.volume || []).map(p => ({ ...p })),
+                pan: (ts.automation?.pan || []).map(p => ({ ...p }))
+            };
+            track.automationVisible = !!ts.automationVisible;
+            track.automationParam = ts.automationParam || 'volume';
             for (const cs of ts.clips || []) {
                 const blob = blobs.get(cs.blobKey);
                 if (!blob) continue;
@@ -3331,6 +4297,8 @@ const AudioDaw = (() => {
             const sel = findClipById(state.selectedClipId);
             if (sel) doSplitClip(sel.clip, sel.track);
         }
+        else if (key === 'b') { switchBottomTab('beats'); }
+        else if (key === 'f') { switchBottomTab('fx'); }
         else if (key === '+' || key === '=') { e.preventDefault(); setZoom(state.zoom * 1.25); }
         else if (key === '-') { e.preventDefault(); setZoom(state.zoom / 1.25); }
         else if (key === 'home') { e.preventDefault(); seekTo(0); }
@@ -3399,6 +4367,7 @@ const AudioDaw = (() => {
 
     function resetState() {
         abortRecording();
+        stopBeatAudition();
         stopPlayback();
         teardownPlaybackGraph();
         // Destroy existing tracks
@@ -3413,6 +4382,10 @@ const AudioDaw = (() => {
 
     function destroyAll() {
         abortRecording();
+        stopBeatAudition();
+        if (paletteEl) { paletteEl.remove(); paletteEl = null; }
+        for (const r of paletteResults) { try { URL.revokeObjectURL(r.url); } catch (_) {} }
+        paletteResults = [];
         stopPlayback();
         teardownPlaybackGraph();
         if (state) {

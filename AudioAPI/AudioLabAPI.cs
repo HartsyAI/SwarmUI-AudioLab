@@ -51,6 +51,7 @@ public static class AudioLabAPI
             API.RegisterAPICall(GetInstallationStatus, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(GetInstallationProgress, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(ConvertAudioFormat, false, AudioLabPermissions.PermProcessAudio);
+            API.RegisterAPICall(AudioLabTimeStretch, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(AudioLabListEngines, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(AudioLabInstallEngine, true, AudioLabPermissions.PermManageBackends);
             API.RegisterAPICall(AudioLabInstallAllModels, true, AudioLabPermissions.PermManageBackends);
@@ -65,6 +66,89 @@ public static class AudioLabAPI
         {
             Logs.Error($"[AudioLab] Failed to register API endpoints: {ex.Message}");
             throw;
+        }
+    }
+
+    /// <summary>Tempo-preserving time-stretch (and optional pitch shift) via ffmpeg atempo.
+    /// rate = output tempo multiplier (2.0 = twice as fast / half as long). semitones shifts pitch.</summary>
+    public static async Task<JObject> AudioLabTimeStretch(Session session, JObject input)
+    {
+        try
+        {
+            string audioData = input["audio_data"]?.ToString();
+            double rate = input["rate"]?.Value<double>() ?? 1.0;
+            double semitones = input["semitones"]?.Value<double>() ?? 0;
+            if (string.IsNullOrEmpty(audioData))
+            {
+                return AudioLab.CreateErrorResponse("audio_data is required", "missing_audio");
+            }
+            if (rate < 0.25 || rate > 4.0)
+            {
+                return AudioLab.CreateErrorResponse("rate must be within 0.25-4.0", "bad_rate");
+            }
+            string ffmpeg = Utilities.FfmegLocation.Value;
+            if (string.IsNullOrEmpty(ffmpeg))
+            {
+                return AudioLab.CreateErrorResponse("ffmpeg not found. Install ffmpeg and ensure it is in your PATH.", "ffmpeg_not_found");
+            }
+            byte[] audioBytes = Convert.FromBase64String(audioData);
+            string tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "audiolab");
+            System.IO.Directory.CreateDirectory(tempDir);
+            string inputPath = System.IO.Path.Combine(tempDir, $"stretch_input_{Guid.NewGuid()}.wav");
+            string outputPath = System.IO.Path.Combine(tempDir, $"stretch_output_{Guid.NewGuid()}.wav");
+            try
+            {
+                await System.IO.File.WriteAllBytesAsync(inputPath, audioBytes);
+                // Pitch shift = resample by 2^(semi/12) then counter-stretch; atempo legal range is
+                // 0.5-2.0 so the total tempo factor is decomposed into a chain.
+                double pitchFactor = Math.Pow(2, semitones / 12.0);
+                double tempo = rate / pitchFactor;
+                List<string> filters = [];
+                if (Math.Abs(semitones) > 0.01)
+                {
+                    filters.Add($"asetrate=44100*{pitchFactor.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)},aresample=44100");
+                }
+                double remaining = tempo;
+                while (remaining < 0.5 || remaining > 2.0)
+                {
+                    double step = remaining < 0.5 ? 0.5 : 2.0;
+                    filters.Add($"atempo={step.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)}");
+                    remaining /= step;
+                }
+                if (Math.Abs(remaining - 1.0) > 0.0001)
+                {
+                    filters.Add($"atempo={remaining.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)}");
+                }
+                List<string> args = ["-i", inputPath, "-y"];
+                if (filters.Count > 0)
+                {
+                    args.AddRange(["-filter:a", string.Join(",", filters)]);
+                }
+                args.AddRange(["-codec:a", "pcm_s16le", "-ar", "44100", outputPath]);
+                string result = await Utilities.QuickRunProcess(ffmpeg, [.. args]);
+                Logs.Debug($"[AudioLab] ffmpeg stretch output: {result}");
+                if (!System.IO.File.Exists(outputPath))
+                {
+                    return AudioLab.CreateErrorResponse("Time-stretch failed - no output file produced", "stretch_failed");
+                }
+                byte[] outputBytes = await System.IO.File.ReadAllBytesAsync(outputPath);
+                return AudioLab.CreateSuccessResponse(new JObject()
+                {
+                    ["audio_data"] = Convert.ToBase64String(outputBytes),
+                    ["rate"] = rate,
+                    ["semitones"] = semitones
+                });
+            }
+            finally
+            {
+                try { System.IO.File.Delete(inputPath); } catch { }
+                try { System.IO.File.Delete(outputPath); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] TimeStretch failed: {ex.Message}");
+            return AudioLab.CreateErrorResponse($"Time-stretch failed: {ex.Message}", "stretch_failed");
         }
     }
 
@@ -288,6 +372,12 @@ public static class AudioLabAPI
                 ["language"] = request.Language,
                 ["volume"] = request.Volume
             };
+            // Forward the zero-shot voice reference so cloning providers (F5, VibeVoice, …) can actually run
+            // via the API — the TtsHandler reads args["reference_audio"] (base64 WAV) + args["ref_text"].
+            if (input["reference_audio"] is JToken refAudio && refAudio.Type != JTokenType.Null)
+                args["reference_audio"] = refAudio.ToString();
+            if (input["ref_text"] is JToken refText && refText.Type != JTokenType.Null)
+                args["ref_text"] = refText.ToString();
 
             long ttsStart = Environment.TickCount64;
             JObject result = await AudioServerManager.Instance.ProcessAsync(ttsProvider, args);

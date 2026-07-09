@@ -160,6 +160,20 @@ Click **Audio Lab** on any audio output to open the DAW editor. The editor opens
 | Ctrl+Shift+Z | Redo |
 | Delete | Delete selected clip |
 
+### Future Features (Roadmap)
+
+Planned DAW upgrades, prioritized from producer feedback research (r/musicproduction, r/ableton, r/Reaper, r/Bitwig, r/FL_Studio):
+
+- **Piano roll + playable instruments** — Scale-aware MIDI note editing (FL Studio-style: lock-to-key highlighting, ghost notes, grid-snapped editing) backed by a built-in sampler/synth. The single most-requested DAW feature across every community surveyed; requires an instrument engine, so it lands after the sample-based workflow matures.
+- **Session-view loop jamming** — A non-linear clip-launch grid (Ableton-style) for auditioning loop combinations before committing them to the arrangement timeline.
+- **Retrospective record** — An always-listening capture buffer (FL "Dump Score Log" style) so an improvised take on the beat pads or mic can be recovered *after* the fact, without having armed record.
+- **Comping & takes** — Loop-record multiple takes into stacked lanes and assemble the best parts; take lanes double as recoverable edit history (Pro Tools playlist-style).
+- **True auto-warp** — Full transient-based warping of imported audio to the project grid (the current Conform-to-BPM auto-detects tempo and stretches uniformly; warping adds per-transient alignment and stretch-quality modes).
+- **Parameter modulation** — Assignable LFO/envelope modulators on any FX knob (Bitwig-style "modulate anything"), building on the existing automation engine.
+- **Sound Palette upgrades** — Starred favorites that persist across projects, audition-at-project-tempo, and prompt presets for common one-shots and loop styles.
+- **Demucs weight auto-download** — One-click stems installs fetch the htdemucs checkpoint automatically instead of requiring manual placement in the model folder.
+- **Full FX-parameter automation** — Extend the volume/pan envelope lanes to any effect parameter.
+
 ## API Endpoints
 
 All endpoints require authentication and use SwarmUI's permission system.
