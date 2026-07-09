@@ -1040,7 +1040,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
             bool anyPresent = false;
             foreach (AudioModelDefinition modelDef in def.Models)
             {
-                if (AudioEngine.WeightsPresent(providerId, modelDef.Id))
+                // Self-managed models fetch their own weights at first load — never "missing"
+                if (modelDef.SelfManaged || AudioEngine.WeightsPresent(providerId, modelDef.Id))
                 {
                     anyPresent = true;
                     break;

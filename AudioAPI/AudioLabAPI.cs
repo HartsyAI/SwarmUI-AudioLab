@@ -29,6 +29,9 @@ public static class AudioLabPermissions
 
     /// <summary>Permission for checking audio provider status.</summary>
     public static readonly PermInfo PermCheckStatus = Permissions.Register(new("audio_check_status", "Check Audio Status", "Allows checking the status of audio providers.", PermissionDefault.POWERUSERS, AudioLabPermGroup));
+
+    /// <summary>Permission for saving/loading DAW projects (per-user data).</summary>
+    public static readonly PermInfo PermDawProjects = Permissions.Register(new("audio_daw_projects", "AudioLab DAW Projects", "Allows saving and loading personal AudioLab DAW projects.", PermissionDefault.USER, AudioLabPermGroup));
 }
 
 /// <summary>AudioLab API endpoints — provider-aware audio processing.</summary>
@@ -53,6 +56,10 @@ public static class AudioLabAPI
             API.RegisterAPICall(AudioLabInstallAllModels, true, AudioLabPermissions.PermManageBackends);
             API.RegisterAPICall(AudioLabUninstallEngine, true, AudioLabPermissions.PermManageBackends);
             API.RegisterAPICall(AudioLabRemoveAllModels, true, AudioLabPermissions.PermManageBackends);
+            API.RegisterAPICall(AudioLabSaveProject, true, AudioLabPermissions.PermDawProjects);
+            API.RegisterAPICall(AudioLabLoadProject, false, AudioLabPermissions.PermDawProjects);
+            API.RegisterAPICall(AudioLabListProjects, false, AudioLabPermissions.PermDawProjects);
+            API.RegisterAPICall(AudioLabDeleteProject, true, AudioLabPermissions.PermDawProjects);
         }
         catch (Exception ex)
         {
@@ -60,6 +67,108 @@ public static class AudioLabAPI
             throw;
         }
     }
+
+    #region DAW Projects
+
+    /// <summary>Per-user data store namespace for DAW projects.</summary>
+    private const string DawProjectDataName = "audiolab_daw";
+
+    /// <summary>Max serialized project size accepted (base64 audio inflates ~1.33x).</summary>
+    private const int MaxProjectBytes = 64 * 1024 * 1024;
+
+    /// <summary>Save a DAW project (arrangement JSON with embedded base64 clip audio) under the user's account.</summary>
+    public static async Task<JObject> AudioLabSaveProject(Session session, JObject input)
+    {
+        try
+        {
+            await Task.CompletedTask;
+            string name = input["name"]?.ToString()?.Trim();
+            string json = input["project_json"]?.ToString();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return AudioLab.CreateErrorResponse("Missing 'name' parameter", "missing_name");
+            }
+            if (string.IsNullOrEmpty(json))
+            {
+                return AudioLab.CreateErrorResponse("Missing 'project_json' parameter", "missing_project");
+            }
+            if (json.Length > MaxProjectBytes)
+            {
+                return AudioLab.CreateErrorResponse($"Project too large ({json.Length / (1024 * 1024)}MB, max {MaxProjectBytes / (1024 * 1024)}MB)", "project_too_large");
+            }
+            session.User.SaveGenericData(DawProjectDataName, name, json);
+            return AudioLab.CreateSuccessResponse(new JObject() { ["name"] = name, ["size"] = json.Length });
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] SaveProject failed: {ex.Message}");
+            return AudioLab.CreateErrorResponse($"Save failed: {ex.Message}", "save_failed");
+        }
+    }
+
+    /// <summary>Load a previously saved DAW project by name.</summary>
+    public static async Task<JObject> AudioLabLoadProject(Session session, JObject input)
+    {
+        try
+        {
+            await Task.CompletedTask;
+            string name = input["name"]?.ToString()?.Trim();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return AudioLab.CreateErrorResponse("Missing 'name' parameter", "missing_name");
+            }
+            string json = session.User.GetGenericData(DawProjectDataName, name);
+            if (json is null)
+            {
+                return AudioLab.CreateErrorResponse($"No project named '{name}'", "not_found");
+            }
+            return AudioLab.CreateSuccessResponse(new JObject() { ["name"] = name, ["project_json"] = json });
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] LoadProject failed: {ex.Message}");
+            return AudioLab.CreateErrorResponse($"Load failed: {ex.Message}", "load_failed");
+        }
+    }
+
+    /// <summary>List the user's saved DAW project names.</summary>
+    public static async Task<JObject> AudioLabListProjects(Session session, JObject input)
+    {
+        try
+        {
+            await Task.CompletedTask;
+            List<string> names = session.User.ListAllGenericData(DawProjectDataName);
+            return AudioLab.CreateSuccessResponse(new JObject() { ["projects"] = JArray.FromObject(names ?? []) });
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] ListProjects failed: {ex.Message}");
+            return AudioLab.CreateErrorResponse($"List failed: {ex.Message}", "list_failed");
+        }
+    }
+
+    /// <summary>Delete a saved DAW project.</summary>
+    public static async Task<JObject> AudioLabDeleteProject(Session session, JObject input)
+    {
+        try
+        {
+            await Task.CompletedTask;
+            string name = input["name"]?.ToString()?.Trim();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return AudioLab.CreateErrorResponse("Missing 'name' parameter", "missing_name");
+            }
+            session.User.DeleteGenericData(DawProjectDataName, name);
+            return AudioLab.CreateSuccessResponse(new JObject() { ["name"] = name });
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] DeleteProject failed: {ex.Message}");
+            return AudioLab.CreateErrorResponse($"Delete failed: {ex.Message}", "delete_failed");
+        }
+    }
+
+    #endregion
 
     #region Generic Provider Processing
 

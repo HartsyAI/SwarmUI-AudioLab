@@ -14,6 +14,7 @@ const AudioDaw = (() => {
     // ===== DAW STATE =====
     let state = null;
     let modalEl = null;
+    let listenersInitialized = false;
 
     // DOM references
     let transportEl = null;
@@ -29,11 +30,19 @@ const AudioDaw = (() => {
     // Runtime
     let timeline = null;
     let audioCtx = null;
-    let activeSourceNodes = [];
     let rafId = null;
-    let playStartCtxTime = 0;
-    let playStartOffset = 0;
     let blobStore = new Map(); // blobKey -> { blob, decodedBuffer }
+    // Live playback session graph; null when stopped. See buildTrackChain/scheduleClip.
+    // { ctx, masterGain, chains: Map<trackId, {trackGain, trackPan}>,
+    //   liveClips: [{clipId, trackId, iteration, source, fadeGain, clipGain}],
+    //   baseCtxTime, baseTimelineTime, schedulerId, loop: {nextWrapCtxTime, nextIterScheduled, iteration}|null }
+    let playback = null;
+    const LOOKAHEAD = 0.2;         // seconds ahead the loop scheduler pre-schedules the next iteration
+    const SCHEDULER_TICK_MS = 25;  // setInterval period (rAF would stall in background tabs)
+    const START_EPSILON = 0.03;    // shared start instant so no source starts "in the past"
+    // Active mic recording session; null when idle. { track, startP, recorder, placeholderEl }
+    let recording = null;
+    let recordSettings = { deviceId: null, voiceMode: false };
 
     function getDefaultState() {
         return {
@@ -47,6 +56,8 @@ const AudioDaw = (() => {
             loopEnabled: false,
             loopStart: 0,
             loopEnd: 0,
+            rulerMode: 'time', // 'time' | 'beats'
+            snapEnabled: true,
             zoom: 100,        // pixels per second
             scrollLeft: 0,
             totalDuration: 10,
@@ -78,20 +89,26 @@ const AudioDaw = (() => {
         const track = addTrack();
         try {
             const blob = await fetchAsBlob(audioSrc);
-            await addClipToTrack(track, blob, { name: getFilenameFromSrc(audioSrc) });
+            const clip = await addClipToTrack(track, blob, { name: getFilenameFromSrc(audioSrc) });
+            state.selectedClipId = clip.id;
             updateTotalDuration();
             renderAllTracks();
             updateTimeDisplay();
+            updateBottomPanel(); // panel was built before the clip existed
         } catch (err) {
             console.error('[AudioDaw] Failed to load audio:', err);
+            if (typeof doNoticePopover === 'function') {
+                doNoticePopover('Failed to load audio: ' + err.message, 'notice-pop-red');
+            }
         }
         hideDawLoadingOverlay(overlay);
+        maybeOfferResume();
     }
 
     function close() {
-        stopPlayback();
+        // Teardown happens in the 'hidden.bs.modal' hook so ESC/backdrop closes clean up too
         if (modalEl) $(modalEl).modal('hide');
-        destroyAll();
+        else destroyAll();
     }
 
     // ===== MODAL BUILDING =====
@@ -127,8 +144,12 @@ const AudioDaw = (() => {
         modalEl = document.getElementById(MODAL_ID);
         modalEl.classList.add('daw-mode');
 
-        // Wire close on backdrop click / escape
         modalEl.addEventListener('keydown', handleKeyboard);
+        // Bootstrap hides on ESC/backdrop without going through close() — always tear down here
+        $(modalEl).on('hidden.bs.modal', () => {
+            flushAutosave(); // snapshot before teardown so the session is resumable
+            destroyAll();
+        });
     }
 
     function initLayout() {
@@ -144,9 +165,15 @@ const AudioDaw = (() => {
         buildFooter();
         initTimeline();
         buildBottomPanel();
-        setupScrollSync();
-        initBottomSplitter();
-        initHeaderSplitter();
+        updateLaneGrid();
+        // Splitters + scroll sync bind document/element listeners — the modal DOM persists
+        // across opens, so bind exactly once or handlers stack up every open.
+        if (!listenersInitialized) {
+            listenersInitialized = true;
+            setupScrollSync();
+            initBottomSplitter();
+            initHeaderSplitter();
+        }
     }
 
     function initHeaderSplitter() {
@@ -223,9 +250,19 @@ const AudioDaw = (() => {
         const recBtn = document.createElement('button');
         recBtn.className = 'daw-transport-btn daw-btn-rec';
         recBtn.innerHTML = '&#x25CF;';
-        recBtn.title = 'Record (future)';
-        recBtn.disabled = true;
+        recBtn.title = 'Record into armed track (R)';
+        recBtn.addEventListener('click', () => {
+            if (recording) stopRecordingFlow(); else startRecordingFlow();
+        });
         transportEl.appendChild(recBtn);
+
+        // Mic settings (device + voice mode)
+        const micBtn = document.createElement('button');
+        micBtn.className = 'daw-transport-btn daw-btn-mic-settings';
+        micBtn.innerHTML = '&#x25BE;';
+        micBtn.title = 'Microphone settings';
+        micBtn.addEventListener('click', (e) => showMicSettingsMenu(e));
+        transportEl.appendChild(micBtn);
 
         // Rewind
         quickAppendButton(transportEl, '&#x23EE;', () => seekTo(0), ' daw-transport-btn', 'Rewind to start');
@@ -239,7 +276,11 @@ const AudioDaw = (() => {
         transportEl.appendChild(playBtn);
 
         // Stop
-        quickAppendButton(transportEl, '&#x25A0;', () => { stopPlayback(); seekTo(0); }, ' daw-transport-btn', 'Stop');
+        quickAppendButton(transportEl, '&#x25A0;', () => {
+            if (recording) { stopRecordingFlow(); return; }
+            stopPlayback();
+            seekTo(0);
+        }, ' daw-transport-btn', 'Stop');
 
         // Fast Forward
         quickAppendButton(transportEl, '&#x23ED;', () => seekTo(state.totalDuration), ' daw-transport-btn', 'Go to end');
@@ -250,24 +291,26 @@ const AudioDaw = (() => {
 
         // Loop toggle
         const loopBtn = document.createElement('button');
-        loopBtn.className = 'daw-transport-btn daw-btn-loop';
-        loopBtn.innerHTML = '&#x1F501;';
-        loopBtn.title = 'Toggle Loop';
-        loopBtn.addEventListener('click', () => {
-            state.loopEnabled = !state.loopEnabled;
-            loopBtn.classList.toggle('active', state.loopEnabled);
-            if (timeline) timeline.setLoop(state.loopEnabled, state.loopStart, state.loopEnd);
-        });
+        loopBtn.className = 'daw-transport-btn daw-btn-text daw-btn-loop' + (state.loopEnabled ? ' active' : '');
+        loopBtn.textContent = 'LOOP';
+        loopBtn.title = 'Toggle Loop (L)';
+        loopBtn.addEventListener('click', toggleLoop);
         transportEl.appendChild(loopBtn);
 
         // Separator
         const sep2 = createDiv(null, 'alp-separator');
         transportEl.appendChild(sep2);
 
-        // Time display
-        timeDisplayEl = createSpan(null, 'daw-transport-time');
+        // LCD position cluster: time + bars.beats
+        const lcd = createDiv(null, 'daw-lcd');
+        timeDisplayEl = createSpan(null, 'daw-lcd-time');
         timeDisplayEl.textContent = '0:00.0 / 0:00.0';
-        transportEl.appendChild(timeDisplayEl);
+        const lcdBeats = createSpan(null, 'daw-lcd-beats');
+        lcdBeats.textContent = '1.1.1';
+        lcdBeats.title = 'Position in bars.beats.sixteenths';
+        lcd.appendChild(timeDisplayEl);
+        lcd.appendChild(lcdBeats);
+        transportEl.appendChild(lcd);
 
         // Spacer
         const spacer = createDiv(null, 'daw-transport-spacer');
@@ -284,11 +327,93 @@ const AudioDaw = (() => {
         bpmInputEl.max = 300;
         bpmInputEl.addEventListener('change', (e) => {
             state.bpm = parseInt(e.target.value) || 120;
+            if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
+            updateLaneGrid();
         });
         const bpmGroup = createDiv(null, 'daw-transport-bpm-group');
         bpmGroup.appendChild(bpmInputEl);
         bpmGroup.appendChild(bpmLabel);
+
+        // Time signature
+        const sigSelect = document.createElement('select');
+        sigSelect.className = 'daw-transport-timesig';
+        sigSelect.title = 'Time signature';
+        for (const sig of ['4/4', '3/4', '6/8', '2/4', '5/4']) {
+            const opt = document.createElement('option');
+            opt.value = sig;
+            opt.textContent = sig;
+            sigSelect.appendChild(opt);
+        }
+        sigSelect.value = state.timeSignature.join('/');
+        sigSelect.addEventListener('change', () => {
+            state.timeSignature = sigSelect.value.split('/').map(Number);
+            if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
+            updateLaneGrid();
+        });
+        bpmGroup.appendChild(sigSelect);
         transportEl.appendChild(bpmGroup);
+
+        // Ruler mode toggle (time <-> bars/beats)
+        const modeBtn = document.createElement('button');
+        modeBtn.className = 'daw-transport-btn daw-btn-text daw-btn-grid-mode';
+        const setModeLabel = () => {
+            modeBtn.textContent = state.rulerMode === 'beats' ? 'BARS' : 'TIME';
+            modeBtn.title = state.rulerMode === 'beats'
+                ? 'Ruler: bars/beats — click for time'
+                : 'Ruler: time — click for bars/beats';
+        };
+        setModeLabel();
+        modeBtn.addEventListener('click', () => {
+            state.rulerMode = state.rulerMode === 'beats' ? 'time' : 'beats';
+            if (timeline) timeline.setMode(state.rulerMode);
+            setModeLabel();
+            updateLaneGrid();
+        });
+        transportEl.appendChild(modeBtn);
+
+        // Snap toggle
+        const snapBtn = document.createElement('button');
+        snapBtn.className = 'daw-transport-btn daw-btn-text daw-btn-snap' + (state.snapEnabled ? ' active' : '');
+        snapBtn.textContent = 'SNAP';
+        snapBtn.title = 'Snap to grid';
+        snapBtn.addEventListener('click', () => {
+            state.snapEnabled = !state.snapEnabled;
+            snapBtn.classList.toggle('active', state.snapEnabled);
+        });
+        transportEl.appendChild(snapBtn);
+
+        // Master volume + meter cluster
+        const masterGroup = createDiv(null, 'daw-transport-master');
+        const masterLbl = createSpan(null, 'daw-transport-master-label');
+        masterLbl.textContent = 'MASTER';
+        const masterSlider = document.createElement('input');
+        masterSlider.type = 'range';
+        masterSlider.className = 'daw-transport-master-vol';
+        masterSlider.min = '0';
+        masterSlider.max = '1';
+        masterSlider.step = '0.005';
+        masterSlider.value = AudioDawMixer.gainToFaderPos
+            ? AudioDawMixer.gainToFaderPos(state.masterVolume) : state.masterVolume;
+        masterSlider.title = 'Master volume (dB-scaled, double-click = 0 dB)';
+        masterSlider.addEventListener('input', (e) => {
+            const p = parseFloat(e.target.value);
+            state.masterVolume = AudioDawMixer.faderPosToGain ? AudioDawMixer.faderPosToGain(p) : p;
+            updatePlaybackGains();
+        });
+        masterSlider.addEventListener('dblclick', () => {
+            state.masterVolume = 1;
+            masterSlider.value = AudioDawMixer.gainToFaderPos ? AudioDawMixer.gainToFaderPos(1) : 1;
+            updatePlaybackGains();
+        });
+        const masterMeter = createDiv(null, 'daw-master-meter');
+        const masterMeterFill = createDiv(null, 'daw-master-meter-fill');
+        const masterMeterPeak = createDiv(null, 'daw-master-meter-peak');
+        masterMeter.appendChild(masterMeterFill);
+        masterMeter.appendChild(masterMeterPeak);
+        masterGroup.appendChild(masterLbl);
+        masterGroup.appendChild(masterSlider);
+        masterGroup.appendChild(masterMeter);
+        transportEl.appendChild(masterGroup);
 
         // Zoom slider
         const zoomGroup = createDiv(null, 'daw-transport-zoom-group');
@@ -312,6 +437,12 @@ const AudioDaw = (() => {
 
     function buildFooter() {
         footerEl.innerHTML = '';
+        const projBtn = document.createElement('button');
+        projBtn.className = 'basic-button';
+        projBtn.innerHTML = 'Project &#x25BE;';
+        projBtn.title = 'Save, load, or start projects';
+        projBtn.addEventListener('click', (e) => showProjectMenu(e));
+        footerEl.appendChild(projBtn);
         quickAppendButton(footerEl, 'Import Audio', importAudioToTrack, ' basic-button', 'Import audio files (each file gets its own track)');
 
         // Spacer
@@ -320,13 +451,11 @@ const AudioDaw = (() => {
 
         // Export dropdown
         const exportGroup = createDiv(null, 'daw-export-group');
-        exportGroup.style.cssText = 'display:flex;gap:0;';
         quickAppendButton(exportGroup, 'Export WAV', () => doExportMixdown('wav'), ' btn btn-primary basic-button', 'Export all tracks as WAV');
         const exportDropdown = document.createElement('button');
-        exportDropdown.className = 'btn btn-primary basic-button';
+        exportDropdown.className = 'btn btn-primary basic-button daw-export-caret';
         exportDropdown.innerHTML = '&#x25BC;';
         exportDropdown.title = 'Export format options';
-        exportDropdown.style.cssText = 'padding:0.3rem;border-left:1px solid var(--shadow);';
         exportDropdown.addEventListener('click', (e) => showExportMenu(e));
         exportGroup.appendChild(exportDropdown);
         footerEl.appendChild(exportGroup);
@@ -336,19 +465,46 @@ const AudioDaw = (() => {
 
     // ===== TIMELINE =====
 
+    /**
+     * Quantize a timeline position to the active grid. No-op when snap is off.
+     * Beats mode: nearest beat, refining to 1/2 or 1/4 beat when zoomed in.
+     * Time mode: finest of 5s/1s/0.5s/0.1s that still spans >= ~12px.
+     */
+    function snapTime(t) {
+        if (!state || !state.snapEnabled) return t;
+        let grid;
+        if (state.rulerMode === 'beats') {
+            const secPerBeat = 60 / state.bpm;
+            grid = secPerBeat;
+            while ((grid / 2) * state.zoom >= 12 && grid > secPerBeat / 4 + 1e-9) grid /= 2;
+        } else {
+            grid = 5;
+            for (const g of [5, 1, 0.5, 0.1]) {
+                if (g * state.zoom >= 12) grid = g;
+            }
+        }
+        return Math.round(t / grid) * grid;
+    }
+
     function initTimeline() {
         rulerContainer.innerHTML = '';
         timeline = AudioDawTimeline.create(rulerContainer, {
             zoom: state.zoom,
             height: 30,
-            totalDuration: state.totalDuration
+            totalDuration: state.totalDuration,
+            mode: state.rulerMode,
+            bpm: state.bpm,
+            timeSig: state.timeSignature
         });
+        timeline.setSnapper(snapTime);
         timeline.on('seek', (time) => {
-            seekTo(time);
+            seekTo(snapTime(time));
         });
         timeline.on('loopChange', (start, end) => {
             state.loopStart = start;
             state.loopEnd = end;
+            updateLoopShade();
+            resyncPlayback(); // live bounds drag while playing reschedules the window
         });
     }
 
@@ -363,15 +519,16 @@ const AudioDaw = (() => {
         // Tab bar
         const tabBar = createDiv(null, 'daw-bottom-tabs');
         const tabs = [
-            { id: 'clip-editor', label: 'Clip Editor' },
-            { id: 'mixer', label: 'Mixer' },
-            { id: 'stems', label: 'Stems' },
-            { id: 'apply-model', label: 'Apply to Model' }
+            { id: 'clip-editor', icon: '&#x2702;', label: 'Clip Editor' },
+            { id: 'mixer', icon: '&#x1F39A;', label: 'Mixer' },
+            { id: 'stems', icon: '&#x1F3BC;', label: 'Stems' },
+            { id: 'generate', icon: '&#x2728;', label: 'Generate' },
+            { id: 'apply-model', icon: '&#x279C;', label: 'Apply to Model' }
         ];
         for (const tab of tabs) {
             const btn = document.createElement('button');
             btn.className = 'daw-bottom-tab' + (tab.id === activeBottomTab ? ' active' : '');
-            btn.textContent = tab.label;
+            btn.innerHTML = `<span class="daw-tab-icon">${tab.icon}</span><span class="translate">${escapeHtml(tab.label)}</span>`;
             btn.dataset.tab = tab.id;
             btn.addEventListener('click', () => {
                 activeBottomTab = tab.id;
@@ -400,6 +557,14 @@ const AudioDaw = (() => {
         stemsContent.hidden = activeBottomTab !== 'stems';
         bottomPanelEl.appendChild(stemsContent);
 
+        // Generate tab content — built ONCE per open (not in updateBottomPanel) so
+        // typed prompts survive selection-driven panel refreshes
+        const generateContent = createDiv(null, 'daw-bottom-tab-content');
+        generateContent.dataset.tab = 'generate';
+        generateContent.hidden = activeBottomTab !== 'generate';
+        bottomPanelEl.appendChild(generateContent);
+        renderGeneratePanel(generateContent);
+
         // Apply to Model tab content
         const applyContent = createDiv(null, 'daw-bottom-tab-content');
         applyContent.dataset.tab = 'apply-model';
@@ -411,6 +576,19 @@ const AudioDaw = (() => {
 
     function updateBottomPanel() {
         if (!bottomPanelEl) return;
+
+        // Auto-select when unambiguous: a lone track, and a lone clip project-wide.
+        // Saves a pointless click before Clip Editor / Apply to Model do anything.
+        if (state.tracks.length && !state.tracks.some(t => t.id === state.selectedTrackId)) {
+            state.selectedTrackId = state.tracks[0].id;
+            updateTrackSelection();
+        }
+        if (!findClipById(state.selectedClipId)) {
+            const allClips = state.tracks.flatMap(t => t.clips);
+            if (allClips.length === 1) {
+                state.selectedClipId = allClips[0].id;
+            }
+        }
 
         // Update Clip Editor tab
         const clipEditorContent = bottomPanelEl.querySelector('.daw-bottom-tab-content[data-tab="clip-editor"]');
@@ -434,13 +612,8 @@ const AudioDaw = (() => {
                 splitBtn.title = 'Split clip at current playhead position';
                 splitBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    console.log('[AudioDaw] Split button clicked, selectedClipId:', state.selectedClipId);
                     const sel = getClip();
-                    if (sel) {
-                        doSplitClip(sel.clip, sel.track);
-                    } else {
-                        console.warn('[AudioDaw] No clip found for split');
-                    }
+                    if (sel) doSplitClip(sel.clip, sel.track);
                 });
                 actions.appendChild(splitBtn);
                 const dupBtn = document.createElement('button');
@@ -449,13 +622,8 @@ const AudioDaw = (() => {
                 dupBtn.title = 'Duplicate this clip';
                 dupBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    console.log('[AudioDaw] Duplicate button clicked, selectedClipId:', state.selectedClipId);
                     const sel = getClip();
-                    if (sel) {
-                        doDuplicateClip(sel.clip, sel.track);
-                    } else {
-                        console.warn('[AudioDaw] No clip found for duplicate');
-                    }
+                    if (sel) doDuplicateClip(sel.clip, sel.track);
                 });
                 actions.appendChild(dupBtn);
                 const delBtn = document.createElement('button');
@@ -464,13 +632,8 @@ const AudioDaw = (() => {
                 delBtn.title = 'Delete this clip';
                 delBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    console.log('[AudioDaw] Delete button clicked, selectedClipId:', state.selectedClipId);
                     const sel = getClip();
-                    if (sel) {
-                        doDeleteClip(sel.clip, sel.track);
-                    } else {
-                        console.warn('[AudioDaw] No clip found for delete');
-                    }
+                    if (sel) doDeleteClip(sel.clip, sel.track);
                 });
                 actions.appendChild(delBtn);
                 const muteBtn = document.createElement('button');
@@ -479,21 +642,78 @@ const AudioDaw = (() => {
                 muteBtn.title = 'Toggle clip mute';
                 muteBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    console.log('[AudioDaw] Mute button clicked, selectedClipId:', state.selectedClipId);
                     const sel = getClip();
                     if (sel) {
                         sel.clip.muted = !sel.clip.muted;
+                        applyClipGain(sel.clip);
                         renderAllTracks();
                         updateBottomPanel();
-                        if (typeof doNoticePopover === 'function') {
-                            doNoticePopover(sel.clip.muted ? 'Clip muted' : 'Clip unmuted', 'notice-pop-green');
-                        }
-                    } else {
-                        console.warn('[AudioDaw] No clip found for mute');
                     }
                 });
                 actions.appendChild(muteBtn);
                 info.appendChild(actions);
+
+                // Gain + fades row
+                const mixRow = createDiv(null, 'daw-clip-editor-info daw-clip-editor-mix');
+                const gainLabel = createSpan(null, 'daw-clip-mix-label');
+                gainLabel.textContent = 'Gain';
+                const gainSlider = document.createElement('input');
+                gainSlider.type = 'range';
+                gainSlider.className = 'daw-clip-gain-slider';
+                gainSlider.min = '-24';
+                gainSlider.max = '12';
+                gainSlider.step = '0.5';
+                const clipDb = clip.gain > 0 ? 20 * Math.log10(clip.gain) : -24;
+                gainSlider.value = Math.max(-24, Math.min(12, clipDb));
+                const gainVal = createSpan(null, 'daw-clip-mix-val');
+                gainVal.textContent = clipDb.toFixed(1) + ' dB';
+                let gainGesture = false;
+                gainSlider.addEventListener('input', () => {
+                    const sel = getClip();
+                    if (!sel) return;
+                    if (!gainGesture) { gainGesture = true; pushUndo(); } // snapshot pre-gesture value once
+                    const db = parseFloat(gainSlider.value);
+                    sel.clip.gain = Math.pow(10, db / 20);
+                    gainVal.textContent = db.toFixed(1) + ' dB';
+                    applyClipGain(sel.clip);
+                });
+                gainSlider.addEventListener('change', () => { gainGesture = false; });
+                gainSlider.addEventListener('dblclick', () => {
+                    const sel = getClip();
+                    if (!sel) return;
+                    pushUndo();
+                    sel.clip.gain = 1;
+                    gainSlider.value = 0;
+                    gainVal.textContent = '0.0 dB';
+                    applyClipGain(sel.clip);
+                });
+                mixRow.appendChild(gainLabel);
+                mixRow.appendChild(gainSlider);
+                mixRow.appendChild(gainVal);
+
+                const makeFadeInput = (label, prop) => {
+                    const lbl = createSpan(null, 'daw-clip-mix-label');
+                    lbl.textContent = label;
+                    const input = document.createElement('input');
+                    input.type = 'number';
+                    input.className = 'daw-clip-fade-input';
+                    input.min = '0';
+                    input.step = '0.1';
+                    input.value = clip[prop] || 0;
+                    input.title = `${label} length in seconds`;
+                    input.addEventListener('change', () => {
+                        const sel = getClip();
+                        if (!sel) return;
+                        pushUndo();
+                        sel.clip[prop] = Math.max(0, parseFloat(input.value) || 0);
+                        resyncPlayback(); // fades are baked into scheduled ramps
+                    });
+                    mixRow.appendChild(lbl);
+                    mixRow.appendChild(input);
+                };
+                makeFadeInput('Fade In', 'fadeIn');
+                makeFadeInput('Fade Out', 'fadeOut');
+                info.appendChild(mixRow);
 
                 clipEditorContent.appendChild(info);
             } else {
@@ -507,7 +727,11 @@ const AudioDaw = (() => {
             if (typeof AudioDawMixer !== 'undefined') {
                 AudioDawMixer.render(mixerContent, state, (prop, val) => {
                     if (prop === 'masterVolume') { state.masterVolume = val; updatePlaybackGains(); }
-                    else if (prop === 'mute' || prop === 'solo' || prop === 'volume') { updatePlaybackGains(); }
+                    else if (prop === 'pan') { updatePlaybackGains(); }
+                    else if (prop === 'mute' || prop === 'solo' || prop === 'volume') {
+                        updatePlaybackGains();
+                        AudioDawTrack.syncHeaderControls(val); // val is the track here
+                    }
                 });
             } else {
                 mixerContent.innerHTML = '';
@@ -835,34 +1059,283 @@ const AudioDaw = (() => {
             return STEM_PRESETS.find(p => p.id === presetSelect.value).plan(stems);
         }
 
-        // --- Selected clip info + separate button ---
-        const selectedClip = findClipById(state.selectedClipId);
+        // --- Source clip picker + separate button ---
         const actionRow = createDiv(null, 'daw-stems-action-row');
-
-        if (selectedClip) {
-            const clipInfo = createSpan(null);
-            clipInfo.className = 'daw-stems-clipinfo';
-            clipInfo.innerHTML = `Selected: <strong>${escapeHtml(selectedClip.clip.name)}</strong> (${formatTimePrecise(selectedClip.clip.duration)}s)`;
-            actionRow.appendChild(clipInfo);
+        const allClips = [];
+        for (const t of state.tracks) {
+            for (const c of t.clips) allClips.push({ clip: c, track: t });
+        }
+        if (!allClips.length) {
+            actionRow.innerHTML = '<span class="daw-stems-clipinfo">Add or import a clip first — stem separation splits one clip into new tracks</span>';
+        } else {
+            const srcLabel = document.createElement('label');
+            srcLabel.className = 'daw-stems-ctl-label';
+            srcLabel.textContent = 'Source:';
+            const srcSelect = document.createElement('select');
+            srcSelect.className = 'daw-stems-select';
+            for (const { clip, track } of allClips) {
+                const opt = document.createElement('option');
+                opt.value = clip.id;
+                const dur = formatTimePrecise(clip.duration - clip.offset - clip.trimEnd);
+                opt.textContent = `${track.name} — ${clip.name} (${dur}s)`;
+                srcSelect.appendChild(opt);
+            }
+            if (state.selectedClipId && allClips.some(x => x.clip.id === state.selectedClipId)) {
+                srcSelect.value = state.selectedClipId;
+            }
+            actionRow.appendChild(srcLabel);
+            actionRow.appendChild(srcSelect);
 
             const sepBtn = document.createElement('button');
             sepBtn.className = 'basic-button btn-sm daw-stems-go';
             sepBtn.textContent = 'Separate Stems';
-            sepBtn.addEventListener('click', () => {
+            sepBtn.addEventListener('click', async () => {
+                const sel = allClips.find(x => x.clip.id === srcSelect.value);
+                if (!sel) return;
                 const outputs = buildPlan();
                 if (!outputs.length) {
                     if (typeof doNoticePopover === 'function') doNoticePopover('Select at least one stem', 'notice-pop-yellow');
                     return;
                 }
-                doSeparateStems(selectedClip.clip, selectedClip.track, { modelName: modelSelect.value, outputs });
+                // Demucs missing? Offer to install it right here, then continue the separation.
+                if (!await checkDemucsInstalled()) {
+                    if (!confirm('Stem separation requires the Demucs engine (a one-time ~2 GB download).\n\nInstall it now? Separation will start automatically when it finishes.')) {
+                        return;
+                    }
+                    sepBtn.disabled = true;
+                    const ok = await installDemucs((msg) => {
+                        sepBtn.textContent = 'Installing Demucs… ' + msg.slice(0, 30);
+                    });
+                    sepBtn.disabled = false;
+                    sepBtn.textContent = 'Separate Stems';
+                    if (!ok) return;
+                }
+                doSeparateStems(sel.clip, sel.track, { modelName: modelSelect.value, outputs });
             });
             actionRow.appendChild(sepBtn);
-        } else {
-            actionRow.innerHTML = '<span class="daw-stems-clipinfo">Select a clip to separate into stems</span>';
         }
 
         controls.appendChild(actionRow);
         section.appendChild(controls);
+    }
+
+    // ===== GENERATE TAB =====
+
+    let generateEngines = null; // engine list cache for the Generate tab
+
+    /** Bottom-panel tab: generate TTS/music/SFX with an installed engine straight into a track. */
+    async function renderGeneratePanel(container) {
+        container.innerHTML = '';
+        const section = createDiv(null, 'daw-generate-panel');
+        container.appendChild(section);
+        const status = createDiv(null, 'daw-stems-desc');
+        status.textContent = 'Loading engines...';
+        section.appendChild(status);
+
+        try {
+            if (!generateEngines) {
+                const result = await AudioLabAPI.callAPI('AudioLabListEngines');
+                if (!result.success) throw new Error(result.error || 'Failed to list engines');
+                generateEngines = result.engines || [];
+            }
+        } catch (err) {
+            status.textContent = 'Failed to load engines: ' + err.message;
+            return;
+        }
+        const usable = generateEngines.filter(e =>
+            e.installed && (e.category === 'TTS' || e.category === 'AudioGeneration'));
+        if (!usable.length) {
+            status.textContent = 'No TTS or audio-generation engines installed — add one from the Audio Backend card under Server -> Backends.';
+            return;
+        }
+        status.remove();
+
+        const isMusic = () => currentEngine()?.category === 'AudioGeneration';
+
+        // Engine + model pickers
+        const engineRow = createDiv(null, 'daw-stems-model-row');
+        const engineLabel = document.createElement('label');
+        engineLabel.className = 'daw-stems-ctl-label';
+        engineLabel.textContent = 'Engine:';
+        const engineSelect = document.createElement('select');
+        engineSelect.className = 'daw-stems-select';
+        const groups = { TTS: 'Text to Speech', AudioGeneration: 'Music & SFX' };
+        for (const [cat, label] of Object.entries(groups)) {
+            const engines = usable.filter(x => x.category === cat);
+            if (!engines.length) continue;
+            const og = document.createElement('optgroup');
+            og.label = label;
+            for (const eng of engines) {
+                const opt = document.createElement('option');
+                opt.value = eng.id;
+                opt.textContent = eng.name;
+                og.appendChild(opt);
+            }
+            engineSelect.appendChild(og);
+        }
+        engineRow.appendChild(engineLabel);
+        engineRow.appendChild(engineSelect);
+        section.appendChild(engineRow);
+
+        const currentEngine = () => usable.find(x => x.id === engineSelect.value);
+
+        const modelRow = createDiv(null, 'daw-stems-model-row');
+        const modelLabel = document.createElement('label');
+        modelLabel.className = 'daw-stems-ctl-label';
+        modelLabel.textContent = 'Model:';
+        const modelSelect = document.createElement('select');
+        modelSelect.className = 'daw-stems-select';
+        modelRow.appendChild(modelLabel);
+        modelRow.appendChild(modelSelect);
+        section.appendChild(modelRow);
+
+        function rebuildModels() {
+            modelSelect.innerHTML = '';
+            const eng = currentEngine();
+            const models = (eng?.models || []).filter(m => m.installed !== false);
+            for (const m of models) {
+                const opt = document.createElement('option');
+                opt.value = m.id;
+                opt.textContent = m.name;
+                modelSelect.appendChild(opt);
+            }
+            modelRow.style.display = models.length > 1 ? '' : 'none';
+        }
+
+        // Prompt / lyrics
+        const promptArea = document.createElement('textarea');
+        promptArea.className = 'daw-generate-text';
+        promptArea.rows = 2;
+        section.appendChild(promptArea);
+
+        const lyricsArea = document.createElement('textarea');
+        lyricsArea.className = 'daw-generate-text';
+        lyricsArea.rows = 2;
+        lyricsArea.placeholder = 'Lyrics (optional)';
+        section.appendChild(lyricsArea);
+
+        // Options row: duration + seed (music), voice ref (TTS)
+        const optsRow = createDiv(null, 'daw-stems-model-row');
+        const durLabel = document.createElement('label');
+        durLabel.className = 'daw-stems-ctl-label';
+        durLabel.textContent = 'Duration (s):';
+        const durationInput = document.createElement('input');
+        durationInput.type = 'number';
+        durationInput.className = 'daw-clip-fade-input';
+        durationInput.min = '1';
+        durationInput.value = '10';
+        const seedLabel = document.createElement('label');
+        seedLabel.className = 'daw-stems-ctl-label';
+        seedLabel.textContent = 'Seed:';
+        const seedInput = document.createElement('input');
+        seedInput.type = 'number';
+        seedInput.className = 'daw-clip-fade-input';
+        seedInput.value = '-1';
+        seedInput.title = '-1 = random';
+        optsRow.appendChild(durLabel);
+        optsRow.appendChild(durationInput);
+        optsRow.appendChild(seedLabel);
+        optsRow.appendChild(seedInput);
+        section.appendChild(optsRow);
+
+        const refRow = createDiv(null, 'daw-stems-model-row');
+        const refCheck = document.createElement('input');
+        refCheck.type = 'checkbox';
+        refCheck.id = 'daw_gen_voice_ref';
+        const refLabel = document.createElement('label');
+        refLabel.className = 'daw-stems-ctl-label';
+        refLabel.htmlFor = 'daw_gen_voice_ref';
+        refLabel.textContent = 'Use selected clip as voice reference';
+        const refTextInput = document.createElement('input');
+        refTextInput.type = 'text';
+        refTextInput.className = 'daw-generate-reftext';
+        refTextInput.placeholder = 'Reference transcript (optional)';
+        refRow.appendChild(refCheck);
+        refRow.appendChild(refLabel);
+        refRow.appendChild(refTextInput);
+        section.appendChild(refRow);
+
+        // Action row
+        const actionRow = createDiv(null, 'daw-stems-action-row');
+        const hint = createSpan(null, 'daw-stems-clipinfo');
+        hint.textContent = 'Result is added as a new track at the playhead.';
+        actionRow.appendChild(hint);
+        const goBtn = document.createElement('button');
+        goBtn.className = 'basic-button btn-sm daw-stems-go';
+        goBtn.textContent = 'Generate';
+        actionRow.appendChild(goBtn);
+        section.appendChild(actionRow);
+
+        function refreshVisibility() {
+            const music = isMusic();
+            lyricsArea.style.display = music ? '' : 'none';
+            optsRow.style.display = music ? '' : 'none';
+            refRow.style.display = music ? 'none' : '';
+            promptArea.placeholder = music
+                ? 'Describe the music or sound to generate (style, mood, instruments)...'
+                : 'Text to speak...';
+            rebuildModels();
+        }
+        engineSelect.addEventListener('change', refreshVisibility);
+        refreshVisibility();
+
+        goBtn.addEventListener('click', async () => {
+            const eng = currentEngine();
+            if (!eng) return;
+            const args = {};
+            if (modelSelect.value) args.__model_id = modelSelect.value;
+            const promptText = promptArea.value.trim();
+            if (!promptText) {
+                if (typeof doNoticePopover === 'function') {
+                    doNoticePopover(isMusic() ? 'Enter a prompt first' : 'Enter text to speak first', 'notice-pop-yellow');
+                }
+                return;
+            }
+            if (eng.category === 'TTS') {
+                args.text = promptText;
+                if (refCheck.checked) {
+                    const sel = findClipById(state.selectedClipId);
+                    if (!sel) {
+                        if (typeof doNoticePopover === 'function') doNoticePopover('Select a clip to use as voice reference', 'notice-pop-yellow');
+                        return;
+                    }
+                    args.reference_audio = await AudioLabCore.readAsBase64(sel.clip.blob);
+                    if (refTextInput.value.trim()) args.ref_text = refTextInput.value.trim();
+                }
+            } else {
+                args.prompt = promptText;
+                if (lyricsArea.value.trim()) args.lyrics = lyricsArea.value.trim();
+                args.duration = Math.max(1, parseFloat(durationInput.value) || 10);
+                const seed = parseInt(seedInput.value);
+                if (!isNaN(seed) && seed >= 0) args.seed = seed;
+            }
+
+            goBtn.disabled = true;
+            const overlay = showDawLoadingOverlay(`Generating with ${eng.name}...`);
+            try {
+                const result = await AudioLabAPI.callAPI('ProcessAudio', { provider_id: eng.id, args });
+                if (!result.success || !result.audio_data) {
+                    throw new Error(result.error || 'Generation returned no audio');
+                }
+                const blob = AudioLabCore.base64ToBlob(result.audio_data, 'audio/wav');
+                pushUndo();
+                const track = addTrack({ name: eng.name });
+                await addClipToTrack(track, blob, {
+                    name: promptText.slice(0, 28) || eng.name,
+                    startTime: snapTime(state.currentTime)
+                });
+                updateTotalDuration();
+                renderAllTracks();
+                updateBottomPanel();
+                resyncPlayback();
+                if (typeof doNoticePopover === 'function') doNoticePopover('Generated clip added', 'notice-pop-green');
+            } catch (err) {
+                console.error('[AudioDaw] Generate failed:', err);
+                if (typeof doNoticePopover === 'function') doNoticePopover('Generate failed: ' + err.message, 'notice-pop-red');
+            }
+            goBtn.disabled = false;
+            hideDawLoadingOverlay(overlay);
+        });
     }
 
     /** Select a clip and jump to the Stems tab so its options can be configured before separating. */
@@ -921,33 +1394,36 @@ const AudioDaw = (() => {
         }
     }
 
-    /** Render mixdown to a Blob (for Apply to Model). */
-    async function renderMixdownBlob() {
+    /**
+     * Render the arrangement offline through the SAME node graph + scheduleClip
+     * math as live playback, so exports always match what you hear.
+     */
+    async function renderMixdownBuffer() {
         if (state.tracks.length === 0) return null;
         const sampleRate = 44100;
-        const totalSamples = Math.ceil(state.totalDuration * sampleRate);
+        const totalSamples = Math.max(1, Math.ceil(state.totalDuration * sampleRate));
         const offlineCtx = new OfflineAudioContext(2, totalSamples, sampleRate);
+        const masterGain = offlineCtx.createGain();
+        masterGain.gain.value = state.masterVolume;
+        masterGain.connect(offlineCtx.destination);
         const soloActive = hasSoloTracks();
-
         for (const track of state.tracks) {
-            if (track.muted) continue;
-            if (soloActive && !track.soloed) continue;
-            const gainNode = offlineCtx.createGain();
-            gainNode.gain.value = track.volume * state.masterVolume;
-            gainNode.connect(offlineCtx.destination);
+            if (track.muted || (soloActive && !track.soloed)) continue; // no point rendering silence
+            const chain = buildTrackChain(offlineCtx, track, masterGain);
             for (const clip of track.clips) {
-                if (clip.muted || !clip.decodedBuffer) continue;
-                const source = offlineCtx.createBufferSource();
-                source.buffer = clip.decodedBuffer;
-                source.connect(gainNode);
-                source.start(clip.startTime + clip.offset, clip.offset,
-                    clip.duration - clip.offset - clip.trimEnd);
+                if (clip.muted) continue;
+                scheduleClip(offlineCtx, chain.trackGain, clip,
+                    { t0Ctx: 0, t0Timeline: 0, windowEnd: state.totalDuration });
             }
         }
+        return await offlineCtx.startRendering();
+    }
 
+    /** Render mixdown to a WAV Blob (export + Apply to Model). */
+    async function renderMixdownBlob() {
         try {
-            const rendered = await offlineCtx.startRendering();
-            return audioBufferToWav(rendered);
+            const rendered = await renderMixdownBuffer();
+            return rendered ? audioBufferToWav(rendered) : null;
         } catch (err) {
             console.error('[AudioDaw] Mixdown render failed:', err);
             return null;
@@ -967,13 +1443,26 @@ const AudioDaw = (() => {
 
     function setupScrollSync() {
         if (!clipLanesEl) return;
+        let syncing = false;
         clipLanesEl.addEventListener('scroll', () => {
+            if (syncing) return;
+            syncing = true;
             state.scrollLeft = clipLanesEl.scrollLeft;
             // Sync ruler horizontal scroll
             if (rulerContainer) rulerContainer.scrollLeft = clipLanesEl.scrollLeft;
             // Sync track headers vertical scroll
             if (trackHeadersEl) trackHeadersEl.scrollTop = clipLanesEl.scrollTop;
+            syncing = false;
         });
+        // Reverse direction: scrolling the header column scrolls the lanes
+        if (trackHeadersEl) {
+            trackHeadersEl.addEventListener('scroll', () => {
+                if (syncing) return;
+                syncing = true;
+                clipLanesEl.scrollTop = trackHeadersEl.scrollTop;
+                syncing = false;
+            });
+        }
 
         // Click on empty clip lane area to seek
         clipLanesEl.addEventListener('click', (e) => {
@@ -981,7 +1470,7 @@ const AudioDaw = (() => {
                 const rect = clipLanesEl.getBoundingClientRect();
                 const x = e.clientX - rect.left + clipLanesEl.scrollLeft;
                 const time = x / state.zoom;
-                seekTo(Math.max(0, Math.min(time, state.totalDuration)));
+                seekTo(snapTime(Math.max(0, Math.min(time, state.totalDuration))));
             }
         });
     }
@@ -1025,14 +1514,7 @@ const AudioDaw = (() => {
         const idx = state.tracks.findIndex(t => t.id === trackId);
         if (idx === -1) return;
         const track = state.tracks[idx];
-        // Clean up clip blob refs
-        for (const clip of track.clips) {
-            // Only remove from store if no other clip references the same blobKey
-            const otherRefs = state.tracks.some(t =>
-                t.id !== trackId && t.clips.some(c => c.blobKey === clip.blobKey)
-            );
-            if (!otherRefs) blobStore.delete(clip.blobKey);
-        }
+        // Blobs stay in blobStore for undo; garbageCollectBlobs() reclaims them later
         AudioDawTrack.destroyTrack(track);
         state.tracks.splice(idx, 1);
         if (state.selectedTrackId === trackId) {
@@ -1052,9 +1534,12 @@ const AudioDaw = (() => {
         existingLanes.forEach(el => el.remove());
 
         const trackCallbacks = {
-            onMute: () => { updatePlaybackGains(); },
-            onSolo: () => { updatePlaybackGains(); },
+            // Rebuild the mixer tab on M/S so its buttons stay in sync with the headers
+            // (volume skipped: rebuilding mid-drag would fight the slider)
+            onMute: () => { updatePlaybackGains(); updateBottomPanel(); },
+            onSolo: () => { updatePlaybackGains(); updateBottomPanel(); },
             onVolume: () => { updatePlaybackGains(); },
+            onPan: () => { updatePlaybackGains(); },
             onArm: () => {},
             onSelect: (track) => {
                 state.selectedTrackId = track.id;
@@ -1062,16 +1547,19 @@ const AudioDaw = (() => {
                 updateBottomPanel();
             },
             onRename: () => {},
+            onRecolor: (track, e) => showTrackColorMenu(track, e),
             onRemove: (track) => {
                 if (state.tracks.length <= 1) return; // keep at least one track
                 pushUndo();
                 removeTrack(track.id);
                 updateTotalDuration();
                 renderAllTracks();
+                resyncPlayback();
             }
         };
 
         const clipCallbacks = {
+            snapTime: (t) => snapTime(t),
             onClipSelect: (clip, track) => {
                 state.selectedClipId = clip.id;
                 state.selectedTrackId = track.id;
@@ -1079,8 +1567,20 @@ const AudioDaw = (() => {
                 updateBottomPanel();
                 renderAllTracks(); // re-render to update selection highlight
             },
+            onClipDragStart: () => {
+                pushUndo(); // one undo step per drag gesture (covers in-lane and cross-track)
+            },
+            onClipTrimStart: () => {
+                pushUndo();
+            },
+            onClipTrimEnd: () => {
+                updateTotalDuration();
+                updateBottomPanel();
+                resyncPlayback();
+            },
             onClipMove: () => {
                 updateTotalDuration();
+                resyncPlayback();
             },
             onClipContext: (e, clip, track) => {
                 showClipContextMenu(e, clip, track);
@@ -1088,7 +1588,6 @@ const AudioDaw = (() => {
             onClipCrossTrack: (clip, srcTrack, targetTrackId) => {
                 const targetTrack = state.tracks.find(t => t.id === targetTrackId);
                 if (!targetTrack) return;
-                pushUndo();
                 // Remove from source track
                 const idx = srcTrack.clips.indexOf(clip);
                 if (idx !== -1) srcTrack.clips.splice(idx, 1);
@@ -1101,6 +1600,7 @@ const AudioDaw = (() => {
                 targetTrack.clips.push(clip);
                 updateTotalDuration();
                 renderAllTracks();
+                resyncPlayback();
             }
         };
 
@@ -1113,6 +1613,19 @@ const AudioDaw = (() => {
 
             AudioDawTrack.renderClips(track, state.zoom, clipCallbacks, state.selectedClipId);
         }
+
+        // "+ Add Track" affordance at the bottom of the header column
+        const addBtn = document.createElement('button');
+        addBtn.className = 'daw-add-track';
+        addBtn.innerHTML = '+ <span class="translate">Add Track</span>';
+        addBtn.title = 'Add an empty track';
+        addBtn.addEventListener('click', () => {
+            pushUndo();
+            const track = addTrack();
+            state.selectedTrackId = track.id;
+            renderAllTracks();
+        });
+        trackHeadersEl.appendChild(addBtn);
 
         updateTrackSelection();
         updateClipLanesWidth();
@@ -1160,15 +1673,224 @@ const AudioDaw = (() => {
         return state.tracks.some(t => t.soloed);
     }
 
-    /** Update gain nodes for all active sources to reflect current mute/solo state. */
-    function updatePlaybackGains() {
-        if (!state.isPlaying || activeSourceNodes.length === 0) return;
+    /** Effective gain for a track's chain given mute/solo state. */
+    function computeTrackGain(track) {
         const soloActive = hasSoloTracks();
-        for (const node of activeSourceNodes) {
-            const t = node.track;
-            const audible = !t.muted && (!soloActive || t.soloed);
-            node.gainNode.gain.value = audible ? t.volume * state.masterVolume : 0;
+        const audible = !track.muted && (!soloActive || track.soloed);
+        return audible ? track.volume : 0;
+    }
+
+    /** Create a track's persistent node chain: trackGain -> trackPan -> masterGain (+ analyser tap for meters). */
+    function buildTrackChain(ctx, track, masterGain) {
+        const trackGain = ctx.createGain();
+        trackGain.gain.value = computeTrackGain(track);
+        let trackPan = null;
+        if (ctx.createStereoPanner) {
+            trackPan = ctx.createStereoPanner();
+            trackPan.pan.value = track.pan || 0;
+            trackGain.connect(trackPan);
+            trackPan.connect(masterGain);
+        } else {
+            trackGain.connect(masterGain);
         }
+        let analyser = null;
+        if (typeof OfflineAudioContext === 'undefined' || !(ctx instanceof OfflineAudioContext)) {
+            analyser = ctx.createAnalyser();
+            analyser.fftSize = 512;
+            (trackPan || trackGain).connect(analyser); // parallel tap, no audio output
+        }
+        return { trackGain, trackPan, analyser };
+    }
+
+    // ===== LEVEL METERS =====
+
+    const meterBuf = new Uint8Array(512);
+
+    function readPeak(analyser) {
+        analyser.getByteTimeDomainData(meterBuf);
+        let peak = 0;
+        for (let i = 0; i < analyser.fftSize; i++) {
+            const v = Math.abs(meterBuf[i] - 128) / 128;
+            if (v > peak) peak = v;
+        }
+        return peak;
+    }
+
+    // Peak-hold state per meter: key -> { peak, heldAt }
+    const meterPeaks = new Map();
+    const PEAK_HOLD_MS = 900;
+    const PEAK_FALL_PER_FRAME = 0.012;
+
+    /** Track a decaying held peak for one meter. */
+    function heldPeak(key, level) {
+        let s = meterPeaks.get(key);
+        if (!s) { s = { peak: 0, heldAt: 0 }; meterPeaks.set(key, s); }
+        const now = performance.now();
+        if (level >= s.peak) {
+            s.peak = level;
+            s.heldAt = now;
+        } else if (now - s.heldAt > PEAK_HOLD_MS) {
+            s.peak = Math.max(level, s.peak - PEAK_FALL_PER_FRAME);
+        }
+        return s.peak;
+    }
+
+    /** Push live levels + peak-hold ticks into header meters, mixer strips, and the master meter. */
+    function updateMeters() {
+        if (!playback) return;
+        for (const track of state.tracks) {
+            const chain = playback.chains.get(track.id);
+            if (!chain?.analyser) continue;
+            const level = Math.min(1, Math.sqrt(readPeak(chain.analyser))); // sqrt = perceptual-ish curve
+            const peak = heldPeak(track.id, level);
+            if (track.meterEl) track.meterEl.style.width = (level * 100) + '%';
+            if (track.meterPeakEl) track.meterPeakEl.style.left = `calc(${(peak * 100).toFixed(1)}% - 2px)`;
+            const strip = AudioDawMixer.getMeterEl?.(track.id);
+            if (strip) {
+                strip.fill.style.height = (level * 100) + '%';
+                strip.peak.style.bottom = (peak * 100).toFixed(1) + '%';
+            }
+        }
+        if (playback.masterAnalyser) {
+            const level = Math.min(1, Math.sqrt(readPeak(playback.masterAnalyser)));
+            const peak = heldPeak('__master__', level);
+            const el = transportEl?.querySelector('.daw-master-meter-fill');
+            if (el) el.style.width = (level * 100) + '%';
+            const tick = transportEl?.querySelector('.daw-master-meter-peak');
+            if (tick) tick.style.left = `calc(${(peak * 100).toFixed(1)}% - 2px)`;
+            const strip = AudioDawMixer.getMeterEl?.('__master__');
+            if (strip) {
+                strip.fill.style.height = (level * 100) + '%';
+                strip.peak.style.bottom = (peak * 100).toFixed(1) + '%';
+            }
+        }
+    }
+
+    /** Zero out every meter and held peak (playback stopped). */
+    function resetMeters() {
+        meterPeaks.clear();
+        for (const track of state?.tracks || []) {
+            if (track.meterEl) track.meterEl.style.width = '0%';
+            if (track.meterPeakEl) track.meterPeakEl.style.left = '0%';
+        }
+        const el = transportEl?.querySelector('.daw-master-meter-fill');
+        if (el) el.style.width = '0%';
+        const tick = transportEl?.querySelector('.daw-master-meter-peak');
+        if (tick) tick.style.left = '0%';
+        if (AudioDawMixer.resetMeters) AudioDawMixer.resetMeters();
+    }
+
+    /**
+     * Schedule one clip into a context — the single source of truth for placement
+     * math, used identically by live playback, loop iterations, and offline export.
+     * Node chain per clip: source -> fadeGain (fade ramps only) -> clipGain (mute/gain) -> destNode.
+     * @param {BaseAudioContext} ctx
+     * @param {AudioNode} destNode - the track's trackGain
+     * @param {Object} clip
+     * @param {Object} origin - { t0Ctx, t0Timeline, windowEnd }: ctx time t0Ctx corresponds
+     *   to timeline time t0Timeline; nothing is scheduled at/after windowEnd (loop/export bound).
+     * @returns {{source, fadeGain, clipGain}|null}
+     */
+    function scheduleClip(ctx, destNode, clip, { t0Ctx, t0Timeline, windowEnd = Infinity }) {
+        const P = t0Timeline;
+        const visibleDur = clip.duration - clip.offset - clip.trimEnd;
+        if (!clip.decodedBuffer || visibleDur <= 0) return null;
+        const clipStart = clip.startTime;
+        const clipEnd = clipStart + visibleDur;
+        if (clipEnd <= P || clipStart >= windowEnd) return null;
+
+        const into = Math.max(0, P - clipStart);
+        const when = t0Ctx + Math.max(0, clipStart - P);
+        const bufferOffset = clip.offset + into;
+        const playDuration = Math.min(visibleDur - into, windowEnd - Math.max(P, clipStart));
+        if (playDuration <= 0) return null;
+
+        const source = ctx.createBufferSource();
+        source.buffer = clip.decodedBuffer;
+        const fadeGain = ctx.createGain();
+        const clipGain = ctx.createGain();
+        clipGain.gain.value = clip.muted ? 0 : (clip.gain ?? 1);
+        source.connect(fadeGain);
+        fadeGain.connect(clipGain);
+        clipGain.connect(destNode);
+
+        // Fade envelope; a mid-clip start resumes at the exact instantaneous value
+        const fi = Math.min(clip.fadeIn || 0, visibleDur);
+        const fo = Math.min(clip.fadeOut || 0, visibleDur - fi);
+        if (fi > 0 || fo > 0) {
+            const u0 = into;
+            const foStart = visibleDur - fo;
+            let startVal = 1;
+            if (fi > 0 && u0 < fi) startVal = u0 / fi;
+            else if (fo > 0 && u0 > foStart) startVal = (visibleDur - u0) / fo;
+            fadeGain.gain.setValueAtTime(startVal, when);
+            if (fi > 0 && u0 < fi) fadeGain.gain.linearRampToValueAtTime(1, when + (fi - u0));
+            if (fo > 0 && u0 < visibleDur) {
+                if (u0 < foStart) fadeGain.gain.setValueAtTime(1, when + (foStart - u0));
+                fadeGain.gain.linearRampToValueAtTime(0, when + (visibleDur - u0));
+            }
+        }
+
+        source.start(when, bufferOffset, playDuration);
+        return { source, fadeGain, clipGain };
+    }
+
+    /**
+     * Schedule every clip of every track from timeline time P.
+     * ALL clips are scheduled — muted ones at gain 0 — so mute/solo/unmute during
+     * playback is always a pure AudioParam write, never a missing source.
+     */
+    function scheduleTransportFrom(P, { t0Ctx, windowEnd = Infinity, iteration = 0 }) {
+        const ctx = playback.ctx;
+        for (const track of state.tracks) {
+            let chain = playback.chains.get(track.id);
+            if (!chain) {
+                chain = buildTrackChain(ctx, track, playback.masterGain);
+                playback.chains.set(track.id, chain);
+            }
+            for (const clip of track.clips) {
+                const nodes = scheduleClip(ctx, chain.trackGain, clip, { t0Ctx, t0Timeline: P, windowEnd });
+                if (!nodes) continue;
+                const entry = { clipId: clip.id, trackId: track.id, iteration, ...nodes };
+                nodes.source.onended = () => {
+                    if (!playback) return;
+                    const i = playback.liveClips.indexOf(entry);
+                    if (i >= 0) playback.liveClips.splice(i, 1);
+                };
+                playback.liveClips.push(entry);
+            }
+        }
+    }
+
+    /** Param-only update of the whole gain topology (mute/solo/volume/pan/master). */
+    function updatePlaybackGains() {
+        if (!playback) return;
+        const now = playback.ctx.currentTime;
+        playback.masterGain.gain.setTargetAtTime(state.masterVolume, now, 0.015);
+        for (const track of state.tracks) {
+            const chain = playback.chains.get(track.id);
+            if (!chain) continue;
+            chain.trackGain.gain.setTargetAtTime(computeTrackGain(track), now, 0.015);
+            if (chain.trackPan) chain.trackPan.pan.setTargetAtTime(track.pan || 0, now, 0.015);
+        }
+    }
+
+    /** Param-only update for one clip's gain/mute on all its live sources. */
+    function applyClipGain(clip) {
+        if (!playback) return;
+        const now = playback.ctx.currentTime;
+        for (const n of playback.liveClips) {
+            if (n.clipId === clip.id) {
+                n.clipGain.gain.setTargetAtTime(clip.muted ? 0 : (clip.gain ?? 1), now, 0.015);
+            }
+        }
+    }
+
+    /** Timeline position derived from the audio clock (authoritative while playing). */
+    function currentTimelineTime() {
+        if (!playback) return state.currentTime;
+        return Math.max(playback.baseTimelineTime,
+            playback.baseTimelineTime + (playback.ctx.currentTime - playback.baseCtxTime));
     }
 
     function togglePlayback() {
@@ -1179,106 +1901,218 @@ const AudioDaw = (() => {
         }
     }
 
-    function startPlayback() {
+    function toggleLoop() {
+        state.loopEnabled = !state.loopEnabled;
+        // First enable with no region set: default to the whole arrangement
+        if (state.loopEnabled && state.loopEnd <= state.loopStart) {
+            state.loopStart = 0;
+            state.loopEnd = state.totalDuration;
+        }
+        const btn = transportEl?.querySelector('.daw-btn-loop');
+        if (btn) btn.classList.toggle('active', state.loopEnabled);
+        if (timeline) timeline.setLoop(state.loopEnabled, state.loopStart, state.loopEnd);
+        updateLoopShade();
+        resyncPlayback();
+    }
+
+    async function startPlayback() {
         if (state.isPlaying) return;
         state.isPlaying = true;
         updatePlayButton(true);
 
-        const ctx = getAudioContext();
-        if (ctx.state === 'suspended') ctx.resume();
-
-        playStartCtxTime = ctx.currentTime;
-        playStartOffset = state.currentTime;
-        const soloActive = hasSoloTracks();
-
-        // Schedule all clips
-        for (const track of state.tracks) {
-            if (track.muted) continue;
-            if (soloActive && !track.soloed) continue;
-
-            const gainNode = ctx.createGain();
-            gainNode.gain.value = track.volume * state.masterVolume;
-            gainNode.connect(ctx.destination);
-
-            for (const clip of track.clips) {
-                if (clip.muted || !clip.decodedBuffer) continue;
-
-                const source = ctx.createBufferSource();
-                source.buffer = clip.decodedBuffer;
-
-                const clipStart = clip.startTime;
-                const clipDuration = clip.duration - clip.offset - clip.trimEnd;
-                const clipEnd = clipStart + clipDuration;
-
-                // Skip clips entirely before current time
-                if (clipEnd <= state.currentTime) continue;
-
-                // How far into the clip we start
-                const offsetIntoClip = Math.max(0, state.currentTime - clipStart) + clip.offset;
-                // When to start playing (relative to now)
-                const whenToStart = Math.max(0, clipStart - state.currentTime);
-                // How long to play
-                const playDuration = clipDuration - Math.max(0, state.currentTime - clipStart);
-
-                if (playDuration <= 0) continue;
-
-                source.connect(gainNode);
-                source.start(ctx.currentTime + whenToStart, offsetIntoClip, playDuration);
-
-                activeSourceNodes.push({ source, gainNode, track });
-            }
+        // Safety: a wedged recording session (record-end never fired) must not put
+        // plain playback into record mode (unclamped playhead, no end-stop)
+        if (recording && (!recording.recorder || !recording.recorder.isRecording())) {
+            abortRecording();
         }
 
+        const ctx = getAudioContext();
+        if (ctx.state === 'suspended') {
+            try { await ctx.resume(); } catch (_) {}
+        }
+        if (!state.isPlaying) return; // user hit stop while we awaited the resume
+
+        const masterGain = ctx.createGain();
+        masterGain.gain.value = state.masterVolume;
+        masterGain.connect(ctx.destination);
+        const masterAnalyser = ctx.createAnalyser();
+        masterAnalyser.fftSize = 512;
+        masterGain.connect(masterAnalyser);
+
+        const P = state.currentTime;
+        const t0Ctx = ctx.currentTime + START_EPSILON;
+        // Loop is suppressed while recording (a take shouldn't wrap onto itself)
+        const loopArmed = !recording && state.loopEnabled && state.loopEnd > state.loopStart && P < state.loopEnd;
+        playback = {
+            ctx, masterGain, masterAnalyser,
+            chains: new Map(),
+            liveClips: [],
+            baseCtxTime: t0Ctx,
+            baseTimelineTime: P,
+            schedulerId: null,
+            loop: loopArmed ? {
+                nextWrapCtxTime: t0Ctx + (state.loopEnd - P),
+                nextIterScheduled: false,
+                iteration: 0
+            } : null
+        };
+        scheduleTransportFrom(P, { t0Ctx, windowEnd: loopArmed ? state.loopEnd : Infinity, iteration: 0 });
+        playback.schedulerId = setInterval(schedulerTick, SCHEDULER_TICK_MS);
         animatePlayhead();
+    }
+
+    /**
+     * Audio-clock scheduler: commits sample-accurate loop wraps and pre-schedules
+     * the next loop iteration ahead of the wrap point. Runs on setInterval so it
+     * keeps working when the tab is backgrounded (rAF would stall).
+     */
+    function schedulerTick() {
+        try {
+            schedulerTickInner();
+        } catch (err) {
+            console.error('[AudioDaw] Scheduler tick failed:', err);
+        }
+    }
+
+    function schedulerTickInner() {
+        if (!playback) return;
+        // Safety: if the stop path was raced past (isPlaying already false), tear down here
+        if (!state.isPlaying) {
+            teardownPlaybackGraph();
+            return;
+        }
+        const ctx = playback.ctx;
+        const loop = playback.loop;
+        if (loop) {
+            // Commit any wrap that has passed, then top up the schedule
+            while (ctx.currentTime >= loop.nextWrapCtxTime) {
+                playback.baseCtxTime = loop.nextWrapCtxTime;
+                playback.baseTimelineTime = state.loopStart;
+                loop.nextWrapCtxTime += (state.loopEnd - state.loopStart);
+                loop.nextIterScheduled = false;
+            }
+            if (!loop.nextIterScheduled && loop.nextWrapCtxTime - ctx.currentTime < LOOKAHEAD) {
+                loop.iteration++;
+                scheduleTransportFrom(state.loopStart, {
+                    t0Ctx: loop.nextWrapCtxTime, windowEnd: state.loopEnd, iteration: loop.iteration
+                });
+                loop.nextIterScheduled = true;
+            }
+        } else if (!recording && currentTimelineTime() >= state.totalDuration) {
+            // While recording, playback runs past the end so the take can extend the song
+            stopPlayback();
+            state.currentTime = 0;
+            updatePlayheadPosition();
+            updateTimeDisplay();
+        }
+    }
+
+    /** Stop and disconnect all live sources + chains + master; leaves state.isPlaying alone. */
+    function teardownPlaybackGraph() {
+        if (!playback) return;
+        clearInterval(playback.schedulerId);
+        for (const n of playback.liveClips) {
+            n.source.onended = null;
+            try { n.source.stop(); } catch (_) {}
+            try { n.source.disconnect(); } catch (_) {}
+            try { n.fadeGain.disconnect(); } catch (_) {}
+            try { n.clipGain.disconnect(); } catch (_) {}
+        }
+        for (const chain of playback.chains.values()) {
+            try { chain.trackGain.disconnect(); } catch (_) {}
+            if (chain.trackPan) { try { chain.trackPan.disconnect(); } catch (_) {} }
+            if (chain.analyser) { try { chain.analyser.disconnect(); } catch (_) {} }
+        }
+        try { playback.masterGain.disconnect(); } catch (_) {}
+        playback = null;
+        resetMeters();
     }
 
     function stopPlayback() {
         if (!state || !state.isPlaying) return;
+        state.currentTime = Math.min(currentTimelineTime(), state.totalDuration);
         state.isPlaying = false;
         updatePlayButton(false);
         cancelAnimationFrame(rafId);
+        teardownPlaybackGraph();
+        updatePlayheadPosition();
+        updateTimeDisplay();
+    }
 
-        for (const node of activeSourceNodes) {
-            try { node.source.stop(); } catch (_) {}
-            try { node.source.disconnect(); } catch (_) {}
-            try { node.gainNode.disconnect(); } catch (_) {}
+    /**
+     * Re-schedule playback from the current position after a topology change
+     * (clip add/move/delete/trim, track add/remove, undo/redo, loop change).
+     * Keeps chains for surviving tracks, the scheduler, and the rAF loop —
+     * no play-button churn, no UI flicker. No-op when stopped.
+     */
+    function resyncPlayback() {
+        if (!state.isPlaying || !playback) return;
+        const ctx = playback.ctx;
+        const P = Math.max(0, Math.min(currentTimelineTime(), state.totalDuration));
+        for (const n of playback.liveClips) {
+            n.source.onended = null;
+            try { n.source.stop(); } catch (_) {}
+            try { n.source.disconnect(); } catch (_) {}
+            try { n.fadeGain.disconnect(); } catch (_) {}
+            try { n.clipGain.disconnect(); } catch (_) {}
         }
-        activeSourceNodes = [];
+        playback.liveClips = [];
+        // Drop chains for removed tracks (missing ones are lazily created on schedule)
+        const liveIds = new Set(state.tracks.map(t => t.id));
+        for (const [id, chain] of playback.chains) {
+            if (!liveIds.has(id)) {
+                try { chain.trackGain.disconnect(); } catch (_) {}
+                if (chain.trackPan) { try { chain.trackPan.disconnect(); } catch (_) {} }
+                playback.chains.delete(id);
+            }
+        }
+        const t0Ctx = ctx.currentTime + START_EPSILON;
+        playback.baseCtxTime = t0Ctx;
+        playback.baseTimelineTime = P;
+        const loopArmed = state.loopEnabled && state.loopEnd > state.loopStart && P < state.loopEnd;
+        playback.loop = loopArmed ? {
+            nextWrapCtxTime: t0Ctx + (state.loopEnd - P),
+            nextIterScheduled: false,
+            iteration: 0
+        } : null;
+        scheduleTransportFrom(P, { t0Ctx, windowEnd: loopArmed ? state.loopEnd : Infinity, iteration: 0 });
+        updatePlaybackGains();
     }
 
     function seekTo(time) {
-        const wasPlaying = state.isPlaying;
-        if (wasPlaying) stopPlayback();
         state.currentTime = Math.max(0, Math.min(time, state.totalDuration));
         updatePlayheadPosition();
         updateTimeDisplay();
-        if (wasPlaying) startPlayback();
+        resyncPlayback();
     }
 
+    /** Display-only rAF loop; the audio clock is authoritative (see schedulerTick). */
     function animatePlayhead() {
         if (!state.isPlaying) return;
-
-        const ctx = getAudioContext();
-        const elapsed = ctx.currentTime - playStartCtxTime;
-        state.currentTime = playStartOffset + elapsed;
-
-        // Loop wrap
-        if (state.loopEnabled && state.loopEnd > state.loopStart && state.currentTime >= state.loopEnd) {
-            seekTo(state.loopStart);
-            return;
-        }
-
-        // End of timeline
-        if (state.currentTime >= state.totalDuration) {
+        state.currentTime = recording
+            ? currentTimelineTime() // unclamped: a take may run past the current end
+            : Math.min(currentTimelineTime(), state.totalDuration);
+        // Redundant end-stop (schedulerTick owns this; keep a display-side backstop)
+        if (!recording && !playback?.loop && currentTimelineTime() >= state.totalDuration) {
             stopPlayback();
             state.currentTime = 0;
             updatePlayheadPosition();
             updateTimeDisplay();
             return;
         }
-
+        if (recording) {
+            // Grow the live-waveform placeholder and stretch the timeline as needed
+            recording.placeholderEl.style.width =
+                Math.max(4, (state.currentTime - recording.startP) * state.zoom) + 'px';
+            if (state.currentTime + 5 > state.totalDuration) {
+                state.totalDuration = state.currentTime + 5;
+                if (timeline) timeline.setDuration(state.totalDuration);
+                updateClipLanesWidth();
+            }
+        }
         updatePlayheadPosition();
         updateTimeDisplay();
+        updateMeters();
         rafId = requestAnimationFrame(animatePlayhead);
     }
 
@@ -1299,6 +2133,59 @@ const AudioDaw = (() => {
         const current = formatTimePrecise(state.currentTime);
         const total = formatTimePrecise(state.totalDuration);
         timeDisplayEl.textContent = `${current} / ${total}`;
+        const beatsEl = transportEl?.querySelector('.daw-lcd-beats');
+        if (beatsEl) {
+            const beatLen = 60 / state.bpm;
+            const beatsPerBar = state.timeSignature[0] || 4;
+            const totalBeats = state.currentTime / beatLen;
+            const bar = Math.floor(totalBeats / beatsPerBar) + 1;
+            const beat = Math.floor(totalBeats % beatsPerBar) + 1;
+            const sixteenth = Math.floor((totalBeats % 1) * 4) + 1;
+            beatsEl.textContent = `${bar}.${beat}.${sixteenth}`;
+        }
+    }
+
+    /**
+     * Paint bar/beat (or seconds) grid lines onto the clip-lane area so the
+     * arrangement reads against the same grid as the ruler.
+     */
+    function updateLaneGrid() {
+        if (!clipLanesEl) return;
+        let minor, major;
+        if (state.rulerMode === 'beats') {
+            minor = 60 / state.bpm;
+            major = minor * (state.timeSignature[0] || 4);
+        } else {
+            if (state.zoom >= 100) { minor = 0.5; major = 5; }
+            else if (state.zoom >= 50) { minor = 1; major = 5; }
+            else if (state.zoom >= 20) { minor = 2; major = 10; }
+            else { minor = 5; major = 30; }
+        }
+        const mpx = minor * state.zoom;
+        const Mpx = major * state.zoom;
+        const majorColor = 'color-mix(in srgb, var(--text-soft) 22%, transparent)';
+        const minorColor = 'color-mix(in srgb, var(--text-soft) 9%, transparent)';
+        const layers = [`repeating-linear-gradient(90deg, ${majorColor} 0 1px, transparent 1px ${Mpx}px)`];
+        if (mpx >= 8) {
+            layers.push(`repeating-linear-gradient(90deg, ${minorColor} 0 1px, transparent 1px ${mpx}px)`);
+        }
+        clipLanesEl.style.backgroundImage = layers.join(', ');
+    }
+
+    /** Translucent wash over the loop region, spanning all lanes (like the ruler overlay). */
+    function updateLoopShade() {
+        if (!clipLanesEl) return;
+        let shade = clipLanesEl.querySelector('.daw-loop-shade');
+        if (!shade) {
+            shade = createDiv(null, 'daw-loop-shade');
+            clipLanesEl.appendChild(shade);
+        }
+        const visible = state.loopEnabled && state.loopEnd > state.loopStart;
+        shade.style.display = visible ? '' : 'none';
+        if (visible) {
+            shade.style.left = (state.loopStart * state.zoom) + 'px';
+            shade.style.width = ((state.loopEnd - state.loopStart) * state.zoom) + 'px';
+        }
     }
 
     // ===== ZOOM =====
@@ -1311,6 +2198,11 @@ const AudioDaw = (() => {
         }
         updateClipLanesWidth();
         updatePlayheadPosition();
+        updateLaneGrid();
+        updateLoopShade();
+        // Keep the transport slider in sync (keyboard +/- also zooms)
+        const slider = transportEl?.querySelector('.daw-transport-zoom');
+        if (slider) slider.value = state.zoom;
     }
 
     // ===== IMPORT =====
@@ -1330,49 +2222,76 @@ const AudioDaw = (() => {
             }
             updateTotalDuration();
             renderAllTracks();
+            resyncPlayback();
             hideDawLoadingOverlay(overlay);
         };
         input.click();
     }
 
-    // ===== CLIP CONTEXT MENU =====
+    // ===== FLOATING MENUS =====
 
-    function showClipContextMenu(e, clip, track) {
-        // Simple context menu using a temporary div (Phase 4 will use AdvancedPopover)
+    /**
+     * Single floating-menu implementation for all DAW dropdowns/context menus.
+     * items: [{ label, action, checked?, disabled? }] — `checked` renders a ✓ column.
+     * Auto-clamps to the viewport; closes on outside click. Returns the menu element.
+     */
+    function dawMenu(e, items) {
         const existing = document.querySelector('.daw-context-menu');
         if (existing) existing.remove();
-
         const menu = createDiv(null, 'daw-context-menu');
         menu.style.position = 'fixed';
-        menu.style.left = e.clientX + 'px';
-        menu.style.top = e.clientY + 'px';
         menu.style.zIndex = '99999';
-
-        const items = [
-            { label: 'Split at Playhead', action: () => doSplitClip(clip, track) },
-            { label: 'Duplicate', action: () => doDuplicateClip(clip, track) },
-            { label: 'Delete', action: () => doDeleteClip(clip, track) },
-            { label: clip.muted ? 'Unmute Clip' : 'Mute Clip', action: () => {
-                clip.muted = !clip.muted;
-                renderAllTracks();
-            }},
-            { label: 'Separate Stems… (Demucs)', action: () => openStemsForClip(clip, track) }
-        ];
-
         for (const item of items) {
             const btn = document.createElement('button');
             btn.className = 'daw-context-item';
-            btn.textContent = item.label;
+            btn.textContent = (item.checked === undefined ? '' : (item.checked ? '✓ ' : '   ')) + item.label;
+            if (item.disabled) btn.disabled = true;
             btn.addEventListener('click', () => {
                 menu.remove();
-                item.action();
+                if (item.action) item.action();
             });
             menu.appendChild(btn);
         }
-
         document.body.appendChild(menu);
+        const w = menu.offsetWidth, h = menu.offsetHeight;
+        menu.style.left = Math.max(8, Math.min(e.clientX, window.innerWidth - w - 8)) + 'px';
+        menu.style.top = Math.max(8, Math.min(e.clientY, window.innerHeight - h - 8)) + 'px';
+        const closeMenu = (ce) => {
+            if (!menu.contains(ce.target)) {
+                menu.remove();
+                document.removeEventListener('click', closeMenu, true);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', closeMenu, true), 0);
+        return menu;
+    }
 
-        // Close on click outside
+    /** Small swatch-grid popover to recolor a track (updates header, clips, mixer). */
+    function showTrackColorMenu(track, e) {
+        const existing = document.querySelector('.daw-context-menu');
+        if (existing) existing.remove();
+        const menu = createDiv(null, 'daw-context-menu daw-color-menu');
+        menu.style.position = 'fixed';
+        menu.style.zIndex = '99999';
+        const grid = createDiv(null, 'daw-color-grid');
+        for (const color of AudioDawTrack.COLORS) {
+            const b = document.createElement('button');
+            b.className = 'daw-color-swatch-btn' + (track.color === color ? ' selected' : '');
+            b.style.background = color;
+            b.title = color;
+            b.addEventListener('click', () => {
+                menu.remove();
+                track.color = color;
+                renderAllTracks();
+                updateBottomPanel();
+            });
+            grid.appendChild(b);
+        }
+        menu.appendChild(grid);
+        document.body.appendChild(menu);
+        const w = menu.offsetWidth, h = menu.offsetHeight;
+        menu.style.left = Math.max(8, Math.min(e.clientX, window.innerWidth - w - 8)) + 'px';
+        menu.style.top = Math.max(8, Math.min(e.clientY, window.innerHeight - h - 8)) + 'px';
         const closeMenu = (ce) => {
             if (!menu.contains(ce.target)) {
                 menu.remove();
@@ -1382,11 +2301,29 @@ const AudioDaw = (() => {
         setTimeout(() => document.addEventListener('click', closeMenu, true), 0);
     }
 
+    // ===== CLIP CONTEXT MENU =====
+
+    function showClipContextMenu(e, clip, track) {
+        dawMenu(e, [
+            { label: 'Split at Playhead', action: () => doSplitClip(clip, track) },
+            { label: 'Duplicate', action: () => doDuplicateClip(clip, track) },
+            { label: 'Delete', action: () => doDeleteClip(clip, track) },
+            { label: clip.muted ? 'Unmute Clip' : 'Mute Clip', action: () => {
+                clip.muted = !clip.muted;
+                applyClipGain(clip);
+                renderAllTracks();
+            }},
+            { label: 'Separate Stems… (Demucs)', action: () => openStemsForClip(clip, track) }
+        ]);
+    }
+
     // ===== CLIP OPERATIONS =====
 
     async function doSplitClip(clip, track) {
+        // splitTime is relative to the clip's visible (trimmed) region
         const splitTime = state.currentTime - clip.startTime;
-        if (splitTime <= 0 || splitTime >= clip.duration) {
+        const visibleDur = clip.duration - clip.offset - clip.trimEnd;
+        if (splitTime <= 0 || splitTime >= visibleDur) {
             if (typeof doNoticePopover === 'function') {
                 doNoticePopover('Move playhead over clip to split', 'notice-pop-yellow');
             }
@@ -1406,13 +2343,16 @@ const AudioDaw = (() => {
                 return;
             }
 
-            // Create two new clips replacing the original
+            // Create two new clips replacing the original. Part A's blob still contains the
+            // trimmed head (offset carries over); part B's blob still contains the trimmed tail.
             const clipA = AudioDawTrack.createClip(parts.before, {
                 name: clip.name + ' (A)',
                 startTime: clip.startTime,
                 color: clip.color
             });
             await AudioDawTrack.decodeClip(clipA);
+            clipA.offset = clip.offset;
+            clipA.gain = clip.gain;
             blobStore.set(clipA.blobKey, { blob: parts.before, decodedBuffer: clipA.decodedBuffer });
 
             const clipB = AudioDawTrack.createClip(parts.after, {
@@ -1421,6 +2361,8 @@ const AudioDaw = (() => {
                 color: clip.color
             });
             await AudioDawTrack.decodeClip(clipB);
+            clipB.trimEnd = clip.trimEnd;
+            clipB.gain = clip.gain;
             blobStore.set(clipB.blobKey, { blob: parts.after, decodedBuffer: clipB.decodedBuffer });
 
             // Replace original clip
@@ -1436,6 +2378,7 @@ const AudioDaw = (() => {
             updateTotalDuration();
             renderAllTracks();
             updateBottomPanel();
+            resyncPlayback();
             if (typeof doNoticePopover === 'function') {
                 doNoticePopover('Clip split successfully', 'notice-pop-green');
             }
@@ -1447,14 +2390,19 @@ const AudioDaw = (() => {
         }
     }
 
+    /** "Foo" -> "Foo (copy)" -> "Foo (copy 2)" instead of stacking " (copy)" forever. */
+    function nextCopyName(name) {
+        const m = name.match(/^(.*) \(copy(?: (\d+))?\)$/);
+        if (!m) return name + ' (copy)';
+        return `${m[1]} (copy ${(parseInt(m[2]) || 1) + 1})`;
+    }
+
     function doDuplicateClip(clip, track) {
-        console.log('[AudioDaw] doDuplicateClip called', clip?.id, track?.id);
         try {
             pushUndo();
-            console.log('[AudioDaw] pushUndo done');
             const newClip = AudioDawTrack.createClip(clip.blob, {
-                name: clip.name + ' (copy)',
-                startTime: clip.startTime + clip.duration + 0.5,
+                name: nextCopyName(clip.name),
+                startTime: clip.startTime + (clip.duration - clip.offset - clip.trimEnd) + 0.5,
                 color: clip.color,
                 blobKey: clip.blobKey // share the same blob
             });
@@ -1463,15 +2411,14 @@ const AudioDaw = (() => {
             newClip.offset = clip.offset;
             newClip.trimEnd = clip.trimEnd;
             newClip.gain = clip.gain;
+            newClip.fadeIn = clip.fadeIn;
+            newClip.fadeOut = clip.fadeOut;
             track.clips.push(newClip);
             state.selectedClipId = newClip.id;
-            console.log('[AudioDaw] new clip created:', newClip.id, 'at', newClip.startTime);
             updateTotalDuration();
-            console.log('[AudioDaw] about to renderAllTracks');
             renderAllTracks();
-            console.log('[AudioDaw] renderAllTracks done');
             updateBottomPanel();
-            console.log('[AudioDaw] duplicate complete');
+            resyncPlayback();
             if (typeof doNoticePopover === 'function') {
                 doNoticePopover('Clip duplicated', 'notice-pop-green');
             }
@@ -1484,33 +2431,26 @@ const AudioDaw = (() => {
     }
 
     function doDeleteClip(clip, track) {
-        console.log('[AudioDaw] doDeleteClip called', clip?.id, track?.id);
         try {
             pushUndo();
             const idx = track.clips.indexOf(clip);
-            console.log('[AudioDaw] clip index in track:', idx);
             if (idx === -1) {
-                console.error('[AudioDaw] clip not found in track during delete');
                 return;
             }
             track.clips.splice(idx, 1);
 
-            // Clean up element
+            // Clean up element (blob stays in blobStore — undo snapshots may reference it;
+            // garbageCollectBlobs() reclaims it once nothing does)
             const entry = track.clipElements.get(clip.id);
             if (entry?.ws) entry.ws.destroy();
             if (entry?.el) entry.el.remove();
             track.clipElements.delete(clip.id);
 
-            // Remove from blob store if no other references
-            const otherRefs = state.tracks.some(t =>
-                t.clips.some(c => c.blobKey === clip.blobKey)
-            );
-            if (!otherRefs) blobStore.delete(clip.blobKey);
-
             if (state.selectedClipId === clip.id) state.selectedClipId = null;
             updateTotalDuration();
             renderAllTracks();
             updateBottomPanel();
+            resyncPlayback();
             if (typeof doNoticePopover === 'function') {
                 doNoticePopover('Clip deleted', 'notice-pop-green');
             }
@@ -1531,17 +2471,36 @@ const AudioDaw = (() => {
         if (!forceRefresh && demucsInstallStatus !== null) return demucsInstallStatus;
         try {
             const result = await AudioLabAPI.callAPI('GetInstallationStatus');
-            console.log('[AudioDaw] GetInstallationStatus response:', JSON.stringify(result));
-            const providers = result.providers || {};
-            const val = providers['demucs_fx'];
-            console.log('[AudioDaw] demucs_fx value:', val, typeof val);
-            // Backend returns raw boolean (true/false), not an object
-            demucsInstallStatus = val === true;
+            // Backend returns raw boolean per provider id
+            demucsInstallStatus = (result.providers || {})['demucs_fx'] === true;
         } catch (err) {
             console.warn('[AudioDaw] Failed to check Demucs status:', err);
             demucsInstallStatus = false;
         }
         return demucsInstallStatus;
+    }
+
+    /** Install the Demucs engine via the streaming installer. Resolves true on success. */
+    function installDemucs(onProgress) {
+        return new Promise(resolve => {
+            makeWSRequest('AudioLabInstallEngine', { provider_id: 'demucs_fx' }, data => {
+                if (data.info) {
+                    if (onProgress) onProgress(data.info);
+                }
+                else if (data.success) {
+                    demucsInstallStatus = true;
+                    if (typeof doNoticePopover === 'function') doNoticePopover('Demucs installed', 'notice-pop-green');
+                    resolve(true);
+                }
+                else if (data.error) {
+                    if (typeof doNoticePopover === 'function') doNoticePopover('Demucs install failed: ' + data.error, 'notice-pop-red');
+                    resolve(false);
+                }
+            }, 0, e => {
+                if (typeof doNoticePopover === 'function') doNoticePopover('Demucs install failed: ' + e, 'notice-pop-red');
+                resolve(false);
+            });
+        });
     }
 
     /**
@@ -1649,6 +2608,7 @@ const AudioDaw = (() => {
             updateTotalDuration();
             renderAllTracks();
             updateBottomPanel();
+            resyncPlayback();
 
             if (typeof doNoticePopover === 'function') {
                 doNoticePopover(`Separated into ${built.length} track${built.length > 1 ? 's' : ''}`, 'notice-pop-green');
@@ -1662,7 +2622,172 @@ const AudioDaw = (() => {
         }
     }
 
+    // ===== RECORDING =====
+    // DAW-local mic capture via AudioLabPlayer.createRecorder (WaveSurfer.Record).
+    // Deliberately NOT AudioLabCore.startRecording — that path is tuned for STT
+    // voice references (16kHz mono, echo cancellation, 30s cap).
+
+    function updateRecordButton(active) {
+        const btn = transportEl?.querySelector('.daw-btn-rec');
+        if (btn) btn.classList.toggle('active', active);
+    }
+
+    async function showMicSettingsMenu(e) {
+        let devices = [];
+        try {
+            devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput');
+        } catch (_) {}
+        const items = [
+            { label: 'Default microphone', checked: !recordSettings.deviceId,
+              action: () => { recordSettings.deviceId = null; } }
+        ];
+        devices.forEach((d, i) => items.push({
+            label: d.label || `Microphone ${i + 1}`,
+            checked: recordSettings.deviceId === d.deviceId,
+            action: () => { recordSettings.deviceId = d.deviceId; }
+        }));
+        items.push({
+            label: 'Voice mode (echo + noise reduction)',
+            checked: recordSettings.voiceMode,
+            action: () => { recordSettings.voiceMode = !recordSettings.voiceMode; }
+        });
+        dawMenu(e, items);
+    }
+
+    async function startRecordingFlow() {
+        if (recording) return;
+        let track = state.tracks.find(t => t.armed);
+        if (!track) {
+            track = addTrack({ name: 'Recording' });
+            track.armed = true;
+            renderAllTracks();
+        }
+
+        // DAW-quality constraints; voice mode re-enables browser voice processing
+        const constraints = {
+            channelCount: { ideal: 2 },
+            sampleRate: { ideal: 48000 },
+            echoCancellation: recordSettings.voiceMode,
+            noiseSuppression: recordSettings.voiceMode,
+            autoGainControl: recordSettings.voiceMode
+        };
+        if (recordSettings.deviceId) constraints.deviceId = { exact: recordSettings.deviceId };
+
+        // Placeholder clip hosting the live waveform; width grows with the playhead
+        const startP = state.currentTime;
+        const placeholderEl = createDiv(null, 'daw-clip daw-clip-recording');
+        placeholderEl.style.left = (startP * state.zoom) + 'px';
+        placeholderEl.style.width = '4px';
+        const waveEl = createDiv(null, 'daw-clip-waveform');
+        placeholderEl.appendChild(waveEl);
+        if (track.laneEl) track.laneEl.appendChild(placeholderEl);
+
+        const recorder = AudioLabPlayer.createRecorder(waveEl, {
+            height: track.height - 8,
+            continuousWaveform: true,
+            renderRecorded: false,
+            audioBitsPerSecond: 256000
+        });
+        if (!recorder) {
+            placeholderEl.remove();
+            if (typeof doNoticePopover === 'function') doNoticePopover('Recorder unavailable', 'notice-pop-red');
+            return;
+        }
+        recorder.on('end', (blob) => finalizeRecording(blob));
+
+        // Acquire the mic BEFORE touching the transport so a denied/slow permission
+        // prompt can't leave playback running with no capture.
+        try {
+            await recorder.startRecording(constraints);
+        } catch (err) {
+            recorder.destroy();
+            placeholderEl.remove();
+            console.error('[AudioDaw] Mic access failed:', err);
+            if (typeof doNoticePopover === 'function') {
+                doNoticePopover('Microphone access failed: ' + err.message, 'notice-pop-red');
+            }
+            return;
+        }
+
+        recording = { track, startP, recorder, placeholderEl };
+        state.isRecording = true;
+        updateRecordButton(true);
+        if (!state.isPlaying) startPlayback(); // hear the other tracks while recording
+    }
+
+    async function stopRecordingFlow() {
+        if (!recording) return;
+        const rec = recording;
+        state.isRecording = false;
+        updateRecordButton(false);
+        try { await rec.recorder.stopRecording(); } catch (_) {} // 'end' event finalizes
+        stopPlayback();
+        // Safety net: if 'record-end' never fires, clear the session so playback
+        // doesn't stay stuck in record mode
+        setTimeout(() => {
+            if (recording === rec) {
+                console.warn('[AudioDaw] record-end never fired; aborting recording session');
+                abortRecording();
+            }
+        }, 2000);
+    }
+
+    /** 'record-end' handler: turn the captured blob into a real clip at the record start. */
+    async function finalizeRecording(blob) {
+        const rec = recording;
+        if (!rec) return;
+        recording = null;
+        try { rec.recorder.destroy(); } catch (_) {}
+        rec.placeholderEl.remove();
+        if (!blob || blob.size === 0) return;
+        pushUndo();
+        try {
+            await addClipToTrack(rec.track, blob, { name: 'Recording', startTime: rec.startP });
+            updateTotalDuration();
+            renderAllTracks();
+            updateBottomPanel();
+            resyncPlayback();
+            if (typeof doNoticePopover === 'function') doNoticePopover('Recording added', 'notice-pop-green');
+        } catch (err) {
+            console.error('[AudioDaw] Failed to add recording:', err);
+            if (typeof doNoticePopover === 'function') {
+                doNoticePopover('Failed to add recording: ' + err.message, 'notice-pop-red');
+            }
+        }
+    }
+
+    /** Abort an in-flight recording without keeping audio (modal teardown). */
+    function abortRecording() {
+        if (!recording) return;
+        const rec = recording;
+        recording = null; // null first so the 'end' handler no-ops
+        try { rec.recorder.stopRecording(); } catch (_) {}
+        try { rec.recorder.destroy(); } catch (_) {}
+        rec.placeholderEl.remove();
+        if (state) state.isRecording = false;
+        updateRecordButton(false);
+    }
+
     // ===== UNDO / REDO =====
+
+    /**
+     * Drop blobStore entries referenced by no live clip AND no undo/redo snapshot.
+     * Deleting blobs eagerly on clip/track delete would make undo restore silence.
+     */
+    function garbageCollectBlobs() {
+        const referenced = new Set();
+        for (const track of state.tracks) {
+            for (const clip of track.clips) referenced.add(clip.blobKey);
+        }
+        for (const snap of [...state.undoStack, ...state.redoStack]) {
+            for (const ts of snap.tracks) {
+                for (const cs of ts.clips) referenced.add(cs.blobKey);
+            }
+        }
+        for (const key of [...blobStore.keys()]) {
+            if (!referenced.has(key)) blobStore.delete(key);
+        }
+    }
 
     function pushUndo() {
         const snapshot = {
@@ -1675,6 +2800,8 @@ const AudioDaw = (() => {
         state.undoStack.push(snapshot);
         if (state.undoStack.length > MAX_UNDO) state.undoStack.shift();
         state.redoStack = []; // clear redo on new action
+        garbageCollectBlobs();
+        scheduleAutosave(); // every undoable mutation marks the session dirty
     }
 
     async function doUndo() {
@@ -1691,6 +2818,7 @@ const AudioDaw = (() => {
 
         const snapshot = state.undoStack.pop();
         await restoreSnapshot(snapshot);
+        garbageCollectBlobs();
     }
 
     async function doRedo() {
@@ -1706,6 +2834,7 @@ const AudioDaw = (() => {
 
         const snapshot = state.redoStack.pop();
         await restoreSnapshot(snapshot);
+        garbageCollectBlobs();
     }
 
     async function restoreSnapshot(snapshot) {
@@ -1751,6 +2880,8 @@ const AudioDaw = (() => {
                 clip.offset = cs.offset;
                 clip.trimEnd = cs.trimEnd;
                 clip.gain = cs.gain;
+                clip.fadeIn = cs.fadeIn || 0;
+                clip.fadeOut = cs.fadeOut || 0;
                 clip.muted = cs.muted;
                 clip.decodedBuffer = stored.decodedBuffer;
                 track.clips.push(clip);
@@ -1760,82 +2891,293 @@ const AudioDaw = (() => {
 
         updateTotalDuration();
         renderAllTracks();
+        resyncPlayback();
+    }
+
+    // ===== PROJECT PERSISTENCE =====
+    // IndexedDB (AudioDawStore) holds a crash-safe autosave slot; explicit saves go
+    // to the server per-user via AudioLabSaveProject/LoadProject/ListProjects.
+
+    const AUTOSAVE_SLOT = '__autosave__';
+    const AUTOSAVE_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
+    const SERVER_SAVE_LIMIT_BYTES = 40 * 1024 * 1024;
+    let autosaveTimer = null;
+    let currentProjectName = null;
+
+    function serializeProject() {
+        return {
+            version: 1,
+            bpm: state.bpm,
+            timeSignature: state.timeSignature,
+            masterVolume: state.masterVolume,
+            rulerMode: state.rulerMode,
+            snapEnabled: state.snapEnabled,
+            tracks: state.tracks.map(t => AudioDawTrack.serializeTrack(t))
+        };
+    }
+
+    /** All blobs referenced by live clips, deduped by blobKey. */
+    function collectProjectBlobs() {
+        const blobs = new Map();
+        for (const track of state.tracks) {
+            for (const clip of track.clips) {
+                if (!blobs.has(clip.blobKey)) {
+                    const stored = blobStore.get(clip.blobKey);
+                    if (stored) blobs.set(clip.blobKey, stored.blob);
+                }
+            }
+        }
+        return blobs;
+    }
+
+    /** Replace the whole arrangement with a deserialized project + its audio blobs. */
+    async function restoreProject(project, blobs) {
+        abortRecording();
+        stopPlayback();
+        for (const track of state.tracks) AudioDawTrack.destroyTrack(track);
+        const keepZoom = state.zoom;
+        state = getDefaultState();
+        state.zoom = keepZoom;
+        state.bpm = project.bpm || 120;
+        state.timeSignature = project.timeSignature || [4, 4];
+        state.masterVolume = project.masterVolume ?? 1.0;
+        state.rulerMode = project.rulerMode || 'time';
+        state.snapEnabled = project.snapEnabled !== false;
+        blobStore.clear();
+
+        for (const ts of project.tracks || []) {
+            const track = AudioDawTrack.createTrack({ name: ts.name, color: ts.color, height: ts.height });
+            track.volume = ts.volume ?? 0.8;
+            track.pan = ts.pan || 0;
+            track.muted = !!ts.muted;
+            track.soloed = !!ts.soloed;
+            track.armed = !!ts.armed;
+            for (const cs of ts.clips || []) {
+                const blob = blobs.get(cs.blobKey);
+                if (!blob) continue;
+                const clip = AudioDawTrack.createClip(blob, {
+                    name: cs.name, startTime: cs.startTime, color: cs.color, blobKey: cs.blobKey
+                });
+                const stored = blobStore.get(cs.blobKey);
+                if (stored?.decodedBuffer) {
+                    clip.decodedBuffer = stored.decodedBuffer;
+                    clip.duration = stored.decodedBuffer.duration;
+                } else {
+                    await AudioDawTrack.decodeClip(clip);
+                    blobStore.set(cs.blobKey, { blob, decodedBuffer: clip.decodedBuffer });
+                }
+                clip.offset = cs.offset || 0;
+                clip.trimEnd = cs.trimEnd || 0;
+                clip.gain = cs.gain ?? 1;
+                clip.fadeIn = cs.fadeIn || 0;
+                clip.fadeOut = cs.fadeOut || 0;
+                clip.muted = !!cs.muted;
+                track.clips.push(clip);
+            }
+            state.tracks.push(track);
+        }
+        if (state.tracks.length === 0) addTrack();
+        state.selectedTrackId = state.tracks[0]?.id || null;
+
+        buildTransport();
+        if (timeline) {
+            timeline.setTempo(state.bpm, state.timeSignature);
+            timeline.setMode(state.rulerMode);
+        }
+        updateTotalDuration();
+        renderAllTracks();
+        updateBottomPanel();
+        updateTimeDisplay();
+        updatePlayheadPosition();
+    }
+
+    function scheduleAutosave() {
+        if (typeof AudioDawStore === 'undefined') return;
+        if (autosaveTimer) clearTimeout(autosaveTimer);
+        autosaveTimer = setTimeout(() => { autosaveTimer = null; flushAutosave(); }, 3000);
+    }
+
+    /** Snapshot synchronously, write async — safe to call right before teardown. */
+    function flushAutosave() {
+        if (typeof AudioDawStore === 'undefined' || !state) return;
+        if (autosaveTimer) { clearTimeout(autosaveTimer); autosaveTimer = null; }
+        if (!state.tracks.some(t => t.clips.length > 0)) return;
+        const project = serializeProject();
+        const blobs = collectProjectBlobs();
+        AudioDawStore.saveProject(AUTOSAVE_SLOT, project, blobs)
+            .catch(err => console.warn('[AudioDaw] Autosave failed:', err));
+    }
+
+    async function maybeOfferResume() {
+        if (typeof AudioDawStore === 'undefined') return;
+        try {
+            const meta = await AudioDawStore.getProjectMeta(AUTOSAVE_SLOT);
+            if (!meta || Date.now() - meta.savedAt > AUTOSAVE_MAX_AGE_MS) return;
+            showResumeBar(meta.savedAt);
+        } catch (_) {}
+    }
+
+    function showResumeBar(savedAt) {
+        const body = modalEl?.querySelector('.daw-body');
+        if (!body || body.querySelector('.daw-resume-bar')) return;
+        const bar = createDiv(null, 'daw-resume-bar');
+        const label = createSpan(null, 'daw-resume-label');
+        label.textContent = `Autosaved session from ${new Date(savedAt).toLocaleString()} available.`;
+        bar.appendChild(label);
+        quickAppendButton(bar, 'Resume', async () => {
+            bar.remove();
+            const overlay = showDawLoadingOverlay('Restoring session...');
+            try {
+                const data = await AudioDawStore.loadProject(AUTOSAVE_SLOT);
+                if (data) await restoreProject(data.project, data.blobs);
+            } catch (err) {
+                console.error('[AudioDaw] Resume failed:', err);
+                if (typeof doNoticePopover === 'function') {
+                    doNoticePopover('Resume failed: ' + err.message, 'notice-pop-red');
+                }
+            }
+            hideDawLoadingOverlay(overlay);
+        }, ' basic-button btn-sm', 'Restore the autosaved arrangement');
+        quickAppendButton(bar, 'Dismiss', () => bar.remove(), ' basic-button btn-sm', 'Keep the current session');
+        body.appendChild(bar);
+    }
+
+    async function saveProjectToServer(name) {
+        const overlay = showDawLoadingOverlay('Saving project...');
+        try {
+            const project = serializeProject();
+            const blobs = collectProjectBlobs();
+            let total = 0;
+            for (const b of blobs.values()) total += b.size;
+            if (total > SERVER_SAVE_LIMIT_BYTES) {
+                throw new Error(`Project audio too large for server save (${Math.round(total / 1024 / 1024)}MB, max ${SERVER_SAVE_LIMIT_BYTES / 1024 / 1024}MB)`);
+            }
+            const blobData = {};
+            for (const [key, blob] of blobs) {
+                blobData[key] = { b64: await AudioLabCore.readAsBase64(blob), type: blob.type || 'audio/wav' };
+            }
+            project.blobs = blobData;
+            const result = await AudioLabAPI.callAPI('AudioLabSaveProject', {
+                name, project_json: JSON.stringify(project)
+            });
+            if (!result.success) throw new Error(result.error || 'Save failed');
+            currentProjectName = name;
+            if (typeof doNoticePopover === 'function') doNoticePopover(`Project "${name}" saved`, 'notice-pop-green');
+        } catch (err) {
+            console.error('[AudioDaw] Save project failed:', err);
+            if (typeof doNoticePopover === 'function') doNoticePopover('Save failed: ' + err.message, 'notice-pop-red');
+        }
+        hideDawLoadingOverlay(overlay);
+    }
+
+    async function openProjectFromServer(name) {
+        const overlay = showDawLoadingOverlay('Loading project...');
+        try {
+            const result = await AudioLabAPI.callAPI('AudioLabLoadProject', { name });
+            if (!result.success) throw new Error(result.error || 'Load failed');
+            const project = JSON.parse(result.project_json);
+            const blobs = new Map();
+            for (const [key, info] of Object.entries(project.blobs || {})) {
+                blobs.set(key, AudioLabCore.base64ToBlob(info.b64, info.type || 'audio/wav'));
+            }
+            delete project.blobs;
+            await restoreProject(project, blobs);
+            currentProjectName = name;
+            if (typeof doNoticePopover === 'function') doNoticePopover(`Project "${name}" loaded`, 'notice-pop-green');
+        } catch (err) {
+            console.error('[AudioDaw] Load project failed:', err);
+            if (typeof doNoticePopover === 'function') doNoticePopover('Load failed: ' + err.message, 'notice-pop-red');
+        }
+        hideDawLoadingOverlay(overlay);
+    }
+
+    function promptSaveAs() {
+        const name = prompt('Project name:', currentProjectName || 'My Project');
+        if (name && name.trim()) saveProjectToServer(name.trim());
+    }
+
+    function resetToEmptyProject() {
+        resetState();
+        currentProjectName = null;
+        addTrack();
+        buildTransport();
+        updateTotalDuration();
+        renderAllTracks();
+        updateBottomPanel();
+        updateTimeDisplay();
+        updatePlayheadPosition();
+    }
+
+    function showProjectMenu(e) {
+        dawMenu(e, [
+            { label: currentProjectName ? `Save "${currentProjectName}"` : 'Save…', action: () => {
+                if (currentProjectName) saveProjectToServer(currentProjectName);
+                else promptSaveAs();
+            }},
+            { label: 'Save As…', action: promptSaveAs },
+            { label: 'Open…', action: async () => {
+                try {
+                    const result = await AudioLabAPI.callAPI('AudioLabListProjects');
+                    const names = (result.projects || []).filter(n => n !== AUTOSAVE_SLOT);
+                    if (!names.length) {
+                        if (typeof doNoticePopover === 'function') doNoticePopover('No saved projects yet', 'notice-pop-yellow');
+                        return;
+                    }
+                    dawMenu(e, names.map(n => ({ label: n, action: () => openProjectFromServer(n) })));
+                } catch (err) {
+                    if (typeof doNoticePopover === 'function') doNoticePopover('Failed to list projects: ' + err.message, 'notice-pop-red');
+                }
+            }},
+            { label: 'New Project', action: () => {
+                if (state.tracks.some(t => t.clips.length > 0) && !confirm('Start a new empty project? Unsaved changes are kept only in the autosave slot.')) {
+                    return;
+                }
+                flushAutosave();
+                resetToEmptyProject();
+            }}
+        ]);
+    }
+
+    /** Render the mixdown and store it in the user's Swarm output history. */
+    async function saveMixdownToOutputs() {
+        try {
+            if (typeof doNoticePopover === 'function') doNoticePopover('Rendering mixdown...', 'notice-pop-blue');
+            const wavBlob = await renderMixdownBlob();
+            if (!wavBlob) throw new Error('Nothing to export');
+            const base64 = await AudioLabCore.readAsBase64(wavBlob);
+            const result = await AudioLabAPI.callAPI('AddImageToHistory', {
+                image: `data:audio/wav;base64,${base64}`,
+                prompt: 'AudioLab DAW mixdown'
+            });
+            if (result.error) throw new Error(result.error);
+            if (typeof doNoticePopover === 'function') doNoticePopover('Mixdown saved to Outputs', 'notice-pop-green');
+        } catch (err) {
+            console.error('[AudioDaw] Save to outputs failed:', err);
+            if (typeof doNoticePopover === 'function') doNoticePopover('Save to Outputs failed: ' + err.message, 'notice-pop-red');
+        }
     }
 
     // ===== EXPORT =====
 
     function showExportMenu(e) {
-        const existing = document.querySelector('.daw-context-menu');
-        if (existing) existing.remove();
-
-        const menu = createDiv(null, 'daw-context-menu');
-        menu.style.position = 'fixed';
-        menu.style.left = e.clientX + 'px';
-        menu.style.top = (e.clientY - 180) + 'px';
-        menu.style.zIndex = '99999';
-
-        const formats = [
-            { id: 'wav', label: 'WAV (Lossless)' },
-            { id: 'mp3', label: 'MP3 (192kbps)' },
-            { id: 'ogg', label: 'OGG Vorbis' },
-            { id: 'flac', label: 'FLAC (Lossless)' },
-            { id: 'aac', label: 'AAC (192kbps)' }
-        ];
-
-        for (const fmt of formats) {
-            const btn = document.createElement('button');
-            btn.className = 'daw-context-item';
-            btn.textContent = fmt.label;
-            btn.addEventListener('click', () => {
-                menu.remove();
-                doExportMixdown(fmt.id);
-            });
-            menu.appendChild(btn);
-        }
-
-        document.body.appendChild(menu);
-        const closeMenu = (ce) => {
-            if (!menu.contains(ce.target)) {
-                menu.remove();
-                document.removeEventListener('click', closeMenu, true);
-            }
-        };
-        setTimeout(() => document.addEventListener('click', closeMenu, true), 0);
+        dawMenu(e, [
+            { label: 'WAV (Lossless)', action: () => doExportMixdown('wav') },
+            { label: 'MP3 (192kbps)', action: () => doExportMixdown('mp3') },
+            { label: 'OGG Vorbis', action: () => doExportMixdown('ogg') },
+            { label: 'FLAC (Lossless)', action: () => doExportMixdown('flac') },
+            { label: 'AAC (192kbps)', action: () => doExportMixdown('aac') },
+            { label: 'Save WAV to Swarm Outputs', action: saveMixdownToOutputs }
+        ]);
     }
 
     async function doExportMixdown(format = 'wav') {
         if (state.tracks.length === 0) return;
-
-        const sampleRate = 44100;
-        const totalSamples = Math.ceil(state.totalDuration * sampleRate);
-        const offlineCtx = new OfflineAudioContext(2, totalSamples, sampleRate);
-        const soloActive = hasSoloTracks();
-
-        for (const track of state.tracks) {
-            if (track.muted) continue;
-            if (soloActive && !track.soloed) continue;
-
-            const gainNode = offlineCtx.createGain();
-            gainNode.gain.value = track.volume * state.masterVolume;
-            gainNode.connect(offlineCtx.destination);
-
-            for (const clip of track.clips) {
-                if (clip.muted || !clip.decodedBuffer) continue;
-
-                const source = offlineCtx.createBufferSource();
-                source.buffer = clip.decodedBuffer;
-                source.connect(gainNode);
-                source.start(clip.startTime + clip.offset, clip.offset,
-                    clip.duration - clip.offset - clip.trimEnd);
-            }
-        }
-
         try {
             if (typeof doNoticePopover === 'function') {
                 doNoticePopover('Rendering mixdown...', 'notice-pop-blue');
             }
-            const rendered = await offlineCtx.startRendering();
-            const wavBlob = audioBufferToWav(rendered);
+            const wavBlob = await renderMixdownBlob();
+            if (!wavBlob) throw new Error('Nothing to export');
 
             if (format === 'wav') {
                 downloadBlob(wavBlob, `audiolab-mixdown-${Date.now()}.wav`);
@@ -1936,12 +3278,31 @@ const AudioDaw = (() => {
     // ===== KEYBOARD SHORTCUTS =====
 
     function handleKeyboard(e) {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
         const key = e.key.toLowerCase();
 
-        if (key === ' ') { e.preventDefault(); togglePlayback(); }
+        if (key === ' ') {
+            e.preventDefault();
+            if (recording) stopRecordingFlow();
+            else togglePlayback();
+        }
+        else if (key === 'r' && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            if (recording) stopRecordingFlow();
+            else startRecordingFlow();
+        }
         else if (key === 'z' && (e.ctrlKey || e.metaKey) && e.shiftKey) { e.preventDefault(); doRedo(); }
         else if (key === 'z' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doUndo(); }
+        else if (key === 's' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            if (currentProjectName) saveProjectToServer(currentProjectName);
+            else promptSaveAs();
+        }
+        else if (key === 'd' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            const sel = findClipById(state.selectedClipId);
+            if (sel) doDuplicateClip(sel.clip, sel.track);
+        }
         else if (key === 'delete' || key === 'backspace') {
             if (state.selectedClipId) {
                 const track = state.tracks.find(t => t.clips.some(c => c.id === state.selectedClipId));
@@ -1957,7 +3318,7 @@ const AudioDaw = (() => {
                 renderAllTracks();
             }
         }
-        else if (key === 's' && !e.ctrlKey) {
+        else if (key === 's') {
             const track = getSelectedTrack();
             if (track) {
                 track.soloed = !track.soloed;
@@ -1965,6 +3326,42 @@ const AudioDaw = (() => {
                 renderAllTracks();
             }
         }
+        else if (key === 'l') { toggleLoop(); }
+        else if (key === 't') {
+            const sel = findClipById(state.selectedClipId);
+            if (sel) doSplitClip(sel.clip, sel.track);
+        }
+        else if (key === '+' || key === '=') { e.preventDefault(); setZoom(state.zoom * 1.25); }
+        else if (key === '-') { e.preventDefault(); setZoom(state.zoom / 1.25); }
+        else if (key === 'home') { e.preventDefault(); seekTo(0); }
+        else if (key === 'end') { e.preventDefault(); seekTo(state.totalDuration); }
+        else if (key === '?') { e.preventDefault(); showShortcutHelp(); }
+    }
+
+    function showShortcutHelp() {
+        const existing = document.querySelector('.daw-shortcut-help');
+        if (existing) { existing.remove(); return; }
+        const overlay = createDiv(null, 'daw-shortcut-help');
+        const rows = [
+            ['Space', 'Play / Pause (stops recording)'],
+            ['R', 'Start / stop recording'],
+            ['L', 'Toggle loop'],
+            ['M / S', 'Mute / solo selected track'],
+            ['T', 'Split selected clip at playhead'],
+            ['Delete', 'Delete selected clip'],
+            ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'],
+            ['Ctrl+D', 'Duplicate selected clip'],
+            ['Ctrl+S', 'Save project'],
+            ['+ / -', 'Zoom in / out'],
+            ['Home / End', 'Jump to start / end'],
+            ['?', 'Toggle this help']
+        ];
+        overlay.innerHTML = '<div class="daw-shortcut-help-title">Keyboard Shortcuts</div>'
+            + rows.map(([k, d]) => `<div class="daw-shortcut-row"><kbd>${escapeHtml(k)}</kbd><span>${escapeHtml(d)}</span></div>`).join('')
+            + '<div class="daw-shortcut-help-hint">Click anywhere to close</div>';
+        overlay.addEventListener('click', () => overlay.remove());
+        const body = modalEl?.querySelector('.daw-body');
+        (body || document.body).appendChild(overlay);
     }
 
     // ===== HELPERS =====
@@ -2001,7 +3398,9 @@ const AudioDaw = (() => {
     }
 
     function resetState() {
+        abortRecording();
         stopPlayback();
+        teardownPlaybackGraph();
         // Destroy existing tracks
         if (state) {
             for (const track of state.tracks) {
@@ -2010,11 +3409,12 @@ const AudioDaw = (() => {
         }
         state = getDefaultState();
         blobStore.clear();
-        activeSourceNodes = [];
     }
 
     function destroyAll() {
+        abortRecording();
         stopPlayback();
+        teardownPlaybackGraph();
         if (state) {
             for (const track of state.tracks) {
                 AudioDawTrack.destroyTrack(track);

@@ -8,6 +8,10 @@ const AudioDawTrack = (() => {
 
     let trackIdCounter = 0;
     let clipIdCounter = 0;
+    // Live zoom (px/sec) read by drag handlers — closures capturing a zoom
+    // snapshot went stale after zoom changes and dragged clips the wrong distance.
+    let currentZoom = 100;
+    const MIN_CLIP_DUR = 0.05; // seconds; trim handles can't shrink a clip below this
 
     const TRACK_COLORS = [
         '#4a9eff', '#ff6b6b', '#51cf66', '#ffd43b', '#cc5de8',
@@ -33,6 +37,8 @@ const AudioDawTrack = (() => {
             offset: 0,                 // internal trim start (seconds into source)
             trimEnd: 0,                // internal trim end (0 = full length)
             gain: 1.0,
+            fadeIn: 0,                 // fade-in length in seconds
+            fadeOut: 0,                // fade-out length in seconds
             muted: false,
             color: opts.color || null, // override track color
             blobKey: opts.blobKey || `blob-${clipIdCounter}-${Date.now()}`
@@ -99,11 +105,18 @@ const AudioDawTrack = (() => {
         header.style.height = track.height + 'px';
         header.style.borderLeft = `3px solid ${track.color}`;
 
-        // Top row: name + remove button
+        // Top row: color swatch + name + remove button
         const topRow = createDiv(null, 'daw-track-name-row');
-        topRow.style.display = 'flex';
-        topRow.style.alignItems = 'center';
-        topRow.style.gap = '0.2rem';
+
+        const swatch = document.createElement('span');
+        swatch.className = 'daw-track-swatch';
+        swatch.style.background = track.color;
+        swatch.title = 'Change track color';
+        swatch.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (callbacks.onRecolor) callbacks.onRecolor(track, e);
+        });
+        topRow.appendChild(swatch);
 
         // Track name (editable)
         const nameEl = document.createElement('span');
@@ -148,6 +161,7 @@ const AudioDawTrack = (() => {
         // Mute
         const muteBtn = document.createElement('button');
         muteBtn.className = 'daw-track-btn' + (track.muted ? ' active-mute' : '');
+        muteBtn.dataset.role = 'mute';
         muteBtn.textContent = 'M';
         muteBtn.title = 'Mute';
         muteBtn.addEventListener('click', (e) => {
@@ -161,6 +175,7 @@ const AudioDawTrack = (() => {
         // Solo
         const soloBtn = document.createElement('button');
         soloBtn.className = 'daw-track-btn' + (track.soloed ? ' active-solo' : '');
+        soloBtn.dataset.role = 'solo';
         soloBtn.textContent = 'S';
         soloBtn.title = 'Solo';
         soloBtn.addEventListener('click', (e) => {
@@ -171,18 +186,28 @@ const AudioDawTrack = (() => {
         });
         controls.appendChild(soloBtn);
 
-        // Volume slider (compact inline)
+        // Volume slider (compact inline, dB taper shared with the mixer)
+        const hasTaper = typeof AudioDawMixer !== 'undefined' && AudioDawMixer.gainToFaderPos;
         const volSlider = document.createElement('input');
         volSlider.type = 'range';
         volSlider.className = 'daw-track-volume';
+        volSlider.dataset.role = 'volume';
         volSlider.min = '0';
         volSlider.max = '1';
-        volSlider.step = '0.05';
-        volSlider.value = track.volume;
-        volSlider.title = `Volume: ${Math.round(track.volume * 100)}%`;
+        volSlider.step = '0.005';
+        volSlider.value = hasTaper ? AudioDawMixer.gainToFaderPos(track.volume) : track.volume;
+        const volTitle = (v) => `Volume: ${v <= 0 ? '-∞' : (20 * Math.log10(v)).toFixed(1)} dB`;
+        volSlider.title = volTitle(track.volume);
         volSlider.addEventListener('input', (e) => {
-            track.volume = parseFloat(e.target.value);
-            volSlider.title = `Volume: ${Math.round(track.volume * 100)}%`;
+            const p = parseFloat(e.target.value);
+            track.volume = hasTaper ? AudioDawMixer.faderPosToGain(p) : p;
+            volSlider.title = volTitle(track.volume);
+            if (callbacks.onVolume) callbacks.onVolume(track);
+        });
+        volSlider.addEventListener('dblclick', () => {
+            track.volume = 1;
+            volSlider.value = hasTaper ? AudioDawMixer.gainToFaderPos(1) : 1;
+            volSlider.title = volTitle(1);
             if (callbacks.onVolume) callbacks.onVolume(track);
         });
         controls.appendChild(volSlider);
@@ -200,7 +225,31 @@ const AudioDawTrack = (() => {
         });
         controls.appendChild(armBtn);
 
+        // Pan knob (reuses the mixer's knob widget)
+        if (typeof AudioDawMixer !== 'undefined' && AudioDawMixer.createKnob) {
+            const knob = AudioDawMixer.createKnob({
+                value: track.pan || 0, min: -1, max: 1, defaultValue: 0,
+                title: 'Pan (drag up/down, double-click to center)',
+                onChange: (v) => {
+                    track.pan = Math.round(v * 20) / 20;
+                    if (callbacks.onPan) callbacks.onPan(track);
+                }
+            });
+            knob.classList.add('daw-track-pan-knob');
+            controls.appendChild(knob);
+        }
+
         header.appendChild(controls);
+
+        // Live level meter (fill + peak-hold tick driven by the DAW's meter loop)
+        const meter = createDiv(null, 'daw-track-meter');
+        const meterFill = createDiv(null, 'daw-track-meter-fill');
+        const meterPeak = createDiv(null, 'daw-track-meter-peak');
+        meter.appendChild(meterFill);
+        meter.appendChild(meterPeak);
+        header.appendChild(meter);
+        track.meterEl = meterFill;
+        track.meterPeakEl = meterPeak;
 
         // Click to select track
         header.addEventListener('click', () => {
@@ -229,6 +278,21 @@ const AudioDawTrack = (() => {
     }
 
     /**
+     * Apply a clip's timeline position, trimmed width, and waveform alignment to its element.
+     * The WaveSurfer canvas renders the FULL source blob; shifting it left by offset*zoom
+     * inside the overflow-hidden clip element shows exactly the trimmed window.
+     */
+    function applyClipLayout(el, clip) {
+        el.style.left = (clip.startTime * currentZoom) + 'px';
+        el.style.width = Math.max((clip.duration - clip.offset - clip.trimEnd) * currentZoom, 4) + 'px';
+        const wsC = el.querySelector('.daw-clip-waveform');
+        if (wsC) {
+            wsC.style.width = (clip.duration * currentZoom) + 'px';
+            wsC.style.transform = `translateX(${-clip.offset * currentZoom}px)`;
+        }
+    }
+
+    /**
      * Render (or re-render) all clips in a track's lane.
      * @param {Object} track - Track data
      * @param {number} zoom - Pixels per second
@@ -237,6 +301,7 @@ const AudioDawTrack = (() => {
      */
     function renderClips(track, zoom, callbacks = {}, selectedClipId = null) {
         if (!track.laneEl) return;
+        currentZoom = zoom;
 
         // Remove clip elements no longer in track.clips
         const currentClipIds = new Set(track.clips.map(c => c.id));
@@ -251,8 +316,6 @@ const AudioDawTrack = (() => {
         // Update or create each clip element
         for (const clip of track.clips) {
             let entry = track.clipElements.get(clip.id);
-            const left = clip.startTime * zoom;
-            const width = Math.max((clip.duration - clip.offset - clip.trimEnd) * zoom, 4);
 
             if (!entry) {
                 // Create new clip element
@@ -268,6 +331,16 @@ const AudioDawTrack = (() => {
                 // Waveform container
                 const wsContainer = createDiv(null, 'daw-clip-waveform');
                 clipEl.appendChild(wsContainer);
+
+                // Trim handles (left = offset, right = trimEnd)
+                const trimL = createDiv(null, 'daw-clip-trim daw-clip-trim-left');
+                trimL.title = 'Drag to trim clip start';
+                const trimR = createDiv(null, 'daw-clip-trim daw-clip-trim-right');
+                trimR.title = 'Drag to trim clip end';
+                clipEl.appendChild(trimL);
+                clipEl.appendChild(trimR);
+                setupTrimDrag(trimL, 'left', clipEl, clip, track, callbacks);
+                setupTrimDrag(trimR, 'right', clipEl, clip, track, callbacks);
 
                 track.laneEl.appendChild(clipEl);
 
@@ -316,10 +389,12 @@ const AudioDawTrack = (() => {
                 track.laneEl.appendChild(entry.el);
             }
 
-            // Update position and size
-            entry.el.style.left = left + 'px';
-            entry.el.style.width = width + 'px';
+            // Update position, size, waveform alignment, and colors (track may be recolored)
+            applyClipLayout(entry.el, clip);
             entry.el.style.backgroundColor = hexToRgba(clip.color || track.color, 0.3);
+            if (entry.ws) {
+                try { entry.ws.setOptions({ waveColor: clip.color || track.color }); } catch (_) {}
+            }
 
             // Selected state
             entry.el.classList.toggle('selected', clip.id === selectedClipId);
@@ -352,13 +427,19 @@ const AudioDawTrack = (() => {
             const onMove = (me) => {
                 const dx = me.clientX - dragStartX;
                 const dy = me.clientY - dragStartY;
-                if (Math.abs(dx) > 3 || Math.abs(dy) > 3) isDragging = true;
+                if (!isDragging && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
+                    isDragging = true;
+                    clipEl.classList.add('dragging');
+                    // Snapshot for undo once per real drag gesture, before any movement applies
+                    if (callbacks.onClipDragStart) callbacks.onClipDragStart(clip, track);
+                }
                 if (!isDragging) return;
 
-                // Horizontal: reposition in time
-                const newTime = Math.max(0, dragStartTime + dx / zoom);
+                // Horizontal: reposition in time (currentZoom, NOT the creation-time zoom)
+                let newTime = Math.max(0, dragStartTime + dx / currentZoom);
+                if (callbacks.snapTime) newTime = Math.max(0, callbacks.snapTime(newTime));
                 clip.startTime = newTime;
-                clipEl.style.left = (newTime * zoom) + 'px';
+                clipEl.style.left = (newTime * currentZoom) + 'px';
 
                 // Vertical: detect target track lane for cross-track drag
                 const lanes = document.querySelectorAll('.daw-track-lane');
@@ -381,6 +462,7 @@ const AudioDawTrack = (() => {
                 clipEl.releasePointerCapture(ue.pointerId);
                 clipEl.removeEventListener('pointermove', onMove);
                 clipEl.removeEventListener('pointerup', onUp);
+                clipEl.classList.remove('dragging');
                 document.querySelectorAll('.daw-track-lane').forEach(l => l.classList.remove('daw-drop-target'));
 
                 if (isDragging) {
@@ -404,18 +486,69 @@ const AudioDawTrack = (() => {
     }
 
     /**
+     * Drag a clip edge to trim it. Left handle adjusts offset (start of the source
+     * window) and shifts startTime so the remaining audio stays anchored on the
+     * timeline; right handle adjusts trimEnd. Undo snapshots via onClipTrimStart.
+     */
+    function setupTrimDrag(handle, side, clipEl, clip, track, callbacks) {
+        handle.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            e.stopPropagation();
+            e.preventDefault();
+            handle.setPointerCapture(e.pointerId);
+            const startX = e.clientX;
+            const start = { offset: clip.offset, trimEnd: clip.trimEnd, startTime: clip.startTime };
+            let moved = false;
+            const onMove = (me) => {
+                if (!moved && Math.abs(me.clientX - startX) > 2) {
+                    moved = true;
+                    if (callbacks.onClipTrimStart) callbacks.onClipTrimStart(clip, track);
+                }
+                if (!moved) return;
+                const dSec = (me.clientX - startX) / currentZoom;
+                if (side === 'left') {
+                    // Snap the visible left edge (timeline position), then derive offset
+                    let edge = start.startTime + dSec;
+                    if (callbacks.snapTime) edge = callbacks.snapTime(edge);
+                    // Offset can't push startTime below 0, nor eat past the min duration
+                    const minOffset = Math.max(0, start.offset - start.startTime);
+                    const maxOffset = clip.duration - start.trimEnd - MIN_CLIP_DUR;
+                    const newOffset = Math.max(minOffset, Math.min(start.offset + (edge - start.startTime), maxOffset));
+                    clip.startTime = start.startTime + (newOffset - start.offset);
+                    clip.offset = newOffset;
+                } else {
+                    // Snap the visible right edge, then derive trimEnd
+                    const startEdge = start.startTime + (clip.duration - start.offset - start.trimEnd);
+                    let edge = startEdge + dSec;
+                    if (callbacks.snapTime) edge = callbacks.snapTime(edge);
+                    const maxTrim = clip.duration - start.offset - MIN_CLIP_DUR;
+                    const newTrim = clip.duration - start.offset - (edge - start.startTime);
+                    clip.trimEnd = Math.max(0, Math.min(newTrim, maxTrim));
+                }
+                applyClipLayout(clipEl, clip);
+            };
+            const onUp = (ue) => {
+                handle.releasePointerCapture(ue.pointerId);
+                handle.removeEventListener('pointermove', onMove);
+                handle.removeEventListener('pointerup', onUp);
+                if (moved && callbacks.onClipTrimEnd) callbacks.onClipTrimEnd(clip, track);
+            };
+            handle.addEventListener('pointermove', onMove);
+            handle.addEventListener('pointerup', onUp);
+        });
+    }
+
+    /**
      * Update all WaveSurfer instances in a track for a new zoom level.
      * @param {Object} track - Track data
      * @param {number} zoom - New pixels per second
      */
     function updateZoom(track, zoom) {
+        currentZoom = zoom;
         for (const clip of track.clips) {
             const entry = track.clipElements.get(clip.id);
             if (!entry) continue;
-            const left = clip.startTime * zoom;
-            const width = Math.max((clip.duration - clip.offset - clip.trimEnd) * zoom, 4);
-            entry.el.style.left = left + 'px';
-            entry.el.style.width = width + 'px';
+            applyClipLayout(entry.el, clip);
             // WaveSurfer zoom update
             if (entry.ws) {
                 try { entry.ws.zoom(zoom); } catch (_) { /* ignore if not ready */ }
@@ -424,6 +557,23 @@ const AudioDawTrack = (() => {
         // Update lane/header height if changed
         if (track.laneEl) track.laneEl.style.height = track.height + 'px';
         if (track.headerEl) track.headerEl.style.height = track.height + 'px';
+    }
+
+    /**
+     * Refresh a track header's mute/solo/volume controls from track state
+     * (used when the mixer changes them, to avoid a full re-render).
+     */
+    function syncHeaderControls(track) {
+        if (!track.headerEl) return;
+        const muteBtn = track.headerEl.querySelector('[data-role="mute"]');
+        const soloBtn = track.headerEl.querySelector('[data-role="solo"]');
+        const volSlider = track.headerEl.querySelector('[data-role="volume"]');
+        if (muteBtn) muteBtn.classList.toggle('active-mute', track.muted);
+        if (soloBtn) soloBtn.classList.toggle('active-solo', track.soloed);
+        if (volSlider) {
+            volSlider.value = (typeof AudioDawMixer !== 'undefined' && AudioDawMixer.gainToFaderPos)
+                ? AudioDawMixer.gainToFaderPos(track.volume) : track.volume;
+        }
     }
 
     /**
@@ -462,6 +612,8 @@ const AudioDawTrack = (() => {
                 offset: c.offset,
                 trimEnd: c.trimEnd,
                 gain: c.gain,
+                fadeIn: c.fadeIn,
+                fadeOut: c.fadeOut,
                 muted: c.muted,
                 color: c.color
             }))
@@ -491,12 +643,14 @@ const AudioDawTrack = (() => {
     }
 
     return {
+        COLORS: TRACK_COLORS,
         createClip,
         decodeClip,
         createTrack,
         buildTrackHeader,
         buildClipLane,
         renderClips,
+        syncHeaderControls,
         updateZoom,
         destroyTrack,
         serializeTrack,

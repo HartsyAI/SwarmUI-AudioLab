@@ -141,7 +141,6 @@ featureSetChangers.push(() => {
 
     const curArch = currentModelHelper.curArch;
     const isAudioModel = AudioLabConfig.isAudioModel(curArch);
-    console.log('[audiolab] featureSetChanger: curArch =', JSON.stringify(curArch), 'isAudioModel =', isAudioModel);
 
     for (const param of gen_param_types) {
         if (AudioLabConfig.coreParamsToHide.includes(param.id)) {

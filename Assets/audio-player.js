@@ -473,11 +473,17 @@ const AudioLabPlayer = (() => {
 
         let recordPlugin = null;
         if (WaveSurfer.Record) {
-            recordPlugin = WaveSurfer.Record.create({
+            const recordOpts = {
                 scrollingWaveform: options.scrolling !== false,
                 scrollingWaveformWindow: options.scrollingWindow || 5,
                 renderRecordedAudio: options.renderRecorded !== false
-            });
+            };
+            if (options.continuousWaveform) {
+                recordOpts.continuousWaveform = true;
+                recordOpts.scrollingWaveform = false;
+            }
+            if (options.audioBitsPerSecond) recordOpts.audioBitsPerSecond = options.audioBitsPerSecond;
+            recordPlugin = WaveSurfer.Record.create(recordOpts);
             ws.registerPlugin(recordPlugin);
         }
 
@@ -493,10 +499,18 @@ const AudioLabPlayer = (() => {
 
         return {
             id,
-            async startRecording(deviceId) {
+            /**
+             * Start capturing. Accepts either a deviceId string (back-compat) or a full
+             * MediaTrackConstraints object — the Record plugin forwards it verbatim
+             * into getUserMedia({ audio: <arg> }).
+             */
+            async startRecording(constraints) {
                 if (!recordPlugin) throw new Error('Record plugin not available');
-                const constraints = deviceId ? { deviceId: { exact: deviceId } } : true;
-                await recordPlugin.startRecording({ deviceId: constraints });
+                let opts;
+                if (!constraints) opts = undefined;
+                else if (typeof constraints === 'string') opts = { deviceId: { exact: constraints } };
+                else opts = constraints;
+                await recordPlugin.startRecording(opts);
             },
             async stopRecording() {
                 if (!recordPlugin) throw new Error('Record plugin not available');

@@ -26,6 +26,10 @@ const AudioDawTimeline = (() => {
             loopStart: 0,
             loopEnd: 0,
             playheadTime: 0,
+            mode: opts.mode || 'time',       // 'time' | 'beats'
+            bpm: opts.bpm || 120,
+            timeSig: opts.timeSig || [4, 4],
+            snapper: null,                    // optional fn(time) -> snapped time, used by loop drags
             callbacks: {}
         };
 
@@ -97,40 +101,69 @@ const AudioDawTimeline = (() => {
         ctx.fillStyle = bgColor;
         ctx.fillRect(0, 0, width, height);
 
-        // Determine tick interval based on zoom level
-        const tickInterval = getTickInterval(zoom);
-        const subTicks = tickInterval.sub;
-        const majorInterval = tickInterval.major;
-
-        // Draw ticks
-        ctx.strokeStyle = lineColor;
-        ctx.fillStyle = textColor;
         ctx.font = '10px var(--font-monospace, monospace)';
         ctx.textAlign = 'center';
-
-        const startTime = 0;
         const endTime = totalDuration;
 
-        // Sub-ticks
-        ctx.lineWidth = 0.5;
-        for (let t = 0; t <= endTime; t += subTicks) {
-            const x = Math.round(t * zoom) + 0.5;
-            ctx.beginPath();
-            ctx.moveTo(x, height - 5);
-            ctx.lineTo(x, height);
-            ctx.stroke();
-        }
+        if (state.mode === 'beats') {
+            // Musical grid: beat sub-ticks, bar major ticks with bar-number labels
+            const secPerBeat = 60 / state.bpm;
+            const secPerBar = secPerBeat * state.timeSig[0];
+            let barLabelEvery = 1;
+            while (secPerBar * zoom * barLabelEvery < 50) barLabelEvery *= 2;
 
-        // Major ticks with labels
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = textColor;
-        for (let t = 0; t <= endTime; t += majorInterval) {
-            const x = Math.round(t * zoom) + 0.5;
-            ctx.beginPath();
-            ctx.moveTo(x, height - 12);
-            ctx.lineTo(x, height);
-            ctx.stroke();
-            ctx.fillText(formatRulerTime(t), x, height - 14);
+            if (secPerBeat * zoom >= 6) {
+                ctx.lineWidth = 0.5;
+                ctx.strokeStyle = lineColor;
+                for (let i = 0; i * secPerBeat <= endTime; i++) {
+                    const x = Math.round(i * secPerBeat * zoom) + 0.5;
+                    ctx.beginPath();
+                    ctx.moveTo(x, height - 5);
+                    ctx.lineTo(x, height);
+                    ctx.stroke();
+                }
+            }
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = textColor;
+            ctx.fillStyle = textColor;
+            for (let bar = 0; bar * secPerBar <= endTime; bar++) {
+                const x = Math.round(bar * secPerBar * zoom) + 0.5;
+                ctx.beginPath();
+                ctx.moveTo(x, height - 12);
+                ctx.lineTo(x, height);
+                ctx.stroke();
+                if (bar % barLabelEvery === 0) {
+                    ctx.fillText(String(bar + 1), x, height - 14);
+                }
+            }
+        } else {
+            // Time grid
+            const tickInterval = getTickInterval(zoom);
+            const subTicks = tickInterval.sub;
+            const majorInterval = tickInterval.major;
+
+            ctx.lineWidth = 0.5;
+            ctx.strokeStyle = lineColor;
+            ctx.fillStyle = textColor;
+            for (let i = 0; i * subTicks <= endTime; i++) {
+                const x = Math.round(i * subTicks * zoom) + 0.5;
+                ctx.beginPath();
+                ctx.moveTo(x, height - 5);
+                ctx.lineTo(x, height);
+                ctx.stroke();
+            }
+
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = textColor;
+            for (let i = 0; i * majorInterval <= endTime; i++) {
+                const t = i * majorInterval;
+                const x = Math.round(t * zoom) + 0.5;
+                ctx.beginPath();
+                ctx.moveTo(x, height - 12);
+                ctx.lineTo(x, height);
+                ctx.stroke();
+                ctx.fillText(formatRulerTime(t), x, height - 14);
+            }
         }
 
         // Loop region overlay
@@ -193,7 +226,8 @@ const AudioDawTimeline = (() => {
             const onMove = (me) => {
                 const rect = state.canvas.getBoundingClientRect();
                 const x = me.clientX - rect.left + state.scrollLeft;
-                const time = Math.max(0, Math.min(x / state.zoom, state.totalDuration));
+                let time = Math.max(0, Math.min(x / state.zoom, state.totalDuration));
+                if (state.snapper) time = state.snapper(time);
                 if (which === 'start') {
                     state.loopStart = Math.min(time, state.loopEnd - 0.1);
                 } else {
@@ -271,6 +305,24 @@ const AudioDawTimeline = (() => {
 
             /** Get current zoom level. */
             getZoom() { return state.zoom; },
+
+            /** Set tempo + time signature (redraws in beats mode). */
+            setTempo(bpm, timeSig) {
+                state.bpm = bpm || state.bpm;
+                if (timeSig) state.timeSig = timeSig;
+                if (state.mode === 'beats') draw(state);
+            },
+
+            /** Switch ruler between 'time' and 'beats' modes. */
+            setMode(mode) {
+                state.mode = mode === 'beats' ? 'beats' : 'time';
+                draw(state);
+            },
+
+            getMode() { return state.mode; },
+
+            /** Provide a fn(time)->time used to snap loop-handle drags. */
+            setSnapper(fn) { state.snapper = fn; },
 
             /** Subscribe to events: 'seek'. */
             on(event, callback) {

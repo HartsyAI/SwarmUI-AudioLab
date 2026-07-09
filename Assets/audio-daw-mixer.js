@@ -1,57 +1,187 @@
 /**
  * AudioDawMixer — Mixer panel for the DAW bottom panel.
- * Renders per-track horizontal rows with volume fader, pan, mute/solo, and dB readout.
- * Uses horizontal layout (rows) for better fit in the bottom panel.
+ * Classic vertical channel strips: pan knob, fader, dB readout, M/S, live meter,
+ * plus a master strip. Exposes createKnob() for reuse (track header pan).
  * Reuses SwarmUI utilities: createDiv(), createSpan().
  */
 const AudioDawMixer = (() => {
     'use strict';
 
-    let lastContainer = null;
+    // trackId (or '__master__') -> { fill, peak } meter elements, refreshed on every render
+    let meterEls = new Map();
+
+    // ===== dB FADER TAPER =====
+    // Fader position p in [0,1] maps linearly in dB over [-60, +6]; 0 dB sits at ~0.909.
+    const DB_MIN = -60, DB_MAX = 6;
+
+    /** Fader position (0..1) -> linear gain. Bottom of travel = silence. */
+    function faderPosToGain(p) {
+        if (p <= 0.001) return 0;
+        const db = DB_MIN + (DB_MAX - DB_MIN) * p;
+        return Math.pow(10, db / 20);
+    }
+
+    /** Linear gain -> fader position (0..1). */
+    function gainToFaderPos(gain) {
+        if (gain <= 0) return 0;
+        const db = 20 * Math.log10(gain);
+        return Math.max(0, Math.min(1, (db - DB_MIN) / (DB_MAX - DB_MIN)));
+    }
+
+    /** Apply the 0 dB detent: snap to exactly unity when within ~0.8 dB. */
+    function detent(gain) {
+        if (gain > 0) {
+            const db = 20 * Math.log10(gain);
+            if (Math.abs(db) < 0.8) return 1;
+        }
+        return gain;
+    }
+
+    /**
+     * Small rotary knob widget. Drag vertically to change, double-click to reset.
+     * @param {Object} opts - { value, min, max, defaultValue, title, onChange(value) }
+     * @returns {HTMLElement}
+     */
+    function createKnob(opts = {}) {
+        const min = opts.min ?? -1;
+        const max = opts.max ?? 1;
+        const def = opts.defaultValue ?? (min + max) / 2;
+        let value = opts.value ?? def;
+
+        const knob = createDiv(null, 'daw-knob');
+        knob.title = opts.title || '';
+        const dial = createDiv(null, 'daw-knob-dial');
+        knob.appendChild(dial);
+
+        const apply = () => {
+            const norm = (value - min) / (max - min);
+            dial.style.transform = `rotate(${(norm - 0.5) * 270}deg)`;
+        };
+        apply();
+
+        knob.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            knob.setPointerCapture(e.pointerId);
+            const startY = e.clientY;
+            const startVal = value;
+            const onMove = (me) => {
+                const dv = (startY - me.clientY) / 120 * (max - min); // full range over ~120px
+                value = Math.max(min, Math.min(max, startVal + dv));
+                apply();
+                if (opts.onChange) opts.onChange(value);
+            };
+            const onUp = (ue) => {
+                knob.releasePointerCapture(ue.pointerId);
+                knob.removeEventListener('pointermove', onMove);
+                knob.removeEventListener('pointerup', onUp);
+            };
+            knob.addEventListener('pointermove', onMove);
+            knob.addEventListener('pointerup', onUp);
+        });
+        knob.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            value = def;
+            apply();
+            if (opts.onChange) opts.onChange(value);
+        });
+        return knob;
+    }
 
     /**
      * Render the mixer into a container element.
      * @param {HTMLElement} container - Target DOM element
      * @param {Object} state - DAW state (tracks, masterVolume)
-     * @param {Function} onStateChange - Callback for state changes (prop, value)
+     * @param {Function} onStateChange - Callback (prop, value): 'volume'|'pan'|'mute'|'solo' pass the track, 'masterVolume' passes the number
      */
     function render(container, state, onStateChange) {
         container.innerHTML = '';
-        lastContainer = container;
-
-        const mixer = createDiv(null, 'daw-mixer');
-
-        // Track rows
+        meterEls = new Map();
+        const strips = createDiv(null, 'daw-mixer-strips');
         for (const track of state.tracks) {
-            mixer.appendChild(buildChannelRow(track, state, onStateChange));
+            strips.appendChild(buildStrip(track, onStateChange));
         }
-
-        // Master row (separator + row)
-        const sep = createDiv(null, 'daw-mixer-separator');
-        mixer.appendChild(sep);
-        mixer.appendChild(buildMasterRow(state, onStateChange));
-
-        container.appendChild(mixer);
+        strips.appendChild(buildMasterStrip(state, onStateChange));
+        container.appendChild(strips);
     }
 
-    function buildChannelRow(track, state, onStateChange) {
-        const row = createDiv(null, 'daw-mixer-row');
-        row.dataset.trackId = track.id;
+    function buildFader(gainValue, title, onGain) {
+        const wrap = createDiv(null, 'daw-strip-fader-wrap');
+        const lane = createDiv(null, 'daw-strip-fader-lane');
+        // 0 dB detent mark on the fader travel
+        const zeroTick = createDiv(null, 'daw-strip-zero-tick');
+        zeroTick.style.bottom = (gainToFaderPos(1) * 100) + '%';
+        lane.appendChild(zeroTick);
+        const fader = document.createElement('input');
+        fader.type = 'range';
+        fader.className = 'daw-strip-fader';
+        fader.min = '0';
+        fader.max = '1';
+        fader.step = '0.005';
+        fader.value = gainToFaderPos(gainValue);
+        fader.title = title + ' (dB-scaled, 0 dB detent)';
+        fader.addEventListener('input', (e) => {
+            const gain = detent(faderPosToGain(parseFloat(e.target.value)));
+            onGain(gain);
+        });
+        fader.addEventListener('dblclick', () => {
+            fader.value = gainToFaderPos(1);
+            onGain(1);
+        });
+        lane.appendChild(fader);
+        const meter = createDiv(null, 'daw-strip-meter');
+        const fill = createDiv(null, 'daw-strip-meter-fill');
+        const peak = createDiv(null, 'daw-strip-meter-peak');
+        meter.appendChild(fill);
+        meter.appendChild(peak);
+        wrap.appendChild(lane);
+        wrap.appendChild(meter);
+        return { wrap, fader, fill, peak };
+    }
 
-        // Color indicator
-        const colorBar = createDiv(null, 'daw-mixer-color');
-        colorBar.style.background = track.color;
-        row.appendChild(colorBar);
+    function buildStrip(track, onStateChange) {
+        const strip = createDiv(null, 'daw-mixer-strip');
+        strip.dataset.trackId = track.id;
 
-        // Track name
-        const label = createDiv(null, 'daw-mixer-label');
-        label.textContent = track.name;
-        label.title = track.name;
-        row.appendChild(label);
+        // Color cap + name
+        const cap = createDiv(null, 'daw-strip-color');
+        cap.style.background = track.color;
+        strip.appendChild(cap);
+        const name = createDiv(null, 'daw-strip-name');
+        name.textContent = track.name;
+        name.title = track.name;
+        strip.appendChild(name);
 
-        // Mute / Solo buttons
-        const btns = createDiv(null, 'daw-mixer-btns');
+        // Pan knob
+        const panWrap = createDiv(null, 'daw-strip-pan');
+        panWrap.appendChild(createKnob({
+            value: track.pan || 0, min: -1, max: 1, defaultValue: 0,
+            title: 'Pan (drag up/down, double-click to center)',
+            onChange: (v) => {
+                track.pan = Math.round(v * 20) / 20;
+                if (onStateChange) onStateChange('pan', track);
+            }
+        }));
+        const panLbl = createSpan(null, 'daw-strip-pan-label');
+        panLbl.textContent = 'PAN';
+        panWrap.appendChild(panLbl);
+        strip.appendChild(panWrap);
 
+        // Fader + meter
+        const dbLabel = createDiv(null, 'daw-strip-db');
+        dbLabel.textContent = volumeToDb(track.volume);
+        const { wrap, fill, peak } = buildFader(track.volume, 'Track volume', (v) => {
+            track.volume = v;
+            dbLabel.textContent = volumeToDb(v);
+            if (onStateChange) onStateChange('volume', track);
+        });
+        strip.appendChild(wrap);
+        strip.appendChild(dbLabel);
+        meterEls.set(track.id, { fill, peak });
+
+        // Mute / Solo
+        const btns = createDiv(null, 'daw-strip-btns');
         const muteBtn = document.createElement('button');
         muteBtn.className = 'daw-mixer-btn' + (track.muted ? ' active-mute' : '');
         muteBtn.textContent = 'M';
@@ -62,7 +192,6 @@ const AudioDawMixer = (() => {
             if (onStateChange) onStateChange('mute', track);
         });
         btns.appendChild(muteBtn);
-
         const soloBtn = document.createElement('button');
         soloBtn.className = 'daw-mixer-btn' + (track.soloed ? ' active-solo' : '');
         soloBtn.textContent = 'S';
@@ -73,117 +202,62 @@ const AudioDawMixer = (() => {
             if (onStateChange) onStateChange('solo', track);
         });
         btns.appendChild(soloBtn);
-        row.appendChild(btns);
+        strip.appendChild(btns);
 
-        // Volume fader (horizontal)
-        const volGroup = createDiv(null, 'daw-mixer-vol-group');
-        const volLabel = createSpan(null, 'daw-mixer-vol-label');
-        volLabel.textContent = 'Vol';
-        const fader = document.createElement('input');
-        fader.type = 'range';
-        fader.className = 'daw-mixer-fader';
-        fader.min = '0';
-        fader.max = '1';
-        fader.step = '0.01';
-        fader.value = track.volume;
-        fader.title = `Volume: ${Math.round(track.volume * 100)}%`;
-        const dbLabel = createSpan(null, 'daw-mixer-db');
-        dbLabel.textContent = volumeToDb(track.volume);
-        fader.addEventListener('input', (e) => {
-            track.volume = parseFloat(e.target.value);
-            fader.title = `Volume: ${Math.round(track.volume * 100)}%`;
-            dbLabel.textContent = volumeToDb(track.volume);
-            if (onStateChange) onStateChange('volume', track);
-        });
-        volGroup.appendChild(volLabel);
-        volGroup.appendChild(fader);
-        volGroup.appendChild(dbLabel);
-        row.appendChild(volGroup);
-
-        // Pan slider
-        const panGroup = createDiv(null, 'daw-mixer-pan-group');
-        const panL = createSpan(null, 'daw-mixer-pan-label');
-        panL.textContent = 'L';
-        const panSlider = document.createElement('input');
-        panSlider.type = 'range';
-        panSlider.className = 'daw-mixer-pan';
-        panSlider.min = '-1';
-        panSlider.max = '1';
-        panSlider.step = '0.1';
-        panSlider.value = track.pan;
-        panSlider.title = `Pan: ${panString(track.pan)}`;
-        const panR = createSpan(null, 'daw-mixer-pan-label');
-        panR.textContent = 'R';
-        panSlider.addEventListener('input', (e) => {
-            track.pan = parseFloat(e.target.value);
-            panSlider.title = `Pan: ${panString(track.pan)}`;
-        });
-        panGroup.appendChild(panL);
-        panGroup.appendChild(panSlider);
-        panGroup.appendChild(panR);
-        row.appendChild(panGroup);
-
-        return row;
+        return strip;
     }
 
-    function buildMasterRow(state, onStateChange) {
-        const row = createDiv(null, 'daw-mixer-row master');
+    function buildMasterStrip(state, onStateChange) {
+        const strip = createDiv(null, 'daw-mixer-strip master');
+        const cap = createDiv(null, 'daw-strip-color');
+        cap.style.background = 'var(--emphasis)';
+        strip.appendChild(cap);
+        const name = createDiv(null, 'daw-strip-name');
+        name.textContent = 'Master';
+        strip.appendChild(name);
 
-        const colorBar = createDiv(null, 'daw-mixer-color');
-        colorBar.style.background = 'var(--emphasis)';
-        row.appendChild(colorBar);
+        const spacer = createDiv(null, 'daw-strip-pan');
+        strip.appendChild(spacer);
 
-        const label = createDiv(null, 'daw-mixer-label');
-        label.textContent = 'Master';
-        label.style.fontWeight = '600';
-        row.appendChild(label);
-
-        // Spacer where M/S buttons would be
-        const spacer = createDiv(null, 'daw-mixer-btns');
-        row.appendChild(spacer);
-
-        // Master volume
-        const volGroup = createDiv(null, 'daw-mixer-vol-group');
-        const volLabel = createSpan(null, 'daw-mixer-vol-label');
-        volLabel.textContent = 'Vol';
-        const fader = document.createElement('input');
-        fader.type = 'range';
-        fader.className = 'daw-mixer-fader';
-        fader.min = '0';
-        fader.max = '1';
-        fader.step = '0.01';
-        fader.value = state.masterVolume;
-        fader.title = `Master volume: ${Math.round(state.masterVolume * 100)}%`;
-        const dbLabel = createSpan(null, 'daw-mixer-db');
+        const dbLabel = createDiv(null, 'daw-strip-db');
         dbLabel.textContent = volumeToDb(state.masterVolume);
-        fader.addEventListener('input', (e) => {
-            const val = parseFloat(e.target.value);
-            fader.title = `Master volume: ${Math.round(val * 100)}%`;
-            dbLabel.textContent = volumeToDb(val);
-            if (onStateChange) onStateChange('masterVolume', val);
+        const { wrap, fill, peak } = buildFader(state.masterVolume, 'Master volume', (v) => {
+            dbLabel.textContent = volumeToDb(v);
+            if (onStateChange) onStateChange('masterVolume', v);
         });
-        volGroup.appendChild(volLabel);
-        volGroup.appendChild(fader);
-        volGroup.appendChild(dbLabel);
-        row.appendChild(volGroup);
+        strip.appendChild(wrap);
+        strip.appendChild(dbLabel);
+        meterEls.set('__master__', { fill, peak });
 
-        return row;
+        const btns = createDiv(null, 'daw-strip-btns');
+        strip.appendChild(btns);
+        return strip;
     }
 
     function volumeToDb(vol) {
-        if (vol <= 0) return '-\u221E dB';
+        if (vol <= 0) return '-∞ dB';
         const db = 20 * Math.log10(vol);
         return db.toFixed(1) + ' dB';
     }
 
-    function panString(val) {
-        if (val === 0) return 'Center';
-        return val < 0 ? `${Math.round(Math.abs(val) * 100)}% L` : `${Math.round(val * 100)}% R`;
+    /** Live-meter hooks used by the DAW's rAF loop. Returns { fill, peak } or null. */
+    function getMeterEl(trackId) {
+        const entry = meterEls.get(trackId);
+        return entry && entry.fill.isConnected ? entry : null;
+    }
+
+    function resetMeters() {
+        for (const entry of meterEls.values()) {
+            if (entry.fill.isConnected) {
+                entry.fill.style.height = '0%';
+                entry.peak.style.bottom = '0%';
+            }
+        }
     }
 
     function destroy() {
-        lastContainer = null;
+        meterEls = new Map();
     }
 
-    return { render, destroy };
+    return { render, createKnob, getMeterEl, resetMeters, destroy, faderPosToGain, gainToFaderPos };
 })();

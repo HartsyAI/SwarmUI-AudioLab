@@ -26,7 +26,7 @@ public sealed class OpenVoiceProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "v2", Name = "OpenVoice V2", Description = "Voice tone transfer: takes existing audio + a reference voice clip, outputs the same speech with the reference voice's tone/style applied. Zero-shot, no model training needed.", SourceUrl = "https://github.com/myshell-ai/OpenVoice", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~2GB", EngineConfig = new() { ["model_version"] = "v2" } }
+        new() { Id = "v2", Name = "OpenVoice V2", Description = "Voice tone transfer: takes existing audio + a reference voice clip, outputs the same speech with the reference voice's tone/style applied. Zero-shot, no model training needed.", SourceUrl = "https://github.com/myshell-ai/OpenVoice", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~2GB", SelfManaged = true, EngineConfig = new() { ["model_version"] = "v2" } }
     ];
 
     #endregion
