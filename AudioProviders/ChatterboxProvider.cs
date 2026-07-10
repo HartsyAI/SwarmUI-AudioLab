@@ -19,7 +19,7 @@ public sealed class ChatterboxProvider : IAudioProviderSource
         .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("chatterbox_tts_params")
         .AddFeatureFlag("tts_sampling")
-        .AddFeatureFlag("tts_voice_ref")
+        // No tts_voice_ref: the engine's Chatterbox path has no PCM→mel voice-encoder front-end yet.
         .AddModels(Models)
         .WithEngineGroup("chatterbox")
         .Build();

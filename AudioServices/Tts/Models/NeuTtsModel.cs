@@ -44,12 +44,10 @@ public static class NeuTtsModel
             NeuTtsConfig cfg = NeuTtsConfig.Air;
             NeuTtsPipeline pipeline = new(cfg);
             pipeline.LoadWeights(backbone, codec);
-            // The NeuCodec checkpoint's ENCODER is X-Codec2 layout (CodecEnc.* weight-norm convs + Snake), which
-            // the engine's NeuCodecEncoder doesn't map yet — load it only if its expected keys exist, so the
-            // default voice works today and cloning gates with a clear message. TODO(engine): port the
-            // X-Codec2 encoder (CodecEnc.*, SemanticEncoder_module.*, fc_prior.*) to unlock reference cloning.
+            // The engine's NeuCodecEncoder now maps the real HF X-Codec2 layout (acoustic_encoder BigVGAN +
+            // semantic_encoder Wav2Vec2-BERT conformer + fc_encoder + FSQ), enabling reference-voice cloning.
             NeuCodecEncoder encoder = null;
-            if (codec.ContainsKey("encoder.stem.weight"))
+            if (codec.ContainsKey("acoustic_encoder.conv1.weight"))
             {
                 encoder = new(NeuCodecEncoderConfig.Default);
                 encoder.LoadWeights(codec);
