@@ -31,7 +31,7 @@
        like every other package. Verified via a from-scratch restore against nuget.org only
        (cleared sources, fresh package cache) — not just checking the version index. -->
   <ItemGroup Condition="'$(UseLocalHartsy)' != 'true'">
-    <PackageReference Include="HartsyInference" Version="1.0.0-alpha.46" />
+    <PackageReference Include="HartsyInference" Version="1.0.0-alpha.47" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs (NOT ProjectReferences — see SwarmUI-LLMAssistant.csproj
