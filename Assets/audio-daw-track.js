@@ -108,19 +108,16 @@ const AudioDawTrack = (() => {
         header.dataset.trackId = track.id;
         header.style.height = track.height + 'px';
         header.style.borderLeft = `3px solid ${track.color}`;
+        header.title = 'Right-click to change track color';
 
-        // Top row: color swatch + name + remove button
+        // Top row: name + remove button. Track color shows via the header's left
+        // border; right-click the header to recolor.
         const topRow = createDiv(null, 'daw-track-name-row');
-
-        const swatch = document.createElement('span');
-        swatch.className = 'daw-track-swatch';
-        swatch.style.background = track.color;
-        swatch.title = 'Change track color';
-        swatch.addEventListener('click', (e) => {
+        header.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
             e.stopPropagation();
             if (callbacks.onRecolor) callbacks.onRecolor(track, e);
         });
-        topRow.appendChild(swatch);
 
         // Track name (editable)
         const nameEl = document.createElement('span');
@@ -257,15 +254,19 @@ const AudioDawTrack = (() => {
 
         header.appendChild(controls);
 
-        // Live level meter (fill + peak-hold tick driven by the DAW's meter loop)
-        const meter = createDiv(null, 'daw-track-meter');
-        const meterFill = createDiv(null, 'daw-track-meter-fill');
-        const meterPeak = createDiv(null, 'daw-track-meter-peak');
-        meter.appendChild(meterFill);
-        meter.appendChild(meterPeak);
+        // Live stereo meter (OBS-style: zone gradient lights up to the level, L/R bars)
+        const meter = createDiv(null, 'daw-meter-hpair daw-track-meter-pair');
+        track.meterChans = [];
+        for (let ch = 0; ch < 2; ch++) {
+            const bar = createDiv(null, 'daw-meter-h');
+            const mask = createDiv(null, 'daw-meter-h-mask');
+            const peakTick = createDiv(null, 'daw-meter-h-peak');
+            bar.appendChild(mask);
+            bar.appendChild(peakTick);
+            meter.appendChild(bar);
+            track.meterChans.push({ mask, peak: peakTick });
+        }
         header.appendChild(meter);
-        track.meterEl = meterFill;
-        track.meterPeakEl = meterPeak;
 
         // Click to select track
         header.addEventListener('click', () => {
@@ -440,6 +441,35 @@ const AudioDawTrack = (() => {
             dragTargetLane = null;
             clipEl.setPointerCapture(e.pointerId);
 
+            // Edge auto-scroll: dragging against the viewport edge scrolls the
+            // lanes and (rightward) extends the timeline so clips can be placed
+            // past the current end, like any DAW arrange view.
+            const scroller = document.getElementById('daw_clip_lanes');
+            const scrollBase = scroller ? scroller.scrollLeft : 0;
+            let lastClientX = e.clientX;
+            let edgeDir = 0;
+            let edgeRaf = null;
+
+            const applyMove = () => {
+                const scrollDelta = scroller ? scroller.scrollLeft - scrollBase : 0;
+                let newTime = Math.max(0, dragStartTime + (lastClientX - dragStartX + scrollDelta) / currentZoom);
+                if (callbacks.snapTime) newTime = Math.max(0, callbacks.snapTime(newTime));
+                clip.startTime = newTime;
+                clipEl.style.left = (newTime * currentZoom) + 'px';
+            };
+
+            const edgeTick = () => {
+                edgeRaf = null;
+                if (!edgeDir || !scroller) return;
+                scroller.scrollLeft += edgeDir * 14;
+                if (edgeDir > 0 && callbacks.onTimelineExtend
+                    && scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 40) {
+                    callbacks.onTimelineExtend((scroller.scrollWidth + 300) / currentZoom);
+                }
+                applyMove();
+                edgeRaf = requestAnimationFrame(edgeTick);
+            };
+
             const onMove = (me) => {
                 const dx = me.clientX - dragStartX;
                 const dy = me.clientY - dragStartY;
@@ -452,10 +482,14 @@ const AudioDawTrack = (() => {
                 if (!isDragging) return;
 
                 // Horizontal: reposition in time (currentZoom, NOT the creation-time zoom)
-                let newTime = Math.max(0, dragStartTime + dx / currentZoom);
-                if (callbacks.snapTime) newTime = Math.max(0, callbacks.snapTime(newTime));
-                clip.startTime = newTime;
-                clipEl.style.left = (newTime * currentZoom) + 'px';
+                lastClientX = me.clientX;
+                applyMove();
+                if (scroller) {
+                    const r = scroller.getBoundingClientRect();
+                    edgeDir = me.clientX > r.right - 40 ? 1
+                        : (me.clientX < r.left + 40 && scroller.scrollLeft > 0 ? -1 : 0);
+                    if (edgeDir && !edgeRaf) edgeRaf = requestAnimationFrame(edgeTick);
+                }
 
                 // Vertical: detect target track lane for cross-track drag
                 const lanes = document.querySelectorAll('.daw-track-lane');
@@ -475,6 +509,8 @@ const AudioDawTrack = (() => {
             };
 
             const onUp = (ue) => {
+                edgeDir = 0;
+                if (edgeRaf) { cancelAnimationFrame(edgeRaf); edgeRaf = null; }
                 clipEl.releasePointerCapture(ue.pointerId);
                 clipEl.removeEventListener('pointermove', onMove);
                 clipEl.removeEventListener('pointerup', onUp);

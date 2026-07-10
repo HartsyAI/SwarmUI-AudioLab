@@ -445,14 +445,75 @@ const AudioDawFx = (() => {
      *              onAdd(track, type), onRemove(track, index), onMove(track, index, dir),
      *              onMasterLimiter(enabled), masterLimiterEnabled }
      */
+    // One-line pitches for the effect browser (shown when a chain is empty)
+    const FX_DESCS = {
+        eq: '5-band shape — cut mud, add air',
+        compressor: 'Even out dynamics, add punch',
+        reverb: 'Space and depth (procedural room)',
+        delay: 'Echoes — free or tempo-synced',
+        saturation: 'Analog-style warmth and drive'
+    };
+
     function renderFxPanel(container, track, callbacks) {
         container.innerHTML = '';
-        const row = createDiv(null, 'daw-fx-row');
-        container.appendChild(row);
         if (!track) {
-            row.innerHTML = '<span class="daw-stems-clipinfo">Select a track to edit its effects</span>';
+            container.innerHTML = '<span class="daw-stems-clipinfo">Select a track to edit its effects</span>';
             return;
         }
+
+        // Toolbar: track context + chain save/load + master limiter
+        const bar = createDiv(null, 'daw-fx-toolbar');
+        const barTitle = createSpan(null, 'daw-fx-toolbar-title');
+        barTitle.textContent = `FX — ${track.name}`;
+        bar.appendChild(barTitle);
+        const saveChainBtn = document.createElement('button');
+        saveChainBtn.className = 'basic-button btn-sm';
+        saveChainBtn.textContent = 'Save Chain';
+        saveChainBtn.title = 'Save this track\'s whole effect chain as a reusable preset';
+        saveChainBtn.disabled = !track.fx.length;
+        saveChainBtn.addEventListener('click', (e) => callbacks.onSaveChain && callbacks.onSaveChain(track, e));
+        bar.appendChild(saveChainBtn);
+        const loadChainBtn = document.createElement('button');
+        loadChainBtn.className = 'basic-button btn-sm';
+        loadChainBtn.textContent = 'Load Chain';
+        loadChainBtn.title = 'Replace this track\'s effects with a saved chain';
+        loadChainBtn.addEventListener('click', (e) => callbacks.onLoadChain && callbacks.onLoadChain(track, e));
+        bar.appendChild(loadChainBtn);
+        const limWrap = createDiv(null, 'daw-fx-lim');
+        const limBox = document.createElement('input');
+        limBox.type = 'checkbox';
+        limBox.id = 'daw_fx_master_limiter';
+        limBox.checked = !!callbacks.masterLimiterEnabled;
+        const limLbl = document.createElement('label');
+        limLbl.htmlFor = limBox.id;
+        limLbl.className = 'daw-fx-knob-label';
+        limLbl.textContent = 'Master limiter';
+        limBox.addEventListener('change', () => callbacks.onMasterLimiter(limBox.checked));
+        limWrap.appendChild(limBox);
+        limWrap.appendChild(limLbl);
+        bar.appendChild(limWrap);
+        container.appendChild(bar);
+
+        // Empty chain: browse all available effects as cards — click one to add it
+        if (!track.fx.length) {
+            const hint = createDiv(null, 'daw-stems-desc');
+            hint.textContent = 'Click an effect to add it to this track\'s chain:';
+            container.appendChild(hint);
+            const browser = createDiv(null, 'daw-fx-browser');
+            for (const [type, def] of Object.entries(FX_DEFS)) {
+                const pick = document.createElement('button');
+                pick.className = 'daw-fx-pick';
+                pick.innerHTML = `<span class="daw-fx-pick-name">${def.label}</span>`
+                    + `<span class="daw-fx-pick-desc">${FX_DESCS[type] || ''}</span>`;
+                pick.addEventListener('click', () => callbacks.onAdd(track, type));
+                browser.appendChild(pick);
+            }
+            container.appendChild(browser);
+            return;
+        }
+
+        const row = createDiv(null, 'daw-fx-row');
+        container.appendChild(row);
 
         track.fx.forEach((fx, index) => {
             const def = FX_DEFS[fx.type];
@@ -544,7 +605,7 @@ const AudioDawFx = (() => {
             row.appendChild(card);
         });
 
-        // Add-effect card
+        // Add-effect card at the end of the chain
         const addCard = createDiv(null, 'daw-fx-card daw-fx-add-card');
         const addBtn = document.createElement('button');
         addBtn.className = 'daw-add-track';
@@ -557,37 +618,6 @@ const AudioDawFx = (() => {
             if (callbacks.showMenu) callbacks.showMenu(e, items);
         });
         addCard.appendChild(addBtn);
-
-        // Savable chains — the most-requested "rack" behavior
-        const chainRow = createDiv(null, 'daw-fx-extra');
-        const saveChainBtn = document.createElement('button');
-        saveChainBtn.className = 'daw-fx-mini-btn';
-        saveChainBtn.textContent = 'Save Chain';
-        saveChainBtn.title = 'Save this track\'s whole effect chain as a reusable preset';
-        saveChainBtn.addEventListener('click', (e) => callbacks.onSaveChain && callbacks.onSaveChain(track, e));
-        const loadChainBtn = document.createElement('button');
-        loadChainBtn.className = 'daw-fx-mini-btn';
-        loadChainBtn.textContent = 'Load Chain';
-        loadChainBtn.title = 'Replace this track\'s effects with a saved chain';
-        loadChainBtn.addEventListener('click', (e) => callbacks.onLoadChain && callbacks.onLoadChain(track, e));
-        chainRow.appendChild(saveChainBtn);
-        chainRow.appendChild(loadChainBtn);
-        addCard.appendChild(chainRow);
-
-        // Master limiter toggle lives on the add card footer
-        const limRow = createDiv(null, 'daw-fx-extra');
-        const limBox = document.createElement('input');
-        limBox.type = 'checkbox';
-        limBox.id = 'daw_fx_master_limiter';
-        limBox.checked = !!callbacks.masterLimiterEnabled;
-        const limLbl = document.createElement('label');
-        limLbl.htmlFor = limBox.id;
-        limLbl.className = 'daw-fx-knob-label';
-        limLbl.textContent = 'Master limiter';
-        limBox.addEventListener('change', () => callbacks.onMasterLimiter(limBox.checked));
-        limRow.appendChild(limBox);
-        limRow.appendChild(limLbl);
-        addCard.appendChild(limRow);
         row.appendChild(addCard);
     }
 

@@ -8,7 +8,7 @@ const AudioLabConfig = {
     /** Maps model class IDs (curArch) to their category flag and provider-specific flag. */
     archToCategory: {
         kokoro_tts: { category: 'audiolab_tts', providerFlag: 'kokoro_tts_params' },
-        chatterbox_tts: { category: 'audiolab_tts', providerFlag: 'chatterbox_tts_params', extraFlags: ['tts_sampling', 'tts_voice_ref'] },
+        chatterbox_tts: { category: 'audiolab_tts', providerFlag: 'chatterbox_tts_params', extraFlags: ['tts_sampling'] }, // no tts_voice_ref: engine lacks the voice-encoder front-end
         bark_tts: { category: 'audiolab_tts', providerFlag: 'bark_tts_params' },
         piper_tts: { category: 'audiolab_tts', providerFlag: 'piper_tts_params' },
         dia_tts: { category: 'audiolab_tts', providerFlag: 'dia_tts_params', extraFlags: ['tts_sampling', 'tts_cfg'] },

@@ -99,6 +99,35 @@ These engines transform voice characteristics. **RVC and OpenVoice** are post-pr
 | Demucs | htdemucs, htdemucs_ft, htdemucs_6s | ~2 GB | Source separation (vocals, drums, bass, other; 6-stem variant adds guitar + piano) |
 | Resemble Enhance | denoise, enhance | ~2 GB | Speech denoising and super-resolution to 44.1 kHz (engine support pending — DeepSpeed checkpoint loader) |
 
+## Performance (Pure-C# engine vs. Python reference)
+
+Measured on an **NVIDIA RTX 3060 (12 GB)**, 2026-07-09. **Ours** = warm SwarmUI `ProcessTTS`/`ProcessSTT` engine time (2nd call, model resident — excludes load). **Python** = the official library on the same GPU, warm. **RTF** = gen-time ÷ audio-duration (lower is faster; < 1 = faster than real-time). **Diff** = ours ÷ Python. TTS prompt: *"The speech synthesizer is now working correctly."* STT clip: the 11 s JFK sample.
+
+All 8 tested TTS engines and both tested STT engines produce correct, intelligible output (human-verified by listening). The perf gap on the heavy diffusion/DiT/AR models is a known, engine-wide bottleneck: several conv layers (depthwise / grouped `Conv1d`, positional-embed) currently run as host-side loops that force a GPU→host sync per call — a shared GPU conv kernel is the top optimization item and would lift F5/Kokoro/Vocos-class models together.
+
+### Text-to-Speech
+
+| Model | Ours (GPU) | Ours RTF | Python (GPU) | Python RTF | Diff | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Kokoro-82M** | 0.83 s | 0.26 | 0.10 s | 0.03 | ~8× | fast; small VITS-class |
+| **FishSpeech 1.5** | 3.50 s | 1.06 | — | — | — | no pip lib to compare |
+| **Chatterbox** | 5.59 s | 2.12 | — | — | — | no pip lib to compare |
+| **NeuTTS-air** | 46 s | ~6 | — | — | — | voice-clone (needs a reference) |
+| **VibeVoice 1.5B** | ~64–113 s | — | — | — | — | ⚠ **re-measure pending** (OOM-prone under load) |
+| **Bark** | 185.7 s | 14.2 | — | — | — | output length varies (stochastic); no safe pip compare |
+| **Dia 1.6B** | ~332 s | ~16 | — | — | — | single-gen (bench hit a transient); needs ≥ 2 sentences |
+| **F5-TTS v1** | 142.7 s | 44.9 | 3.47 s | 0.73 | ~41× | biggest gap → host-conv bottleneck |
+
+### Speech-to-Text
+
+| Model | Ours (GPU) | Ours RTF | Python (GPU) | Python RTF | Diff | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Whisper-base** | 1.04 s | 0.095 | 0.25 s | 0.022 | ~4× | correct transcription |
+| **Moonshine-base** | 0.64 s | 0.059 | — | — | — | fastest STT; correct |
+| **Distil-Whisper** | — | — | — | — | — | provider repo-id config bug (fix pending) |
+
+> Python baselines are shown only where the official library installs and runs in this environment without OOM risk. Kokoro/F5 Python numbers predate a `neucodec` install that upgraded `transformers` to 5.x (which broke `kokoro`/`torchvision` imports); the remaining models have no pip package (Chatterbox, VibeVoice, FishSpeech, NeuTTS) or are too large to run alongside the resident stack on a 12 GB-VRAM / 31 GB-RAM box.
+
 ## Usage
 
 1. **Add the Audio Backend** — Go to Server > Backends and add "Audio Backend".

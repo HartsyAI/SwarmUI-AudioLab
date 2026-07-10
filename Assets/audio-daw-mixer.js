@@ -130,14 +130,28 @@ const AudioDawMixer = (() => {
             onGain(1);
         });
         lane.appendChild(fader);
-        const meter = createDiv(null, 'daw-strip-meter');
-        const fill = createDiv(null, 'daw-strip-meter-fill');
-        const peak = createDiv(null, 'daw-strip-meter-peak');
-        meter.appendChild(fill);
-        meter.appendChild(peak);
+        // OBS-style stereo meter pair + dB scale
+        const meterWrap = createDiv(null, 'daw-meter-pair');
+        const chans = [];
+        for (let ch = 0; ch < 2; ch++) {
+            const bar = createDiv(null, 'daw-meter-v');
+            const mask = createDiv(null, 'daw-meter-v-mask');
+            const peakTick = createDiv(null, 'daw-meter-v-peak');
+            bar.appendChild(mask);
+            bar.appendChild(peakTick);
+            meterWrap.appendChild(bar);
+            chans.push({ mask, peak: peakTick });
+        }
+        const scale = createDiv(null, 'daw-strip-scale');
+        for (const db of [0, -12, -24, -36, -48, -60]) {
+            const tick = createSpan(null, 'daw-strip-scale-tick');
+            tick.textContent = db === 0 ? '0' : String(db);
+            scale.appendChild(tick);
+        }
         wrap.appendChild(lane);
-        wrap.appendChild(meter);
-        return { wrap, fader, fill, peak };
+        wrap.appendChild(meterWrap);
+        wrap.appendChild(scale);
+        return { wrap, fader, chans };
     }
 
     function buildStrip(track, onStateChange) {
@@ -171,14 +185,14 @@ const AudioDawMixer = (() => {
         // Fader + meter
         const dbLabel = createDiv(null, 'daw-strip-db');
         dbLabel.textContent = volumeToDb(track.volume);
-        const { wrap, fill, peak } = buildFader(track.volume, 'Track volume', (v) => {
+        const { wrap, chans } = buildFader(track.volume, 'Track volume', (v) => {
             track.volume = v;
             dbLabel.textContent = volumeToDb(v);
             if (onStateChange) onStateChange('volume', track);
         });
         strip.appendChild(wrap);
         strip.appendChild(dbLabel);
-        meterEls.set(track.id, { fill, peak });
+        meterEls.set(track.id, { chans });
 
         // Mute / Solo
         const btns = createDiv(null, 'daw-strip-btns');
@@ -221,13 +235,13 @@ const AudioDawMixer = (() => {
 
         const dbLabel = createDiv(null, 'daw-strip-db');
         dbLabel.textContent = volumeToDb(state.masterVolume);
-        const { wrap, fill, peak } = buildFader(state.masterVolume, 'Master volume', (v) => {
+        const { wrap, chans } = buildFader(state.masterVolume, 'Master volume', (v) => {
             dbLabel.textContent = volumeToDb(v);
             if (onStateChange) onStateChange('masterVolume', v);
         });
         strip.appendChild(wrap);
         strip.appendChild(dbLabel);
-        meterEls.set('__master__', { fill, peak });
+        meterEls.set('__master__', { chans });
 
         const btns = createDiv(null, 'daw-strip-btns');
         strip.appendChild(btns);
@@ -240,17 +254,19 @@ const AudioDawMixer = (() => {
         return db.toFixed(1) + ' dB';
     }
 
-    /** Live-meter hooks used by the DAW's rAF loop. Returns { fill, peak } or null. */
+    /** Live-meter hooks used by the DAW's rAF loop. Returns { chans: [{mask, peak}, ...] } or null. */
     function getMeterEl(trackId) {
         const entry = meterEls.get(trackId);
-        return entry && entry.fill.isConnected ? entry : null;
+        return entry && entry.chans[0]?.mask.isConnected ? entry : null;
     }
 
     function resetMeters() {
         for (const entry of meterEls.values()) {
-            if (entry.fill.isConnected) {
-                entry.fill.style.height = '0%';
-                entry.peak.style.bottom = '0%';
+            for (const chan of entry.chans || []) {
+                if (chan.mask.isConnected) {
+                    chan.mask.style.height = '100%';
+                    chan.peak.style.bottom = '0%';
+                }
             }
         }
     }

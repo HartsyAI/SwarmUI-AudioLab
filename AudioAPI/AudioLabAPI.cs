@@ -620,6 +620,8 @@ public static class AudioLabAPI
                         ["license"] = modelDef.License,
                         ["estimated_size"] = modelDef.EstimatedSize,
                         ["estimated_vram"] = modelDef.EstimatedVram,
+                        // Name in Swarm's model registry, for generating via the core T2I pipeline.
+                        ["swarm_model"] = provider.GetFullModelName(modelDef.Id),
                         // Per-model: are this variant's weights on disk? (API/self-managed report true.)
                         ["installed"] = provider.IsApiProvider || AudioEngine.WeightsPresent(provider.Id, modelDef.Id)
                     });
@@ -643,6 +645,8 @@ public static class AudioLabAPI
                     ["in_process"] = !provider.IsApiProvider,
                     // Weights fetched on first use — no explicit per-model install/remove for this engine.
                     ["self_managed"] = selfManaged,
+                    // Capability flags (e.g. tts_voice_ref) so the UI only offers what the engine supports.
+                    ["features"] = JArray.FromObject(provider.FeatureFlags),
                     ["models"] = models
                 });
             }

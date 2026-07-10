@@ -42,7 +42,12 @@ const AudioDaw = (() => {
     const START_EPSILON = 0.03;    // shared start instant so no source starts "in the past"
     // Active mic recording session; null when idle. { track, startP, recorder, placeholderEl }
     let recording = null;
+    // Guards against double-triggering a Demucs pass while one is running
+    let stemsSeparating = false;
+    // Clip-editor waveform preview player (destroyed on each panel re-render)
+    let clipEditorPlayer = null;
     let recordSettings = { deviceId: null, voiceMode: false };
+    let masterMeterChans = []; // transport master meter L/R DOM pairs, rebuilt with the transport
 
     function getDefaultState() {
         return {
@@ -63,6 +68,7 @@ const AudioDaw = (() => {
             zoom: 100,        // pixels per second
             scrollLeft: 0,
             totalDuration: 10,
+            contentDuration: 0, // end of the last clip — playback/export stop here
             selectedTrackId: null,
             selectedClipId: null,
             undoStack: [],
@@ -247,47 +253,67 @@ const AudioDaw = (() => {
 
     // ===== TRANSPORT BAR =====
 
+    // Inline SVG icons — all currentColor so they inherit theme colors (no hardcoded colors).
+    const svgFill = (path) => `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${path}</svg>`;
+    const svgLine = (path) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+    const DAW_ICONS = {
+        record: svgFill('<circle cx="12" cy="12" r="7"/>'),
+        play: svgFill('<path d="M7 4.8v14.4a0.6 0.6 0 0 0 0.9 0.5l11.6-7.2a0.6 0.6 0 0 0 0-1L7.9 4.3a0.6 0.6 0 0 0-0.9 0.5z"/>'),
+        pause: svgFill('<rect x="6" y="5" width="4.2" height="14" rx="1"/><rect x="13.8" y="5" width="4.2" height="14" rx="1"/>'),
+        stop: svgFill('<rect x="6" y="6" width="12" height="12" rx="1.5"/>'),
+        toStart: svgFill('<rect x="5" y="5" width="3" height="14" rx="1"/><path d="M19.2 5.7v12.6a0.6 0.6 0 0 1-0.95 0.5L10 12.5a0.6 0.6 0 0 1 0-1l8.25-6.3a0.6 0.6 0 0 1 0.95 0.5z"/>'),
+        toEnd: svgFill('<rect x="16" y="5" width="3" height="14" rx="1"/><path d="M4.8 5.7v12.6a0.6 0.6 0 0 0 0.95 0.5L14 12.5a0.6 0.6 0 0 0 0-1L5.75 5.2a0.6 0.6 0 0 0-0.95 0.5z"/>'),
+        caretDown: svgFill('<path d="M7.5 10l4.5 5 4.5-5z"/>'),
+        refresh: svgLine('<path d="M3 4v6h6"/><path d="M4.2 15a8 8 0 1 0 1.9-8.4L3 10"/>'),
+        tabClip: svgLine('<circle cx="6.5" cy="6.5" r="2.8"/><circle cx="6.5" cy="17.5" r="2.8"/><path d="M8.8 8.8 20 20M8.8 15.2 20 4"/>'),
+        tabMixer: svgLine('<path d="M6 4v9M6 17v3M12 4v3M12 11v9M18 4v11M18 19v1"/><path d="M3.5 13h5M9.5 7h5M15.5 15h5"/>'),
+        tabStems: svgLine('<path d="M4 6h16M4 12h10M4 18h13"/>'),
+        tabFx: svgLine('<circle cx="12" cy="12" r="8"/><path d="M12 12 8.5 7.5"/>'),
+        tabBeats: svgLine('<rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13.5" y="4" width="7" height="7" rx="1"/><rect x="4" y="13.5" width="7" height="7" rx="1"/><rect x="13.5" y="13.5" width="7" height="7" rx="1"/>'),
+        tabGenerate: svgLine('<path d="M3.5 10.5v3M8 7v10M12 4v16M16 7v10M20.5 10.5v3"/>')
+    };
+
     function buildTransport() {
         transportEl.innerHTML = '';
 
-        // Record
+        // Record + mic settings as one split button
+        const recGroup = createDiv(null, 'daw-btn-group');
         const recBtn = document.createElement('button');
         recBtn.className = 'daw-transport-btn daw-btn-rec';
-        recBtn.innerHTML = '&#x25CF;';
+        recBtn.innerHTML = DAW_ICONS.record;
         recBtn.title = 'Record into armed track (R)';
         recBtn.addEventListener('click', () => {
             if (recording) stopRecordingFlow(); else startRecordingFlow();
         });
-        transportEl.appendChild(recBtn);
-
-        // Mic settings (device + voice mode)
+        recGroup.appendChild(recBtn);
         const micBtn = document.createElement('button');
         micBtn.className = 'daw-transport-btn daw-btn-mic-settings';
-        micBtn.innerHTML = '&#x25BE;';
+        micBtn.innerHTML = DAW_ICONS.caretDown;
         micBtn.title = 'Microphone settings';
         micBtn.addEventListener('click', (e) => showMicSettingsMenu(e));
-        transportEl.appendChild(micBtn);
+        recGroup.appendChild(micBtn);
+        transportEl.appendChild(recGroup);
 
         // Rewind
-        quickAppendButton(transportEl, '&#x23EE;', () => seekTo(0), ' daw-transport-btn', 'Rewind to start');
+        quickAppendButton(transportEl, DAW_ICONS.toStart, () => seekTo(0), ' daw-transport-btn', 'Rewind to start');
 
         // Play/Pause
         const playBtn = document.createElement('button');
         playBtn.className = 'daw-transport-btn daw-btn-play';
-        playBtn.innerHTML = '&#x25B6;';
+        playBtn.innerHTML = DAW_ICONS.play;
         playBtn.title = 'Play / Pause (Space)';
         playBtn.addEventListener('click', togglePlayback);
         transportEl.appendChild(playBtn);
 
         // Stop
-        quickAppendButton(transportEl, '&#x25A0;', () => {
+        quickAppendButton(transportEl, DAW_ICONS.stop, () => {
             if (recording) { stopRecordingFlow(); return; }
             stopPlayback();
             seekTo(0);
         }, ' daw-transport-btn', 'Stop');
 
         // Fast Forward
-        quickAppendButton(transportEl, '&#x23ED;', () => seekTo(state.totalDuration), ' daw-transport-btn', 'Go to end');
+        quickAppendButton(transportEl, DAW_ICONS.toEnd, () => seekTo(state.contentDuration), ' daw-transport-btn', 'Go to end');
 
         // Separator
         const sep1 = createDiv(null, 'alp-separator');
@@ -423,11 +449,17 @@ const AudioDaw = (() => {
             masterSlider.value = AudioDawMixer.gainToFaderPos ? AudioDawMixer.gainToFaderPos(1) : 1;
             updatePlaybackGains();
         });
-        const masterMeter = createDiv(null, 'daw-master-meter');
-        const masterMeterFill = createDiv(null, 'daw-master-meter-fill');
-        const masterMeterPeak = createDiv(null, 'daw-master-meter-peak');
-        masterMeter.appendChild(masterMeterFill);
-        masterMeter.appendChild(masterMeterPeak);
+        const masterMeter = createDiv(null, 'daw-meter-hpair daw-master-meter');
+        masterMeterChans = [];
+        for (let ch = 0; ch < 2; ch++) {
+            const bar = createDiv(null, 'daw-meter-h');
+            const mask = createDiv(null, 'daw-meter-h-mask');
+            const peakTick = createDiv(null, 'daw-meter-h-peak');
+            bar.appendChild(mask);
+            bar.appendChild(peakTick);
+            masterMeter.appendChild(bar);
+            masterMeterChans.push({ mask, peak: peakTick });
+        }
         masterGroup.appendChild(masterLbl);
         masterGroup.appendChild(masterSlider);
         masterGroup.appendChild(masterMeter);
@@ -526,6 +558,20 @@ const AudioDaw = (() => {
         timeline.on('seek', (time) => {
             seekTo(snapTime(time));
         });
+        // Live scrub: while paused just move the display; while playing, commit
+        // throttled seeks so the audio follows the drag without per-frame rebuilds.
+        let lastScrubSeek = 0;
+        timeline.on('scrub', (time) => {
+            const t = snapTime(time);
+            if (state.isPlaying) {
+                const now = performance.now();
+                if (now - lastScrubSeek > 120) { lastScrubSeek = now; seekTo(t); }
+            } else {
+                state.currentTime = t;
+                updatePlayheadPosition();
+                updateTimeDisplay();
+            }
+        });
         timeline.on('loopChange', (start, end) => {
             state.loopStart = start;
             state.loopEnd = end;
@@ -552,13 +598,12 @@ const AudioDaw = (() => {
         // Tab bar
         const tabBar = createDiv(null, 'daw-bottom-tabs');
         const tabs = [
-            { id: 'clip-editor', icon: '&#x2702;', label: 'Clip Editor' },
-            { id: 'mixer', icon: '&#x1F39A;', label: 'Mixer' },
-            { id: 'stems', icon: '&#x1F3BC;', label: 'Stems' },
-            { id: 'fx', icon: '&#x1F39B;', label: 'FX' },
-            { id: 'beats', icon: '&#x1F941;', label: 'Beats' },
-            { id: 'generate', icon: '&#x2728;', label: 'Generate' },
-            { id: 'apply-model', icon: '&#x279C;', label: 'Apply to Model' }
+            { id: 'clip-editor', icon: DAW_ICONS.tabClip, label: 'Clip Editor' },
+            { id: 'mixer', icon: DAW_ICONS.tabMixer, label: 'Mixer' },
+            { id: 'stems', icon: DAW_ICONS.tabStems, label: 'Stems' },
+            { id: 'fx', icon: DAW_ICONS.tabFx, label: 'FX' },
+            { id: 'beats', icon: DAW_ICONS.tabBeats, label: 'Instruments' },
+            { id: 'generate', icon: DAW_ICONS.tabGenerate, label: 'Generate' }
         ];
         for (const tab of tabs) {
             const btn = document.createElement('button');
@@ -612,12 +657,6 @@ const AudioDaw = (() => {
         generateContent.hidden = activeBottomTab !== 'generate';
         bottomPanelEl.appendChild(generateContent);
         renderGeneratePanel(generateContent);
-
-        // Apply to Model tab content
-        const applyContent = createDiv(null, 'daw-bottom-tab-content');
-        applyContent.dataset.tab = 'apply-model';
-        applyContent.hidden = activeBottomTab !== 'apply-model';
-        bottomPanelEl.appendChild(applyContent);
 
         updateBottomPanel();
     }
@@ -718,7 +757,7 @@ const AudioDaw = (() => {
         if (!bottomPanelEl) return;
 
         // Auto-select when unambiguous: a lone track, and a lone clip project-wide.
-        // Saves a pointless click before Clip Editor / Apply to Model do anything.
+        // Saves a pointless click before Clip Editor / Generate voice-ref do anything.
         if (state.tracks.length && !state.tracks.some(t => t.id === state.selectedTrackId)) {
             state.selectedTrackId = state.tracks[0].id;
             updateTrackSelection();
@@ -737,11 +776,33 @@ const AudioDaw = (() => {
             const selectedClip = findClipById(state.selectedClipId);
             if (selectedClip) {
                 const { clip, track } = selectedClip;
-                const info = createDiv(null, 'daw-clip-editor');
+                const info = createDiv(null, 'daw-clip-editor daw-panel-split');
+                // Wide panels: clip card (waveform + actions) left, mix card right
+                const editLeft = createDiv(null, 'daw-panel-col');
+                const editRight = createDiv(null, 'daw-panel-col');
+                info.appendChild(editLeft);
+                info.appendChild(editRight);
 
-                const infoRow = createDiv(null, 'daw-clip-editor-info');
-                infoRow.innerHTML = `<strong>${escapeHtml(clip.name)}</strong> | Track: ${escapeHtml(track.name)} | Duration: ${formatTimePrecise(clip.duration)}s | Start: ${formatTimePrecise(clip.startTime)}s`;
-                info.appendChild(infoRow);
+                // Clip inspector card: name, metadata, waveform preview
+                const clipCard = createDiv(null, 'daw-fx-card daw-clip-card');
+                const nameEl = createDiv(null, 'daw-clip-card-name');
+                nameEl.textContent = clip.name;
+                nameEl.title = clip.name;
+                clipCard.appendChild(nameEl);
+                const metaEl = createDiv(null, 'daw-clip-card-meta');
+                metaEl.textContent = `${track.name} · ${formatTimePrecise(clip.duration)}s · starts at ${formatTimePrecise(clip.startTime)}s`;
+                clipCard.appendChild(metaEl);
+                const waveHolder = createDiv(null, 'daw-clip-card-wave');
+                clipCard.appendChild(waveHolder);
+                if (clipEditorPlayer) {
+                    try { clipEditorPlayer.destroy(); } catch (_) {}
+                    clipEditorPlayer = null;
+                }
+                if (clip.blob && typeof AudioLabPlayer !== 'undefined') {
+                    clipEditorPlayer = AudioLabPlayer.createMini(waveHolder, { height: 48, showDownload: false });
+                    clipEditorPlayer.loadBlob(clip.blob);
+                }
+                editLeft.appendChild(clipCard);
 
                 // Re-lookup clip at click time to avoid stale closures
                 const getClip = () => findClipById(state.selectedClipId);
@@ -791,7 +852,7 @@ const AudioDaw = (() => {
                     }
                 });
                 actions.appendChild(muteBtn);
-                info.appendChild(actions);
+                clipCard.appendChild(actions);
 
                 // Gain + fades row
                 const mixRow = createDiv(null, 'daw-clip-editor-info daw-clip-editor-mix');
@@ -853,11 +914,20 @@ const AudioDaw = (() => {
                 };
                 makeFadeInput('Fade In', 'fadeIn');
                 makeFadeInput('Fade Out', 'fadeOut');
-                info.appendChild(mixRow);
+                const mixCard = createDiv(null, 'daw-fx-card daw-clip-mix-card');
+                const mixTitle = createDiv(null, 'daw-fx-card-title');
+                mixTitle.textContent = 'Clip Mix';
+                mixCard.appendChild(mixTitle);
+                mixCard.appendChild(mixRow);
+                editRight.appendChild(mixCard);
 
                 clipEditorContent.appendChild(info);
             } else {
-                clipEditorContent.innerHTML = '<div style="color:var(--text-soft);font-size:0.8rem;padding:0.5rem;">Select a clip to edit</div>';
+                if (clipEditorPlayer) {
+                    try { clipEditorPlayer.destroy(); } catch (_) {}
+                    clipEditorPlayer = null;
+                }
+                clipEditorContent.innerHTML = '<div style="color:var(--text-soft);font-size:0.85rem;padding:0.5rem;">Select a clip to edit</div>';
             }
         }
 
@@ -892,12 +962,6 @@ const AudioDaw = (() => {
             AudioDawFx.renderFxPanel(fxContent, getSelectedTrack(), fxPanelCallbacks());
         }
 
-        // Update Apply to Model tab
-        const applyContent = bottomPanelEl.querySelector('.daw-bottom-tab-content[data-tab="apply-model"]');
-        if (applyContent) {
-            applyContent.innerHTML = '';
-            renderApplyToModel(applyContent);
-        }
     }
 
     /** Simple inline mixer fallback when AudioDawMixer module isn't loaded. */
@@ -1002,81 +1066,27 @@ const AudioDaw = (() => {
         return db.toFixed(1) + ' dB';
     }
 
-    /** Render the Apply to Model tab content. */
-    function renderApplyToModel(container) {
-        const section = createDiv(null, 'daw-clip-editor');
-
-        const selectedClip = findClipById(state.selectedClipId);
-        const clipLabel = selectedClip ? escapeHtml(selectedClip.clip.name) : 'No clip selected';
-        const clipDuration = selectedClip ? selectedClip.clip.duration : 0;
-
-        // Info row
-        const infoRow = createDiv(null, 'daw-clip-editor-info');
-        infoRow.innerHTML = `Source: <strong>${clipLabel}</strong>`;
-        if (clipDuration > 0) {
-            infoRow.innerHTML += ` | ${formatTimePrecise(clipDuration)}s`;
-            const durationHint = clipDuration >= 3 && clipDuration <= 15
-                ? ' <span style="color:var(--green,#5a5);">(good for voice ref)</span>'
-                : clipDuration > 15
-                    ? ' <span style="color:var(--yellow,#a85);">(long — consider trimming)</span>'
-                    : ' <span style="color:var(--yellow,#a85);">(short — may affect quality)</span>';
-            infoRow.innerHTML += durationHint;
-        }
-        section.appendChild(infoRow);
-
-        // Reference text input
-        const refRow = createDiv(null, 'daw-clip-editor-info');
-        refRow.style.marginTop = '0.3rem';
-        const refLabel = document.createElement('label');
-        refLabel.style.cssText = 'font-size:0.8rem;color:var(--text);white-space:nowrap;';
-        refLabel.textContent = 'Reference Text:';
-        const refInput = document.createElement('input');
-        refInput.type = 'text';
-        refInput.placeholder = 'Transcript of the audio (optional, improves quality)';
-        refInput.style.cssText = 'flex:1;padding:0.2rem 0.4rem;border:1px solid var(--shadow);border-radius:0.25rem;background:var(--background);color:var(--text);font-size:0.8rem;';
-        refRow.appendChild(refLabel);
-        refRow.appendChild(refInput);
-        section.appendChild(refRow);
-
-        // Action buttons
-        const actions = createDiv(null, 'daw-clip-editor-actions');
-        actions.style.marginTop = '0.3rem';
-
-        quickAppendButton(actions, 'Apply Selected Clip as Voice Ref', async () => {
-            if (!selectedClip) {
-                if (typeof doNoticePopover === 'function') doNoticePopover('Select a clip first', 'notice-pop-yellow');
-                return;
-            }
-            await applyClipToParam(selectedClip.clip, 'referenceaudio', refInput.value);
-        }, ' basic-button btn-sm', 'Set selected clip as voice reference for current model');
-
-        quickAppendButton(actions, 'Apply Mixdown as Voice Ref', async () => {
-            const mixBlob = await renderMixdownBlob();
-            if (!mixBlob) return;
-            const tmpClip = { blob: mixBlob, name: 'Mixdown' };
-            await applyClipToParam(tmpClip, 'referenceaudio', refInput.value);
-        }, ' basic-button btn-sm', 'Render and set mixdown as voice reference');
-
-        section.appendChild(actions);
-        container.appendChild(section);
-    }
-
     /** Render the Stems (Demucs) tab content. */
     function renderStemsPanel(container) {
-        const section = createDiv(null, 'daw-stems-panel');
+        const section = createDiv(null, 'daw-stems-panel daw-panel-split');
+        // Wide panels: description + model/preset left, stem picks + action right
+        const left = createDiv(null, 'daw-panel-col');
+        const right = createDiv(null, 'daw-panel-col');
 
         // Header with explanation
         const header = createDiv(null, 'daw-stems-header');
         header.innerHTML = '<strong>Stem Separation (Demucs)</strong>';
-        section.appendChild(header);
+        left.appendChild(header);
 
         const desc = createDiv(null, 'daw-stems-desc');
         desc.textContent = 'Separate audio into individual tracks — vocals, drums, bass, and more. Uses AI-powered source separation to split a mixed audio clip into its component parts. Each stem becomes a new track in the DAW.';
-        section.appendChild(desc);
+        left.appendChild(desc);
 
         // Always show controls — the actual API call will report if Demucs isn't available
-        renderStemsControls(section);
+        renderStemsControls(left, right);
 
+        section.appendChild(left);
+        section.appendChild(right);
         container.appendChild(section);
     }
 
@@ -1116,7 +1126,7 @@ const AudioDaw = (() => {
     }
 
     /** Render the Stems controls: model + output preset + per-stem selection + separate button. */
-    function renderStemsControls(section) {
+    function renderStemsControls(left, right) {
         const controls = createDiv(null, 'daw-stems-controls');
 
         // --- Model picker ---
@@ -1155,7 +1165,7 @@ const AudioDaw = (() => {
 
         // --- Per-stem checkboxes (editable only in Custom mode; read-only preview otherwise) ---
         const stemsRow = createDiv(null, 'daw-stems-checks');
-        controls.appendChild(stemsRow);
+        right.appendChild(stemsRow);
 
         const getStems = () => STEM_MODELS[modelSelect.value].stems;
         let customSel = new Set(getStems());
@@ -1207,6 +1217,7 @@ const AudioDaw = (() => {
 
         // --- Source clip picker + separate button ---
         const actionRow = createDiv(null, 'daw-stems-action-row');
+        let sepBtn = null;
         const allClips = [];
         for (const t of state.tracks) {
             for (const c of t.clips) allClips.push({ clip: c, track: t });
@@ -1232,7 +1243,7 @@ const AudioDaw = (() => {
             actionRow.appendChild(srcLabel);
             actionRow.appendChild(srcSelect);
 
-            const sepBtn = document.createElement('button');
+            sepBtn = document.createElement('button');
             sepBtn.className = 'basic-button btn-sm daw-stems-go';
             sepBtn.textContent = 'Separate Stems';
             sepBtn.addEventListener('click', async () => {
@@ -1258,72 +1269,156 @@ const AudioDaw = (() => {
                 }
                 doSeparateStems(sel.clip, sel.track, { modelName: modelSelect.value, outputs });
             });
-            actionRow.appendChild(sepBtn);
         }
 
-        controls.appendChild(actionRow);
-        section.appendChild(controls);
+        right.appendChild(actionRow);
+        if (sepBtn) right.appendChild(sepBtn);
+        left.appendChild(controls);
     }
 
     // ===== GENERATE TAB =====
 
     let generateEngines = null; // engine list cache for the Generate tab
 
+    /**
+     * Generate through SwarmUI's core pipeline (GenerateText2ImageWS) — the same
+     * endpoint the main Generate tab uses. The output is saved to the user's
+     * outputs folder + history like any generation, and progress streams back.
+     * @param {Object} opts - { model: Swarm model name, prompt, params: extra T2I params, onProgress(frac) }
+     * @returns {Promise<{blob: Blob, src: string}>} the produced audio + its View URL
+     */
+    function dawSwarmGenerate({ model, prompt, params = {}, onProgress = null }) {
+        return new Promise((resolve, reject) => {
+            const genData = { images: 1, model, prompt, seed: -1, ...params };
+            let settled = false;
+            const fail = (msg) => { if (!settled) { settled = true; reject(new Error(msg)); } };
+            makeWSRequestT2I('GenerateText2ImageWS', genData, (data) => {
+                if (data.gen_progress && onProgress) {
+                    const p = data.gen_progress.overall_percent || data.gen_progress.current_percent;
+                    if (p) onProgress(Math.max(0, Math.min(1, p)));
+                }
+                if (data.error) { fail(data.error); return; }
+                if (data.image) {
+                    const src = typeof data.image === 'string' ? data.image : data.image.image;
+                    fetch(src)
+                        .then(r => { if (!r.ok) throw new Error(`Output fetch failed (${r.status})`); return r.blob(); })
+                        .then(blob => { if (!settled) { settled = true; resolve({ blob, src }); } })
+                        .catch(err => fail(err.message));
+                }
+            }, (err) => fail(err || 'Generation failed'));
+        });
+    }
+
+    /** Fetch + cache the engine list (shared by the Generate tab, palette, and beat pads). */
+    async function ensureEnginesList() {
+        if (!generateEngines) {
+            const result = await AudioLabAPI.callAPI('AudioLabListEngines');
+            if (!result.success) throw new Error(result.error || 'Failed to list engines');
+            generateEngines = result.engines || [];
+        }
+        return generateEngines;
+    }
+
+    /** First installed model's Swarm-registry name for an engine id (cached engine list). */
+    function dawSwarmModelFor(engineId) {
+        const eng = (generateEngines || []).find(x => x.id === engineId);
+        const m = (eng?.models || []).find(x => x.installed !== false);
+        return m?.swarm_model || null;
+    }
+
     /** Bottom-panel tab: generate TTS/music/SFX with an installed engine straight into a track. */
+    // Generate tab: category cards (TTS / Music / SFX / STT) — each shows only
+    // its engines and the params that type actually needs.
+    const GEN_CATEGORIES = [
+        { id: 'tts', name: 'Text to Speech', desc: 'Speak any text — optionally clone a voice' },
+        { id: 'music', name: 'Music', desc: 'Songs and loops from a style prompt + lyrics' },
+        { id: 'sfx', name: 'Sound FX', desc: 'One-shots and foley from a description' },
+        { id: 'stt', name: 'Speech to Text', desc: 'Transcribe the selected clip' }
+    ];
+    let generateCategory = 'tts';
+
+    function enginesForCategory(cat) {
+        const list = (generateEngines || []).filter(e => e.installed);
+        if (cat === 'tts') return list.filter(e => e.category === 'TTS');
+        if (cat === 'stt') return list.filter(e => e.category === 'STT');
+        const gen = list.filter(e => e.category === 'AudioGeneration');
+        return cat === 'sfx' ? gen.filter(e => /sfx/i.test(e.id)) : gen.filter(e => !/sfx/i.test(e.id));
+    }
+
     async function renderGeneratePanel(container) {
         container.innerHTML = '';
-        const section = createDiv(null, 'daw-generate-panel');
-        container.appendChild(section);
+        const panel = createDiv(null, 'daw-generate-panel');
+        container.appendChild(panel);
         const status = createDiv(null, 'daw-stems-desc');
         status.textContent = 'Loading engines...';
-        section.appendChild(status);
-
+        panel.appendChild(status);
         try {
-            if (!generateEngines) {
-                const result = await AudioLabAPI.callAPI('AudioLabListEngines');
-                if (!result.success) throw new Error(result.error || 'Failed to list engines');
-                generateEngines = result.engines || [];
-            }
+            await ensureEnginesList();
         } catch (err) {
             status.textContent = 'Failed to load engines: ' + err.message;
             return;
         }
-        const usable = generateEngines.filter(e =>
-            e.installed && (e.category === 'TTS' || e.category === 'AudioGeneration'));
-        if (!usable.length) {
-            status.textContent = 'No TTS or audio-generation engines installed — add one from the Audio Backend card under Server -> Backends.';
-            return;
-        }
         status.remove();
 
-        const isMusic = () => currentEngine()?.category === 'AudioGeneration';
+        // Category cards; fall back to the first category that has an engine
+        if (!enginesForCategory(generateCategory).length) {
+            const firstReady = GEN_CATEGORIES.find(c => enginesForCategory(c.id).length);
+            if (firstReady) generateCategory = firstReady.id;
+        }
+        const browser = createDiv(null, 'daw-fx-browser daw-gen-browser');
+        for (const cat of GEN_CATEGORIES) {
+            const count = enginesForCategory(cat.id).length;
+            const pick = document.createElement('button');
+            pick.className = 'daw-fx-pick daw-inst-pick'
+                + (cat.id === generateCategory ? ' selected' : '')
+                + (count ? '' : ' not-ready');
+            pick.innerHTML = `<span class="daw-fx-pick-name">${cat.name}</span>`
+                + `<span class="daw-fx-pick-desc">${count ? cat.desc : 'No engine installed'}</span>`;
+            pick.addEventListener('click', () => {
+                if (!count) {
+                    if (typeof doNoticePopover === 'function') doNoticePopover(`No installed ${cat.name} engine — add one under Server -> Backends`, 'notice-pop-yellow');
+                    return;
+                }
+                generateCategory = cat.id;
+                renderGeneratePanel(container);
+            });
+            browser.appendChild(pick);
+        }
+        panel.appendChild(browser);
 
-        // Engine + model pickers
+        const engines = enginesForCategory(generateCategory);
+        if (!engines.length) {
+            const none = createDiv(null, 'daw-stems-desc');
+            none.textContent = 'No audio engines installed — add one from the Audio Backend card under Server -> Backends.';
+            panel.appendChild(none);
+            return;
+        }
+
+        const section = createDiv(null, 'daw-panel-split');
+        panel.appendChild(section);
+        const mainCol = createDiv(null, 'daw-panel-col');
+        const sideCol = createDiv(null, 'daw-panel-col');
+        section.appendChild(mainCol);
+        section.appendChild(sideCol);
+
+        // Engine + model pickers (only this category's engines)
         const engineRow = createDiv(null, 'daw-stems-model-row');
         const engineLabel = document.createElement('label');
         engineLabel.className = 'daw-stems-ctl-label';
         engineLabel.textContent = 'Engine:';
         const engineSelect = document.createElement('select');
         engineSelect.className = 'daw-stems-select';
-        const groups = { TTS: 'Text to Speech', AudioGeneration: 'Music & SFX' };
-        for (const [cat, label] of Object.entries(groups)) {
-            const engines = usable.filter(x => x.category === cat);
-            if (!engines.length) continue;
-            const og = document.createElement('optgroup');
-            og.label = label;
-            for (const eng of engines) {
-                const opt = document.createElement('option');
-                opt.value = eng.id;
-                opt.textContent = eng.name;
-                og.appendChild(opt);
-            }
-            engineSelect.appendChild(og);
+        for (const eng of engines) {
+            const opt = document.createElement('option');
+            opt.value = eng.id;
+            opt.textContent = eng.name;
+            engineSelect.appendChild(opt);
         }
         engineRow.appendChild(engineLabel);
         engineRow.appendChild(engineSelect);
-        section.appendChild(engineRow);
+        mainCol.appendChild(engineRow);
 
-        const currentEngine = () => usable.find(x => x.id === engineSelect.value);
+        const currentEngine = () => engines.find(x => x.id === engineSelect.value) || engines[0];
 
         const modelRow = createDiv(null, 'daw-stems-model-row');
         const modelLabel = document.createElement('label');
@@ -1333,7 +1428,7 @@ const AudioDaw = (() => {
         modelSelect.className = 'daw-stems-select';
         modelRow.appendChild(modelLabel);
         modelRow.appendChild(modelSelect);
-        section.appendChild(modelRow);
+        mainCol.appendChild(modelRow);
 
         function rebuildModels() {
             modelSelect.innerHTML = '';
@@ -1348,78 +1443,199 @@ const AudioDaw = (() => {
             modelRow.style.display = models.length > 1 ? '' : 'none';
         }
 
-        // Prompt / lyrics
+        // ==== Speech to Text: transcription workflow (produces text, not audio) ====
+        if (generateCategory === 'stt') {
+            const resultArea = document.createElement('textarea');
+            resultArea.className = 'daw-generate-text';
+            resultArea.rows = 4;
+            resultArea.placeholder = 'Transcription appears here…';
+            mainCol.appendChild(resultArea);
+
+            const actionRow = createDiv(null, 'daw-stems-action-row');
+            const hint = createSpan(null, 'daw-stems-clipinfo');
+            hint.textContent = 'Transcribes the selected clip with the chosen engine.';
+            actionRow.appendChild(hint);
+            sideCol.appendChild(actionRow);
+            const goBtn = document.createElement('button');
+            goBtn.className = 'basic-button btn-sm daw-stems-go';
+            goBtn.textContent = 'Transcribe Selected Clip';
+            goBtn.addEventListener('click', async () => {
+                const sel = findClipById(state.selectedClipId);
+                if (!sel) {
+                    if (typeof doNoticePopover === 'function') doNoticePopover('Select a clip to transcribe', 'notice-pop-yellow');
+                    return;
+                }
+                goBtn.disabled = true;
+                const busy = createBusyIndicator('Transcribing…', 'generate');
+                sideCol.appendChild(busy);
+                try {
+                    const b64 = await AudioLabCore.readAsBase64(sel.clip.blob);
+                    const result = await AudioLabAPI.processSTT(b64, { providerId: currentEngine().id });
+                    if (!result.success || !result.transcription) throw new Error(result.error || 'No transcription returned');
+                    resultArea.value = result.transcription.trim();
+                } catch (err) {
+                    console.error('[AudioDaw] Transcription failed:', err);
+                    if (typeof doNoticePopover === 'function') doNoticePopover('Transcription failed: ' + err.message, 'notice-pop-red');
+                } finally {
+                    busy.done();
+                    goBtn.disabled = false;
+                }
+            });
+            sideCol.appendChild(goBtn);
+            const copyRow = createDiv(null, 'daw-stems-model-row');
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'basic-button btn-sm';
+            copyBtn.textContent = 'Copy Text';
+            copyBtn.addEventListener('click', () => {
+                if (!resultArea.value) return;
+                navigator.clipboard?.writeText(resultArea.value);
+                if (typeof doNoticePopover === 'function') doNoticePopover('Copied to clipboard', 'notice-pop-green');
+            });
+            copyRow.appendChild(copyBtn);
+            sideCol.appendChild(copyRow);
+            engineSelect.addEventListener('change', rebuildModels);
+            rebuildModels();
+            return;
+        }
+
+        // ==== TTS / Music / SFX generation form ====
+        const isTts = generateCategory === 'tts';
+        const isMusicCat = generateCategory === 'music';
+
         const promptArea = document.createElement('textarea');
         promptArea.className = 'daw-generate-text';
         promptArea.rows = 2;
-        section.appendChild(promptArea);
+        promptArea.placeholder = isTts ? 'Text to speak...'
+            : isMusicCat ? 'Describe the music (style, mood, instruments)...'
+            : 'Describe the sound: "punchy kick drum", "rain on a tin roof"...';
+        mainCol.appendChild(promptArea);
 
-        const lyricsArea = document.createElement('textarea');
-        lyricsArea.className = 'daw-generate-text';
-        lyricsArea.rows = 2;
-        lyricsArea.placeholder = 'Lyrics (optional)';
-        section.appendChild(lyricsArea);
+        let lyricsArea = null;
+        if (isMusicCat) {
+            lyricsArea = document.createElement('textarea');
+            lyricsArea.className = 'daw-generate-text';
+            lyricsArea.rows = 3;
+            lyricsArea.placeholder = 'Lyrics (optional — leave empty for instrumental)';
+            mainCol.appendChild(lyricsArea);
+        }
 
-        // Options row: duration + seed (music), voice ref (TTS)
-        const optsRow = createDiv(null, 'daw-stems-model-row');
-        const durLabel = document.createElement('label');
-        durLabel.className = 'daw-stems-ctl-label';
-        durLabel.textContent = 'Duration (s):';
-        const durationInput = document.createElement('input');
-        durationInput.type = 'number';
-        durationInput.className = 'daw-clip-fade-input';
-        durationInput.min = '1';
-        durationInput.value = '10';
-        const seedLabel = document.createElement('label');
-        seedLabel.className = 'daw-stems-ctl-label';
-        seedLabel.textContent = 'Seed:';
-        const seedInput = document.createElement('input');
-        seedInput.type = 'number';
-        seedInput.className = 'daw-clip-fade-input';
-        seedInput.value = '-1';
-        seedInput.title = '-1 = random';
-        optsRow.appendChild(durLabel);
-        optsRow.appendChild(durationInput);
-        optsRow.appendChild(seedLabel);
-        optsRow.appendChild(seedInput);
-        section.appendChild(optsRow);
+        // Options: duration + seed (music/SFX), tempo hints (music)
+        let durationInput = null, seedInput = null, tempoCheck = null;
+        if (!isTts) {
+            const optsRow = createDiv(null, 'daw-stems-model-row');
+            const durLabel = document.createElement('label');
+            durLabel.className = 'daw-stems-ctl-label';
+            durLabel.textContent = 'Duration (s):';
+            durationInput = document.createElement('input');
+            durationInput.type = 'number';
+            durationInput.className = 'daw-clip-fade-input';
+            durationInput.min = '1';
+            durationInput.value = isMusicCat ? '20' : '3';
+            const seedLabel = document.createElement('label');
+            seedLabel.className = 'daw-stems-ctl-label';
+            seedLabel.textContent = 'Seed:';
+            seedInput = document.createElement('input');
+            seedInput.type = 'number';
+            seedInput.className = 'daw-clip-fade-input';
+            seedInput.value = '-1';
+            seedInput.title = '-1 = random';
+            optsRow.appendChild(durLabel);
+            optsRow.appendChild(durationInput);
+            optsRow.appendChild(seedLabel);
+            optsRow.appendChild(seedInput);
+            sideCol.appendChild(optsRow);
 
-        const refRow = createDiv(null, 'daw-stems-model-row');
-        const refCheck = document.createElement('input');
-        refCheck.type = 'checkbox';
-        refCheck.id = 'daw_gen_voice_ref';
-        const refLabel = document.createElement('label');
-        refLabel.className = 'daw-stems-ctl-label';
-        refLabel.htmlFor = 'daw_gen_voice_ref';
-        refLabel.textContent = 'Use selected clip as voice reference';
-        const refTextInput = document.createElement('input');
-        refTextInput.type = 'text';
-        refTextInput.className = 'daw-generate-reftext';
-        refTextInput.placeholder = 'Reference transcript (optional)';
-        refRow.appendChild(refCheck);
-        refRow.appendChild(refLabel);
-        refRow.appendChild(refTextInput);
-        section.appendChild(refRow);
+            if (isMusicCat) {
+                const tempoRow = createDiv(null, 'daw-stems-model-row');
+                tempoCheck = document.createElement('input');
+                tempoCheck.type = 'checkbox';
+                tempoCheck.id = 'daw_gen_tempo_hints';
+                tempoCheck.checked = true;
+                const tempoLbl = document.createElement('label');
+                tempoLbl.htmlFor = 'daw_gen_tempo_hints';
+                tempoLbl.className = 'daw-stems-ctl-label';
+                tempoLbl.textContent = `Match project tempo (${state.bpm} BPM, ${state.timeSignature.join('/')})`;
+                tempoRow.appendChild(tempoCheck);
+                tempoRow.appendChild(tempoLbl);
+                sideCol.appendChild(tempoRow);
+            }
+        }
 
-        // Action row
+        // Voice reference (TTS only, capability-gated per engine)
+        let refCheck = null, refTextInput = null, refRow = null, refNote = null;
+        if (isTts) {
+            refRow = createDiv(null, 'daw-stems-model-row');
+            refCheck = document.createElement('input');
+            refCheck.type = 'checkbox';
+            refCheck.id = 'daw_gen_voice_ref';
+            const refLabel = document.createElement('label');
+            refLabel.className = 'daw-stems-ctl-label';
+            refLabel.htmlFor = 'daw_gen_voice_ref';
+            refLabel.textContent = 'Use selected clip as voice reference';
+            refTextInput = document.createElement('input');
+            refTextInput.type = 'text';
+            refTextInput.className = 'daw-generate-reftext';
+            refTextInput.placeholder = 'Reference transcript (optional)';
+            // Auto-fill the transcript by running the selected clip through STT
+            const sttBtn = document.createElement('button');
+            sttBtn.type = 'button';
+            sttBtn.className = 'basic-button btn-sm daw-reftext-stt';
+            sttBtn.textContent = 'Transcribe';
+            sttBtn.title = 'Fill the transcript automatically — runs the selected clip through speech-to-text';
+            sttBtn.style.display = enginesForCategory('stt').length ? '' : 'none';
+            sttBtn.addEventListener('click', async () => {
+                const sel = findClipById(state.selectedClipId);
+                if (!sel) {
+                    if (typeof doNoticePopover === 'function') doNoticePopover('Select a clip to transcribe', 'notice-pop-yellow');
+                    return;
+                }
+                sttBtn.disabled = true;
+                sttBtn.textContent = 'Transcribing…';
+                try {
+                    const b64 = await AudioLabCore.readAsBase64(sel.clip.blob);
+                    const result = await AudioLabAPI.processSTT(b64);
+                    if (!result.success || !result.transcription) throw new Error(result.error || 'No transcription returned');
+                    refTextInput.value = result.transcription.trim();
+                    refCheck.checked = true;
+                } catch (err) {
+                    console.error('[AudioDaw] Transcription failed:', err);
+                    if (typeof doNoticePopover === 'function') doNoticePopover('Transcription failed: ' + err.message, 'notice-pop-red');
+                } finally {
+                    sttBtn.disabled = false;
+                    sttBtn.textContent = 'Transcribe';
+                }
+            });
+            const refTextWrap = createDiv(null, 'daw-reftext-wrap');
+            refTextWrap.appendChild(refTextInput);
+            refTextWrap.appendChild(sttBtn);
+            refRow.appendChild(refCheck);
+            refRow.appendChild(refLabel);
+            refRow.appendChild(refTextWrap);
+            sideCol.appendChild(refRow);
+
+            refNote = createDiv(null, 'daw-stems-clipinfo');
+            refNote.textContent = 'This engine uses its built-in voice — voice cloning is not supported.';
+            sideCol.appendChild(refNote);
+        }
+
+        const supportsVoiceRef = () => (currentEngine()?.features || []).includes('tts_voice_ref');
+
+        // Action row: hint above a full-width Generate button
         const actionRow = createDiv(null, 'daw-stems-action-row');
         const hint = createSpan(null, 'daw-stems-clipinfo');
-        hint.textContent = 'Result is added as a new track at the playhead.';
+        hint.textContent = 'Result is added as a new track at the playhead (and saved to your outputs).';
         actionRow.appendChild(hint);
         const goBtn = document.createElement('button');
         goBtn.className = 'basic-button btn-sm daw-stems-go';
         goBtn.textContent = 'Generate';
         actionRow.appendChild(goBtn);
-        section.appendChild(actionRow);
+        sideCol.appendChild(actionRow);
 
         function refreshVisibility() {
-            const music = isMusic();
-            lyricsArea.style.display = music ? '' : 'none';
-            optsRow.style.display = music ? '' : 'none';
-            refRow.style.display = music ? 'none' : '';
-            promptArea.placeholder = music
-                ? 'Describe the music or sound to generate (style, mood, instruments)...'
-                : 'Text to speak...';
+            if (isTts) {
+                refRow.style.display = supportsVoiceRef() ? '' : 'none';
+                refNote.style.display = supportsVoiceRef() ? 'none' : '';
+            }
             rebuildModels();
         }
         engineSelect.addEventListener('change', refreshVisibility);
@@ -1428,42 +1644,55 @@ const AudioDaw = (() => {
         goBtn.addEventListener('click', async () => {
             const eng = currentEngine();
             if (!eng) return;
-            const args = {};
-            if (modelSelect.value) args.__model_id = modelSelect.value;
+            const models = (eng.models || []).filter(m => m.installed !== false);
+            const modelDef = models.find(m => m.id === modelSelect.value) || models[0];
+            if (!modelDef?.swarm_model) {
+                if (typeof doNoticePopover === 'function') doNoticePopover('No installed model for this engine', 'notice-pop-yellow');
+                return;
+            }
             const promptText = promptArea.value.trim();
             if (!promptText) {
                 if (typeof doNoticePopover === 'function') {
-                    doNoticePopover(isMusic() ? 'Enter a prompt first' : 'Enter text to speak first', 'notice-pop-yellow');
+                    doNoticePopover(isTts ? 'Enter text to speak first' : 'Enter a prompt first', 'notice-pop-yellow');
                 }
                 return;
             }
-            if (eng.category === 'TTS') {
-                args.text = promptText;
-                if (refCheck.checked) {
+            // Core T2I params — same pipeline + param ids as the main Generate tab
+            const params = {};
+            if (isTts) {
+                if (refCheck.checked && supportsVoiceRef()) {
                     const sel = findClipById(state.selectedClipId);
                     if (!sel) {
                         if (typeof doNoticePopover === 'function') doNoticePopover('Select a clip to use as voice reference', 'notice-pop-yellow');
                         return;
                     }
-                    args.reference_audio = await AudioLabCore.readAsBase64(sel.clip.blob);
-                    if (refTextInput.value.trim()) args.ref_text = refTextInput.value.trim();
+                    const b64 = await AudioLabCore.readAsBase64(sel.clip.blob);
+                    params.referenceaudio = `data:${sel.clip.blob.type || 'audio/wav'};base64,${b64}`;
+                    if (refTextInput.value.trim()) params.referencetext = refTextInput.value.trim();
                 }
             } else {
-                args.prompt = promptText;
-                if (lyricsArea.value.trim()) args.lyrics = lyricsArea.value.trim();
-                args.duration = Math.max(1, parseFloat(durationInput.value) || 10);
+                if (lyricsArea?.value.trim()) params.lyrics = lyricsArea.value.trim();
+                params.text2audioduration = Math.max(1, parseFloat(durationInput.value) || (isMusicCat ? 20 : 3));
                 const seed = parseInt(seedInput.value);
-                if (!isNaN(seed) && seed >= 0) args.seed = seed;
+                if (!isNaN(seed) && seed >= 0) params.seed = seed;
+                if (isMusicCat && tempoCheck?.checked) {
+                    params.text2audiobpm = state.bpm;
+                    params.text2audiotimesignature = state.timeSignature.join('/');
+                }
             }
 
+            // Non-blocking: only the Generate button locks; the rest of the DAW
+            // stays usable while the engine works (progress on the tab too).
             goBtn.disabled = true;
-            const overlay = showDawLoadingOverlay(`Generating with ${eng.name}...`);
+            const busy = createBusyIndicator(`Generating with ${eng.name}…`, 'generate');
+            sideCol.appendChild(busy);
             try {
-                const result = await AudioLabAPI.callAPI('ProcessAudio', { provider_id: eng.id, args });
-                if (!result.success || !result.audio_data) {
-                    throw new Error(result.error || 'Generation returned no audio');
-                }
-                const blob = AudioLabCore.base64ToBlob(result.audio_data, 'audio/wav');
+                const { blob } = await dawSwarmGenerate({
+                    model: modelDef.swarm_model,
+                    prompt: promptText,
+                    params,
+                    onProgress: (frac) => busy.setProgress(frac)
+                });
                 pushUndo();
                 const track = addTrack({ name: eng.name });
                 await addClipToTrack(track, blob, {
@@ -1474,13 +1703,14 @@ const AudioDaw = (() => {
                 renderAllTracks();
                 updateBottomPanel();
                 resyncPlayback();
-                if (typeof doNoticePopover === 'function') doNoticePopover('Generated clip added', 'notice-pop-green');
+                if (typeof doNoticePopover === 'function') doNoticePopover('Generated clip added (also saved to your outputs)', 'notice-pop-green');
             } catch (err) {
                 console.error('[AudioDaw] Generate failed:', err);
                 if (typeof doNoticePopover === 'function') doNoticePopover('Generate failed: ' + err.message, 'notice-pop-red');
+            } finally {
+                busy.done();
+                goBtn.disabled = false;
             }
-            goBtn.disabled = false;
-            hideDawLoadingOverlay(overlay);
         });
     }
 
@@ -1512,42 +1742,18 @@ const AudioDaw = (() => {
         return audioBufferToWav(out);
     }
 
-    /** Apply a clip's audio data to a SwarmUI model parameter input. */
-    async function applyClipToParam(clip, paramId, refText) {
-        try {
-            const base64 = await AudioLabCore.readAsBase64(clip.blob);
-            const inputEl = document.getElementById(`input_${paramId}`);
-            if (inputEl) {
-                inputEl.value = `data:audio/wav;base64,${base64}`;
-                triggerChangeFor(inputEl);
-            }
-            // Also set reference text if provided
-            if (refText) {
-                const refTextEl = document.getElementById('input_referencetext');
-                if (refTextEl) {
-                    refTextEl.value = refText;
-                    triggerChangeFor(refTextEl);
-                }
-            }
-            if (typeof doNoticePopover === 'function') {
-                doNoticePopover(`Applied "${clip.name}" to model`, 'notice-pop-green');
-            }
-        } catch (err) {
-            console.error('[AudioDaw] Apply to model failed:', err);
-            if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Failed to apply: ' + err.message, 'notice-pop-red');
-            }
-        }
-    }
-
     /**
      * Render the arrangement offline through the SAME node graph + scheduleClip
      * math as live playback, so exports always match what you hear.
      */
     async function renderMixdownBuffer() {
-        if (state.tracks.length === 0) return null;
+        if (state.tracks.length === 0 || state.contentDuration <= 0) return null;
         const sampleRate = 44100;
-        const totalSamples = Math.max(1, Math.ceil(state.totalDuration * sampleRate));
+        // Export ends with the music; leave room only when FX tails need to ring out.
+        const hasTails = state.tracks.some(t => (t.fx || []).some(f =>
+            f.enabled && (f.type === 'reverb' || f.type === 'delay')));
+        const renderEnd = state.contentDuration + (hasTails ? 5 : 0.1);
+        const totalSamples = Math.max(1, Math.ceil(renderEnd * sampleRate));
         const offlineCtx = new OfflineAudioContext(2, totalSamples, sampleRate);
         const masterGain = offlineCtx.createGain();
         masterGain.gain.value = state.masterVolume;
@@ -1562,17 +1768,17 @@ const AudioDaw = (() => {
         for (const track of state.tracks) {
             if (track.muted || (soloActive && !track.soloed)) continue; // no point rendering silence
             const chain = buildTrackChain(offlineCtx, track, masterGain);
-            scheduleTrackAutomation(chain, track, { t0Ctx: 0, t0Timeline: 0, windowEnd: state.totalDuration, fresh: true });
+            scheduleTrackAutomation(chain, track, { t0Ctx: 0, t0Timeline: 0, windowEnd: renderEnd, fresh: true });
             for (const clip of track.clips) {
                 if (clip.muted) continue;
                 scheduleClip(offlineCtx, chain.trackGain, clip,
-                    { t0Ctx: 0, t0Timeline: 0, windowEnd: state.totalDuration });
+                    { t0Ctx: 0, t0Timeline: 0, windowEnd: renderEnd });
             }
         }
         return await offlineCtx.startRendering();
     }
 
-    /** Render mixdown to a WAV Blob (export + Apply to Model). */
+    /** Render mixdown to a WAV Blob (export). */
     async function renderMixdownBlob() {
         try {
             const rendered = await renderMixdownBuffer();
@@ -1617,15 +1823,43 @@ const AudioDaw = (() => {
             });
         }
 
-        // Click on empty clip lane area to seek
-        clipLanesEl.addEventListener('click', (e) => {
-            if (e.target === clipLanesEl || e.target.classList.contains('daw-track-lane')) {
-                const rect = clipLanesEl.getBoundingClientRect();
-                const x = e.clientX - rect.left + clipLanesEl.scrollLeft;
-                const time = x / state.zoom;
-                seekTo(snapTime(Math.max(0, Math.min(time, state.totalDuration))));
+        // Click or drag on empty lane area (or the playhead line itself) to scrub;
+        // the final position commits on release.
+        const laneTimeAt = (e) => {
+            const rect = clipLanesEl.getBoundingClientRect();
+            const x = e.clientX - rect.left + clipLanesEl.scrollLeft;
+            return snapTime(Math.max(0, Math.min(x / state.zoom, state.totalDuration)));
+        };
+        let lastLaneScrub = 0;
+        const laneScrub = (t) => {
+            if (state.isPlaying) {
+                const now = performance.now();
+                if (now - lastLaneScrub > 120) { lastLaneScrub = now; seekTo(t); }
+            } else {
+                state.currentTime = t;
+                updatePlayheadPosition();
+                updateTimeDisplay();
             }
-        });
+        };
+        const setupLaneScrub = (el, accepts) => {
+            el.addEventListener('pointerdown', (e) => {
+                if (e.button !== 0 || !accepts(e)) return;
+                e.preventDefault();
+                el.setPointerCapture(e.pointerId);
+                laneScrub(laneTimeAt(e));
+                const onMove = (me) => laneScrub(laneTimeAt(me));
+                const onUp = (ue) => {
+                    el.releasePointerCapture(ue.pointerId);
+                    el.removeEventListener('pointermove', onMove);
+                    el.removeEventListener('pointerup', onUp);
+                    seekTo(laneTimeAt(ue));
+                };
+                el.addEventListener('pointermove', onMove);
+                el.addEventListener('pointerup', onUp);
+            });
+        };
+        setupLaneScrub(clipLanesEl, (e) => e.target === clipLanesEl || e.target.classList.contains('daw-track-lane'));
+        if (playheadEl) setupLaneScrub(playheadEl, () => true);
     }
 
     // ===== TRACK MANAGEMENT =====
@@ -1739,6 +1973,15 @@ const AudioDaw = (() => {
                 updateTotalDuration();
                 resyncPlayback();
             },
+            onTimelineExtend: (seconds) => {
+                // Mid-drag growth past the current end; updateTotalDuration()
+                // snaps back to content + padding on drop.
+                if (seconds > state.totalDuration) {
+                    state.totalDuration = seconds;
+                    if (timeline) timeline.setDuration(state.totalDuration);
+                    updateClipLanesWidth();
+                }
+            },
             onClipContext: (e, clip, track) => {
                 showClipContextMenu(e, clip, track);
             },
@@ -1833,12 +2076,15 @@ const AudioDaw = (() => {
     }
 
     function updateTotalDuration() {
-        let max = 10; // minimum 10 seconds
+        // contentDuration = where the music actually ends (playback/export stop here);
+        // totalDuration = ruler length, kept longer so clips can be dragged past the end.
+        let content = 0;
         for (const track of state.tracks) {
             const td = AudioDawTrack.getTrackDuration(track);
-            if (td > max) max = td;
+            if (td > content) content = td;
         }
-        state.totalDuration = max + 5; // 5 second padding
+        state.contentDuration = content;
+        state.totalDuration = Math.max(10, content) + 5;
         if (timeline) timeline.setDuration(state.totalDuration);
         updateClipLanesWidth();
     }
@@ -1888,13 +2134,16 @@ const AudioDaw = (() => {
         } else {
             volAuto.connect(masterGain);
         }
-        let analyser = null;
+        let analysers = null;
+        let meterSplitter = null;
         if (typeof OfflineAudioContext === 'undefined' || !(ctx instanceof OfflineAudioContext)) {
-            analyser = ctx.createAnalyser();
-            analyser.fftSize = 512;
-            (trackPan || volAuto).connect(analyser); // parallel tap, no audio output
+            // Per-channel L/R taps for OBS-style stereo metering
+            meterSplitter = ctx.createChannelSplitter(2);
+            (trackPan || volAuto).connect(meterSplitter);
+            analysers = [ctx.createAnalyser(), ctx.createAnalyser()];
+            analysers.forEach((a, i) => { a.fftSize = 512; meterSplitter.connect(a, i); });
         }
-        return { trackGain, fxChain, volAuto, trackPan, analyser };
+        return { trackGain, fxChain, volAuto, trackPan, analysers, meterSplitter };
     }
 
     /** Fully disconnect one track chain (incl. FX feedback loops, which otherwise persist). */
@@ -1903,7 +2152,8 @@ const AudioDaw = (() => {
         if (typeof AudioDawFx !== 'undefined') AudioDawFx.disposeFxChain(chain.fxChain);
         try { chain.volAuto.disconnect(); } catch (_) {}
         if (chain.trackPan) { try { chain.trackPan.disconnect(); } catch (_) {} }
-        if (chain.analyser) { try { chain.analyser.disconnect(); } catch (_) {} }
+        if (chain.meterSplitter) { try { chain.meterSplitter.disconnect(); } catch (_) {} }
+        for (const a of chain.analysers || []) { try { a.disconnect(); } catch (_) {} }
     }
 
     /** Topology change on a track's FX (add/remove/reorder): rebuild its chain live. */
@@ -2013,36 +2263,56 @@ const AudioDaw = (() => {
         return s.peak;
     }
 
-    /** Push live levels + peak-hold ticks into header meters, mixer strips, and the master meter. */
+    /** Peak (0..1) -> meter height fraction on a -60..0 dB scale (OBS-style). */
+    function levelToPct(peak) {
+        if (peak <= 0.001) return 0;
+        const db = 20 * Math.log10(peak);
+        return Math.max(0, Math.min(1, (db + 60) / 60));
+    }
+
+    function readChanPeaks(analysers) {
+        if (analysers?.length === 2) return [readPeak(analysers[0]), readPeak(analysers[1])];
+        return [0, 0];
+    }
+
+    /** Write one channel's level + held peak into its DOM pair (mask covers the UNLIT part). */
+    function setMeterChan(chan, pct, peakPct, vertical) {
+        if (!chan) return;
+        if (vertical) {
+            chan.mask.style.height = ((1 - pct) * 100).toFixed(1) + '%';
+            chan.peak.style.bottom = (peakPct * 100).toFixed(1) + '%';
+        } else {
+            chan.mask.style.width = ((1 - pct) * 100).toFixed(1) + '%';
+            chan.peak.style.left = `calc(${(peakPct * 100).toFixed(1)}% - 2px)`;
+        }
+    }
+
+    /** Push live stereo levels + peak-hold ticks into header meters, mixer strips, and the master meter. */
     function updateMeters() {
         if (!playback) return;
         for (const track of state.tracks) {
             const chain = playback.chains.get(track.id);
-            if (!chain?.analyser) continue;
-            const level = Math.min(1, Math.sqrt(readPeak(chain.analyser))); // sqrt = perceptual-ish curve
-            const peak = heldPeak(track.id, level);
-            if (track.meterEl) track.meterEl.style.width = (level * 100) + '%';
-            if (track.meterPeakEl) track.meterPeakEl.style.left = `calc(${(peak * 100).toFixed(1)}% - 2px)`;
+            if (!chain?.analysers) continue;
+            const peaks = readChanPeaks(chain.analysers);
             const strip = AudioDawMixer.getMeterEl?.(track.id);
-            if (strip) {
-                strip.fill.style.height = (level * 100) + '%';
-                strip.peak.style.bottom = (peak * 100).toFixed(1) + '%';
+            for (let ch = 0; ch < 2; ch++) {
+                const pct = levelToPct(peaks[ch]);
+                const held = heldPeak(`${track.id}:${ch}`, pct);
+                setMeterChan(track.meterChans?.[ch], pct, held, false);
+                setMeterChan(strip?.chans?.[ch], pct, held, true);
             }
         }
-        if (playback.masterAnalyser) {
-            const level = Math.min(1, Math.sqrt(readPeak(playback.masterAnalyser)));
-            const peak = heldPeak('__master__', level);
-            const el = transportEl?.querySelector('.daw-master-meter-fill');
-            if (el) el.style.width = (level * 100) + '%';
-            const tick = transportEl?.querySelector('.daw-master-meter-peak');
-            if (tick) tick.style.left = `calc(${(peak * 100).toFixed(1)}% - 2px)`;
+        if (playback.masterAnalysers) {
+            const peaks = readChanPeaks(playback.masterAnalysers);
             const strip = AudioDawMixer.getMeterEl?.('__master__');
-            if (strip) {
-                strip.fill.style.height = (level * 100) + '%';
-                strip.peak.style.bottom = (peak * 100).toFixed(1) + '%';
+            for (let ch = 0; ch < 2; ch++) {
+                const pct = levelToPct(peaks[ch]);
+                const held = heldPeak(`__master__:${ch}`, pct);
+                setMeterChan(masterMeterChans[ch], pct, held, false);
+                setMeterChan(strip?.chans?.[ch], pct, held, true);
             }
             // ~Loudness readout (slow RMS EMA; not true K-weighted LUFS but tracks it usefully)
-            const rms = readRms(playback.masterAnalyser);
+            const rms = readRms(playback.masterAnalysers[0]);
             loudnessEma = loudnessEma * 0.95 + rms * 0.05;
             const lufsEl = transportEl?.querySelector('.daw-master-lufs');
             if (lufsEl) {
@@ -2051,7 +2321,7 @@ const AudioDaw = (() => {
                 lufsEl.title = 'Approximate loudness (RMS). Streaming targets sit around -14.';
             }
             // Clip latch: lights when the master pins, click to reset
-            if (level >= 0.985) {
+            if (Math.max(peaks[0], peaks[1]) >= 0.985) {
                 const clipDot = transportEl?.querySelector('.daw-master-clip');
                 if (clipDot) clipDot.classList.add('lit');
             }
@@ -2062,13 +2332,9 @@ const AudioDaw = (() => {
     function resetMeters() {
         meterPeaks.clear();
         for (const track of state?.tracks || []) {
-            if (track.meterEl) track.meterEl.style.width = '0%';
-            if (track.meterPeakEl) track.meterPeakEl.style.left = '0%';
+            for (const chan of track.meterChans || []) setMeterChan(chan, 0, 0, false);
         }
-        const el = transportEl?.querySelector('.daw-master-meter-fill');
-        if (el) el.style.width = '0%';
-        const tick = transportEl?.querySelector('.daw-master-meter-peak');
-        if (tick) tick.style.left = '0%';
+        for (const chan of masterMeterChans) setMeterChan(chan, 0, 0, false);
         if (AudioDawMixer.resetMeters) AudioDawMixer.resetMeters();
     }
 
@@ -2217,7 +2483,7 @@ const AudioDaw = (() => {
         // First enable with no region set: default to the whole arrangement
         if (state.loopEnabled && state.loopEnd <= state.loopStart) {
             state.loopStart = 0;
-            state.loopEnd = state.totalDuration;
+            state.loopEnd = state.contentDuration || state.totalDuration;
         }
         const btn = transportEl?.querySelector('.daw-btn-loop');
         if (btn) btn.classList.toggle('active', state.loopEnabled);
@@ -2253,20 +2519,25 @@ const AudioDaw = (() => {
             masterOut = masterLimiter;
         }
         masterOut.connect(ctx.destination);
-        const masterAnalyser = ctx.createAnalyser();
-        masterAnalyser.fftSize = 512;
-        masterOut.connect(masterAnalyser); // meter shows post-limiter level
+        // Post-limiter stereo taps for the master meter
+        const masterSplitter = ctx.createChannelSplitter(2);
+        masterOut.connect(masterSplitter);
+        const masterAnalysers = [ctx.createAnalyser(), ctx.createAnalyser()];
+        masterAnalysers.forEach((a, i) => { a.fftSize = 512; masterSplitter.connect(a, i); });
 
         const P = state.currentTime;
         const t0Ctx = ctx.currentTime + START_EPSILON;
         // Loop is suppressed while recording (a take shouldn't wrap onto itself)
         const loopArmed = !recording && state.loopEnabled && state.loopEnd > state.loopStart && P < state.loopEnd;
         playback = {
-            ctx, masterGain, masterLimiter, masterAnalyser,
+            ctx, masterGain, masterLimiter, masterAnalysers,
             chains: new Map(),
             liveClips: [],
             baseCtxTime: t0Ctx,
             baseTimelineTime: P,
+            // Stop at the end of the music, not the ruler; starting past the
+            // content deliberately lets the transport run out the ruler instead.
+            endTime: P < state.contentDuration ? state.contentDuration : state.totalDuration,
             schedulerId: null,
             loop: loopArmed ? {
                 nextWrapCtxTime: t0Ctx + (state.loopEnd - P),
@@ -2316,7 +2587,7 @@ const AudioDaw = (() => {
                 });
                 loop.nextIterScheduled = true;
             }
-        } else if (!recording && currentTimelineTime() >= state.totalDuration) {
+        } else if (!recording && currentTimelineTime() >= playback.endTime) {
             // While recording, playback runs past the end so the take can extend the song
             stopPlayback();
             state.currentTime = 0;
@@ -2347,7 +2618,7 @@ const AudioDaw = (() => {
 
     function stopPlayback() {
         if (!state || !state.isPlaying) return;
-        state.currentTime = Math.min(currentTimelineTime(), state.totalDuration);
+        state.currentTime = Math.min(currentTimelineTime(), playback?.endTime ?? state.totalDuration);
         state.isPlaying = false;
         updatePlayButton(false);
         cancelAnimationFrame(rafId);
@@ -2385,6 +2656,7 @@ const AudioDaw = (() => {
         const t0Ctx = ctx.currentTime + START_EPSILON;
         playback.baseCtxTime = t0Ctx;
         playback.baseTimelineTime = P;
+        playback.endTime = P < state.contentDuration ? state.contentDuration : state.totalDuration;
         const loopArmed = state.loopEnabled && state.loopEnd > state.loopStart && P < state.loopEnd;
         playback.loop = loopArmed ? {
             nextWrapCtxTime: t0Ctx + (state.loopEnd - P),
@@ -2405,11 +2677,12 @@ const AudioDaw = (() => {
     /** Display-only rAF loop; the audio clock is authoritative (see schedulerTick). */
     function animatePlayhead() {
         if (!state.isPlaying) return;
+        const endTime = playback?.endTime ?? state.totalDuration;
         state.currentTime = recording
             ? currentTimelineTime() // unclamped: a take may run past the current end
-            : Math.min(currentTimelineTime(), state.totalDuration);
+            : Math.min(currentTimelineTime(), endTime);
         // Redundant end-stop (schedulerTick owns this; keep a display-side backstop)
-        if (!recording && !playback?.loop && currentTimelineTime() >= state.totalDuration) {
+        if (!recording && !playback?.loop && currentTimelineTime() >= endTime) {
             stopPlayback();
             state.currentTime = 0;
             updatePlayheadPosition();
@@ -2441,7 +2714,7 @@ const AudioDaw = (() => {
 
     function updatePlayButton(playing) {
         const btn = transportEl?.querySelector('.daw-btn-play');
-        if (btn) btn.innerHTML = playing ? '&#x23F8;' : '&#x25B6;';
+        if (btn) btn.innerHTML = playing ? DAW_ICONS.pause : DAW_ICONS.play;
     }
 
     function updateTimeDisplay() {
@@ -2865,6 +3138,43 @@ const AudioDaw = (() => {
      * @param {Object} track - The track containing the clip
      * @param {string} [modelName='htdemucs'] - Demucs model
      */
+    /**
+     * Inline non-blocking busy indicator: indeterminate bar + label + elapsed
+     * seconds. Optionally pulses a dot on a bottom tab so progress stays visible
+     * from other tabs. Call .done() when finished (safe if already removed).
+     */
+    function createBusyIndicator(label, tabId = null) {
+        const row = createDiv(null, 'daw-busy-row');
+        const bar = createDiv(null, 'daw-busy-bar');
+        bar.appendChild(createDiv(null, 'daw-busy-bar-fill'));
+        const text = createSpan(null, 'daw-busy-label');
+        text.textContent = label;
+        row.appendChild(bar);
+        row.appendChild(text);
+        const tabBtn = tabId ? bottomPanelEl?.querySelector(`.daw-bottom-tab[data-tab="${tabId}"]`) : null;
+        tabBtn?.classList.add('busy');
+        const started = performance.now();
+        let pct = null;
+        const timer = setInterval(() => {
+            const secs = Math.floor((performance.now() - started) / 1000);
+            text.textContent = pct === null ? `${label} ${secs}s` : `${label} ${secs}s · ${Math.round(pct * 100)}%`;
+        }, 1000);
+        // Switches the bar from indeterminate sweep to a real 0..1 fill
+        row.setProgress = (frac) => {
+            pct = Math.max(0, Math.min(1, frac));
+            const fill = bar.firstChild;
+            fill.style.animation = 'none';
+            fill.style.left = '0';
+            fill.style.width = (pct * 100) + '%';
+        };
+        row.done = () => {
+            clearInterval(timer);
+            tabBtn?.classList.remove('busy');
+            row.remove();
+        };
+        return row;
+    }
+
     function showDawLoadingOverlay(message = 'Processing...') {
         const body = document.querySelector('.daw-body');
         if (!body) return null;
@@ -2902,7 +3212,14 @@ const AudioDaw = (() => {
         const modelName = options?.modelName || 'htdemucs';
         let outputs = options?.outputs || null; // [{name, parts:[stem...]}]; null = full split of whatever comes back
 
-        const overlay = showDawLoadingOverlay('Separating stems... this may take a moment');
+        if (stemsSeparating) {
+            if (typeof doNoticePopover === 'function') doNoticePopover('Stem separation already running', 'notice-pop-yellow');
+            return;
+        }
+        stemsSeparating = true;
+        // Non-blocking: progress lives in the Stems panel + a pulse on its tab
+        const busy = createBusyIndicator('Separating stems…', 'stems');
+        bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="stems"]')?.appendChild(busy);
 
         try {
             const base64 = await AudioLabCore.readAsBase64(clip.blob);
@@ -2940,8 +3257,6 @@ const AudioDaw = (() => {
                 built.push({ name: out.name, blob });
             }
 
-            hideDawLoadingOverlay(overlay);
-
             if (!built.length) throw new Error('No stems were produced for the chosen output');
 
             pushUndo();
@@ -2969,11 +3284,13 @@ const AudioDaw = (() => {
                 doNoticePopover(`Separated into ${built.length} track${built.length > 1 ? 's' : ''}`, 'notice-pop-green');
             }
         } catch (err) {
-            hideDawLoadingOverlay(overlay);
             console.error('[AudioDaw] Stem separation failed:', err);
             if (typeof doNoticePopover === 'function') {
                 doNoticePopover('Stem separation failed: ' + err.message, 'notice-pop-red');
             }
+        } finally {
+            busy.done();
+            stemsSeparating = false;
         }
     }
 
@@ -2988,24 +3305,62 @@ const AudioDaw = (() => {
     }
 
     async function showMicSettingsMenu(e) {
+        const voiceItem = {
+            label: 'Voice mode (echo + noise reduction)',
+            checked: recordSettings.voiceMode,
+            action: () => { recordSettings.voiceMode = !recordSettings.voiceMode; }
+        };
+        // mediaDevices is absent on insecure (non-HTTPS, non-localhost) origins
+        if (!navigator.mediaDevices?.enumerateDevices) {
+            dawMenu(e, [
+                { label: 'Microphone requires HTTPS (or localhost)', disabled: true, action: () => {} },
+                voiceItem
+            ]);
+            return;
+        }
         let devices = [];
         try {
             devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput');
         } catch (_) {}
-        const items = [
-            { label: 'Default microphone', checked: !recordSettings.deviceId,
-              action: () => { recordSettings.deviceId = null; } }
-        ];
-        devices.forEach((d, i) => items.push({
-            label: d.label || `Microphone ${i + 1}`,
-            checked: recordSettings.deviceId === d.deviceId,
-            action: () => { recordSettings.deviceId = d.deviceId; }
-        }));
-        items.push({
-            label: 'Voice mode (echo + noise reduction)',
-            checked: recordSettings.voiceMode,
-            action: () => { recordSettings.voiceMode = !recordSettings.voiceMode; }
-        });
+        // Until mic permission is granted, browsers hide device labels (and may
+        // collapse the list to one placeholder entry) — offer an explicit grant.
+        const labelsHidden = !devices.length || devices.every(d => !d.label);
+        let permState = 'prompt';
+        try {
+            permState = (await navigator.permissions.query({ name: 'microphone' })).state;
+        } catch (_) {} // permissions.query('microphone') is not universal (e.g. Firefox)
+        const items = [];
+        if (labelsHidden && permState === 'denied') {
+            items.push({ label: 'Mic blocked — allow it in browser site settings', disabled: true, action: () => {} });
+        } else if (labelsHidden) {
+            // No permission yet: show nothing but the grant action — device names
+            // are meaningless placeholders until the browser unlocks them.
+            items.push({
+                label: 'Allow mic access to list devices…',
+                action: async () => {
+                    try {
+                        // One-shot grant: open the mic just to unlock labels, then release it
+                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                        stream.getTracks().forEach(t => t.stop());
+                        showMicSettingsMenu(e);
+                    } catch (err) {
+                        console.error('[AudioDaw] Mic permission request failed:', err);
+                        if (typeof doNoticePopover === 'function') {
+                            doNoticePopover('Microphone access denied: ' + err.message, 'notice-pop-red');
+                        }
+                    }
+                }
+            });
+        } else {
+            items.push({ label: 'System default microphone', checked: !recordSettings.deviceId,
+                action: () => { recordSettings.deviceId = null; } });
+            devices.forEach((d, i) => items.push({
+                label: d.label || `Microphone ${i + 1}`,
+                checked: recordSettings.deviceId === d.deviceId,
+                action: () => { recordSettings.deviceId = d.deviceId; }
+            }));
+        }
+        items.push(voiceItem);
         dawMenu(e, items);
     }
 
@@ -3463,13 +3818,49 @@ const AudioDaw = (() => {
         scheduleAutosave();
     }
 
-    /** Beats tab UI. Rebuilt only on structural changes (lanes add/remove, steps count). */
+    // Instrument browser: the drum machine ships today; the rest are planned
+    // slots (clicking one explains what's coming). New instruments plug in by
+    // flipping ready:true and rendering their UI in renderBeatsPanel.
+    const DAW_INSTRUMENTS = [
+        { id: 'drums', name: 'Drum Machine', desc: '16/32-step sample sequencer', ready: true },
+        { id: 'keys', name: 'Piano / Keys', desc: 'Piano roll — coming soon', ready: false },
+        { id: 'bass', name: 'Bass', desc: 'Coming soon', ready: false },
+        { id: 'synth', name: 'Synth', desc: 'Coming soon', ready: false }
+    ];
+    let activeInstrument = 'drums';
+
+    /** Instruments tab UI. Rebuilt only on structural changes (lanes add/remove, steps count). */
     function renderBeatsPanel(container) {
         container.innerHTML = '';
         stopBeatAudition();
         const p = state.beatPattern;
         const panel = createDiv(null, 'daw-beats-panel');
         container.appendChild(panel);
+
+        // Instrument picker cards (FX-browser language)
+        const browser = createDiv(null, 'daw-fx-browser daw-inst-browser');
+        for (const inst of DAW_INSTRUMENTS) {
+            const pick = document.createElement('button');
+            pick.className = 'daw-fx-pick daw-inst-pick'
+                + (inst.id === activeInstrument ? ' selected' : '')
+                + (inst.ready ? '' : ' not-ready');
+            pick.innerHTML = `<span class="daw-fx-pick-name">${inst.name}</span>`
+                + `<span class="daw-fx-pick-desc">${inst.desc}</span>`;
+            pick.addEventListener('click', () => {
+                if (!inst.ready) {
+                    if (typeof doNoticePopover === 'function') doNoticePopover(`${inst.name} is on the roadmap — the Drum Machine is ready today`, 'notice-pop-yellow');
+                    return;
+                }
+                activeInstrument = inst.id;
+                renderBeatsPanel(container);
+            });
+            browser.appendChild(pick);
+        }
+        panel.appendChild(browser);
+
+        // Selected instrument UI (drum machine is the only one wired so far)
+        const instCard = createDiv(null, 'daw-fx-card daw-inst-card');
+        panel.appendChild(instCard);
 
         // Header controls
         const head = createDiv(null, 'daw-stems-model-row');
@@ -3524,7 +3915,7 @@ const AudioDaw = (() => {
         renderBtn.textContent = 'Render to Track';
         renderBtn.addEventListener('click', () => renderBeatsToTrack(parseInt(repeatsSel.value)));
         head.appendChild(renderBtn);
-        panel.appendChild(head);
+        instCard.appendChild(head);
 
         // Lane grid
         const grid = createDiv(null, 'daw-beats-grid');
@@ -3580,7 +3971,12 @@ const AudioDaw = (() => {
             row.appendChild(stepsWrap);
             grid.appendChild(row);
         });
-        panel.appendChild(grid);
+        if (!p.lanes.length) {
+            const empty = createDiv(null, 'daw-stems-desc');
+            empty.textContent = 'No pads yet — describe a one-shot below and hit Generate Pad, or import a sample.';
+            instCard.appendChild(empty);
+        }
+        instCard.appendChild(grid);
 
         // Add-pad row
         const addRow = createDiv(null, 'daw-stems-action-row');
@@ -3601,12 +3997,14 @@ const AudioDaw = (() => {
             genBtn.disabled = true;
             genBtn.textContent = 'Generating…';
             try {
-                const result = await AudioLabAPI.callAPI('ProcessAudio', {
-                    provider_id: 'audiogen_sfx',
-                    args: { prompt, duration: 1, seed: Math.floor(Math.random() * 1e9) }
+                await ensureEnginesList().catch(() => {});
+                const model = dawSwarmModelFor('audiogen_sfx');
+                if (!model) throw new Error('SFX engine (AudioGen) is not installed');
+                const { blob } = await dawSwarmGenerate({
+                    model, prompt,
+                    params: { text2audioduration: 1, seed: Math.floor(Math.random() * 1e9) }
                 });
-                if (!result.success || !result.audio_data) throw new Error(result.error || 'No audio returned');
-                await addBeatPadBlob(prompt.slice(0, 18), AudioLabCore.base64ToBlob(result.audio_data, 'audio/wav'), container);
+                await addBeatPadBlob(prompt.slice(0, 18), blob, container);
             } catch (err) {
                 console.error('[AudioDaw] Pad generation failed:', err);
                 if (typeof doNoticePopover === 'function') doNoticePopover('Pad generation failed: ' + err.message, 'notice-pop-red');
@@ -3641,7 +4039,7 @@ const AudioDaw = (() => {
             renderBeatsPanel(container);
         });
         addRow.appendChild(clipBtn);
-        panel.appendChild(addRow);
+        instCard.appendChild(addRow);
     }
 
     // ===== SOUND PALETTE =====
@@ -3666,35 +4064,38 @@ const AudioDaw = (() => {
     }
 
     function paletteEngineFor(type) {
-        if (type === 'sfx') return { id: 'audiogen_sfx', args: (prompt, dur, seed) => ({ prompt, duration: dur, seed }) };
-        // loops/music: ACE-Step with tempo/key hints from the transport
+        if (type === 'sfx') return { engineId: 'audiogen_sfx', params: (dur, seed) => ({ text2audioduration: dur, seed }) };
+        // loops/music: ACE-Step with tempo/time-signature hints from the transport
         return {
-            id: 'acestep_music',
-            args: (prompt, dur, seed) => ({
-                prompt, genre: prompt, duration: dur, seed,
-                bpm: state.bpm, time_signature: state.timeSignature.join('/')
+            engineId: 'acestep_music',
+            params: (dur, seed) => ({
+                text2audioduration: dur, seed,
+                text2audiobpm: state.bpm,
+                text2audiotimesignature: state.timeSignature.join('/')
             })
         };
     }
 
     async function paletteGenerate(prompt, type, duration, count) {
+        const eng = paletteEngineFor(type);
+        try { await ensureEnginesList(); } catch (_) {}
+        const model = dawSwarmModelFor(eng.engineId);
+        if (!model) {
+            if (typeof doNoticePopover === 'function') {
+                doNoticePopover(`No installed engine for ${type === 'sfx' ? 'SFX (AudioGen)' : 'music (ACE-Step)'}`, 'notice-pop-yellow');
+            }
+            return [];
+        }
+        // Each candidate is a normal Swarm generation — saved to outputs + history
         const jobs = [];
         for (let i = 0; i < count; i++) {
             const seed = Math.floor(Math.random() * 1e9);
-            const eng = paletteEngineFor(type);
-            jobs.push(AudioLabAPI.callAPI('ProcessAudio', { provider_id: eng.id, args: eng.args(prompt, duration, seed) })
-                .then(r => ({ r, seed }))
-                .catch(err => ({ r: { success: false, error: err.message }, seed })));
+            jobs.push(dawSwarmGenerate({ model, prompt, params: eng.params(duration, seed) })
+                .then(({ blob }) => ({ blob, seed }))
+                .catch(err => { console.error('[AudioDaw] Palette generation failed:', err); return null; }));
         }
-        const done = await Promise.all(jobs);
-        const out = [];
-        for (const { r, seed } of done) {
-            if (r.success && r.audio_data) {
-                const blob = AudioLabCore.base64ToBlob(r.audio_data, 'audio/wav');
-                out.push({ blob, url: URL.createObjectURL(blob), prompt, seed, type });
-            }
-        }
-        return out;
+        const done = (await Promise.all(jobs)).filter(Boolean);
+        return done.map(({ blob, seed }) => ({ blob, url: URL.createObjectURL(blob), prompt, seed, type }));
     }
 
     function renderPalette() {
@@ -3808,7 +4209,7 @@ const AudioDaw = (() => {
             actions.appendChild(padBtn);
             const varBtn = document.createElement('button');
             varBtn.className = 'basic-button btn-sm';
-            varBtn.innerHTML = '&#x267B;';
+            varBtn.innerHTML = DAW_ICONS.refresh;
             varBtn.title = 'Generate a variation (same prompt, new seed)';
             varBtn.addEventListener('click', async () => {
                 varBtn.disabled = true;

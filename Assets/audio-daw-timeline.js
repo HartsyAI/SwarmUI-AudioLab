@@ -48,13 +48,32 @@ const AudioDawTimeline = (() => {
         container.appendChild(playheadMarker);
         state.playheadMarker = playheadMarker;
 
-        // Click on ruler to seek
-        canvas.addEventListener('click', (e) => {
+        // Click or drag anywhere on the ruler to scrub; the seek is committed on
+        // release ('scrub' fires live during the drag, 'seek' once on pointerup).
+        const timeFromEvent = (e) => {
             const rect = canvas.getBoundingClientRect();
             const x = e.clientX - rect.left + state.scrollLeft;
-            const time = x / state.zoom;
-            fire(state, 'seek', Math.max(0, Math.min(time, state.totalDuration)));
-        });
+            return Math.max(0, Math.min(x / state.zoom, state.totalDuration));
+        };
+        const setupScrub = (el) => {
+            el.addEventListener('pointerdown', (e) => {
+                if (e.button !== 0) return;
+                e.preventDefault();
+                el.setPointerCapture(e.pointerId);
+                fire(state, 'scrub', timeFromEvent(e));
+                const onMove = (me) => fire(state, 'scrub', timeFromEvent(me));
+                const onUp = (ue) => {
+                    el.releasePointerCapture(ue.pointerId);
+                    el.removeEventListener('pointermove', onMove);
+                    el.removeEventListener('pointerup', onUp);
+                    fire(state, 'seek', timeFromEvent(ue));
+                };
+                el.addEventListener('pointermove', onMove);
+                el.addEventListener('pointerup', onUp);
+            });
+        };
+        setupScrub(canvas);
+        setupScrub(playheadMarker);
 
         // Loop region handles (draggable)
         const loopStartHandle = createDiv(null, 'daw-loop-handle daw-loop-start');
