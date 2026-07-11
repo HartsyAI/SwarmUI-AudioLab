@@ -11,6 +11,7 @@ using HartsyInference.Audio.Models.Codecs.EnCodec;
 using HartsyInference.Audio.Models.Codecs.Oobleck;
 using HartsyInference.Audio.Models.Codecs.Vocos;
 using HartsyInference.Audio.Models.Codecs.XCodec;
+using HartsyInference.Audio.Models.Csm;
 using HartsyInference.Audio.Models.HeartMula;
 using HartsyInference.Audio.Models.Music;
 using HartsyInference.Audio.Pipelines;
@@ -20,6 +21,7 @@ using HartsyInference.Diffusion.Models.TextEncoders;
 using HartsyInference.Diffusion.Pipelines;
 using HartsyInference.Diffusion.Utilities;
 using HartsyInference.ModelHandler.CheckpointConverters;
+using HartsyInference.ModelHandler.Gguf;
 using HartsyInference.ModelHandler.PyTorch;
 using HartsyInference.ModelHandler.SafeTensors;
 using HartsyInference.Tokenizers;
@@ -663,8 +665,10 @@ public static class MusicModels
     public static readonly MusicModelDescriptor HeartMula = new()
     {
         ManagesOwnWeights = true,
-        CacheKey = (_, modelId) => ResolveHeartMulaRepo(modelId),
-        LoadAsync = (_, _, modelId, ct) => LoadHeartMulaAsync(ResolveHeartMulaRepo(modelId), ct),
+        // Cache key includes the quant so bf16/Q8/Q4 variants of the same repo cache as SEPARATE runners — otherwise
+        // switching precision would return the stale cached runner.
+        CacheKey = (_, modelId) => $"{ResolveHeartMulaRepo(modelId)}|{ResolveHeartMulaQuant(modelId) ?? "bf16"}",
+        LoadAsync = (_, _, modelId, ct) => LoadHeartMulaAsync(ResolveHeartMulaRepo(modelId), ResolveHeartMulaQuant(modelId), ct),
     };
 
     private static string ResolveHeartMulaRepo(string modelId)
@@ -675,27 +679,56 @@ public static class MusicModels
             return id;
         }
         string lower = id.ToLowerInvariant();
-        if (lower.Contains("rl")) return HeartMulaRlRepo;                      // 3b-rl
-        if (lower.Contains("hny") || lower.Contains("happy")) return HeartMulaHnyRepo; // 3b-hny
-        return HeartMulaRepo;                                                  // 3b-base
+        // The `-q8`/`-q4` precision suffix (if any) doesn't affect repo selection — these contains-checks ignore it.
+        if (lower.Contains("rl")) return HeartMulaRlRepo;                      // 3b-rl[-q8|-q4]
+        if (lower.Contains("hny") || lower.Contains("happy")) return HeartMulaHnyRepo; // 3b-hny[-q8|-q4]
+        return HeartMulaRepo;                                                  // 3b-base[-q8|-q4]
     }
 
-    private static async Task<IMusicRunner> LoadHeartMulaAsync(string repo, CancellationToken ct)
+    /// <summary>Maps a HeartLib model id's precision suffix to a quant mode: <c>-q8</c> → <c>q8_0</c>,
+    /// <c>-q4</c> → <c>q4_k</c>, otherwise null (full bf16). Q8/Q4 select a disk-cached quantized weight set that is
+    /// ~1.4×/more faster + smaller; the conversion runs once on first generation (see <see cref="CsmWeightCache"/>).</summary>
+    private static string ResolveHeartMulaQuant(string modelId)
+    {
+        string lower = (modelId ?? "").Trim().ToLowerInvariant();
+        if (lower.EndsWith("-q8") || lower.EndsWith("-q8_0")) return "q8_0";
+        if (lower.EndsWith("-q4") || lower.EndsWith("-q4_k")) return "q4_k";
+        return null;   // bf16 (full precision)
+    }
+
+    private static async Task<IMusicRunner> LoadHeartMulaAsync(string repo, string? quant, CancellationToken ct)
     {
         // LM = sharded safetensors (no tokenizer files); codec = a separate flow-matching decoder checkpoint.
         (IReadOnlyDictionary<string, Tensor> lmW, IDisposable[] lmLoaders) = await TtsModels.LoadCheckpointAsync(repo, ct).ConfigureAwait(false);
         (IReadOnlyDictionary<string, Tensor> codecW, IDisposable[] codecLoaders) = await TtsModels.LoadCheckpointAsync(HeartCodecRepo, ct).ConfigureAwait(false);
 
-        // Upstream inference dtypes: LM bf16 (halves the per-frame weight streaming too), codec f32.
-        Dictionary<string, Tensor> lmBf = new(lmW.Count);
-        foreach ((string k, Tensor t) in lmW) lmBf[k] = t.DType == DType.F32 ? t.CastTo(DType.BF16) : t;
+        // The AR decode is memory-bandwidth-bound (per-token weight streaming), so the Q8/Q4 model variants
+        // (`quant`, chosen at install via the `-q8`/`-q4` model id) are ~1.4×/more faster AND smaller. The pipeline
+        // quantizes the REMAPPED weights ONCE to a disk GGUF cache (streaming, no OOM) and loads from there
+        // thereafter; a null/unrecognized `quant` → the plain bf16 path.
+        bool useQuant = CsmWeightCache.ResolveQuant(quant) is not null;
 
         HeartMulaConfig config = HeartMulaConfig.Oss3B;
         HeartMulaPipeline pipeline = new(config);
-        pipeline.LoadWeights(lmBf);
+        if (useQuant)
+        {
+            string quantCache = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".cache", "hartsyinference", "heartmula", $"{repo.Replace('/', '_')}-{quant!.ToLowerInvariant()}.gguf");
+            pipeline.LoadWeights(lmW, quant, quantCache);   // raw → remap → quantize (post-remap), disk-cached
+            // The GGUF cache owns the weights now — drop the source safetensors mmaps.
+            foreach (IDisposable l in lmLoaders) l.Dispose();
+            lmLoaders = System.Array.Empty<IDisposable>();
+        }
+        else
+        {
+            // Upstream inference dtypes: LM bf16 (halves the per-frame weight streaming too), codec f32.
+            Dictionary<string, Tensor> lmBf = new(lmW.Count);
+            foreach ((string k, Tensor t) in lmW) lmBf[k] = t.DType == DType.F32 ? t.CastTo(DType.BF16) : t;
+            pipeline.LoadWeights(lmBf);
+        }
         pipeline.LoadCodecWeights(codecW);
 
-        Logs.Info($"[AudioLab][HeartMuLa] Loaded {repo} + {HeartCodecRepo} (CSM-shaped LM + HeartCodec, 48 kHz).");
+        Logs.Info($"[AudioLab][HeartMuLa] Loaded {repo} + {HeartCodecRepo} (CSM-shaped LM{(useQuant ? $", {quant} quantized" : " bf16")} + HeartCodec, 48 kHz).");
 
         MusicAudio Synth(IBackend backend, MusicRequest req, CancellationToken ct)
         {

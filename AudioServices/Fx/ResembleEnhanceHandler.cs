@@ -56,7 +56,13 @@ public sealed class ResembleEnhanceHandler : IAudioHandler
 
         Loaded loaded = await GetOrLoadAsync(cancel).ConfigureAwait(false);
         long start = Environment.TickCount64;
-        float[] enhanced = loaded.Pipeline.Enhance(backend, mono, lambd: 0.5f, tau: 0.5f, seed: 0);
+        // Honor the user's enhance params (previously hardcoded). `lambd` = denoise/enhance blend, `tau` = prior
+        // temperature, `seed` = determinism. (`nfe`/`solver` are in args but the engine's Enhance doesn't take them
+        // yet — LCFM step-count/solver would need an engine-side signature; tracked separately.)
+        float lambd = (float)ParseDouble(args, "lambd", 0.5);
+        float tau = (float)ParseDouble(args, "tau", 0.5);
+        int seed = (int)ParseDouble(args, "seed", 0);
+        float[] enhanced = loaded.Pipeline.Enhance(backend, mono, lambd: lambd, tau: tau, seed: seed < 0 ? 0 : seed);
         double duration = enhanced.Length / 44_100.0;
         Logs.Verbose($"[AudioLab][Resemble-Enhance] Enhanced {mono.Length / 44100.0:0.0}s in {Environment.TickCount64 - start}ms.");
         return AudioIo.AudioResult(AudioIo.EncodeWavBase64(enhanced, enhanced, 44_100), "wav", duration);
@@ -89,4 +95,17 @@ public sealed class ResembleEnhanceHandler : IAudioHandler
     }
 
     public void UnloadAll() => Unload(null);
+
+    private static double ParseDouble(IReadOnlyDictionary<string, object> args, string key, double fallback)
+    {
+        if (!args.TryGetValue(key, out object v) || v is null) { return fallback; }
+        return v switch
+        {
+            double d => d,
+            int i => i,
+            long l => l,
+            float f => f,
+            _ => double.TryParse(v.ToString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double parsed) ? parsed : fallback,
+        };
+    }
 }
