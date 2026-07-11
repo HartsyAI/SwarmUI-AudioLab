@@ -84,11 +84,12 @@ const AudioDawStore = (() => {
         return { savedAt: rec.savedAt, project: rec.project, blobs };
     }
 
-    /** Metadata only (no blobs). @returns {Promise<{name, savedAt}|null>} */
+    /** Metadata + project JSON (no blobs — those are the heavy part).
+     * @returns {Promise<{name, savedAt, project}|null>} */
     async function getProjectMeta(name) {
         const db = await openDb();
         const rec = await asPromise(db.transaction('projects', 'readonly').objectStore('projects').get(name));
-        return rec ? { name: rec.name, savedAt: rec.savedAt } : null;
+        return rec ? { name: rec.name, savedAt: rec.savedAt, project: rec.project } : null;
     }
 
     /** @returns {Promise<Array<{name, savedAt}>>} newest first */

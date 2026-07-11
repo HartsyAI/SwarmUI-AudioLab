@@ -1,0 +1,34 @@
+<!-- AudioLab DAW main tab. Injected by WebServer as tab-pane id="audiolab" (nav link
+     id="maintab_audiolab"). The tab <li> is hidden by audio-daw.js until the DAW is
+     opened or a resumable autosave exists. All behavior lives in Assets/audio-daw.js. -->
+<div class="daw-container" id="daw_container">
+    <div class="daw-transport" id="daw_transport"></div>
+    <div class="daw-main" id="daw_main">
+        <div class="daw-ruler-corner"></div>
+        <div class="daw-ruler" id="daw_ruler"></div>
+        <div class="daw-track-headers" id="daw_track_headers"></div>
+        <div class="daw-header-splitter" id="daw_header_splitter"></div>
+        <div class="daw-clip-lanes" id="daw_clip_lanes">
+            <div class="daw-playhead" id="daw_playhead"></div>
+        </div>
+    </div>
+    <div class="splitter-bar daw-bbar-split" id="daw_bbar_split"><div class="t2i-split-quickbutton daw-bbar-quickbutton" id="daw_bbar_button">&#x290B;</div></div>
+    <div class="daw-bottom-bar" id="daw_bottom_bar">
+        <ul class="nav nav-tabs" role="tablist" id="daw_bbar_tabs">
+            <li class="nav-item" role="presentation"><a class="nav-link active" data-bs-toggle="tab" href="#daw_btab_clip-editor" data-tab="clip-editor" aria-selected="true" role="tab">Clip Editor</a></li>
+            <li class="nav-item" role="presentation"><a class="nav-link" data-bs-toggle="tab" href="#daw_btab_mixer" data-tab="mixer" aria-selected="false" tabindex="-1" role="tab">Mixer</a></li>
+            <li class="nav-item" role="presentation"><a class="nav-link" data-bs-toggle="tab" href="#daw_btab_stems" data-tab="stems" aria-selected="false" tabindex="-1" role="tab">Stems</a></li>
+            <li class="nav-item" role="presentation"><a class="nav-link" data-bs-toggle="tab" href="#daw_btab_fx" data-tab="fx" aria-selected="false" tabindex="-1" role="tab">FX</a></li>
+            <li class="nav-item" role="presentation"><a class="nav-link" data-bs-toggle="tab" href="#daw_btab_beats" data-tab="beats" aria-selected="false" tabindex="-1" role="tab">Instruments</a></li>
+            <li class="nav-item" role="presentation"><a class="nav-link" data-bs-toggle="tab" href="#daw_btab_generate" data-tab="generate" aria-selected="false" tabindex="-1" role="tab">Generate</a></li>
+        </ul>
+        <div class="tab-content" id="daw_bbar_content">
+            <div class="tab-pane show active daw-bottom-tab-content" id="daw_btab_clip-editor" data-tab="clip-editor" role="tabpanel"></div>
+            <div class="tab-pane daw-bottom-tab-content" id="daw_btab_mixer" data-tab="mixer" role="tabpanel"></div>
+            <div class="tab-pane daw-bottom-tab-content" id="daw_btab_stems" data-tab="stems" role="tabpanel"></div>
+            <div class="tab-pane daw-bottom-tab-content" id="daw_btab_fx" data-tab="fx" role="tabpanel"></div>
+            <div class="tab-pane daw-bottom-tab-content" id="daw_btab_beats" data-tab="beats" role="tabpanel"></div>
+            <div class="tab-pane daw-bottom-tab-content" id="daw_btab_generate" data-tab="generate" role="tabpanel"></div>
+        </div>
+    </div>
+</div>

@@ -90,7 +90,9 @@ public static class MusicModels
         {
             string decPath = await AudioModelCache.GetAsync(repo, "state_dict.bin", ct: ct).ConfigureAwait(false);
             string codPath = await AudioModelCache.GetAsync(repo, "compression_state_dict.bin", ct: ct).ConfigureAwait(false);
-            string t5Path = await AudioModelCache.GetAsync("google-t5/t5-base", "pytorch_model.bin", ct: ct).ConfigureAwait(false);
+            // AudioGen conditions on t5-LARGE (enc_to_dec_proj input = 1024); MusicGen-large uses t5-base.
+            string t5Repo = audioGen ? "google-t5/t5-large" : "google-t5/t5-base";
+            string t5Path = await AudioModelCache.GetAsync(t5Repo, "pytorch_model.bin", ct: ct).ConfigureAwait(false);
             (decW, decLoader) = MusicGenCheckpointConverter.LoadDecoderAny(decPath, castToF32: true);
             (codW, codLoader) = MusicGenCheckpointConverter.LoadEnCodecAny(codPath, castToF32: true);
             (t5W, t5Loader) = MusicGenCheckpointConverter.LoadTextEncoderAny(t5Path, castToF32: true);
@@ -109,7 +111,12 @@ public static class MusicModels
         decoder.LoadWeights(decW, prefix: "model.decoder");
         EnCodec codec = new(audioGen ? EnCodecConfig.EnCodec16kHz : EnCodecConfig.EnCodec32kHz);
         codec.LoadWeights(codW);
-        T5TextEncoder t5 = new(T5TextEncoderConfig.T5Base);
+        // AudioGen conditions on t5-large (dim 1024); MusicGen on t5-base. Built inline so this compiles against
+        // the currently-pinned engine nuget (T5Large preset lands in the next engine release).
+        T5TextEncoderConfig t5Cfg = audioGen
+            ? new T5TextEncoderConfig { DModel = 1024, DFf = 4096, DKv = 64, NumHeads = 16, NumLayers = 24, VocabSize = 32128, GatedFeedForward = false, UseReluActivation = true, AttentionScale = 1.0f }
+            : T5TextEncoderConfig.T5Base;
+        T5TextEncoder t5 = new(t5Cfg);
         t5.LoadWeights(t5W);
         T5Tokenizer tokenizer = new(maxLength: T5MaxTokens);
 

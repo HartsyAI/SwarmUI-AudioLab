@@ -1,19 +1,21 @@
 /**
  * AudioDaw — Multi-track DAW shell for AudioLab.
- * Manages the fullscreen modal, transport bar, playback engine (Web Audio API),
- * track/clip arrangement, scroll sync, undo/redo, and export.
- * Reuses SwarmUI: modalHeader/Footer, quickAppendButton, createDiv, doNoticePopover, escapeHtml.
+ * Lives in a conditionally-visible native main tab (Tabs/Text2Image/Audio Lab.html):
+ * hidden by default, shown when opened or when a resumable autosave exists.
+ * Switching main tabs keeps the session (and playback) alive; Close tears down
+ * everything and frees all memory. Manages the transport bar, playback engine
+ * (Web Audio API), track/clip arrangement, scroll sync, undo/redo, and export.
+ * Reuses SwarmUI: quickAppendButton, createDiv, doNoticePopover, escapeHtml.
  * Depends on: AudioDawTimeline, AudioDawTrack, AudioLabCore, AudioLabPlayer.
  */
 const AudioDaw = (() => {
     'use strict';
 
-    const MODAL_ID = 'audiolab_modal';
     const MAX_UNDO = 30;
 
     // ===== DAW STATE =====
     let state = null;
-    let modalEl = null;
+    let initialized = false; // DAW bound to the tab DOM + state live
     let listenersInitialized = false;
 
     // DOM references
@@ -23,7 +25,6 @@ const AudioDaw = (() => {
     let clipLanesEl = null;
     let playheadEl = null;
     let bottomPanelEl = null;
-    let footerEl = null;
     let timeDisplayEl = null;
     let bpmInputEl = null;
 
@@ -47,7 +48,6 @@ const AudioDaw = (() => {
     // Clip-editor waveform preview player (destroyed on each panel re-render)
     let clipEditorPlayer = null;
     let recordSettings = { deviceId: null, voiceMode: false };
-    let masterMeterChans = []; // transport master meter L/R DOM pairs, rebuilt with the transport
 
     function getDefaultState() {
         return {
@@ -78,31 +78,77 @@ const AudioDaw = (() => {
 
     // ===== PUBLIC API =====
 
+    // ===== TAB VISIBILITY =====
+    // The tab <li> is hidden with a class (not inline style) because permissions.js
+    // re-applies inline display on permission-gated elements and would undo us.
+
+    function dawTabLink() { return document.getElementById('maintab_audiolab'); }
+
+    function showDawTab() {
+        const link = dawTabLink();
+        if (!link) return;
+        link.closest('.nav-item')?.classList.remove('daw-tab-hidden');
+        link.click();
+    }
+
+    function hideDawTab() {
+        dawTabLink()?.closest('.nav-item')?.classList.add('daw-tab-hidden');
+    }
+
     /**
-     * Open the DAW with an initial audio source.
-     * @param {string} audioSrc - URL or data: URI of audio file
+     * Size the container to the real viewport: .tab-hundred is 100% of body, so
+     * pure-CSS height overflows by the top tab bar's height and runs under the
+     * fixed version footer. Measure instead (the GenTabLayout approach).
      */
-    async function open(audioSrc) {
-        if (!modalEl) buildModal();
+    function sizeDawContainer() {
+        const container = document.getElementById('daw_container');
+        if (!container || container.offsetParent === null) return;
+        const top = container.getBoundingClientRect().top;
+        // 28px clearance keeps the DAW footer above the fixed version display
+        container.style.height = Math.max(400, window.innerHeight - top - 28) + 'px';
+    }
+
+    /** Bind to the static tab DOM and build the UI. Idempotent per session. */
+    function ensureInitialized() {
+        if (initialized) return;
+        if (!document.getElementById('daw_container')) return;
+        initialized = true;
+        sizeDawContainer();
         resetState();
-        $(modalEl).modal('show');
-        // Allow modal to fully render before initializing layout
-        await sleep(150);
         initLayout();
         renderAllTracks();
         updateTimeDisplay();
-        // Show loading spinner while audio decodes
+    }
+
+    /**
+     * Open the DAW with an audio source. First open initializes a fresh session;
+     * while a session is live, the audio is added as a new track at the playhead.
+     * @param {string} audioSrc - URL or data: URI of audio file (optional)
+     */
+    async function open(audioSrc) {
+        const firstOpen = !initialized;
+        showDawTab(); // the tab-shown hook runs ensureInitialized()
+        ensureInitialized();
+        if (!audioSrc) {
+            if (firstOpen) maybeOfferResume().then(maybeShowStartScreen);
+            return;
+        }
         const overlay = showDawLoadingOverlay('Loading audio...');
-        // Create first track and load audio in background
-        const track = addTrack();
         try {
             const blob = await fetchAsBlob(audioSrc);
-            const clip = await addClipToTrack(track, blob, { name: getFilenameFromSrc(audioSrc) });
+            if (!firstOpen) pushUndo(); // adding into a live session
+            const track = addTrack();
+            const clip = await addClipToTrack(track, blob, {
+                name: getFilenameFromSrc(audioSrc),
+                startTime: firstOpen ? 0 : snapTime(state.currentTime)
+            });
             state.selectedClipId = clip.id;
+            state.selectedTrackId = track.id;
             updateTotalDuration();
             renderAllTracks();
             updateTimeDisplay();
             updateBottomPanel(); // panel was built before the clip existed
+            resyncPlayback();
         } catch (err) {
             console.error('[AudioDaw] Failed to load audio:', err);
             if (typeof doNoticePopover === 'function') {
@@ -110,56 +156,58 @@ const AudioDaw = (() => {
             }
         }
         hideDawLoadingOverlay(overlay);
-        maybeOfferResume();
+        if (firstOpen) maybeOfferResume();
     }
 
+    /**
+     * Close = deliberate end of session (the pro-DAW pattern): sessions with
+     * content prompt Save / Discard / Cancel; either way the crash-recovery
+     * autosave is deleted, so the dormant tab only ever reappears after an
+     * UNCLEAN end (crash, page nav) — never for junk sessions.
+     */
     function close() {
-        // Teardown happens in the 'hidden.bs.modal' hook so ESC/backdrop closes clean up too
-        if (modalEl) $(modalEl).modal('hide');
-        else destroyAll();
+        const hasContent = state && state.tracks.some(t => t.clips.length > 0);
+        if (!hasContent) { finishClose(); return; }
+        showCloseDialog();
     }
 
-    // ===== MODAL BUILDING =====
-
-    function buildModal() {
-        const existing = document.getElementById(MODAL_ID);
+    function showCloseDialog() {
+        const existing = document.querySelector('.daw-close-dialog');
         if (existing) existing.remove();
+        const dlg = createDiv(null, 'daw-shortcut-help daw-close-dialog');
+        const title = createDiv(null, 'daw-shortcut-help-title');
+        title.textContent = 'Close Audio Lab?';
+        dlg.appendChild(title);
+        const msg = createDiv(null, 'daw-stems-desc');
+        msg.textContent = 'Save this session as a project, or discard it. Discarded sessions are gone for good.';
+        dlg.appendChild(msg);
+        const row = createDiv(null, 'daw-clip-editor-actions');
+        row.style.marginTop = '0.75rem';
+        quickAppendButton(row, 'Save & Close', async () => {
+            const name = prompt('Project name:', currentProjectName || 'My Project');
+            if (!name || !name.trim()) return; // keep dialog open — treat as cancel
+            dlg.remove();
+            await saveProjectToServer(name.trim());
+            finishClose();
+        }, ' basic-button btn-primary', 'Save the project to the server, then close');
+        quickAppendButton(row, 'Discard', () => {
+            dlg.remove();
+            finishClose();
+        }, ' basic-button', 'Throw this session away and close');
+        quickAppendButton(row, 'Cancel', () => dlg.remove(), ' basic-button', 'Keep working');
+        dlg.appendChild(row);
+        (document.getElementById('daw_container') || document.body).appendChild(dlg);
+    }
 
-        const bodyHtml = `
-        <div class="modal-body daw-body">
-            <div class="daw-transport" id="daw_transport"></div>
-            <div class="daw-main" id="daw_main">
-                <div class="daw-ruler-corner"></div>
-                <div class="daw-ruler" id="daw_ruler"></div>
-                <div class="daw-track-headers" id="daw_track_headers"></div>
-                <div class="daw-header-splitter" id="daw_header_splitter"></div>
-                <div class="daw-clip-lanes" id="daw_clip_lanes">
-                    <div class="daw-playhead" id="daw_playhead"></div>
-                </div>
-            </div>
-            <div class="daw-split-bar" id="daw_split_bar"></div>
-            <div class="daw-bottom-panel" id="daw_bottom_panel"></div>
-        </div>`;
-
-        const footerHtml = `
-        <div class="modal-footer daw-footer" id="daw_footer"></div>`;
-
-        const html = modalHeader(MODAL_ID, 'Audio Lab') + bodyHtml + footerHtml + modalFooter();
-        const wrapper = document.createElement('div');
-        wrapper.innerHTML = html;
-        document.body.appendChild(wrapper.firstElementChild);
-
-        modalEl = document.getElementById(MODAL_ID);
-        modalEl.classList.add('daw-mode');
-
-        modalEl.addEventListener('keydown', handleKeyboard);
-        // Browser tabs die without warning — flush the autosave on page close too
-        window.addEventListener('beforeunload', () => flushAutosave());
-        // Bootstrap hides on ESC/backdrop without going through close() — always tear down here
-        $(modalEl).on('hidden.bs.modal', () => {
-            flushAutosave(); // snapshot before teardown so the session is resumable
-            destroyAll();
-        });
+    /** Full teardown: delete the crash-recovery autosave, free all memory, hide the tab. */
+    function finishClose() {
+        if (typeof AudioDawStore !== 'undefined') {
+            AudioDawStore.deleteProject(AUTOSAVE_SLOT).catch(() => {});
+        }
+        destroyAll();
+        initialized = false;
+        hideDawTab();
+        document.getElementById('text2imagetabbutton')?.click();
     }
 
     function initLayout() {
@@ -168,16 +216,14 @@ const AudioDaw = (() => {
         trackHeadersEl = document.getElementById('daw_track_headers');
         clipLanesEl = document.getElementById('daw_clip_lanes');
         playheadEl = document.getElementById('daw_playhead');
-        bottomPanelEl = document.getElementById('daw_bottom_panel');
-        footerEl = document.getElementById('daw_footer');
+        bottomPanelEl = document.getElementById('daw_bbar_content');
 
         buildTransport();
-        buildFooter();
         initTimeline();
         buildBottomPanel();
         updateLaneGrid();
-        // Splitters + scroll sync bind document/element listeners — the modal DOM persists
-        // across opens, so bind exactly once or handlers stack up every open.
+        // Splitters + scroll sync bind document/element listeners — the tab DOM is
+        // static across sessions, so bind exactly once or handlers stack up every open.
         if (!listenersInitialized) {
             listenersInitialized = true;
             setupScrollSync();
@@ -216,39 +262,67 @@ const AudioDaw = (() => {
         document.addEventListener('touchend', onUp);
     }
 
+    // ===== BOTTOM BAR SPLITTER (Swarm GenTabLayout pattern: drag to resize,
+    // drag to the bottom or click the quick-button to snap shut) =====
+
+    let bottomBarShut = localStorage.getItem('daw_bbar_shut') === 'true';
+
+    function setBottomBarShut(shut) {
+        bottomBarShut = shut;
+        localStorage.setItem('daw_bbar_shut', shut ? 'true' : 'false');
+        applyBottomBarLayout();
+    }
+
+    function applyBottomBarLayout() {
+        const bar = document.getElementById('daw_bottom_bar');
+        const btn = document.getElementById('daw_bbar_button');
+        if (!bar) return;
+        const px = parseInt(localStorage.getItem('daw_bbar_px')) || 380;
+        const tabsH = document.getElementById('daw_bbar_tabs')?.offsetHeight || 38;
+        bar.style.height = (bottomBarShut ? tabsH : Math.max(120, px)) + 'px';
+        bar.classList.toggle('daw-bbar-shut', bottomBarShut);
+        if (btn) btn.innerHTML = bottomBarShut ? '&#x290A;' : '&#x290B;';
+    }
+
     function initBottomSplitter() {
-        const splitBar = document.getElementById('daw_split_bar');
-        if (!splitBar || !bottomPanelEl) return;
+        const split = document.getElementById('daw_bbar_split');
+        const bar = document.getElementById('daw_bottom_bar');
+        const btn = document.getElementById('daw_bbar_button');
+        if (!split || !bar) return;
         let dragging = false;
-        const savedHeight = localStorage.getItem('daw_bottom_panel_height');
-        if (savedHeight) {
-            bottomPanelEl.style.height = savedHeight + 'px';
-        }
-        splitBar.addEventListener('mousedown', (e) => {
-            dragging = true;
-            e.preventDefault();
+        btn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (bottomBarShut) {
+                // Reopen to a useful height even if it was dragged tiny before
+                localStorage.setItem('daw_bbar_px', Math.max(380, parseInt(localStorage.getItem('daw_bbar_px')) || 0));
+            }
+            setBottomBarShut(!bottomBarShut);
         });
-        splitBar.addEventListener('touchstart', (e) => {
-            dragging = true;
-            e.preventDefault();
-        }, { passive: false });
+        split.addEventListener('mousedown', (e) => { if (e.target === btn) return; dragging = true; e.preventDefault(); });
+        split.addEventListener('touchstart', (e) => { if (e.target === btn) return; dragging = true; e.preventDefault(); }, { passive: false });
         const onMove = (clientY) => {
             if (!dragging) return;
-            const bodyRect = bottomPanelEl.parentElement.getBoundingClientRect();
-            const footerHeight = footerEl ? footerEl.offsetHeight : 0;
-            const newHeight = Math.max(80, Math.min(bodyRect.bottom - clientY - footerHeight, bodyRect.height * 0.7));
-            bottomPanelEl.style.height = newHeight + 'px';
+            const container = document.getElementById('daw_container');
+            if (!container) return;
+            const rect = container.getBoundingClientRect();
+            const h = rect.bottom - clientY;
+            const shut = h < 60; // dragging against the bottom snaps closed
+            if (!shut) {
+                localStorage.setItem('daw_bbar_px', Math.round(Math.max(120, Math.min(h, rect.height * 0.75))));
+            }
+            if (shut !== bottomBarShut) setBottomBarShut(shut);
+            else applyBottomBarLayout();
         };
         document.addEventListener('mousemove', (e) => onMove(e.clientY));
-        document.addEventListener('touchmove', (e) => onMove(e.touches[0].clientY));
-        const onUp = () => {
-            if (dragging) {
-                dragging = false;
-                localStorage.setItem('daw_bottom_panel_height', bottomPanelEl.offsetHeight);
-            }
-        };
+        document.addEventListener('touchmove', (e) => { if (dragging) onMove(e.touches[0].clientY); });
+        const onUp = () => { dragging = false; };
         document.addEventListener('mouseup', onUp);
         document.addEventListener('touchend', onUp);
+        // Clicking any bottom tab while shut reopens the bar (core Swarm behavior)
+        document.getElementById('daw_bbar_tabs')?.addEventListener('click', (e) => {
+            if (bottomBarShut && e.target.closest('.nav-link')) setBottomBarShut(false);
+        });
+        applyBottomBarLayout();
     }
 
     // ===== TRANSPORT BAR =====
@@ -264,20 +338,22 @@ const AudioDaw = (() => {
         toStart: svgFill('<rect x="5" y="5" width="3" height="14" rx="1"/><path d="M19.2 5.7v12.6a0.6 0.6 0 0 1-0.95 0.5L10 12.5a0.6 0.6 0 0 1 0-1l8.25-6.3a0.6 0.6 0 0 1 0.95 0.5z"/>'),
         toEnd: svgFill('<rect x="16" y="5" width="3" height="14" rx="1"/><path d="M4.8 5.7v12.6a0.6 0.6 0 0 0 0.95 0.5L14 12.5a0.6 0.6 0 0 0 0-1L5.75 5.2a0.6 0.6 0 0 0-0.95 0.5z"/>'),
         caretDown: svgFill('<path d="M7.5 10l4.5 5 4.5-5z"/>'),
-        refresh: svgLine('<path d="M3 4v6h6"/><path d="M4.2 15a8 8 0 1 0 1.9-8.4L3 10"/>'),
-        tabClip: svgLine('<circle cx="6.5" cy="6.5" r="2.8"/><circle cx="6.5" cy="17.5" r="2.8"/><path d="M8.8 8.8 20 20M8.8 15.2 20 4"/>'),
-        tabMixer: svgLine('<path d="M6 4v9M6 17v3M12 4v3M12 11v9M18 4v11M18 19v1"/><path d="M3.5 13h5M9.5 7h5M15.5 15h5"/>'),
-        tabStems: svgLine('<path d="M4 6h16M4 12h10M4 18h13"/>'),
-        tabFx: svgLine('<circle cx="12" cy="12" r="8"/><path d="M12 12 8.5 7.5"/>'),
-        tabBeats: svgLine('<rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13.5" y="4" width="7" height="7" rx="1"/><rect x="4" y="13.5" width="7" height="7" rx="1"/><rect x="13.5" y="13.5" width="7" height="7" rx="1"/>'),
-        tabGenerate: svgLine('<path d="M3.5 10.5v3M8 7v10M12 4v16M16 7v10M20.5 10.5v3"/>')
+        refresh: svgLine('<path d="M3 4v6h6"/><path d="M4.2 15a8 8 0 1 0 1.9-8.4L3 10"/>')
     };
 
     function buildTransport() {
         transportEl.innerHTML = '';
+        // Segmented pill groups: related controls share a rounded container,
+        // buttons are flat inside, active states fill with the emphasis color.
+        const mkGroup = (cls = '') => {
+            const g = createDiv(null, 'daw-tgroup' + cls);
+            transportEl.appendChild(g);
+            return g;
+        };
 
-        // Record + mic settings as one split button
-        const recGroup = createDiv(null, 'daw-btn-group');
+        // ── Transport: record (+mic), rewind, play, stop, end, loop ──
+        const transGroup = mkGroup();
+        const recWrap = createDiv(null, 'daw-btn-group');
         const recBtn = document.createElement('button');
         recBtn.className = 'daw-transport-btn daw-btn-rec';
         recBtn.innerHTML = DAW_ICONS.record;
@@ -285,53 +361,35 @@ const AudioDaw = (() => {
         recBtn.addEventListener('click', () => {
             if (recording) stopRecordingFlow(); else startRecordingFlow();
         });
-        recGroup.appendChild(recBtn);
+        recWrap.appendChild(recBtn);
         const micBtn = document.createElement('button');
         micBtn.className = 'daw-transport-btn daw-btn-mic-settings';
         micBtn.innerHTML = DAW_ICONS.caretDown;
         micBtn.title = 'Microphone settings';
         micBtn.addEventListener('click', (e) => showMicSettingsMenu(e));
-        recGroup.appendChild(micBtn);
-        transportEl.appendChild(recGroup);
-
-        // Rewind
-        quickAppendButton(transportEl, DAW_ICONS.toStart, () => seekTo(0), ' daw-transport-btn', 'Rewind to start');
-
-        // Play/Pause
+        recWrap.appendChild(micBtn);
+        transGroup.appendChild(recWrap);
+        quickAppendButton(transGroup, DAW_ICONS.toStart, () => seekTo(0), ' daw-transport-btn', 'Rewind to start');
         const playBtn = document.createElement('button');
         playBtn.className = 'daw-transport-btn daw-btn-play';
         playBtn.innerHTML = DAW_ICONS.play;
         playBtn.title = 'Play / Pause (Space)';
         playBtn.addEventListener('click', togglePlayback);
-        transportEl.appendChild(playBtn);
-
-        // Stop
-        quickAppendButton(transportEl, DAW_ICONS.stop, () => {
+        transGroup.appendChild(playBtn);
+        quickAppendButton(transGroup, DAW_ICONS.stop, () => {
             if (recording) { stopRecordingFlow(); return; }
             stopPlayback();
             seekTo(0);
         }, ' daw-transport-btn', 'Stop');
-
-        // Fast Forward
-        quickAppendButton(transportEl, DAW_ICONS.toEnd, () => seekTo(state.contentDuration), ' daw-transport-btn', 'Go to end');
-
-        // Separator
-        const sep1 = createDiv(null, 'alp-separator');
-        transportEl.appendChild(sep1);
-
-        // Loop toggle
+        quickAppendButton(transGroup, DAW_ICONS.toEnd, () => seekTo(state.contentDuration), ' daw-transport-btn', 'Go to end');
         const loopBtn = document.createElement('button');
         loopBtn.className = 'daw-transport-btn daw-btn-text daw-btn-loop' + (state.loopEnabled ? ' active' : '');
         loopBtn.textContent = 'LOOP';
         loopBtn.title = 'Toggle Loop (L)';
         loopBtn.addEventListener('click', toggleLoop);
-        transportEl.appendChild(loopBtn);
+        transGroup.appendChild(loopBtn);
 
-        // Separator
-        const sep2 = createDiv(null, 'alp-separator');
-        transportEl.appendChild(sep2);
-
-        // LCD position cluster: time + bars.beats
+        // ── LCD position cluster: time + bars.beats ──
         const lcd = createDiv(null, 'daw-lcd');
         timeDisplayEl = createSpan(null, 'daw-lcd-time');
         timeDisplayEl.textContent = '0:00.0 / 0:00.0';
@@ -342,12 +400,29 @@ const AudioDaw = (() => {
         lcd.appendChild(lcdBeats);
         transportEl.appendChild(lcd);
 
-        // Spacer
         const spacer = createDiv(null, 'daw-transport-spacer');
         transportEl.appendChild(spacer);
 
-        // BPM
-        const bpmLabel = createSpan(null, 'daw-transport-bpm-label');
+        // ── Zoom ──
+        const zoomGroup = mkGroup(' daw-tgroup-fields');
+        const zoomLabel = createSpan(null, 'daw-transport-label');
+        zoomLabel.textContent = 'ZOOM';
+        const zoomSlider = document.createElement('input');
+        zoomSlider.type = 'range';
+        zoomSlider.className = 'daw-transport-zoom';
+        zoomSlider.min = '10';
+        zoomSlider.max = '500';
+        zoomSlider.value = state.zoom;
+        zoomSlider.title = 'Timeline zoom (pixels per second)';
+        zoomSlider.addEventListener('input', (e) => {
+            setZoom(parseInt(e.target.value));
+        });
+        zoomGroup.appendChild(zoomLabel);
+        zoomGroup.appendChild(zoomSlider);
+
+        // ── Tempo: BPM + time signature ──
+        const tempoGroup = mkGroup(' daw-tgroup-fields');
+        const bpmLabel = createSpan(null, 'daw-transport-label');
         bpmLabel.textContent = 'BPM';
         bpmInputEl = document.createElement('input');
         bpmInputEl.type = 'number';
@@ -366,11 +441,6 @@ const AudioDaw = (() => {
                 }
             }
         });
-        const bpmGroup = createDiv(null, 'daw-transport-bpm-group');
-        bpmGroup.appendChild(bpmInputEl);
-        bpmGroup.appendChild(bpmLabel);
-
-        // Time signature
         const sigSelect = document.createElement('select');
         sigSelect.className = 'daw-transport-timesig';
         sigSelect.title = 'Time signature';
@@ -386,28 +456,32 @@ const AudioDaw = (() => {
             if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
             updateLaneGrid();
         });
-        bpmGroup.appendChild(sigSelect);
-        transportEl.appendChild(bpmGroup);
+        tempoGroup.appendChild(bpmLabel);
+        tempoGroup.appendChild(bpmInputEl);
+        tempoGroup.appendChild(sigSelect);
 
-        // Ruler mode toggle (time <-> bars/beats)
-        const modeBtn = document.createElement('button');
-        modeBtn.className = 'daw-transport-btn daw-btn-text daw-btn-grid-mode';
-        const setModeLabel = () => {
-            modeBtn.textContent = state.rulerMode === 'beats' ? 'BARS' : 'TIME';
-            modeBtn.title = state.rulerMode === 'beats'
-                ? 'Ruler: bars/beats — click for time'
-                : 'Ruler: time — click for bars/beats';
+        // ── Ruler mode: TIME | BARS segmented radio ──
+        const rulerGroup = mkGroup();
+        const segBtns = [];
+        const mkSeg = (label, mode, title) => {
+            const b = document.createElement('button');
+            b.className = 'daw-transport-btn daw-btn-text daw-seg' + (state.rulerMode === mode ? ' active' : '');
+            b.textContent = label;
+            b.title = title;
+            b.addEventListener('click', () => {
+                state.rulerMode = mode;
+                if (timeline) timeline.setMode(mode);
+                segBtns.forEach(([btn, m]) => btn.classList.toggle('active', m === mode));
+                updateLaneGrid();
+            });
+            segBtns.push([b, mode]);
+            rulerGroup.appendChild(b);
         };
-        setModeLabel();
-        modeBtn.addEventListener('click', () => {
-            state.rulerMode = state.rulerMode === 'beats' ? 'time' : 'beats';
-            if (timeline) timeline.setMode(state.rulerMode);
-            setModeLabel();
-            updateLaneGrid();
-        });
-        transportEl.appendChild(modeBtn);
+        mkSeg('TIME', 'time', 'Ruler shows minutes:seconds');
+        mkSeg('BARS', 'beats', 'Ruler shows bars/beats at the project tempo');
 
-        // Snap toggle
+        // ── Workspace toggles: snap-to-grid, sound palette ──
+        const togGroup = mkGroup();
         const snapBtn = document.createElement('button');
         snapBtn.className = 'daw-transport-btn daw-btn-text daw-btn-snap' + (state.snapEnabled ? ' active' : '');
         snapBtn.textContent = 'SNAP';
@@ -416,109 +490,52 @@ const AudioDaw = (() => {
             state.snapEnabled = !state.snapEnabled;
             snapBtn.classList.toggle('active', state.snapEnabled);
         });
-        transportEl.appendChild(snapBtn);
-
-        // Sound Palette toggle
+        togGroup.appendChild(snapBtn);
         const palBtn = document.createElement('button');
         palBtn.className = 'daw-transport-btn daw-btn-text daw-btn-palette';
         palBtn.textContent = 'SOUNDS';
         palBtn.title = 'Sound Palette — generate SFX/loops on demand (audition, then add)';
         palBtn.addEventListener('click', () => togglePalette(palBtn));
-        transportEl.appendChild(palBtn);
+        togGroup.appendChild(palBtn);
 
-        // Master volume + meter cluster
-        const masterGroup = createDiv(null, 'daw-transport-master');
-        const masterLbl = createSpan(null, 'daw-transport-master-label');
-        masterLbl.textContent = 'MASTER';
-        const masterSlider = document.createElement('input');
-        masterSlider.type = 'range';
-        masterSlider.className = 'daw-transport-master-vol';
-        masterSlider.min = '0';
-        masterSlider.max = '1';
-        masterSlider.step = '0.005';
-        masterSlider.value = AudioDawMixer.gainToFaderPos
-            ? AudioDawMixer.gainToFaderPos(state.masterVolume) : state.masterVolume;
-        masterSlider.title = 'Master volume (dB-scaled, double-click = 0 dB)';
-        masterSlider.addEventListener('input', (e) => {
-            const p = parseFloat(e.target.value);
-            state.masterVolume = AudioDawMixer.faderPosToGain ? AudioDawMixer.faderPosToGain(p) : p;
-            updatePlaybackGains();
-        });
-        masterSlider.addEventListener('dblclick', () => {
-            state.masterVolume = 1;
-            masterSlider.value = AudioDawMixer.gainToFaderPos ? AudioDawMixer.gainToFaderPos(1) : 1;
-            updatePlaybackGains();
-        });
-        const masterMeter = createDiv(null, 'daw-meter-hpair daw-master-meter');
-        masterMeterChans = [];
-        for (let ch = 0; ch < 2; ch++) {
-            const bar = createDiv(null, 'daw-meter-h');
-            const mask = createDiv(null, 'daw-meter-h-mask');
-            const peakTick = createDiv(null, 'daw-meter-h-peak');
-            bar.appendChild(mask);
-            bar.appendChild(peakTick);
-            masterMeter.appendChild(bar);
-            masterMeterChans.push({ mask, peak: peakTick });
-        }
-        masterGroup.appendChild(masterLbl);
-        masterGroup.appendChild(masterSlider);
-        masterGroup.appendChild(masterMeter);
-        const lufs = createSpan(null, 'daw-master-lufs');
-        lufs.textContent = '-\u221E LU';
-        masterGroup.appendChild(lufs);
-        const clipDot = createSpan(null, 'daw-master-clip');
-        clipDot.title = 'Master clip indicator — click to reset';
-        clipDot.addEventListener('click', () => clipDot.classList.remove('lit'));
-        masterGroup.appendChild(clipDot);
-        transportEl.appendChild(masterGroup);
+        // (Master volume/meter/loudness live in the Mixer's Master strip — one
+        // master control, not two.)
 
-        // Zoom slider
-        const zoomGroup = createDiv(null, 'daw-transport-zoom-group');
-        const zoomLabel = createSpan(null, 'daw-transport-zoom-label');
-        zoomLabel.textContent = 'Zoom';
-        const zoomSlider = document.createElement('input');
-        zoomSlider.type = 'range';
-        zoomSlider.className = 'daw-transport-zoom';
-        zoomSlider.min = '10';
-        zoomSlider.max = '500';
-        zoomSlider.value = state.zoom;
-        zoomSlider.addEventListener('input', (e) => {
-            setZoom(parseInt(e.target.value));
-        });
-        zoomGroup.appendChild(zoomLabel);
-        zoomGroup.appendChild(zoomSlider);
-        transportEl.appendChild(zoomGroup);
+        // Second spacer: floats the controls cluster over the working area and
+        // pins the file operations + close to the far right.
+        const spacer2 = createDiv(null, 'daw-transport-spacer');
+        transportEl.appendChild(spacer2);
+
+        // ── File operations (DAW menu-bar convention) + window close ──
+        const fileGroup = mkGroup();
+        const mkFileBtn = (label, title, fn) => {
+            const b = document.createElement('button');
+            b.className = 'daw-transport-btn daw-btn-text';
+            b.innerHTML = `${label} &#x25BE;`;
+            b.title = title;
+            b.addEventListener('click', fn);
+            fileGroup.appendChild(b);
+            return b;
+        };
+        mkFileBtn('PROJECT', 'Save, load, or start projects', (e) => showProjectMenu(e));
+        mkFileBtn('IMPORT', 'Add audio — from your outputs or your computer', (e) => showImportMenu(e));
+        mkFileBtn('EXPORT', 'Export the mixdown (WAV/MP3/OGG/FLAC/AAC or to Outputs)', (e) => showExportMenu(e));
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'daw-transport-btn daw-btn-close';
+        closeBtn.innerHTML = '&#x2715;';
+        closeBtn.title = 'Close Audio Lab';
+        closeBtn.addEventListener('click', close);
+        transportEl.appendChild(closeBtn);
     }
 
     // ===== FOOTER =====
 
-    function buildFooter() {
-        footerEl.innerHTML = '';
-        const projBtn = document.createElement('button');
-        projBtn.className = 'basic-button';
-        projBtn.innerHTML = 'Project &#x25BE;';
-        projBtn.title = 'Save, load, or start projects';
-        projBtn.addEventListener('click', (e) => showProjectMenu(e));
-        footerEl.appendChild(projBtn);
-        quickAppendButton(footerEl, 'Import Audio', importAudioToTrack, ' basic-button', 'Import audio files (each file gets its own track)');
-        quickAppendButton(footerEl, 'Add from Outputs', (e) => showOutputsPicker(e), ' basic-button', 'Add a previously generated audio output as a new track');
-
-        // Spacer
-        const spacer = createDiv(null, 'daw-footer-spacer');
-        footerEl.appendChild(spacer);
-
-        // Export dropdown
-        const exportGroup = createDiv(null, 'daw-export-group');
-        quickAppendButton(exportGroup, 'Export WAV', () => doExportMixdown('wav'), ' btn btn-primary basic-button', 'Export all tracks as WAV');
-        const exportDropdown = document.createElement('button');
-        exportDropdown.className = 'btn btn-primary basic-button daw-export-caret';
-        exportDropdown.innerHTML = '&#x25BC;';
-        exportDropdown.title = 'Export format options';
-        exportDropdown.addEventListener('click', (e) => showExportMenu(e));
-        exportGroup.appendChild(exportDropdown);
-        footerEl.appendChild(exportGroup);
-
-        quickAppendButton(footerEl, 'Close', close, ' btn btn-secondary basic-button', 'Close DAW');
+    /** Show the unified import menu: server outputs or local files. */
+    function showImportMenu(e) {
+        dawMenu(e, [
+            { label: 'From Outputs…', action: () => showOutputsPicker(e) },
+            { label: 'From Computer…', action: () => importAudioToTrack() }
+        ]);
     }
 
     // ===== TIMELINE =====
@@ -581,83 +598,21 @@ const AudioDaw = (() => {
     }
 
     // ===== BOTTOM PANEL =====
-
-    let activeBottomTab = 'clip-editor';
+    // The tab strip + panes are static markup (Audio Lab.html); Bootstrap handles
+    // switching. JS only fills the panes.
 
     function switchBottomTab(id) {
-        activeBottomTab = id;
-        if (!bottomPanelEl) return;
-        bottomPanelEl.querySelectorAll('.daw-bottom-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
-        bottomPanelEl.querySelectorAll('.daw-bottom-tab-content').forEach(c => c.hidden = c.dataset.tab !== id);
+        document.querySelector(`#daw_bbar_tabs .nav-link[data-tab="${id}"]`)?.click();
+        if (bottomBarShut) setBottomBarShut(false);
     }
 
     function buildBottomPanel() {
         if (!bottomPanelEl) return;
-        bottomPanelEl.innerHTML = '';
-
-        // Tab bar
-        const tabBar = createDiv(null, 'daw-bottom-tabs');
-        const tabs = [
-            { id: 'clip-editor', icon: DAW_ICONS.tabClip, label: 'Clip Editor' },
-            { id: 'mixer', icon: DAW_ICONS.tabMixer, label: 'Mixer' },
-            { id: 'stems', icon: DAW_ICONS.tabStems, label: 'Stems' },
-            { id: 'fx', icon: DAW_ICONS.tabFx, label: 'FX' },
-            { id: 'beats', icon: DAW_ICONS.tabBeats, label: 'Instruments' },
-            { id: 'generate', icon: DAW_ICONS.tabGenerate, label: 'Generate' }
-        ];
-        for (const tab of tabs) {
-            const btn = document.createElement('button');
-            btn.className = 'daw-bottom-tab' + (tab.id === activeBottomTab ? ' active' : '');
-            btn.innerHTML = `<span class="daw-tab-icon">${tab.icon}</span><span class="translate">${escapeHtml(tab.label)}</span>`;
-            btn.dataset.tab = tab.id;
-            btn.addEventListener('click', () => {
-                activeBottomTab = tab.id;
-                tabBar.querySelectorAll('.daw-bottom-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab.id));
-                bottomPanelEl.querySelectorAll('.daw-bottom-tab-content').forEach(c => c.hidden = c.dataset.tab !== tab.id);
-            });
-            tabBar.appendChild(btn);
-        }
-        bottomPanelEl.appendChild(tabBar);
-
-        // Clip Editor tab content
-        const clipEditorContent = createDiv(null, 'daw-bottom-tab-content');
-        clipEditorContent.dataset.tab = 'clip-editor';
-        clipEditorContent.hidden = activeBottomTab !== 'clip-editor';
-        bottomPanelEl.appendChild(clipEditorContent);
-
-        // Mixer tab content
-        const mixerContent = createDiv(null, 'daw-bottom-tab-content');
-        mixerContent.dataset.tab = 'mixer';
-        mixerContent.hidden = activeBottomTab !== 'mixer';
-        bottomPanelEl.appendChild(mixerContent);
-
-        // Stems tab content
-        const stemsContent = createDiv(null, 'daw-bottom-tab-content');
-        stemsContent.dataset.tab = 'stems';
-        stemsContent.hidden = activeBottomTab !== 'stems';
-        bottomPanelEl.appendChild(stemsContent);
-
-        // FX tab content
-        const fxContent = createDiv(null, 'daw-bottom-tab-content');
-        fxContent.dataset.tab = 'fx';
-        fxContent.hidden = activeBottomTab !== 'fx';
-        bottomPanelEl.appendChild(fxContent);
-
-        // Beats tab content — built ONCE per open (step toggles mutate state directly)
-        const beatsContent = createDiv(null, 'daw-bottom-tab-content');
-        beatsContent.dataset.tab = 'beats';
-        beatsContent.hidden = activeBottomTab !== 'beats';
-        bottomPanelEl.appendChild(beatsContent);
-        renderBeatsPanel(beatsContent);
-
-        // Generate tab content — built ONCE per open (not in updateBottomPanel) so
-        // typed prompts survive selection-driven panel refreshes
-        const generateContent = createDiv(null, 'daw-bottom-tab-content');
-        generateContent.dataset.tab = 'generate';
-        generateContent.hidden = activeBottomTab !== 'generate';
-        bottomPanelEl.appendChild(generateContent);
-        renderGeneratePanel(generateContent);
-
+        const pane = (id) => bottomPanelEl.querySelector(`.daw-bottom-tab-content[data-tab="${id}"]`);
+        // Beats + Generate are built ONCE per session (not in updateBottomPanel) so
+        // typed prompts and pattern edits survive selection-driven panel refreshes
+        renderBeatsPanel(pane('beats'));
+        renderGeneratePanel(pane('generate'));
         updateBottomPanel();
     }
 
@@ -909,16 +864,24 @@ const AudioDaw = (() => {
                         sel.clip[prop] = Math.max(0, parseFloat(input.value) || 0);
                         resyncPlayback(); // fades are baked into scheduled ramps
                     });
-                    mixRow.appendChild(lbl);
-                    mixRow.appendChild(input);
+                    fadeRow.appendChild(lbl);
+                    fadeRow.appendChild(input);
+                    const unit = createSpan(null, 'daw-clip-mix-label');
+                    unit.textContent = 's';
+                    fadeRow.appendChild(unit);
                 };
+                const fadeRow = createDiv(null, 'daw-clip-editor-info daw-clip-editor-mix');
                 makeFadeInput('Fade In', 'fadeIn');
                 makeFadeInput('Fade Out', 'fadeOut');
                 const mixCard = createDiv(null, 'daw-fx-card daw-clip-mix-card');
                 const mixTitle = createDiv(null, 'daw-fx-card-title');
                 mixTitle.textContent = 'Clip Mix';
                 mixCard.appendChild(mixTitle);
+                const mixNote = createDiv(null, 'daw-clip-card-meta');
+                mixNote.textContent = 'Level and fades for this clip only — track volume lives in the Mixer.';
+                mixCard.appendChild(mixNote);
                 mixCard.appendChild(mixRow);
+                mixCard.appendChild(fadeRow);
                 editRight.appendChild(mixCard);
 
                 clipEditorContent.appendChild(info);
@@ -1067,69 +1030,52 @@ const AudioDaw = (() => {
     }
 
     /** Render the Stems (Demucs) tab content. */
+    let stemsPreset = 'split'; // selected output-preset card
+
     function renderStemsPanel(container) {
-        const section = createDiv(null, 'daw-stems-panel daw-panel-split');
-        // Wide panels: description + model/preset left, stem picks + action right
+        container.innerHTML = '';
+        const panel = createDiv(null, 'daw-stems-panel');
+        container.appendChild(panel);
+
+        // Output preset cards — the tab's primary choice, front and center
+        const PRESET_CARDS = {
+            split: ['Full Split', 'Every stem becomes its own track'],
+            karaoke: ['Karaoke', 'Vocals + combined instrumental'],
+            acapella: ['Acapella', 'Vocals only'],
+            instrumental: ['Instrumental', 'Everything except vocals'],
+            custom: ['Custom', 'Pick exactly which stems to keep']
+        };
+        const browser = createDiv(null, 'daw-fx-browser daw-stems-browser');
+        for (const preset of STEM_PRESETS) {
+            const [name, cdesc] = PRESET_CARDS[preset.id];
+            const pick = document.createElement('button');
+            pick.className = 'daw-fx-pick daw-inst-pick' + (preset.id === stemsPreset ? ' selected' : '');
+            pick.innerHTML = `<span class="daw-fx-pick-name">${name}</span>`
+                + `<span class="daw-fx-pick-desc">${cdesc}</span>`;
+            pick.addEventListener('click', () => {
+                stemsPreset = preset.id;
+                renderStemsPanel(container);
+            });
+            browser.appendChild(pick);
+        }
+        panel.appendChild(browser);
+
+        // Wide panels: about + model left, stem picks + source + action right
+        const section = createDiv(null, 'daw-panel-split');
+        panel.appendChild(section);
         const left = createDiv(null, 'daw-panel-col');
         const right = createDiv(null, 'daw-panel-col');
+        section.appendChild(left);
+        section.appendChild(right);
 
-        // Header with explanation
         const header = createDiv(null, 'daw-stems-header');
         header.innerHTML = '<strong>Stem Separation (Demucs)</strong>';
         left.appendChild(header);
-
         const desc = createDiv(null, 'daw-stems-desc');
-        desc.textContent = 'Separate audio into individual tracks — vocals, drums, bass, and more. Uses AI-powered source separation to split a mixed audio clip into its component parts. Each stem becomes a new track in the DAW.';
+        desc.textContent = 'AI source separation splits a mixed clip into its component parts — each chosen stem becomes a new track in the DAW.';
         left.appendChild(desc);
 
-        // Always show controls — the actual API call will report if Demucs isn't available
-        renderStemsControls(left, right);
-
-        section.appendChild(left);
-        section.appendChild(right);
-        container.appendChild(section);
-    }
-
-    // Stem sets each Demucs model produces (names match what the backend returns).
-    const STEM_MODELS = {
-        htdemucs: { label: 'HTDemucs — 4 stems', stems: ['vocals', 'drums', 'bass', 'other'] },
-        htdemucs_ft: { label: 'HTDemucs Fine-tuned — 4 stems (best quality)', stems: ['vocals', 'drums', 'bass', 'other'] },
-        htdemucs_6s: { label: 'HTDemucs 6-stem — adds guitar + piano', stems: ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'] }
-    };
-
-    // Track colors per stem name (+ the synthesized "instrumental" combine track).
-    const STEM_COLORS = {
-        vocals: '#cc5de8', drums: '#ff922b', bass: '#22b8cf',
-        other: '#82c91e', guitar: '#ffd43b', piano: '#4a9eff', instrumental: '#20c997'
-    };
-
-    // Output presets. `plan(stems)` → [{name, parts}]; a `parts` list longer than 1 is summed into one track.
-    const STEM_PRESETS = [
-        { id: 'split', label: 'Full split — every stem as its own track', plan: (s) => s.map(x => ({ name: x, parts: [x] })) },
-        { id: 'karaoke', label: 'Karaoke — vocals + combined instrumental', plan: (s) => [{ name: 'vocals', parts: ['vocals'] }, { name: 'instrumental', parts: s.filter(x => x !== 'vocals') }] },
-        { id: 'acapella', label: 'Acapella — vocals only', plan: (s) => [{ name: 'vocals', parts: ['vocals'] }] },
-        { id: 'instrumental', label: 'Instrumental — everything except vocals', plan: (s) => [{ name: 'instrumental', parts: s.filter(x => x !== 'vocals') }] },
-        { id: 'custom', label: 'Custom — pick stems below', plan: null }
-    ];
-
-    function capStem(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
-
-    /** Stems a non-custom preset includes, for the (read-only) checkbox display. */
-    function presetInvolved(presetId, stems) {
-        switch (presetId) {
-            case 'acapella': return ['vocals'];
-            case 'instrumental': return stems.filter(s => s !== 'vocals');
-            case 'split':
-            case 'karaoke': return stems.slice();
-            default: return stems.slice();
-        }
-    }
-
-    /** Render the Stems controls: model + output preset + per-stem selection + separate button. */
-    function renderStemsControls(left, right) {
-        const controls = createDiv(null, 'daw-stems-controls');
-
-        // --- Model picker ---
+        // Model picker
         const modelRow = createDiv(null, 'daw-stems-model-row');
         const modelLabel = document.createElement('label');
         modelLabel.className = 'daw-stems-ctl-label';
@@ -1144,26 +1090,9 @@ const AudioDaw = (() => {
         }
         modelRow.appendChild(modelLabel);
         modelRow.appendChild(modelSelect);
-        controls.appendChild(modelRow);
+        left.appendChild(modelRow);
 
-        // --- Output preset picker ---
-        const presetRow = createDiv(null, 'daw-stems-model-row');
-        const presetLabel = document.createElement('label');
-        presetLabel.className = 'daw-stems-ctl-label';
-        presetLabel.textContent = 'Output:';
-        const presetSelect = document.createElement('select');
-        presetSelect.className = 'daw-stems-select';
-        for (const p of STEM_PRESETS) {
-            const opt = document.createElement('option');
-            opt.value = p.id;
-            opt.textContent = p.label;
-            presetSelect.appendChild(opt);
-        }
-        presetRow.appendChild(presetLabel);
-        presetRow.appendChild(presetSelect);
-        controls.appendChild(presetRow);
-
-        // --- Per-stem checkboxes (editable only in Custom mode; read-only preview otherwise) ---
+        // Per-stem chips (editable only in Custom mode; read-only preview otherwise)
         const stemsRow = createDiv(null, 'daw-stems-checks');
         right.appendChild(stemsRow);
 
@@ -1173,8 +1102,8 @@ const AudioDaw = (() => {
         function rebuildStemChecks() {
             stemsRow.innerHTML = '';
             const stems = getStems();
-            const custom = presetSelect.value === 'custom';
-            const sel = new Set(custom ? [...customSel].filter(s => stems.includes(s)) : presetInvolved(presetSelect.value, stems));
+            const custom = stemsPreset === 'custom';
+            const sel = new Set(custom ? [...customSel].filter(s => stems.includes(s)) : presetInvolved(stemsPreset, stems));
 
             const hint = createDiv(null, 'daw-stems-checks-hint');
             hint.textContent = custom ? 'Choose which stems become tracks:' : 'Included stems:';
@@ -1203,19 +1132,18 @@ const AudioDaw = (() => {
         }
 
         modelSelect.addEventListener('change', () => { customSel = new Set(getStems()); rebuildStemChecks(); });
-        presetSelect.addEventListener('change', rebuildStemChecks);
         rebuildStemChecks();
 
         // Turns the current control state into the output plan the separator executes.
         function buildPlan() {
             const stems = getStems();
-            if (presetSelect.value === 'custom') {
+            if (stemsPreset === 'custom') {
                 return stems.filter(s => customSel.has(s)).map(s => ({ name: s, parts: [s] }));
             }
-            return STEM_PRESETS.find(p => p.id === presetSelect.value).plan(stems);
+            return STEM_PRESETS.find(p => p.id === stemsPreset).plan(stems);
         }
 
-        // --- Source clip picker + separate button ---
+        // Source clip picker + separate button
         const actionRow = createDiv(null, 'daw-stems-action-row');
         let sepBtn = null;
         const allClips = [];
@@ -1270,11 +1198,45 @@ const AudioDaw = (() => {
                 doSeparateStems(sel.clip, sel.track, { modelName: modelSelect.value, outputs });
             });
         }
-
         right.appendChild(actionRow);
         if (sepBtn) right.appendChild(sepBtn);
-        left.appendChild(controls);
     }
+
+    // Stem sets each Demucs model produces (names match what the backend returns).
+    const STEM_MODELS = {
+        htdemucs: { label: 'HTDemucs — 4 stems', stems: ['vocals', 'drums', 'bass', 'other'] },
+        htdemucs_ft: { label: 'HTDemucs Fine-tuned — 4 stems (best quality)', stems: ['vocals', 'drums', 'bass', 'other'] },
+        htdemucs_6s: { label: 'HTDemucs 6-stem — adds guitar + piano', stems: ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'] }
+    };
+
+    // Track colors per stem name (+ the synthesized "instrumental" combine track).
+    const STEM_COLORS = {
+        vocals: '#cc5de8', drums: '#ff922b', bass: '#22b8cf',
+        other: '#82c91e', guitar: '#ffd43b', piano: '#4a9eff', instrumental: '#20c997'
+    };
+
+    // Output presets. `plan(stems)` → [{name, parts}]; a `parts` list longer than 1 is summed into one track.
+    const STEM_PRESETS = [
+        { id: 'split', label: 'Full split — every stem as its own track', plan: (s) => s.map(x => ({ name: x, parts: [x] })) },
+        { id: 'karaoke', label: 'Karaoke — vocals + combined instrumental', plan: (s) => [{ name: 'vocals', parts: ['vocals'] }, { name: 'instrumental', parts: s.filter(x => x !== 'vocals') }] },
+        { id: 'acapella', label: 'Acapella — vocals only', plan: (s) => [{ name: 'vocals', parts: ['vocals'] }] },
+        { id: 'instrumental', label: 'Instrumental — everything except vocals', plan: (s) => [{ name: 'instrumental', parts: s.filter(x => x !== 'vocals') }] },
+        { id: 'custom', label: 'Custom — pick stems below', plan: null }
+    ];
+
+    function capStem(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+    /** Stems a non-custom preset includes, for the (read-only) checkbox display. */
+    function presetInvolved(presetId, stems) {
+        switch (presetId) {
+            case 'acapella': return ['vocals'];
+            case 'instrumental': return stems.filter(s => s !== 'vocals');
+            case 'split':
+            case 'karaoke': return stems.slice();
+            default: return stems.slice();
+        }
+    }
+
 
     // ===== GENERATE TAB =====
 
@@ -1719,9 +1681,9 @@ const AudioDaw = (() => {
         if (!clip) return;
         state.selectedClipId = clip.id;
         if (track) state.selectedTrackId = track.id;
-        activeBottomTab = 'stems';
         updateTrackSelection();
-        buildBottomPanel();
+        updateBottomPanel();
+        switchBottomTab('stems');
         renderAllTracks();
     }
 
@@ -2308,13 +2270,12 @@ const AudioDaw = (() => {
             for (let ch = 0; ch < 2; ch++) {
                 const pct = levelToPct(peaks[ch]);
                 const held = heldPeak(`__master__:${ch}`, pct);
-                setMeterChan(masterMeterChans[ch], pct, held, false);
                 setMeterChan(strip?.chans?.[ch], pct, held, true);
             }
             // ~Loudness readout (slow RMS EMA; not true K-weighted LUFS but tracks it usefully)
             const rms = readRms(playback.masterAnalysers[0]);
             loudnessEma = loudnessEma * 0.95 + rms * 0.05;
-            const lufsEl = transportEl?.querySelector('.daw-master-lufs');
+            const lufsEl = document.querySelector('.daw-master-lufs');
             if (lufsEl) {
                 const db = loudnessEma > 1e-5 ? (20 * Math.log10(loudnessEma)).toFixed(1) : '-\u221E';
                 lufsEl.textContent = db + ' LU';
@@ -2322,7 +2283,7 @@ const AudioDaw = (() => {
             }
             // Clip latch: lights when the master pins, click to reset
             if (Math.max(peaks[0], peaks[1]) >= 0.985) {
-                const clipDot = transportEl?.querySelector('.daw-master-clip');
+                const clipDot = document.querySelector('.daw-master-clip');
                 if (clipDot) clipDot.classList.add('lit');
             }
         }
@@ -2334,7 +2295,6 @@ const AudioDaw = (() => {
         for (const track of state?.tracks || []) {
             for (const chan of track.meterChans || []) setMeterChan(chan, 0, 0, false);
         }
-        for (const chan of masterMeterChans) setMeterChan(chan, 0, 0, false);
         if (AudioDawMixer.resetMeters) AudioDawMixer.resetMeters();
     }
 
@@ -3151,7 +3111,7 @@ const AudioDaw = (() => {
         text.textContent = label;
         row.appendChild(bar);
         row.appendChild(text);
-        const tabBtn = tabId ? bottomPanelEl?.querySelector(`.daw-bottom-tab[data-tab="${tabId}"]`) : null;
+        const tabBtn = tabId ? document.querySelector(`#daw_bbar_tabs .nav-link[data-tab="${tabId}"]`) : null;
         tabBtn?.classList.add('busy');
         const started = performance.now();
         let pct = null;
@@ -3176,7 +3136,7 @@ const AudioDaw = (() => {
     }
 
     function showDawLoadingOverlay(message = 'Processing...') {
-        const body = document.querySelector('.daw-body');
+        const body = document.getElementById('daw_container');
         if (!body) return null;
         const overlay = createDiv(null, 'daw-loading-overlay');
         overlay.innerHTML = `
@@ -4058,7 +4018,7 @@ const AudioDaw = (() => {
         }
         btn?.classList.add('active');
         paletteEl = createDiv(null, 'daw-palette');
-        const body = modalEl?.querySelector('.daw-body');
+        const body = document.getElementById('daw_container');
         (body || document.body).appendChild(paletteEl);
         renderPalette();
     }
@@ -4241,6 +4201,7 @@ const AudioDaw = (() => {
     function serializeProject() {
         return {
             version: 2,
+            projectName: currentProjectName || null,
             bpm: state.bpm,
             masterLimiterEnabled: state.masterLimiterEnabled,
             timeSignature: state.timeSignature,
@@ -4284,6 +4245,7 @@ const AudioDaw = (() => {
         const keepZoom = state.zoom;
         state = getDefaultState();
         state.zoom = keepZoom;
+        if (project.projectName) currentProjectName = project.projectName;
         state.bpm = project.bpm || 120;
         state.timeSignature = project.timeSignature || [4, 4];
         state.masterVolume = project.masterVolume ?? 1.0;
@@ -4380,18 +4342,75 @@ const AudioDaw = (() => {
         try {
             const meta = await AudioDawStore.getProjectMeta(AUTOSAVE_SLOT);
             if (!meta || Date.now() - meta.savedAt > AUTOSAVE_MAX_AGE_MS) return;
-            showResumeBar(meta.savedAt);
+            showResumeBar(meta);
         } catch (_) {}
     }
 
-    function showResumeBar(savedAt) {
-        const body = modalEl?.querySelector('.daw-body');
+    /**
+     * Start screen: when the DAW opens EMPTY (no crash autosave shown, no clips),
+     * offer the user's saved projects so the tab is a real way back into their
+     * work — the DAW-app "recent projects on launch" pattern.
+     */
+    async function maybeShowStartScreen() {
+        const body = document.getElementById('daw_container');
+        if (!body || body.querySelector('.daw-resume-bar, .daw-start-screen')) return;
+        if (!state || state.tracks.some(t => t.clips.length > 0)) return;
+        let names = [];
+        try {
+            const result = await AudioLabAPI.callAPI('AudioLabListProjects');
+            names = (result.projects || []).filter(n => n !== AUTOSAVE_SLOT);
+        } catch (_) {}
+        if (!names.length) return;
+        // Re-check after the await — the user may have started working meanwhile
+        if (!state || state.tracks.some(t => t.clips.length > 0)) return;
+        if (body.querySelector('.daw-resume-bar, .daw-start-screen')) return;
+
+        const card = createDiv(null, 'daw-resume-bar daw-start-screen');
+        const title = createDiv(null, 'daw-resume-title');
+        title.textContent = 'Open a project';
+        card.appendChild(title);
+        const detail = createDiv(null, 'daw-resume-detail');
+        detail.textContent = 'Pick up where you left off, or start fresh.';
+        card.appendChild(detail);
+        const list = createDiv(null, 'daw-start-projects');
+        for (const n of names.slice(0, 8)) {
+            quickAppendButton(list, escapeHtml(n), () => {
+                card.remove();
+                openProjectFromServer(n);
+            }, ' basic-button', `Load project "${n}"`);
+        }
+        card.appendChild(list);
+        const actions = createDiv(null, 'daw-resume-actions');
+        quickAppendButton(actions, 'Start Empty', () => card.remove(), ' basic-button', 'Begin a fresh session');
+        card.appendChild(actions);
+        body.appendChild(card);
+    }
+
+    function showResumeBar(meta) {
+        const body = document.getElementById('daw_container');
         if (!body || body.querySelector('.daw-resume-bar')) return;
         const bar = createDiv(null, 'daw-resume-bar');
-        const label = createSpan(null, 'daw-resume-label');
-        label.textContent = `Autosaved session from ${new Date(savedAt).toLocaleString()} available.`;
-        bar.appendChild(label);
-        quickAppendButton(bar, 'Resume', async () => {
+
+        const title = createDiv(null, 'daw-resume-title');
+        title.textContent = 'Resume your last session?';
+        bar.appendChild(title);
+
+        // Session summary from the recovered project JSON
+        const proj = meta.project || {};
+        const tracks = Array.isArray(proj.tracks) ? proj.tracks : [];
+        const clipCount = tracks.reduce((n, t) => n + (t.clips?.length || 0), 0);
+        const bits = [];
+        if (proj.projectName) bits.push(`“${proj.projectName}”`);
+        bits.push(`${tracks.length} track${tracks.length === 1 ? '' : 's'}`);
+        bits.push(`${clipCount} clip${clipCount === 1 ? '' : 's'}`);
+        if (proj.bpm) bits.push(`${proj.bpm} BPM`);
+        bits.push(`autosaved ${new Date(meta.savedAt).toLocaleString()}`);
+        const detail = createDiv(null, 'daw-resume-detail');
+        detail.textContent = bits.join(' · ');
+        bar.appendChild(detail);
+
+        const actions = createDiv(null, 'daw-resume-actions');
+        quickAppendButton(actions, 'Resume', async () => {
             bar.remove();
             const overlay = showDawLoadingOverlay('Restoring session...');
             try {
@@ -4404,8 +4423,12 @@ const AudioDaw = (() => {
                 }
             }
             hideDawLoadingOverlay(overlay);
-        }, ' basic-button btn-sm', 'Restore the autosaved arrangement');
-        quickAppendButton(bar, 'Dismiss', () => bar.remove(), ' basic-button btn-sm', 'Keep the current session');
+        }, ' basic-button btn-primary', 'Restore the autosaved arrangement');
+        quickAppendButton(actions, 'Discard', () => {
+            bar.remove();
+            AudioDawStore.deleteProject(AUTOSAVE_SLOT).catch(() => {});
+        }, ' basic-button', 'Delete the autosave — start fresh');
+        bar.appendChild(actions);
         body.appendChild(bar);
     }
 
@@ -4729,7 +4752,7 @@ const AudioDaw = (() => {
             + rows.map(([k, d]) => `<div class="daw-shortcut-row"><kbd>${escapeHtml(k)}</kbd><span>${escapeHtml(d)}</span></div>`).join('')
             + '<div class="daw-shortcut-help-hint">Click anywhere to close</div>';
         overlay.addEventListener('click', () => overlay.remove());
-        const body = modalEl?.querySelector('.daw-body');
+        const body = document.getElementById('daw_container');
         (body || document.body).appendChild(overlay);
     }
 
@@ -4784,6 +4807,10 @@ const AudioDaw = (() => {
     function destroyAll() {
         abortRecording();
         stopBeatAudition();
+        if (clipEditorPlayer) {
+            try { clipEditorPlayer.destroy(); } catch (_) {}
+            clipEditorPlayer = null;
+        }
         if (paletteEl) { paletteEl.remove(); paletteEl = null; }
         for (const r of paletteResults) { try { URL.revokeObjectURL(r.url); } catch (_) {} }
         paletteResults = [];
@@ -4801,6 +4828,67 @@ const AudioDaw = (() => {
         audioCtx = null;
         state = null;
         blobStore.clear();
+    }
+
+    // ===== TAB-MODE BOOT (once per page load) =====
+    // Hides the tab until it's needed, wires the tab-shown lifecycle (lazy init +
+    // mic release on switch-away), and reveals a dormant tab when a resumable
+    // autosave exists. No-ops on pages without the AudioLab tab.
+    function bootTabMode() {
+        const container = document.getElementById('daw_container');
+        if (!container || !dawTabLink()) return;
+        hideDawTab();
+        // Keyboard: document-level, only while the DAW tab is the visible one
+        document.addEventListener('keydown', (e) => {
+            if (!initialized || !state || container.offsetParent === null) return;
+            handleKeyboard(e);
+        });
+        // Browser tabs die without warning — flush the autosave on page close too
+        window.addEventListener('beforeunload', () => flushAutosave());
+        window.addEventListener('resize', sizeDawContainer);
+        if (typeof $ !== 'undefined') {
+            $('#toptablist').on('shown.bs.tab', (e) => {
+                if (e.target.id === 'maintab_audiolab') {
+                    sizeDawContainer(); // pane just became measurable
+                    // Covers hash-nav landing directly on #audiolab too (no re-click
+                    // from inside the shown handler — just unhide + init)
+                    if (!initialized) {
+                        dawTabLink()?.closest('.nav-item')?.classList.remove('daw-tab-hidden');
+                        ensureInitialized();
+                        maybeOfferResume().then(maybeShowStartScreen);
+                    }
+                } else if (recording) {
+                    // Never leave the microphone hot while the DAW is hidden
+                    stopRecordingFlow();
+                }
+            });
+        }
+        // Dormant tab: a crash-recovery autosave only exists when a session ended
+        // WITHOUT a clean Close (clean closes delete the slot) — reveal the tab
+        // so the user can get back to their interrupted work.
+        if (typeof AudioDawStore !== 'undefined') {
+            AudioDawStore.getProjectMeta(AUTOSAVE_SLOT).then(meta => {
+                if (meta && Date.now() - meta.savedAt <= AUTOSAVE_MAX_AGE_MS) {
+                    dawTabLink()?.closest('.nav-item')?.classList.remove('daw-tab-hidden');
+                }
+            }).catch(() => {});
+        }
+        // Users with saved projects get the tab as their way back into the DAW —
+        // clicking it opens the start screen with their project list. (Delayed so
+        // the session is established before the API call.)
+        setTimeout(() => {
+            try {
+                AudioLabAPI.callAPI('AudioLabListProjects').then(result => {
+                    const names = (result?.projects || []).filter(n => n !== AUTOSAVE_SLOT);
+                    if (names.length) dawTabLink()?.closest('.nav-item')?.classList.remove('daw-tab-hidden');
+                }).catch(() => {});
+            } catch (_) {}
+        }, 1500);
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bootTabMode);
+    } else {
+        bootTabMode();
     }
 
     return { open, close };

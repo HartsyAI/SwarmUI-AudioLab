@@ -222,10 +222,6 @@
 .audiolab-model-installed { color: var(--backend-running); font-size: 0.85em; white-space: nowrap; }
 .audiolab-model-installing { color: var(--text-soft); font-size: 0.85em; white-space: nowrap; }
 
-/* ===== AUDIO LAB MODAL ===== */
-#audiolab_modal .modal-dialog { max-width: 850px; }
-#audiolab_modal .modal-body { padding: 1rem; }
-
 /* Main waveform container */
 .ale-waveform {
     border: 1px solid var(--shadow);
@@ -468,75 +464,87 @@
     font-size: 0.85rem;
 }
 
-/* ===== DAW MODE — FULLSCREEN MODAL ===== */
-#audiolab_modal.daw-mode .modal-dialog {
-    max-width: calc(100vw - 2rem);
-    width: calc(100vw - 2rem);
-    margin: 1rem auto;
-}
-
-#audiolab_modal.daw-mode .modal-content {
-    width: 100%;
-    height: calc(100vh - 2rem);
-    display: flex;
-    flex-direction: column;
-}
-
-#audiolab_modal.daw-mode .modal-header {
-    flex-shrink: 0;
-    padding: 0.5rem 1rem;
-}
-
-#audiolab_modal.daw-mode .modal-body.daw-body {
-    flex: 1;
+/* ===== DAW NATIVE TAB ===== */
+/* The tab pane (id=audiolab, class tab-pane-vw) provides height:100%; the
+   container fills it. Overlays (loading, palette, resume bar) anchor here. */
+.daw-container {
+    height: 100%;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    padding: 0;
     position: relative;
+    background: var(--background);
 }
+/* Hides the AudioLab main-tab button; !important so permissions.js's inline
+   display re-application can't reveal it */
+.daw-tab-hidden { display: none !important; }
 
 /* ===== TRANSPORT BAR ===== */
 .daw-transport {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
-    padding: 0.55rem 1rem;
+    gap: 0.7rem;
+    padding: 0.65rem 1.4rem;
     border-bottom: 1px solid var(--border-color);
     background: var(--background);
     flex-shrink: 0;
 }
 
 .daw-transport-btn {
-    background: var(--background-soft);
-    border: 1px solid var(--border-color);
+    background: transparent;
+    border: none;
     color: var(--text);
     cursor: pointer;
-    padding: 0.45rem 0.7rem;
-    border-radius: 0.45rem;
-    font-size: 1.25rem;
+    padding: 0.4rem 0.65rem;
+    border-radius: 0.5rem;
+    font-size: 1.2rem;
     display: flex;
     align-items: center;
     justify-content: center;
-    min-width: 46px;
-    min-height: 46px;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    min-width: 44px;
+    min-height: 40px;
+    transition: background 0.15s, color 0.15s;
 }
-.daw-transport-btn svg { width: 1.2rem; height: 1.2rem; display: block; }
+.daw-transport-btn svg { width: 1.25rem; height: 1.25rem; display: block; }
 
-/* Hover tints with the button's own accent color (currentColor), not a full flip */
+/* Hover tints with the button's own accent color (currentColor) */
 .daw-transport-btn:hover {
-    background: color-mix(in srgb, currentColor 14%, var(--background-soft));
-    border-color: color-mix(in srgb, currentColor 55%, var(--border-color));
+    background: color-mix(in srgb, currentColor 12%, transparent);
 }
 .daw-transport-btn:disabled { opacity: 0.3; cursor: default; pointer-events: none; }
+
+/* Pill groups: related controls share a rounded container (MagicPrompt-style) */
+.daw-tgroup {
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+    background: var(--background-soft);
+    border: 1px solid var(--border-color);
+    border-radius: 0.7rem;
+    padding: 0.25rem;
+    flex-shrink: 0;
+}
+/* Field groups (BPM, master, zoom) get inner breathing room for labels/inputs */
+.daw-tgroup-fields { gap: 0.45rem; padding: 0.25rem 0.7rem; min-height: 50px; }
+
+/* Shared small-caps label inside field groups */
+.daw-transport-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    color: var(--text-soft);
+}
 
 /* Split-button group (Record + mic settings) */
 .daw-btn-group { display: inline-flex; align-items: stretch; }
 .daw-btn-group > .daw-transport-btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
-.daw-btn-group > .daw-transport-btn:last-child { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: none; }
+.daw-btn-group > .daw-transport-btn:last-child {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-left: 1px solid var(--border-color);
+}
 
-.daw-btn-rec { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, var(--border-color)); }
+.daw-btn-rec { color: var(--red); }
 .daw-btn-rec.active {
     background: var(--red);
     color: var(--background);
@@ -552,13 +560,13 @@
     pointer-events: none;
 }
 .daw-clip-recording .audiolab-player { background: transparent; border: none; padding: 0; }
-.daw-btn-play { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, var(--border-color)); }
+.daw-btn-play { color: var(--green); }
 .daw-btn-play.active {
     background: var(--green);
     color: var(--background);
     border-color: var(--green);
 }
-.daw-btn-loop { color: var(--emphasis); border-color: color-mix(in srgb, var(--emphasis) 45%, var(--border-color)); }
+.daw-btn-loop { color: var(--emphasis); }
 .daw-btn-loop.active {
     background: var(--emphasis);
     color: var(--background);
@@ -576,65 +584,38 @@
 
 .daw-transport-spacer { flex: 1; }
 
-.daw-transport-bpm-group {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-}
-
 .daw-transport-bpm {
-    width: 3.5rem;
-    padding: 0.25rem 0.4rem;
+    width: 4.2rem;
+    padding: 0.3rem 0.4rem;
     border: 1px solid var(--border-color);
-    border-radius: 0.25rem;
+    border-radius: 0.4rem;
     background: var(--background);
     color: var(--text);
-    font-size: 0.9rem;
+    font-size: 0.95rem;
     text-align: center;
 }
 
-.daw-transport-bpm-label {
-    font-size: 0.85rem;
-    color: var(--text-soft);
-}
-
 .daw-transport-timesig {
-    padding: 0.25rem 0.3rem;
+    padding: 0.3rem 0.35rem;
     border: 1px solid var(--border-color);
-    border-radius: 0.25rem;
+    border-radius: 0.4rem;
     background: var(--background);
     color: var(--text);
-    font-size: 0.85rem;
+    font-size: 0.9rem;
 }
 
-.daw-btn-grid-mode, .daw-btn-snap { font-size: 0.9rem; }
 .daw-btn-snap.active {
     background: var(--emphasis);
     color: var(--background);
     border-color: var(--emphasis);
 }
 
-.daw-transport-zoom-group {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-}
-
-.daw-transport-zoom-label {
-    font-size: 0.85rem;
-    color: var(--text-soft);
-}
-
-.daw-transport-zoom {
-    width: 100px;
-    height: 6px;
-    accent-color: var(--emphasis);
-    cursor: pointer;
-}
+input[type="range"].daw-transport-zoom { width: 11rem; flex-shrink: 0; }
 
 /* ===== DAW MAIN LAYOUT (CSS Grid) ===== */
 .daw-main {
     flex: 1;
+    min-height: 0;
     display: grid;
     grid-template-columns: var(--daw-header-width, 220px) 5px 1fr;
     grid-template-rows: 30px 1fr;
@@ -891,21 +872,11 @@
     gap: 0.2rem;
 }
 
-/* Export split-button group */
-.daw-export-group { display: flex; gap: 0; }
-.daw-export-group .basic-button:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
-.daw-export-caret {
-    padding: 0.3rem !important;
-    border-left: 1px solid var(--shadow);
-    border-top-left-radius: 0;
-    border-bottom-left-radius: 0;
-}
-
 /* Keyboard focus visibility across all DAW controls */
-#audiolab_modal button:focus-visible,
-#audiolab_modal input:focus-visible,
-#audiolab_modal select:focus-visible,
-#audiolab_modal textarea:focus-visible,
+.daw-container button:focus-visible,
+.daw-container input:focus-visible,
+.daw-container select:focus-visible,
+.daw-container textarea:focus-visible,
 .daw-context-menu .daw-context-item:focus-visible {
     outline: 2px solid var(--emphasis);
     outline-offset: 1px;
@@ -954,7 +925,7 @@
 .daw-busy-label { font-size: 0.75rem; color: var(--text-soft); }
 
 /* Pulsing dot on a bottom tab while its long-running job is active */
-.daw-bottom-tab.busy::after {
+#daw_bbar_tabs .nav-link.busy::after {
     content: '';
     width: 6px;
     height: 6px;
@@ -968,9 +939,6 @@
 }
 
 /* Bottom tab icons (inline SVG, currentColor) */
-.daw-tab-icon { display: inline-flex; opacity: 0.75; }
-.daw-tab-icon svg { width: 0.95rem; height: 0.95rem; display: block; }
-.daw-bottom-tab.active .daw-tab-icon { opacity: 1; }
 
 /* Keyboard shortcut cheat sheet */
 .daw-shortcut-help {
@@ -997,9 +965,10 @@
 }
 .daw-shortcut-help-hint { margin-top: 0.6rem; font-size: 0.75rem; color: var(--text-soft); }
 
+/* Close dialog reuses the shortcut-help panel look but is button-driven */
+.daw-close-dialog { cursor: default; }
+
 /* Hover/transition polish */
-.daw-bottom-tab { transition: color 0.15s, background 0.15s; }
-.daw-bottom-tab:hover { background: color-mix(in srgb, var(--emphasis) 10%, transparent); }
 .daw-mixer-row { transition: background 0.15s; }
 .daw-mixer-row:hover { background: color-mix(in srgb, var(--emphasis) 6%, transparent); }
 .daw-context-item { transition: color 0.1s, background 0.1s; }
@@ -1017,7 +986,50 @@
 /* Clip editor gain + fade controls */
 .daw-clip-editor-mix { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
 .daw-clip-mix-label { font-size: 0.85rem; color: var(--text-soft); white-space: nowrap; }
-.daw-clip-gain-slider { width: 14rem; max-width: 100%; accent-color: var(--emphasis); }
+.daw-clip-gain-slider { width: 14rem; max-width: 100%; }
+
+/* Themed horizontal sliders — default range tracks are near-invisible on dark themes */
+input[type="range"].daw-clip-gain-slider,
+input[type="range"].daw-beats-lane-gain,
+input[type="range"].daw-beats-swing,
+input[type="range"].daw-transport-zoom {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 7px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--text) 32%, var(--background));
+    outline: none;
+    cursor: ew-resize;
+}
+input[type="range"].daw-clip-gain-slider::-webkit-slider-thumb,
+input[type="range"].daw-beats-lane-gain::-webkit-slider-thumb,
+input[type="range"].daw-beats-swing::-webkit-slider-thumb,
+input[type="range"].daw-transport-zoom::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px !important;
+    height: 18px !important;
+    border-radius: 50% !important;
+    background-color: var(--emphasis) !important;
+    border: 2px solid var(--background) !important;
+}
+input[type="range"].daw-clip-gain-slider::-moz-range-thumb,
+input[type="range"].daw-beats-lane-gain::-moz-range-thumb,
+input[type="range"].daw-beats-swing::-moz-range-thumb,
+input[type="range"].daw-transport-zoom::-moz-range-thumb {
+    width: 16px !important;
+    height: 16px !important;
+    border-radius: 50% !important;
+    background-color: var(--emphasis) !important;
+    border: 2px solid var(--background) !important;
+}
+input[type="range"].daw-clip-gain-slider::-moz-range-track,
+input[type="range"].daw-beats-lane-gain::-moz-range-track,
+input[type="range"].daw-beats-swing::-moz-range-track,
+input[type="range"].daw-transport-zoom::-moz-range-track {
+    height: 7px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--text) 32%, var(--background));
+}
 .daw-clip-mix-val { font-size: 0.85rem; font-family: var(--font-monospace, monospace); min-width: 4rem; }
 .daw-clip-fade-input {
     width: 4.5rem;
@@ -1107,22 +1119,37 @@
 }
 .daw-reftext-stt { white-space: nowrap; flex-shrink: 0; }
 
-/* Autosave resume prompt (floats below the transport, non-blocking) */
+/* Autosave resume card (centered below the transport, non-blocking) */
 .daw-resume-bar {
     position: absolute;
-    top: 3.4rem;
-    right: 1rem;
+    top: 4rem;
+    left: 50%;
+    transform: translateX(-50%);
     z-index: 50;
     display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.4rem 0.7rem;
-    background: var(--background-soft, var(--background));
+    flex-direction: column;
+    gap: 0.35rem;
+    min-width: 26rem;
+    max-width: 40rem;
+    padding: 0.9rem 1.2rem;
+    background: color-mix(in srgb, var(--emphasis) 12%, var(--background-soft));
     border: 1px solid var(--emphasis);
-    border-radius: 0.375rem;
-    box-shadow: 0 4px 16px color-mix(in srgb, var(--black) 35%, transparent);
+    border-radius: 0.5rem;
+    box-shadow: 0 8px 28px color-mix(in srgb, var(--black) 50%, transparent);
 }
-.daw-resume-label { font-size: 0.8rem; color: var(--text); }
+.daw-resume-title { font-size: 1rem; font-weight: 600; color: var(--text); }
+.daw-resume-detail { font-size: 0.82rem; color: var(--text-soft); }
+.daw-resume-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+
+/* Start screen: saved-project list (shares the resume card shell) */
+.daw-start-projects {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.4rem;
+    max-height: 12rem;
+    overflow-y: auto;
+}
 
 /* ===== LOADING OVERLAY ===== */
 .daw-loading-overlay {
@@ -1160,39 +1187,60 @@
     font-size: 1rem;
 }
 
-/* ===== BOTTOM SPLITTER ===== */
-.daw-split-bar {
+/* ===== BOTTOM BAR (Swarm gen-tab pattern: splitter drag + snap shut) ===== */
+.daw-bbar-split {
     height: 5px;
+    width: 100%;
     cursor: row-resize;
-    background: var(--border-color);
     flex-shrink: 0;
-    transition: background 0.15s;
+    overflow: visible;
+    z-index: 5;
 }
-.daw-split-bar:hover {
-    background: var(--emphasis);
+.daw-bbar-split:hover {
+    background-color: var(--emphasis);
     box-shadow:
-        0 -0.3rem 0.5rem 0 color-mix(in srgb, var(--emphasis) 30%, transparent),
-        0 0.3rem 0.5rem 0 color-mix(in srgb, var(--emphasis) 30%, transparent);
+      0 -0.5rem 0.5rem 0 color-mix(in srgb, transparent 50%, var(--emphasis)),
+      0 0.5rem 0.5rem 0 color-mix(in srgb, transparent 50%, var(--emphasis));
 }
-
-/* ===== BOTTOM PANEL ===== */
-.daw-bottom-panel {
+/* Snap toggle floats compactly at the right of the bar (core t2i-mid pattern) */
+.daw-bbar-quickbutton {
+    float: right;
+    vertical-align: top;
+    top: 0;
+    right: 2rem;
+    line-height: 1;
+}
+.daw-bottom-bar {
     border-top: 1px solid var(--border-color);
     flex-shrink: 0;
-    height: 250px;
-    overflow-y: auto;
+    height: 380px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     background: var(--background);
 }
-
-/* ===== FOOTER ===== */
-.daw-footer {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 1rem;
+.daw-bottom-bar > .tab-content {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
 }
+.daw-bottom-bar.daw-bbar-shut > .tab-content { display: none; }
 
-.daw-footer-spacer { flex: 1; }
+/* Close button (top-right of the transport, window-close convention) */
+.daw-btn-close {
+    background: var(--background-soft);
+    border: 1px solid var(--border-color);
+    border-radius: 0.7rem;
+    color: var(--text);
+    font-size: 1.4rem;
+    font-weight: 700;
+    min-width: 3.2rem !important;
+    min-height: 50px;
+}
+.daw-btn-close:hover {
+    color: var(--red);
+    background: color-mix(in srgb, var(--red) 10%, var(--background-soft));
+}
 
 /* ===== CONTEXT MENU ===== */
 .daw-context-menu {
@@ -1228,49 +1276,21 @@
     box-shadow: inset 0 0 0 2px var(--emphasis);
 }
 
-/* ===== BOTTOM PANEL TABS ===== */
-.daw-bottom-tabs {
-    display: flex;
-    border-bottom: 1px solid var(--border-color);
-    background: var(--background);
-    flex-shrink: 0;
-}
-
-.daw-bottom-tab {
+/* ===== BOTTOM PANEL TABS (Bootstrap nav-tabs; theme styles the strip) ===== */
+#daw_bbar_tabs { flex-shrink: 0; }
+#daw_bbar_tabs .nav-link {
     display: inline-flex;
     align-items: center;
     gap: 0.45rem;
-    padding: 0.5rem 0.9rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    color: var(--text-soft);
-    background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    cursor: pointer;
-    white-space: nowrap;
-}
-
-.daw-bottom-tab:hover { color: var(--text); }
-.daw-bottom-tab.active {
-    color: var(--emphasis);
-    border-bottom-color: var(--emphasis);
-    background: color-mix(in srgb, var(--emphasis) 8%, transparent);
 }
 
 .daw-bottom-tab-content {
     padding: 0.5rem 0.75rem;
+    height: 100%;
     overflow-y: auto;
-    max-height: 160px;
     /* Panels adapt to the panel's own width (container queries below) */
     container-type: inline-size;
 }
-
-.daw-bottom-tab-content[hidden] { display: none; }
-.daw-bottom-tab-content[data-tab="generate"] { max-height: 380px; }
-.daw-bottom-tab-content[data-tab="stems"] { max-height: 260px; }
-.daw-bottom-tab-content[data-tab="clip-editor"] { max-height: 300px; }
 
 /* ===== RESPONSIVE PANEL LAYOUT =====
    .daw-panel-split: single column on narrow panels; two side-by-side columns
@@ -1614,11 +1634,16 @@
 
 /* Compact text toggles (LOOP / SNAP / BARS-TIME) — no emoji glyphs */
 .daw-btn-text {
-    font-size: 0.64rem !important;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    min-width: 3.2rem !important;
+    font-size: 0.78rem !important;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    min-width: 3.8rem !important;
     color: var(--text-soft);
+}
+.daw-btn-text:hover { color: var(--text); }
+.daw-seg.active {
+    background: var(--emphasis);
+    color: var(--background);
 }
 
 /* Palette variation button (inline SVG refresh) */
@@ -1650,50 +1675,18 @@
 }
 .daw-lcd-time {
     font-family: var(--font-monospace, monospace);
-    font-size: 1.05rem;
+    font-size: 1.15rem;
     color: var(--emphasis);
     white-space: nowrap;
     line-height: 1.1;
 }
 .daw-lcd-beats {
     font-family: var(--font-monospace, monospace);
-    font-size: 0.7rem;
+    font-size: 0.78rem;
     color: var(--text-soft);
     line-height: 1;
 }
 
-/* Master cluster in the transport */
-.daw-transport-master {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    margin-right: 0.5rem;
-}
-.daw-transport-master-label {
-    font-size: 0.6rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    color: var(--text-soft);
-}
-.daw-transport-master-vol { width: 5.5rem; accent-color: var(--emphasis); }
-.daw-master-meter {
-    width: 4rem;
-    height: 6px;
-    border-radius: 3px;
-    background: color-mix(in srgb, var(--black) 30%, var(--background));
-    border: 1px solid var(--shadow);
-    overflow: hidden;
-}
-.daw-master-meter-fill {
-    height: 100%;
-    width: 0%;
-    background: linear-gradient(to right,
-        color-mix(in srgb, var(--green) 70%, var(--background)) 0%,
-        color-mix(in srgb, var(--green) 85%, var(--yellow)) 60%,
-        var(--yellow) 82%,
-        var(--red) 95%);
-    transition: width 0.05s linear;
-}
 
 /* Rotary knob widget */
 .daw-knob {
@@ -1747,7 +1740,6 @@
 }
 
 /* Mixer: vertical channel strips */
-.daw-bottom-tab-content[data-tab="mixer"] { max-height: 400px; }
 .daw-mixer-strips {
     display: flex;
     gap: 6px;
@@ -1850,9 +1842,9 @@
 
 /* ===== METER PEAK-HOLD TICKS + dB FADERS + LOOP SHADE ===== */
 
-/* Horizontal meters (track header, transport master): tick is a vertical sliver */
+/* Horizontal meters (track header): tick is a vertical sliver */
 .daw-track-meter { position: relative; }
-.daw-track-meter-peak, .daw-master-meter-peak {
+.daw-track-meter-peak {
     position: absolute;
     top: 0;
     bottom: 0;
@@ -1862,7 +1854,6 @@
     opacity: 0.85;
     pointer-events: none;
 }
-.daw-master-meter { position: relative; }
 
 /* Vertical strip meters: tick is a horizontal sliver anchored by bottom% */
 .daw-strip-meter-peak {
@@ -1916,7 +1907,6 @@
 }
 
 /* ===== FX TAB (per-track insert chain) ===== */
-.daw-bottom-tab-content[data-tab="fx"] { max-height: 330px; }
 .daw-fx-row { display: flex; gap: 0.4rem; padding: 0.4rem; overflow-x: auto; align-items: stretch; }
 
 /* FX toolbar: track context + chain save/load + master limiter */
@@ -2056,7 +2046,6 @@
 @container (min-width: 1200px) {
     .daw-beats-step { width: 2rem; height: 2rem; }
 }
-.daw-bottom-tab-content[data-tab="beats"] { max-height: 340px; }
 .daw-beats-grid { display: flex; flex-direction: column; gap: 0.25rem; }
 .daw-beats-lane { display: flex; align-items: center; gap: 0.35rem; }
 .daw-beats-lane-name {
@@ -2120,8 +2109,13 @@
 .daw-btn-palette.active { background: var(--emphasis); color: var(--background); border-color: var(--emphasis); }
 
 /* Master loudness readout + clip latch */
+.daw-strip-loudness {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
 .daw-master-lufs {
-    font-size: 0.6rem;
+    font-size: 0.72rem;
     font-family: var(--font-monospace, monospace);
     color: var(--text-soft);
     min-width: 3.6rem;
@@ -2207,7 +2201,6 @@
 }
 .daw-meter-hpair { display: flex; flex-direction: column; gap: 1px; }
 .daw-track-meter-pair { margin: 0.25rem 0.4rem 0 0.4rem; }
-.daw-master-meter.daw-meter-hpair { width: 4rem; }
 
 /* dB tick scale beside the mixer meter pair */
 .daw-strip-scale {
@@ -2222,14 +2215,6 @@
     padding: 0 1px;
 }
 
-/* Neutralize the legacy single-bar master meter rule for the stereo pair */
-.daw-master-meter.daw-meter-hpair {
-    height: auto;
-    background: none;
-    border: none;
-    border-radius: 0;
-    overflow: visible;
-}
 
 /* Mixer strip pan knob, console-sized */
 .daw-mixer-strip .daw-knob { width: 34px; height: 34px; }

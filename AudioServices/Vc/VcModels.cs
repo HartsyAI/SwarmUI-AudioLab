@@ -51,19 +51,41 @@ public static class VcModels
         LoadAsync = (providerId, modelId, ct) => LoadRvcAsync(ResolveRvcModel(providerId, modelId), ct),
     };
 
+    // RVC voice models ship as native PyTorch `.pth` (the training output); we load that directly (no manual
+    // conversion), and also accept a `.safetensors` a power user dropped in. Search order per variant name.
+    private static readonly string[] RvcExtensions = ["", ".safetensors", ".pth", ".pt"];
+
     private static string ResolveRvcModel(string providerId, string modelId)
     {
         AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId)
             ?? throw new InvalidOperationException($"Unknown audio provider '{providerId}'.");
         string dir = AudioWeights.WeightsDirectory(provider);
         string variant = (modelId ?? "").Trim();
-        string direct = Path.Combine(dir, variant);
-        if (File.Exists(direct))
+        foreach (string ext in RvcExtensions)
         {
-            return direct;
+            string p = Path.Combine(dir, variant + ext);
+            if (File.Exists(p))
+            {
+                return p;
+            }
         }
-        string withExt = Path.Combine(dir, variant + ".safetensors");
-        return File.Exists(withExt) ? withExt : direct; // 'direct' is used in the not-found message
+        return Path.Combine(dir, variant); // not-found path, used in the message below
+    }
+
+    /// <summary>Loads a checkpoint by extension: <c>.safetensors</c> (mmap) or a native PyTorch <c>.pth</c>/<c>.pt</c>
+    /// pickle. Weights keep their stored dtype (fp16 stays fp16 — the model loaders upcast only the host-touched
+    /// weights). Returns the tensor map + the owning loader (kept alive for the tensors' lifetime).</summary>
+    private static (IReadOnlyDictionary<string, Tensor> Tensors, IDisposable Loader) LoadCheckpoint(string path)
+    {
+        if (path.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase))
+        {
+            SafeTensorsLoader st = new();
+            st.Load(path);
+            return (st.GetAllTensors(), st);
+        }
+        PytorchPickleLoader pt = new();
+        pt.Load(path);
+        return (pt.GetAllTensors(), pt);
     }
 
     private static async Task<IVcRunner> LoadRvcAsync(string rvcModelPath, CancellationToken ct)
@@ -71,7 +93,7 @@ public static class VcModels
         if (!File.Exists(rvcModelPath))
         {
             throw new FileNotFoundException(
-                $"RVC voice model not found: '{rvcModelPath}'. Place the RVC voice .safetensors (converted from the .pth) there.", rvcModelPath);
+                $"RVC voice model not found: '{rvcModelPath}'. Drop the RVC voice model (.pth or .safetensors) there.", rvcModelPath);
         }
         string contentVec = Path.Combine(Path.GetFullPath(AudioConfiguration.ModelRoot), ContentVecFile);
         await EnsureContentVecAsync(contentVec, ct).ConfigureAwait(false);
@@ -81,12 +103,12 @@ public static class VcModels
         hubLoader.Load(contentVec);
         hubert.LoadWeights(hubLoader.GetAllTensors());
 
-        RvcPipeline rvc = new(RvcConfig.V2_40k);
-        SafeTensorsLoader rvcLoader = new();
-        rvcLoader.Load(rvcModelPath);
-        rvc.LoadWeights(rvcLoader.GetAllTensors());
+        (IReadOnlyDictionary<string, Tensor> rvcTensors, IDisposable rvcLoader) = LoadCheckpoint(rvcModelPath);
+        RvcConfig cfg = DetectRvcConfig(rvcTensors);
+        RvcPipeline rvc = new(cfg);
+        rvc.LoadWeights(rvcTensors);
 
-        Logs.Info($"[AudioLab][RVC] Loaded voice '{Path.GetFileName(rvcModelPath)}' (40 kHz; ContentVec + YIN F0).");
+        Logs.Info($"[AudioLab][RVC] Loaded voice '{Path.GetFileName(rvcModelPath)}' ({rvc.SampleRate} Hz; ContentVec + YIN F0).");
         // Loaders kept alive for the runner's lifetime (the model tensors reference them); freed on Unload.
         // RVC carries the target voice in its trained weights — the target argument is unused.
         return new VcRunner(rvc.SampleRate, (backend, src, _, req) => ConvertRvc(backend, hubert, rvc, src, req.PitchShift), hubLoader, rvcLoader, rvc);
@@ -120,27 +142,64 @@ public static class VcModels
         Logs.Info($"[AudioLab][RVC] {ContentVecFile} ready.");
     }
 
+    /// <summary>Picks the RVC config from the model's first upsample-kernel width: the ConvTranspose1d kernel is 24
+    /// for 48 kHz (<c>[12,10,2,2]</c>) and 16 for 40 kHz (<c>[10,10,2,2]</c>). weight-norm models store <c>weight_v</c>;
+    /// pre-fused models store <c>weight</c>. Defaults to 40 kHz when the key is absent.</summary>
+    private static RvcConfig DetectRvcConfig(IReadOnlyDictionary<string, Tensor> w)
+    {
+        Tensor? ups0 = w.TryGetValue("dec.ups.0.weight_v", out Tensor? v) ? v
+            : w.TryGetValue("dec.ups.0.weight", out Tensor? ww) ? ww : null;
+        int kernel = ups0 is not null ? (int)ups0.Shape[ups0.Shape.Rank - 1] : 16;
+        return kernel >= 20 ? RvcConfig.V2_48k : RvcConfig.V2_40k;
+    }
+
     private static float[] ConvertRvc(IBackend backend, Hubert hubert, RvcPipeline rvc, float[] source16k, double pitchSemitones)
     {
         int tPcm = source16k.Length;
         Tensor pcm = new(new TensorShape(1, 1, tPcm), DType.F32);
         source16k.AsSpan().CopyTo(pcm.AsSpan<float>());
-        Tensor content = hubert.Forward(backend, pcm, tPcm); // [1, 768, T]
+        Tensor content = hubert.Forward(backend, pcm, tPcm); // [1, 768, T] at 50 Hz (HuBERT frame rate)
         pcm.Dispose();
+        // RVC upsamples the HuBERT features 2× (F.interpolate scale_factor=2, nearest) → 100 Hz, so the NSF
+        // decoder's ∏upsample_rates (400 @ 40k / 480 @ 48k) maps back to the true output rate. Skipping this
+        // halved the output duration (2×-fast, garbled speech). F0 is then sampled at the matching 100 Hz grid.
+        Tensor content2x = Interpolate2xNearest(content);
+        content.Dispose();
         try
         {
-            int contentT = (int)content.Shape[2];
-            float[] f0 = F0Estimator.EstimateYin(source16k, 16_000, hopSize: 320); // 50 Hz, same grid as the content frames
+            int contentT = (int)content2x.Shape[2];
+            float[] f0 = F0Estimator.EstimateYin(source16k, 16_000, hopSize: 160); // 100 Hz, matches the 2× content grid
             if (pitchSemitones != 0d)
             {
                 f0 = RvcPitch.Shift(f0, (float)pitchSemitones);
             }
-            return rvc.Convert(backend, content, AlignF0(f0, contentT), sid: 0);
+            return rvc.Convert(backend, content2x, AlignF0(f0, contentT), sid: 0);
         }
         finally
         {
-            content.Dispose();
+            content2x.Dispose();
         }
+    }
+
+    /// <summary>Nearest-neighbour 2× upsample of the content along time: <c>[1, C, T] → [1, C, 2T]</c> (each frame
+    /// duplicated), matching RVC's <c>F.interpolate(scale_factor=2)</c> before the synthesizer.</summary>
+    private static Tensor Interpolate2xNearest(Tensor content)
+    {
+        int c = (int)content.Shape[1], t = (int)content.Shape[2];
+        ReadOnlySpan<float> src = content.AsSpan<float>();
+        Tensor outT = new(new TensorShape(1, c, 2 * t), DType.F32);
+        Span<float> dst = outT.AsSpan<float>();
+        for (int ch = 0; ch < c; ch++)
+        {
+            int sBase = ch * t, dBase = ch * 2 * t;
+            for (int i = 0; i < t; i++)
+            {
+                float v = src[sBase + i];
+                dst[dBase + 2 * i] = v;
+                dst[dBase + 2 * i + 1] = v;
+            }
+        }
+        return outT;
     }
 
     /// <summary>RVC requires <c>f0.Length == content T</c>; trim or zero-pad (trailing = unvoiced).</summary>

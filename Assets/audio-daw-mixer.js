@@ -243,6 +243,17 @@ const AudioDawMixer = (() => {
         strip.appendChild(dbLabel);
         meterEls.set('__master__', { chans });
 
+        // Loudness readout + clip latch (fed by the DAW's meter loop)
+        const loudRow = createDiv(null, 'daw-strip-loudness');
+        const lufs = createSpan(null, 'daw-master-lufs');
+        lufs.textContent = '-∞ LU';
+        loudRow.appendChild(lufs);
+        const clipDot = createSpan(null, 'daw-master-clip');
+        clipDot.title = 'Master clip indicator — click to reset';
+        clipDot.addEventListener('click', () => clipDot.classList.remove('lit'));
+        loudRow.appendChild(clipDot);
+        strip.appendChild(loudRow);
+
         const btns = createDiv(null, 'daw-strip-btns');
         strip.appendChild(btns);
         return strip;
