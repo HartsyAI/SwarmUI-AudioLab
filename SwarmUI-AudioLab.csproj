@@ -31,7 +31,10 @@
        like every other package. Verified via a from-scratch restore against nuget.org only
        (cleared sources, fresh package cache) — not just checking the version index. -->
   <ItemGroup Condition="'$(UseLocalHartsy)' != 'true'">
-    <PackageReference Include="HartsyInference" Version="1.0.0-alpha.47" />
+    <!-- 2026-07-12: bumped to alpha.48 (ACE-Step DiT GPU-residency rewrite + prior work); the engine
+         repo publishes it on push. If a build hits NU1603 / can't restore, alpha.48 has not indexed on
+         nuget.org yet — wait for the flat-container index, then rebuild with a cleared package cache. -->
+    <PackageReference Include="HartsyInference" Version="1.0.0-alpha.48" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs (NOT ProjectReferences — see SwarmUI-LLMAssistant.csproj
