@@ -517,8 +517,13 @@ public static class MusicModels
             ?? throw new InvalidOperationException($"Unknown audio provider '{providerId}'.");
         string baseDir = AudioWeights.WeightsDirectory(provider);
         string variant = (modelId ?? "").Trim();
+        // Folder-checkpoint providers (YuE) load a whole variant DIRECTORY (sharded weights + sidecars); the
+        // registry's per-variant download set lands in "{variant}/…", so resolve to that folder.
+        if (AudioWeightsRegistry.IsFolderCheckpoint(providerId))
+        {
+            return string.IsNullOrEmpty(variant) ? baseDir : Path.Combine(baseDir, variant);
+        }
         // Single-file providers (ACE-Step) register the variant→filename map; map to the real .safetensors.
-        // Folder-checkpoint providers (YuE) have no registry entry — fall back to the variant as a subpath.
         AudioWeightsRegistry.DownloadSpec spec = AudioWeightsRegistry.Resolve(providerId, variant);
         if (spec is not null)
         {
@@ -551,8 +556,8 @@ public static class MusicModels
         }
         string tokenizerPath = FindSibling(folder, "tokenizer.model")
             ?? throw new InvalidOperationException($"YuE needs 'tokenizer.model' (mm_tokenizer_v0.2_hf) in or beside '{folder}'.");
-        string xcodecPath = FindSibling(folder, "xcodec.safetensors")
-            ?? throw new InvalidOperationException($"YuE needs 'xcodec.safetensors' (converted from m-a-p/xcodec_mini_infer) in or beside '{folder}'.");
+        string xcodecPath = EnsureYueXCodec(folder)
+            ?? throw new InvalidOperationException($"YuE needs 'xcodec.safetensors' (or the X-Codec 'ckpt_00360000.pth' from m-a-p/xcodec_mini_infer, which the installer downloads and this loader auto-converts) in or beside '{folder}'.");
 
         YueConfig config = YueConfig.V1;
         YueTokenizer tokenizer = new(tokenizerPath);
@@ -623,6 +628,54 @@ public static class MusicModels
     }
 
     /// <summary>Finds a file inside the checkpoint folder, then one directory up (so variants can share one copy).</summary>
+    /// <summary>Ensures a loadable <c>xcodec.safetensors</c> exists for YuE, converting the downloaded X-Codec
+    /// torch checkpoint (<c>m-a-p/xcodec_mini_infer/final_ckpt/ckpt_00360000.pth</c>) on first use. The .pth is a
+    /// pickled <c>{codec_model: state_dict}</c>; we keep only the tensors the engine's X-Codec loader actually
+    /// maps (its <see cref="YueCheckpointConverter.MapXCodecKey"/> drops the encoder/discriminator/semantic-train
+    /// branches) and write them with their original keys, so the normal <c>LoadXCodec</c> path re-maps them
+    /// identically. Returns the safetensors path, or null if neither the converted file nor the .pth is present.</summary>
+    private static string EnsureYueXCodec(string folder)
+    {
+        string existing = FindSibling(folder, "xcodec.safetensors");
+        if (existing is not null)
+        {
+            return existing;
+        }
+        string parent = Directory.GetParent(folder)?.FullName ?? folder;
+        string[] candidates =
+        [
+            Path.Combine(parent, "xcodec", "ckpt_00360000.pth"),
+            Path.Combine(folder, "xcodec", "ckpt_00360000.pth"),
+            Path.Combine(parent, "ckpt_00360000.pth"),
+            Path.Combine(folder, "ckpt_00360000.pth"),
+        ];
+        string pth = candidates.FirstOrDefault(File.Exists);
+        if (pth is null)
+        {
+            return null;
+        }
+        string outPath = Path.Combine(parent, "xcodec.safetensors");
+        Logs.Info($"[AudioLab][YuE] Converting X-Codec '{Path.GetFileName(pth)}' → xcodec.safetensors (one-time)...");
+        using PytorchPickleLoader loader = new();
+        loader.Load(pth, recursiveFlatten: true);
+        Dictionary<string, Tensor> raw = loader.GetAllTensors();
+        Dictionary<string, Tensor> keep = new(StringComparer.Ordinal);
+        foreach ((string key, Tensor tensor) in raw)
+        {
+            if (YueCheckpointConverter.MapXCodecKey(key) is not null)
+            {
+                keep[key] = tensor;
+            }
+        }
+        if (keep.Count == 0)
+        {
+            throw new InvalidDataException($"X-Codec checkpoint '{pth}' yielded no usable acoustic tensors — unexpected key layout.");
+        }
+        SafeTensorsWriter.Save(outPath, keep);
+        Logs.Info($"[AudioLab][YuE] Wrote {keep.Count} X-Codec acoustic tensors to '{outPath}'.");
+        return outPath;
+    }
+
     private static string FindSibling(string folder, string fileName)
     {
         string inside = Path.Combine(folder, fileName);

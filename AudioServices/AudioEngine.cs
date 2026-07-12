@@ -147,10 +147,18 @@ public static class AudioEngine
         string spvDir = Path.Combine(extDir, "Spirv");
         Logs.Debug($"[AudioLab] Audio engine kernels: PTX={ptxDir} (exists={Directory.Exists(ptxDir)}), SPIR-V={spvDir} (exists={Directory.Exists(spvDir)})");
 
+        // CUDA device ordinal is configurable so a multi-GPU box can pin audio to a specific card
+        // (e.g. keep music/TTS off the GPU a large image/video model is resident on). Default 0
+        // preserves the historical single-GPU behavior. Ordinal follows CUDA's own enumeration.
+        int cudaOrdinal = 0;
+        if (int.TryParse(Environment.GetEnvironmentVariable("HARTSY_AUDIO_CUDA_DEVICE"), out int envOrdinal) && envOrdinal >= 0)
+        {
+            cudaOrdinal = envOrdinal;
+        }
         try
         {
-            CudaBackend cuda = new(0, ptxDir);
-            Logs.Init($"[AudioLab] Audio engine using CUDA: {cuda.Capabilities.Name} (device={cuda.Device}).");
+            CudaBackend cuda = new(cudaOrdinal, ptxDir);
+            Logs.Init($"[AudioLab] Audio engine using CUDA: {cuda.Capabilities.Name} (device={cuda.Device}, ordinal={cudaOrdinal}).");
             return cuda;
         }
         catch (Exception ex)

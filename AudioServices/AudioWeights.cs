@@ -165,6 +165,16 @@ public static class AudioWeights
             {
                 try { File.Delete(tmpPath); } catch { }
             }
+            // A genuine download failure (not a user cancel) falls back to the spec's alternate source when it
+            // has one — e.g. prefer a pre-converted repack, but still install off the canonical full checkpoint
+            // if the repack host is down / not yet published.
+            if (spec.Fallback is not null && !cancel.IsCancellationRequested)
+            {
+                Logs.Warning($"[AudioLab] Primary source for '{spec.FileName}' failed ({ex.Message}); falling back to '{spec.Fallback.FileName}'.");
+                onProgress?.Invoke($"{spec.FileName} unavailable from the preferred source — using fallback...");
+                await EnsureWeightAsync(spec.Fallback, dir, onProgress, cancel);
+                return;
+            }
             Logs.Error($"[AudioLab] Failed to download audio checkpoint '{spec.FileName}': {ex.Message}");
             throw;
         }

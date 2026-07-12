@@ -18,6 +18,11 @@ public static class AudioWeightsRegistry
     public sealed record DownloadSpec(string Url, string FileName, string Sha256)
     {
         public bool HasHash => !string.IsNullOrEmpty(Sha256);
+
+        /// <summary>Optional alternate source, tried (recursively) only if the primary URL fails to download.
+        /// Used so an install prefers a small pre-converted repack but still succeeds off the canonical
+        /// full-size source when the repack host is unreachable / not yet published.</summary>
+        public DownloadSpec Fallback { get; init; }
     }
 
     private const string HfAce = "https://huggingface.co/ACE-Step/";
@@ -56,11 +61,60 @@ public static class AudioWeightsRegistry
         AceSilenceLatent,
     ];
 
+    private const string HfYue = "https://huggingface.co/m-a-p/";
+
+    /// <summary>The shared X-Codec acoustic decoder. DEFAULT = a small pre-converted <c>xcodec.safetensors</c>
+    /// repack (the decode-only tensors, ~0.8 GB) hosted by us — the install downloads it ready-to-load with NO
+    /// on-the-fly conversion. FALLBACK (repack host unreachable / not yet published) = the canonical
+    /// m-a-p/xcodec_mini_infer torch <c>.pth</c> (1.36 GB), which the YuE loader converts to
+    /// <c>xcodec.safetensors</c> ONCE on first load and reuses thereafter. Byte-identical across YuE variants,
+    /// so one copy lives beside the per-variant folders (FileName has no variant prefix).</summary>
+    private static readonly DownloadSpec YueXCodec = new(
+        Url: "https://huggingface.co/HartsyAI/YuE-xcodec-mini-safetensors/resolve/main/xcodec.safetensors",
+        FileName: "xcodec.safetensors",
+        Sha256: "")
+    {
+        Fallback = new(
+            Url: HfYue + "xcodec_mini_infer/resolve/main/final_ckpt/ckpt_00360000.pth",
+            FileName: "xcodec/ckpt_00360000.pth",
+            Sha256: ""),
+    };
+
+    /// <summary>YuE Stage-1 (7B, ~12.5GB): the m-a-p/YuE-s1-7B-anneal-{variant} folder — 3 sharded safetensors +
+    /// index + config + tokenizer, downloaded into a per-variant subfolder — plus the shared X-Codec .pth. The
+    /// engine loads the folder (sharded) and converts the .pth to xcodec.safetensors on first load.</summary>
+    private static DownloadSpec[] YueVariant(string variant)
+    {
+        string repo = $"{HfYue}YuE-s1-7B-anneal-{variant}/resolve/main/";
+        string[] files = ["model-00001-of-00003.safetensors", "model-00002-of-00003.safetensors",
+            "model-00003-of-00003.safetensors", "model.safetensors.index.json", "config.json",
+            "generation_config.json", "tokenizer.model"];
+        DownloadSpec[] set = new DownloadSpec[files.Length + 1];
+        for (int i = 0; i < files.Length; i++)
+        {
+            set[i] = new(Url: repo + files[i], FileName: $"{variant}/{files[i]}", Sha256: "");
+        }
+        set[^1] = YueXCodec;
+        return set;
+    }
+
+    /// <summary>Providers whose checkpoint is a multi-file FOLDER (sharded weights + sidecars), not a single
+    /// <c>.safetensors</c>. Their load path resolves to the variant DIRECTORY, and downloads land in a
+    /// <c>{variant}/</c> subfolder rather than a single file.</summary>
+    public static bool IsFolderCheckpoint(string providerId) => providerId == "yue_music";
+
     /// <summary>(providerId → (modelId → file set)). The FIRST spec in each set is the primary checkpoint
     /// (what <see cref="Resolve"/> returns for load-path resolution). Absent entries mean "engine can't run
     /// this variant yet".</summary>
     private static readonly Dictionary<string, Dictionary<string, DownloadSpec[]>> _registry = new()
     {
+        ["yue_music"] = new()
+        {
+            ["en-cot"] = YueVariant("en-cot"),
+            ["en-icl"] = YueVariant("en-icl"),
+            ["zh-cot"] = YueVariant("zh-cot"),
+            ["zh-icl"] = YueVariant("zh-icl"),
+        },
         ["acestep_music"] = new()
         {
             // Every variant is distinct weights (distinct upstream sha256s) — do NOT alias them.
