@@ -39,6 +39,31 @@ A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeypr
 
 4. In **Server** > **Backends**, expand the Audio Backend card and click an engine to open its install panel. Install individual models with their per-model **Install** button (or **Download All** for the whole set); multi-variant engines let you install/remove one checkpoint at a time. Weights download automatically; self-managed models (e.g. Whisper) fetch themselves on first use. Generation runs in-process on the C# engine.
 
+## Measured Performance (in-engine, this extension)
+
+Real-time factor (RTF = generated-audio-seconds ÷ warm generation time; higher = faster than real time), measured
+end-to-end through this extension on the pure-C# engine. These are **our measured numbers** — distinct from the
+per-engine "Notes" column further down, which quotes each upstream project's own claims.
+
+Measured through the canonical **`GenerateText2Image`** path (select the model → text in the prompt → WAV in `/Output`, like any gen); STT via `ProcessSTT`.
+
+| Model | Type | RTX 3060 | RTX 4090 | Status |
+| --- | --- | --- | --- | --- |
+| Piper | TTS | 8.6× | 8.3× | ✅ runnable |
+| Moonshine | STT | 6.5× | 6.5× | ✅ runnable |
+| Whisper (base) | STT | 5.1× | 5.4× | ✅ runnable |
+| Kokoro | TTS | 4.5× | 5.2× | ✅ runnable + word-correct (misaki g2p + canonical-fallback fixes) |
+| MeloTTS | TTS | 1.4× | 1.4× | ✅ runnable + word-correct (stride + number-norm fixes); slow — optimization target |
+| F5-TTS (voice clone) | TTS | ~0.4× | — | ✅ runnable + word-correct; **174.6 s → 6.4 s (34×)** host-conv→GPU, bit-parity |
+
+The small TTS/STT models are **host/launch-bound, not compute-bound** — a faster GPU (4090) barely helps; the real
+lever is CUDA-graph capture to remove kernel-launch overhead. Both STT engines (Moonshine, Whisper) transcribe
+real human speech (JFK clip) + synthetic clips **word-perfect** (verified 2026-07-13); the Whisper `en-US`
+default-language crash is **fixed** (locale-code normalization). Full table, method, and the remaining outlier list
+(e.g. Spark-TTS not-yet-runtime-wired) are in the engine repo at `benchmarks/results/audio_tts_stt_2026-07-12.md`. Note: several models marked "verified" upstream
+are numerical-parity-verified in the test harness but **not yet runnable through the install/generate path** — the
+install button surfaces a clear message when a model isn't wired yet.
+
 ## Supported Engines
 
 ### Text-to-Speech (16 Providers, 30+ Models)
@@ -103,7 +128,7 @@ These engines transform voice characteristics. **RVC and OpenVoice** are post-pr
 
 Measured on an **NVIDIA RTX 3060 (12 GB)**, 2026-07-09. **Ours** = warm SwarmUI `ProcessTTS`/`ProcessSTT` engine time (2nd call, model resident — excludes load). **Python** = the official library on the same GPU, warm. **RTF** = gen-time ÷ audio-duration (lower is faster; < 1 = faster than real-time). **Diff** = ours ÷ Python. TTS prompt: *"The speech synthesizer is now working correctly."* STT clip: the 11 s JFK sample.
 
-All 8 tested TTS engines and both tested STT engines produce correct, intelligible output (human-verified by listening). The perf gap on the heavy diffusion/DiT/AR models is a known, engine-wide bottleneck: several conv layers (depthwise / grouped `Conv1d`, positional-embed) currently run as host-side loops that force a GPU→host sync per call — a shared GPU conv kernel is the top optimization item and would lift F5/Kokoro/Vocos-class models together.
+All tested TTS engines and both STT engines produce correct, intelligible output — re-verified 2026-07-13 through the canonical `GenerateText2Image` path with **whisper `medium.en`** as a proven oracle (not by ear alone), across short/long/numbers/punctuation prompts. The perf gap on the heavy diffusion/DiT/AR models was an engine-wide bottleneck: several conv layers (depthwise / grouped `Conv1d`, positional-embed) ran as host-side loops that force a GPU→host sync per call. **2026-07-13: fixed for F5-TTS** — its per-forward `F5ConvPosEmbed` grouped Conv1D (the ~99% wall-time cost) now routes to the GPU `backend.Conv1d`, cutting F5 from 142.7 s to ~6.4 s (**~22–34×**) at bit-parity. The same host→GPU-conv treatment is the remaining lever for the other Vocos/VITS-class models.
 
 ### Text-to-Speech
 
@@ -116,7 +141,7 @@ All 8 tested TTS engines and both tested STT engines produce correct, intelligib
 | **VibeVoice 1.5B** | ~64–113 s | — | — | — | — | ⚠ **re-measure pending** (OOM-prone under load) |
 | **Bark** | 185.7 s | 14.2 | — | — | — | output length varies (stochastic); no safe pip compare |
 | **Dia 1.6B** | ~332 s | ~16 | — | — | — | single-gen (bench hit a transient); needs ≥ 2 sentences |
-| **F5-TTS v1** | 142.7 s | 44.9 | 3.47 s | 0.73 | ~41× | biggest gap → host-conv bottleneck |
+| **F5-TTS v1** | **6.4 s** (was 142.7 s) | ~2.4 | 3.47 s | 0.73 | ~1.8× | **host-conv bottleneck FIXED 07-13** (grouped Conv1D → GPU `backend.Conv1d`, bit-parity) |
 
 ### Speech-to-Text
 

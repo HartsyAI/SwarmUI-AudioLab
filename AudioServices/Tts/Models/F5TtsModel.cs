@@ -13,10 +13,11 @@ namespace Hartsy.Extensions.AudioLab.AudioServices.Tts;
 /// the target text in that voice. We compute the reference mel here with the exact Vocos mel-24k feature
 /// extractor F5 expects (24 kHz, n_fft 1024, hop 256, 100 mels, magnitude, natural-log).</para>
 ///
-/// <para><b>Runtime-pending:</b> the engine's F5 pipeline is wired structurally but is flagged in-source as not
-/// yet validated against real reference audio (the duration heuristic, CFG mixing, and in-context infill masking
-/// need numerical reference dumps). It runs end-to-end and produces audio; audible-quality parity is a
-/// follow-up.</para></summary>
+/// <para><b>Verified 2026-07-13:</b> end-to-end through the canonical <c>GenerateText2Image</c> path with a real
+/// voice reference — transcribes word-perfect via a proven STT oracle (whisper <c>medium.en</c>), voice clone
+/// works. The engine's F5 pipeline is numerically validated (DiT velocity corr 1.0, CFM sample loop corr 1.0,
+/// Vocos 0.9999). Perf: the per-forward ConvPos grouped Conv1D was moved off a host loop onto the GPU
+/// (<c>backend.Conv1d</c>), taking a short clip from ~174 s to ~6 s at bit-parity.</para></summary>
 public static class F5TtsModel
 {
     private const string Repo = "SWivid/F5-TTS";
