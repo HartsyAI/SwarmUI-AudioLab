@@ -164,21 +164,26 @@ public static class TtsModels
     /// Auto-downloads the model; the separate Descript DAC 44 kHz codec is user-placed.</summary>
     public static readonly TtsModelDescriptor Dia = new()
     {
-        ResolveRepo = _ => "nari-labs/Dia-1.6B",
+        // Use the 0626 release, NOT the original Dia-1.6B: the two share architecture/keys/shapes exactly but
+        // the original checkpoint's weights degenerate through the engine (loops the opening turn / non-verbal
+        // garbage across seeds), while 0626 produces the full multi-turn dialogue word-correct — verified by
+        // A/B against the nari-labs `dia` package (which itself defaults to 0626). Ships as pytorch_model.bin.
+        ResolveRepo = _ => "nari-labs/Dia-1.6B-0626",
         LoadAsync = async (_, ct) =>
         {
-            string modelPath = await AudioModelCache.GetAsync("nari-labs/Dia-1.6B", "model.safetensors", ct: ct).ConfigureAwait(false);
+            string modelPath = await AudioModelCache.GetAsync("nari-labs/Dia-1.6B-0626", "pytorch_model.bin", ct: ct).ConfigureAwait(false);
             // The Descript DAC 44 kHz codec auto-downloads — the canonical descript .pth has the layout the engine
             // expects (the HF safetensors mirrors are MLX/HF-reshaped and would not load).
             string dacPath = await AudioModelCache.GetAsync("descript/descript-audio-codec", "weights.pth", ct: ct).ConfigureAwait(false);
-            SafeTensorsLoader modelLoader = new();
-            modelLoader.Load(modelPath);
+            // 0626 is a flat pickle state_dict; non-recursive flatten keeps the encoder./decoder. prefixes intact.
+            PytorchPickleLoader modelLoader = new();
+            modelLoader.Load(modelPath, recursiveFlatten: false);
             PytorchPickleLoader dacLoader = new();
             dacLoader.Load(dacPath);
 
             DiaPipeline pipeline = new(DiaConfig.Dia1_6B);
             pipeline.LoadWeights(modelLoader.GetAllTensors(), dacLoader.GetAllTensors());
-            Logs.Info("[AudioLab][Dia] Loaded nari-labs/Dia-1.6B (byte-level dialogue TTS, 44.1 kHz).");
+            Logs.Info("[AudioLab][Dia] Loaded nari-labs/Dia-1.6B-0626 (byte-level dialogue TTS, 44.1 kHz).");
 
             return new TtsRunner(44_100,
                 (backend, req) =>

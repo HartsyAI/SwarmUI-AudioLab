@@ -4,7 +4,7 @@ A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeypr
 
 ## Features
 
-- **Text-to-Speech (TTS)** — 16 providers: Chatterbox, Kokoro, Bark, Orpheus, Piper, Dia, F5-TTS, Fish Speech, Pocket TTS, Kyutai TTS, Qwen3, Zonos, CSM, VibeVoice, CosyVoice, and NeuTTS
+- **Text-to-Speech (TTS)** — 17 providers: Chatterbox, Kokoro, Bark, Orpheus, Piper, Dia, F5-TTS, StyleTTS2, Fish Speech, Pocket TTS, Kyutai TTS, Qwen3, Zonos, CSM, VibeVoice, CosyVoice, and NeuTTS
 - **Speech-to-Text (STT)** — 5 providers: Whisper, Kyutai STT, Distil-Whisper, Moonshine, and RealtimeSTT
 - **Audio Generation** — ACE-Step 1.5 (6 DiT models, 6 task types, lyrics alignment, 50 languages), MusicGen (text-to-music with melody conditioning), and AudioGen (text-to-sound-effects)
 - **Voice Conversion** — RVC (re-voice existing audio), OpenVoice (tone/style transfer), GPT-SoVITS (TTS with cloned voice)
@@ -140,7 +140,7 @@ All tested TTS engines and both STT engines produce correct, intelligible output
 | **NeuTTS-air** | 46 s | ~6 | — | — | — | voice-clone (needs a reference) |
 | **VibeVoice 1.5B** | ~64–113 s | — | — | — | — | ⚠ **re-measure pending** (OOM-prone under load) |
 | **Bark** | 185.7 s | 14.2 | — | — | — | output length varies (stochastic); no safe pip compare |
-| **Dia 1.6B** | ~332 s | ~16 | — | — | — | single-gen (bench hit a transient); needs ≥ 2 sentences |
+| **Dia 1.6B** | ~320 s | ~0.036 | — | — | 10/10 | **fixed 2026-07-15** (word-correct via `Dia-1.6B-0626` checkpoint; EOS-stops at 11.4 s); slowest TTS (dual-CFG F32) |
 | **F5-TTS v1** | **6.4 s** (was 142.7 s) | ~2.4 | 3.47 s | 0.73 | ~1.8× | **host-conv bottleneck FIXED 07-13** (grouped Conv1D → GPU `backend.Conv1d`, bit-parity) |
 
 ### Speech-to-Text

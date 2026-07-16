@@ -31,7 +31,7 @@ rebuild — restart ≠ rebuild) and (b) F5/VibeVoice **refusing without a requi
 | bark_tts | default | ⚠️ | 55 | 4.8s | 1475 | 0.94 | intelligible but **staticy/robotic** (user). "quick *ground* fox" |
 | kokoro_tts | default | ✅ | **2.5** | 2.6s | 1200 | ~0.9 | clean, fast, good volume ("As she sells seashells…") |
 | chatterbox_tts | default | ✅ | **9.3** | 2.4s | 2794 | 0.94 | fast, good; default voice only (ref cloning gated) |
-| dia_tts | 1.6b | ⚠️ | **347** | 20s | 3579 | — | correct words but **loops the phrase**; unusably slow |
+| dia_tts | 1.6b | ✅ **fixed 2026-07-15** | **320** (11.4s, EOS-stops) | 11.4s | 3579 | 10/10 | was the **WRONG CHECKPOINT** — switched `Dia-1.6B`→`Dia-1.6B-0626` (drop-in); now full 3-turn dialogue word-perfect through Swarm, stops itself at 11.4s. Still slow (dual-CFG F32, RTF ~0.036×). |
 | f5_tts | v1-base | ⚠️ | 226 | 4.1s | 1276 | 0.97 | Whisper decodes it, but **audibly a slow distorted robot** (user). Needs ref+ref-text |
 | fishspeech_tts | fish-speech-1.5 | ⚠️ | **8.1** | 4.5s | **222** | 0.97 | great vocals but **~10× too quiet** (user + RMS 222 vs 1500–7800) |
 | neutts_tts | air | ⚠️ | 50 | 4.7s | 7861 | 0.85 | decent, slightly robotic; **appends trailing garble** ("Blackface") → EOS bug. Default voice only |
@@ -51,7 +51,7 @@ Installed via `AudioLabInstallEngine`; each refuses at weight-prefetch with a **
 | sparktts_tts | 0.5B | ⛔ | `SparkTtsConfig` token offsets + BiCodec decoder keys checkpoint-reconciliation-pending |
 | cosyvoice_tts | 2-0.5b | ⛔ | engine text front-end pending |
 | pockettts_tts | default | ⛔ | placeholder (zero) config dims + SentencePiece tokenizer asset not wired |
-| styletts2_tts | libritts | ⛔ | no unified `LoadWeights` for the Kokoro submodules from the LibriTTS checkpoint |
+| styletts2_tts | libritts | ✅ | **2026-07-15** zero-shot voice clone (supply a reference clip); StyleEncoder corr 1.0 + HiFiGAN corr 0.999999; Swarm e2e Whisper `medium.en` 12/13. No-reference/Random mode still a scaffold |
 
 > **Correction to the earlier "espeak now works → unblocks Piper/Zonos/MeloTTS" note:** espeak *is*
 > present (NeuTTS uses it), but it is **not sufficient** for any of these three — MeloTTS still needs
@@ -120,7 +120,7 @@ per-token host↔GPU sync overhead is the remaining speed bottleneck (GPU util ~
 | chatterbox_tts | default | ✅ | 18.0 | **15.2** | **0.50** | 5084 | 0.22 | 66s → 15.2s across the two engine fixes (weight residency + ProjectLinear); output bit-identical (same WER). Python-class perf on this GPU |
 | kokoro_tts | default (af_heart) | ✅ | 2.5 | **2.0** | **4.31** | 5508 | 0.30 | 8.4s → 2.0s; within the Python reference range for Kokoro-82M |
 | bark_tts | default | ✅ | 189 (13.0s audio) | — | 0.07 | 5260 | 0.52* | required 4 engine fixes (see above); *unconditioned random speaker, quiet — voice presets pending |
-| dia_tts | 1.6b | ✅ fixed (port-correct) | 1240 (20s dialogue) | 905 | 0.02 | 11721 | 0.84* | **9 recipe deviations fixed vs upstream**; step-0 logits corr 1.000000 with upstream torch; engine RMS matches upstream (0.1055 vs 0.1079). *First `[S1]` line transcribes verbatim (proves correctness); later dialogue lines degrade — a model limitation (upstream shows the same), not a port bug. Peak-level "clipping" is loud-but-legit speech. Short prompts → silence (upstream too; extension warns). Slow (F32, long dialogue); VRAM hygiene keeps it under the 12GB edge |
+| dia_tts | 1.6b | ✅ **word-correct (Swarm 10/10) 2026-07-15** | 985 (11.4s dialogue) | 985 | 0.036 | 11721 | 10/10 | **The "later dialogue lines degrade — a model limitation" conclusion was WRONG.** The real cause was the **old checkpoint** (`nari-labs/Dia-1.6B`); the current **`nari-labs/Dia-1.6B-0626`** (drop-in — identical keys/shapes) produces the **full 3-turn dialogue** and **EOS-stops at 11.4s**. Proven by a layer-diff A/B vs the nari `dia` package (which hardcodes `-0626`) — the engine port was faithful all along. Still slow (dual-CFG F32); perf pass pending. |
 | f5_tts | v1-base | ⚠️ | 454 (~7.3s audio) | 455 | 0.016 | 10165 | **0.125** | correct + zero-shot clone works; 60x slower than Python — `F5Ops` runs adaLN/norms as CPU loops (GPU-residency refactor queued) |
 | qwen3_tts | 1.7B-CustomVoice | ✅ **fixed** (was always-OOM) | 112 | **109** | **1.04** | 8389 | ~1.0* | FIVE stacked bugs fixed: Reshape GC-use-after-free; talker-loop OOM (pre-decode `FreeActivations`); vocoder dim 512-vs-256 OOB (AccessViolation); **EOS never fired** → babbled to cap+OOM (faithful stop-condition port); dim guards. Now **realtime, 8GB** — the hardest case in the catalog, from always-crashes to working. Plus synchronous GPU-cache eviction. *speaks input then minor rambling tail |
 | qwen3_tts | 0.6B-CustomVoice | ✅ **fixed** (was instant-crash) | 23 | **20** | **1.06** | 5060 | ~1.0* | was instant `INVALID_VALUE`: talker (hidden 1024) + MTP assumed 1.7B's 2048 dims. Now **faster-than-realtime**, first sentence verbatim. *minor rambling tail after correct content (EOS calibration) |
@@ -135,7 +135,7 @@ per-token host↔GPU sync overhead is the remaining speed bottleneck (GPU util ~
 | piper_tts | default | ⛔ gated | — | — | — | — | — | needs espeak-ng phonemizer + phoneme_id_map + ONNX loader |
 | melotts_tts | english-v3 | ⛔ gated | — | — | — | — | — | needs espeak + tone/lang streams + BERT features |
 | sparktts_tts | 0.5B | ⛔ gated | — | — | — | — | — | token offsets + BiCodec keys reconciliation pending |
-| styletts2_tts | libritts | ⛔ gated | — | — | — | — | — | no unified LoadWeights yet |
+| styletts2_tts | libritts | ✅ | ~5 s | ~1.3× | — | — | 12/13 | **2026-07-15** clone (needs reference clip); host/launch-bound like other small TTS |
 | zonos_tts | transformer | ⛔ gated | — | — | — | — | — | needs espeak conditioning prefix |
 
 ## STT
