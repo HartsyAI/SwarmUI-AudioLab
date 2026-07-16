@@ -50,7 +50,7 @@ Installed via `AudioLabInstallEngine`; each refuses at weight-prefetch with a **
 | zonos_tts | transformer | ⛔ | needs a precomputed conditioning prefix (espeak phones + speaker/emotion/rate) + uncond counterpart |
 | sparktts_tts | 0.5B | ✅ | **2026-07-16** controllable synth live in Swarm (Qwen2.5-0.5B LM + BiCodec, 16 kHz). Whisper `medium.en` word-perfect. Engine bit-exact (LM corr 1.0, BiCodec wav 1.0). Style: gender via voice field + speed→coarse buckets; zero-shot clone not wired (needs BiCodec encoder) |
 | cosyvoice_tts | 2-0.5b | ⛔ | engine text front-end pending |
-| pockettts_tts | default | ⛔ | placeholder (zero) config dims + SentencePiece tokenizer asset not wired |
+| pockettts_tts | default | ✅ | **2026-07-16** continuous-latent flow-LM synth live in Swarm (voice-KV-primed, English, 24 kHz). Whisper `medium.en` word-perfect. Engine port real-weight PARITY-VERIFIED (all layers + hidden + latents corr 1.0). Voice required (default `alba`); weights = non-gated `kyutai/pocket-tts-without-voice-cloning` `languages/english/` |
 | styletts2_tts | libritts | ✅ | **2026-07-15** zero-shot voice clone (supply a reference clip); StyleEncoder corr 1.0 + HiFiGAN corr 0.999999; Swarm e2e Whisper `medium.en` 12/13. No-reference/Random mode still a scaffold |
 
 > **Correction to the earlier "espeak now works → unblocks Piper/Zonos/MeloTTS" note:** espeak *is*
@@ -131,7 +131,7 @@ per-token host↔GPU sync overhead is the remaining speed bottleneck (GPU util ~
 | csm_tts | 1b | ✅ un-gated, reverify pending | — | — | — | — | — | was HF 401. Now `nielsr/csm-1b` — non-gated mirror, verified byte-identical original format (backbone/decoder/text_embeddings, 187 tensors), no token needed. May hit engine Llama-3-tokenizer gate at synth (verify next) |
 | kyutaitts_tts | 1.6b-en-fr | ✅ | ~5.5 s | — | — | — | word-perfect | **2026-07-16** delayed-streams synth live in Swarm (Helium backbone + Mimi DSM). Whisper `medium.en` word-perfect ("Kyutai"→"QTIE" = whisper brand mishearing). Pre-embedded voice (default `expresso/ex03-...`); moshi `script_to_entries` (padding_between=1 + Main token) + cfg=2.0; peak 0.47 no clipping |
 | cosyvoice_tts | 2-0.5b | ⛔ gated | — | — | — | — | — | engine front-end pending |
-| pockettts_tts | default | ⛔ gated | — | — | — | — | — | placeholder dims + missing SentencePiece asset |
+| pockettts_tts | default | ✅ | ~4.5 s | — | — | — | word-perfect | **2026-07-16** flow-LM synth live in Swarm (24 kHz); engine port parity-verified (corr 1.0); voice-KV priming; from-scratch engine bring-up |
 | piper_tts | default | ⛔ gated | — | — | — | — | — | needs espeak-ng phonemizer + phoneme_id_map + ONNX loader |
 | melotts_tts | english-v3 | ⛔ gated | — | — | — | — | — | needs espeak + tone/lang streams + BERT features |
 | sparktts_tts | 0.5B | ✅ | ~5.9 s | — | — | — | word-perfect | **2026-07-16** controllable synth live in Swarm (16 kHz); engine bit-exact; extension-only wire-up vs alpha.49 |
