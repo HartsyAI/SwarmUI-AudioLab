@@ -37,4 +37,9 @@
 /python_backend/engines/__pycache__
 /python_backend/venvs
 /.vs
+# Local NuGet feed config — never commit. Git is case-sensitive on Linux, so list every casing
+# (the actual file ships as NuGet.config, which the lowercase pattern below did NOT match → it got
+# committed by accident once).
 nuget.config
+NuGet.config
+Nuget.config

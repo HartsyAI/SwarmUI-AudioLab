@@ -31,10 +31,13 @@
        like every other package. Verified via a from-scratch restore against nuget.org only
        (cleared sources, fresh package cache) — not just checking the version index. -->
   <ItemGroup Condition="'$(UseLocalHartsy)' != 'true'">
-    <!-- 2026-07-12: bumped to alpha.48 (ACE-Step DiT GPU-residency rewrite + prior work); the engine
-         repo publishes it on push. If a build hits NU1603 / can't restore, alpha.48 has not indexed on
-         nuget.org yet — wait for the flat-container index, then rebuild with a cleared package cache. -->
-    <PackageReference Include="HartsyInference" Version="1.0.0-alpha.48.4-local" />
+    <!-- Pin an EXACT version PUBLISHED on nuget.org. NEVER a "-local" suffix: those are locally-packed
+         builds that live only on the dev machine's feed and are NOT on nuget.org, so a fresh clone fails
+         restore with NU1301 (the "missing local dll" error). alpha.49 = latest published (Kyutai TTS
+         intelligible-e2e fix + ACE-Step DiT GPU-residency). If a build hits NU1603, the version hasn't
+         indexed yet — wait for the flat-container index, then rebuild with a cleared package cache.
+         Verify at https://api.nuget.org/v3-flatcontainer/hartsyinference/index.json -->
+    <PackageReference Include="HartsyInference" Version="1.0.0-alpha.49" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs (NOT ProjectReferences — see SwarmUI-LLMAssistant.csproj
