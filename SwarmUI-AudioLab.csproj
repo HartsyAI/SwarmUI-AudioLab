@@ -13,14 +13,14 @@
   </PropertyGroup>
   <Import Project="../../SwarmUI.extension.props" />
 
-  <!-- After the import: override the two extension-wide defaults it sets.
-       TargetFramework net10.0 — the engine (and this box's runtime) is net10.0; a net8.0 target can't
-       reference the net10.0 engine assemblies (NuGet net10.0 assets / local net10.0 HintPaths below), so
-       the extension TFM must match. The net8.0-built SwarmUI host loads a net10.0 extension on the net10.0
-       runtime. CopyLocalLockFileAssemblies — copy the engine's private DLLs into our output so the
-       per-extension AssemblyLoadContext can resolve them. -->
+  <!-- Inherit TargetFramework net8.0 from SwarmUI.extension.props (matches the net8.0 SwarmUI host). Do NOT
+       override to net10.0: the HartsyInference engine is MULTI-TARGET (net8.0 + net10.0), so a net8.0 extension
+       correctly resolves the net8.0 engine assets. A net10.0 extension pulls net10.0 engine DLLs that reference
+       System.Runtime 10.0.0.0, which the net8.0 host's extension AssemblyLoadContext cannot resolve (roll-forward
+       makes the RUNTIME net10 but not the net8.0 assembly-version resolution) → ReflectionTypeLoadException.
+       CopyLocalLockFileAssemblies — copy the engine's private DLLs into our output so the per-extension
+       AssemblyLoadContext can resolve them. -->
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
@@ -47,12 +47,12 @@
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs (NOT ProjectReferences — see SwarmUI-LLMAssistant.csproj
        for why). FIRST build the engine: dotnet build src/HartsyInference.{Audio,Cpu,Cuda,Vulkan}/*.csproj
-       -c Release -f net10.0 (in HartsyInference). -->
+       -c Release -f net8.0 (in HartsyInference). -->
   <PropertyGroup Condition="'$(UseLocalHartsy)' == 'true'">
-    <HartsyAudioBin>$(HartsyRepo)/src/HartsyInference.Audio/bin/Release/net10.0</HartsyAudioBin>
-    <HartsyCpuBin>$(HartsyRepo)/src/HartsyInference.Cpu/bin/Release/net10.0</HartsyCpuBin>
-    <HartsyCudaBin>$(HartsyRepo)/src/HartsyInference.Cuda/bin/Release/net10.0</HartsyCudaBin>
-    <HartsyVulkanBin>$(HartsyRepo)/src/HartsyInference.Vulkan/bin/Release/net10.0</HartsyVulkanBin>
+    <HartsyAudioBin>$(HartsyRepo)/src/HartsyInference.Audio/bin/Release/net8.0</HartsyAudioBin>
+    <HartsyCpuBin>$(HartsyRepo)/src/HartsyInference.Cpu/bin/Release/net8.0</HartsyCpuBin>
+    <HartsyCudaBin>$(HartsyRepo)/src/HartsyInference.Cuda/bin/Release/net8.0</HartsyCudaBin>
+    <HartsyVulkanBin>$(HartsyRepo)/src/HartsyInference.Vulkan/bin/Release/net8.0</HartsyVulkanBin>
   </PropertyGroup>
   <ItemGroup Condition="'$(UseLocalHartsy)' == 'true'">
     <Reference Include="HartsyInference.Audio"><HintPath>$(HartsyAudioBin)/HartsyInference.Audio.dll</HintPath><Private>true</Private></Reference>
@@ -61,7 +61,7 @@
     <Reference Include="HartsyInference.Tokenizers"><HintPath>$(HartsyAudioBin)/HartsyInference.Tokenizers.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="HartsyInference.LLM"><HintPath>$(HartsyAudioBin)/HartsyInference.LLM.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="HartsyInference.Phonemizer"><HintPath>$(HartsyAudioBin)/HartsyInference.Phonemizer.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="HartsyInference.Diffusion"><HintPath>$(HartsyRepo)/src/HartsyInference.Diffusion/bin/Release/net10.0/HartsyInference.Diffusion.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="HartsyInference.Diffusion"><HintPath>$(HartsyRepo)/src/HartsyInference.Diffusion/bin/Release/net8.0/HartsyInference.Diffusion.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="HartsyInference.Cpu"><HintPath>$(HartsyCpuBin)/HartsyInference.Cpu.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="HartsyInference.Cuda"><HintPath>$(HartsyCudaBin)/HartsyInference.Cuda.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="HartsyInference.Vulkan"><HintPath>$(HartsyVulkanBin)/HartsyInference.Vulkan.dll</HintPath><Private>true</Private></Reference>
