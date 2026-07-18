@@ -27,6 +27,9 @@ public static class Qwen3TtsModel
     /// <summary>English preset speaker id on the CustomVoice checkpoint (codec space). See pipeline docstring.</summary>
     private const int EnglishSpeakerToken = 3061;
 
+    /// <summary>English codec-space language id (<c>LanguageIdBase</c> 2050) used to condition voice_clone.</summary>
+    private const int EnglishLanguageId = 2050;
+
     public static readonly TtsModelDescriptor Descriptor = new()
     {
         ResolveRepo = modelId => ResolveRepo(modelId),
@@ -48,22 +51,31 @@ public static class Qwen3TtsModel
             Qwen3TtsPipeline pipeline = new(is0_6B ? Qwen3TtsConfig.Default_0_6B : Qwen3TtsConfig.Default_1_7B);
             // The talker ships BF16 (loads directly on CUDA); CPU-only synth would need an F32 cast of the talker
             // dict (engine is F32-only on CPU) — the engine constructs CUDA→Vulkan→CPU, so the GPU path is default.
-            pipeline.LoadWeights(talkerLoader.GetAllTensors(), talkerLoader.GetAllTensors(), codecLoader.GetAllTensors());
+            // voice_clone (Base checkpoint only) also ships the ECAPA speaker encoder under speaker_encoder.*; pass
+            // the talker dict as the ecapa source so the x-vector path loads (CustomVoice/VoiceDesign lack it).
+            pipeline.LoadWeights(talkerLoader.GetAllTensors(), talkerLoader.GetAllTensors(), codecLoader.GetAllTensors(),
+                ecapa: mode == "voice_clone" ? talkerLoader.GetAllTensors() : null);
             Qwen3Tokenizer tokenizer = new(maxLength: 512);
             Logs.Info($"[AudioLab][Qwen3-TTS] Loaded {repo} (mode={mode}, 12 Hz talker + MTP + codec, 24 kHz).");
 
             IDisposable[] keep = [pipeline, talkerLoader, codecLoader];
             return new TtsRunner(pipeline.SampleRate, (backend, req) =>
             {
-                int[] textTokens = tokenizer.Encode(req.Text, appendEos: false);
+                // TTS needs the RAW byte-level token stream — NOT Qwen3Tokenizer.Encode, which right-pads to
+                // maxLength (512) with <|endoftext|> (a diffusion text-encoder convention) and skips GPT-2
+                // byte-level pre-tokenization. Padding floods the talker's text stream → wrong-length garbage
+                // audio (a ~4 s line became 32 s); EncodeRaw gives the correct ~15-token, word-perfect prefill.
+                int[] textTokens = [.. tokenizer.EncodeRaw(req.Text)];
                 return mode switch
                 {
                     "custom_voice" => pipeline.SynthesizeCustomVoice(backend, textTokens, EnglishSpeakerToken, seed: req.Seed),
                     // Voice-design folds the instruct text into the token stream; here we pass the text as-is.
                     "voice_design" => pipeline.SynthesizeVoiceDesign(backend, textTokens, seed: req.Seed),
-                    "voice_clone" => throw new NotSupportedException(
-                        "[AudioLab][Qwen3-TTS] voice_clone is engine-pending (ICL/ECAPA path not yet weight-validated). "
-                        + "Use a CustomVoice or VoiceDesign model until the engine confirms the clone path."),
+                    // Voice clone (Base): the reference clip's ECAPA x-vector is injected at the speaker position.
+                    "voice_clone" => req.ReferenceMono24k is { Length: > 0 }
+                        ? pipeline.SynthesizeVoiceClone(backend, textTokens, req.ReferenceMono24k, languageId: EnglishLanguageId, seed: req.Seed)
+                        : throw new NotSupportedException(
+                            "[AudioLab][Qwen3-TTS] voice_clone needs a reference voice clip — attach a ~3 s+ sample."),
                     _ => throw new InvalidOperationException($"[AudioLab][Qwen3-TTS] unknown mode '{mode}'."),
                 };
             }, keep);
