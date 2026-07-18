@@ -42,7 +42,7 @@
          intelligible-e2e fix + ACE-Step DiT GPU-residency). If a build hits NU1603, the version hasn't
          indexed yet — wait for the flat-container index, then rebuild with a cleared package cache.
          Verify at https://api.nuget.org/v3-flatcontainer/hartsyinference/index.json -->
-    <PackageReference Include="HartsyInference" Version="1.0.0-alpha.51" />
+    <PackageReference Include="HartsyInference" Version="1.0.0-alpha.52" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs (NOT ProjectReferences — see SwarmUI-LLMAssistant.csproj
