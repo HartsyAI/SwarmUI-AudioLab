@@ -20,8 +20,7 @@ public sealed class CosyVoiceProvider : IAudioProviderSource
         .AddFeatureFlag("cosyvoice_tts_params")
         .AddFeatureFlag("tts_voice_ref")
         .AddModels(Models)
-        .WithEngineGroup("linux_docker")
-        .WithRequiresDocker()
+        .WithEngineGroup("main")
         .Build();
 
     #region Models
