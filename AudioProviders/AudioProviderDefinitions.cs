@@ -37,6 +37,7 @@ public static class AudioProviderDefinitions
         DistilWhisperProvider.Instance,
         // Local audio generation providers
         AceStepProvider.Instance,
+        StableAudioProvider.Instance,
         MusicGenProvider.Instance,
         AudioGenProvider.Instance,
         YuEProvider.Instance,

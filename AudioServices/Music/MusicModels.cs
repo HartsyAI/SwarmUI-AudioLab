@@ -813,4 +813,83 @@ public static class MusicModels
     }
 
     #endregion
+
+    #region Stable Audio Open Small (HF auto-download)
+
+    private const string StableAudioRepo = "FastVideo/stable-audio-open-small-Diffusers";
+    private const string T5BaseRepo = "google-t5/t5-base";
+
+    /// <summary>Stable Audio Open Small (Stability AI Community License) — the 341M rectified-flow DiT over
+    /// Oobleck-VAE latents, 8-step pingpong sampling, no CFG (ARC-distilled). Text prompt only (no lyrics/genre
+    /// split — <c>req.Prompt</c> feeds T5-base directly); duration up to ~11.89 s (the model's fixed trained
+    /// window — longer requests are clamped and logged by the pipeline). DiT/VAE/timing-conditioner are
+    /// individually real-weight-verified bit-exact against independent Python references (cosine 1.0 each; see
+    /// HartsyInference's PARITY_VERIFICATION.md).</summary>
+    public static readonly MusicModelDescriptor StableAudio = new()
+    {
+        ManagesOwnWeights = true,
+        CacheKey = (_, _) => StableAudioRepo,
+        LoadAsync = (backend, _, _, ct) => LoadStableAudioAsync(backend, ct),
+    };
+
+    private static async Task<IMusicRunner> LoadStableAudioAsync(IBackend backend, CancellationToken ct)
+    {
+        string ditPath = await AudioModelCache.GetAsync(StableAudioRepo, "transformer/diffusion_pytorch_model.safetensors", ct: ct).ConfigureAwait(false);
+        string vaePath = await AudioModelCache.GetAsync(StableAudioRepo, "vae/diffusion_pytorch_model.safetensors", ct: ct).ConfigureAwait(false);
+        string condPath = await AudioModelCache.GetAsync(StableAudioRepo, "conditioner/diffusion_pytorch_model.safetensors", ct: ct).ConfigureAwait(false);
+        string t5Path = await AudioModelCache.GetAsync(T5BaseRepo, "model.safetensors", ct: ct).ConfigureAwait(false);
+
+        StableAudioDitConfig config = StableAudioDitConfig.OpenSmall;
+
+        SafeTensorsLoader ditLoader = new();
+        ditLoader.Load(ditPath);
+        StableAudioDit dit = new(config);
+        dit.LoadWeights(ditLoader.GetAllTensors());
+
+        SafeTensorsLoader vaeLoader = new();
+        vaeLoader.Load(vaePath);
+        OobleckConfig vaeConfig = OobleckConfig.StableAudioOpen;
+        // The real checkpoint uses diffusers' NAMED-submodule key layout, not the flat nn.Sequential layout
+        // OobleckVae.LoadWeights expects (the ACE-Step 1.5 dialect) — remap first (pure key rename).
+        Dictionary<string, Tensor> vaeWeights = OobleckKeyRemap.ToFlatSequentialLayout(vaeLoader.GetAllTensors(), vaeConfig);
+        OobleckVae vae = new(vaeConfig);
+        vae.LoadWeights(vaeWeights);
+
+        SafeTensorsLoader condLoader = new();
+        condLoader.Load(condPath);
+        StableAudioNumberEmbedder timing = new(minVal: 0f, maxVal: (float)config.TimingMaxSeconds);
+        timing.LoadWeights(condLoader.GetAllTensors(), "conditioners.seconds_total");
+
+        SafeTensorsLoader t5Loader = new();
+        t5Loader.Load(t5Path);
+        T5TextEncoder t5 = new(T5TextEncoderConfig.T5Base);
+        t5.LoadWeights(t5Loader.GetAllTensors());
+        T5Tokenizer tokenizer = new(maxLength: 64);
+
+        StableAudioPipeline pipeline = new(backend, dit, vae, timing, config);
+        Logs.Info("[AudioLab][StableAudio] Loaded Stable Audio Open Small.");
+
+        MusicAudio Synth(IBackend b, MusicRequest req, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            int[] tokens = tokenizer.Encode(req.Prompt);
+            Tensor textEmbeds = t5.Encode(b, [tokens]);
+            b.Sync();
+            b.FreeWeights(t5.EnumerateWeights());
+            try
+            {
+                (float[] left, float[] right, int rate, int seed) = pipeline.Generate(
+                    textEmbeds, secondsTotal: req.Duration, steps: req.InferSteps, seed: req.Seed);
+                return MusicAudio.Stereo(left, right);
+            }
+            finally
+            {
+                textEmbeds.Dispose();
+            }
+        }
+
+        return new MusicRunner(config.SampleRate, Synth, pipeline, dit, ditLoader, vaeLoader, condLoader, t5, t5Loader);
+    }
+
+    #endregion
 }

@@ -72,6 +72,8 @@ public static class AudioEngine
         map["musicgen_music"] = new MusicHandler("musicgen_music", MusicModels.MusicGen);
         map["audiogen_sfx"] = new MusicHandler("audiogen_sfx", MusicModels.AudioGen);
         map["acestep_music"] = new MusicHandler("acestep_music", MusicModels.AceStep);
+        // Stable Audio Open Small — 341M rectified-flow DiT + Oobleck VAE, 8-step pingpong, HF auto-download.
+        map["stableaudio_music"] = new MusicHandler("stableaudio_music", MusicModels.StableAudio);
         map["yue_music"] = new MusicHandler("yue_music", MusicModels.Yue);
         // HeartMuLa-oss-3B — CSM-shaped music LM + flow-matching HeartCodec, 48 kHz (HF auto-download).
         map["heartlib_music"] = new MusicHandler("heartlib_music", MusicModels.HeartMula);
