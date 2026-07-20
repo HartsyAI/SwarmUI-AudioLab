@@ -4,7 +4,7 @@ using Hartsy.Extensions.AudioLab.WebAPI.Models;
 namespace Hartsy.Extensions.AudioLab.AudioProviders;
 
 /// <summary>Spark-TTS provider — Qwen2.5-0.5B LM + BiCodec, 16 kHz (SparkAudio). Engine-hosted; gated on the
-/// engine's token-offset/BiCodec checkpoint reconciliation (see <see cref="AudioServices.Tts.SparkTtsModel"/>).</summary>
+/// engine's token-offset/BiCodec checkpoint reconciliation (engine TTS catalog id "sparktts").</summary>
 public sealed class SparkTTSProvider : IAudioProviderSource
 {
     /// <summary>Singleton instance of the Spark-TTS provider.</summary>

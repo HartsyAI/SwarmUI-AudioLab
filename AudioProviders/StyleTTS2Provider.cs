@@ -4,7 +4,7 @@ using Hartsy.Extensions.AudioLab.WebAPI.Models;
 namespace Hartsy.Extensions.AudioLab.AudioProviders;
 
 /// <summary>StyleTTS 2 provider — diffusion-style TTS reusing the Kokoro modules, 24 kHz. Engine-hosted; gated on
-/// a StyleTts2 submodule load helper (see <see cref="AudioServices.Tts.StyleTts2Model"/>).</summary>
+/// a StyleTts2 submodule load helper in the engine's TTS catalog ("styletts2").</summary>
 public sealed class StyleTTS2Provider : IAudioProviderSource
 {
     /// <summary>Singleton instance of the StyleTTS 2 provider.</summary>

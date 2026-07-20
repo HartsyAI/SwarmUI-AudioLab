@@ -529,7 +529,7 @@ public static class AudioLabAPI
                 .Select(b => b.AbstractBackend as DynamicAudioBackend)
                 .FirstOrDefault(b => b is not null);
             IReadOnlySet<string> installedIds = backend?.GetInstalledEngineIds() ?? new HashSet<string>();
-            bool engineAvailable = AudioEngine.Available;
+            bool engineAvailable = AudioEngineBridge.Available;
 
             JObject providerStatuses = [];
             foreach (AudioProviderDefinition provider in AudioProviderRegistry.All)
@@ -541,7 +541,7 @@ public static class AudioLabAPI
             {
                 ["success"] = true,
                 ["engine_available"] = engineAvailable,
-                ["engine_ready"] = engineAvailable && AudioEngine.EngineReady(),
+                ["engine_ready"] = engineAvailable && AudioEngineBridge.EngineReady(),
                 ["providers"] = providerStatuses
             };
         }
@@ -605,7 +605,7 @@ public static class AudioLabAPI
 
                 // Self-managed (HF auto-download) providers fetch weights on first use, so per-model
                 // presence is meaningless — the UI shows "Downloads on first use" instead of install buttons.
-                bool selfManaged = AudioEngine.ProviderManagesOwnWeights(provider.Id);
+                bool selfManaged = AudioEngineBridge.ProviderManagesOwnWeights(provider.Id);
 
                 // Build models list
                 JArray models = [];
@@ -623,7 +623,7 @@ public static class AudioLabAPI
                         // Name in Swarm's model registry, for generating via the core T2I pipeline.
                         ["swarm_model"] = provider.GetFullModelName(modelDef.Id),
                         // Per-model: are this variant's weights on disk? (API/self-managed report true.)
-                        ["installed"] = provider.IsApiProvider || AudioEngine.WeightsPresent(provider.Id, modelDef.Id)
+                        ["installed"] = provider.IsApiProvider || AudioEngineBridge.WeightsPresent(provider.Id, modelDef.Id)
                     });
                 }
 
@@ -819,7 +819,7 @@ public static class AudioLabAPI
                 return null;
             }
             List<AudioModelDefinition> pending = provider.Models
-                .Where(m => !(provider.IsApiProvider || AudioEngine.WeightsPresent(provider.Id, m.Id)))
+                .Where(m => !(provider.IsApiProvider || AudioEngineBridge.WeightsPresent(provider.Id, m.Id)))
                 .ToList();
             if (pending.Count == 0)
             {
@@ -874,7 +874,7 @@ public static class AudioLabAPI
                 return AudioLab.CreateErrorResponse("Audio backend is not running.", "no_backend");
             }
             List<AudioModelDefinition> present = provider.Models
-                .Where(m => !provider.IsApiProvider && AudioEngine.WeightsPresent(provider.Id, m.Id))
+                .Where(m => !provider.IsApiProvider && AudioEngineBridge.WeightsPresent(provider.Id, m.Id))
                 .ToList();
             if (present.Count == 0)
             {

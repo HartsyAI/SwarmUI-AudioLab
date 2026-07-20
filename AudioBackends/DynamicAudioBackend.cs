@@ -202,9 +202,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
             HealMissingWeightsInBackground();
             Program.ModelRefreshEvent += ReRegisterModelsAfterRefresh;
 
-            // No Python servers / Docker to start — inference runs in-process on the HartsyInference
-            // C# engine (via AudioEngine, compiled into AudioLab) or through cloud API handlers. The
-            // backend is ready as soon as installed engines' models are registered.
+            // Nothing to start — local inference is delegated to HartsyInference.Engine (via
+            // AudioEngineBridge) and cloud providers to their API handlers. The backend is ready as soon
+            // as installed engines' models are registered.
 
             Status = BackendStatus.RUNNING;
             if (_providers.Count > 0)
@@ -349,7 +349,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
         // and hope the engine self-heals" only worked for HF-cache models, not AudioLab-managed weights.
         // ManagesOwnWeights providers (HeartMuLa etc.) download lazily from the HF cache inside their LoadAsync,
         // so on-disk WeightsPresent is always false pre-first-gen — fall through and let the loader fetch them.
-        if (!provider.IsApiProvider && !AudioEngine.ProviderManagesOwnWeights(provider.Id) && !AudioEngine.WeightsPresent(provider.Id, modelDef?.Id))
+        if (!provider.IsApiProvider && !AudioEngineBridge.ProviderManagesOwnWeights(provider.Id) && !AudioEngineBridge.WeightsPresent(provider.Id, modelDef?.Id))
         {
             _weightsMissing[provider.Id] = 0;
             if (!Settings.AutoRedownloadMissingWeights)
@@ -364,7 +364,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             }
             Logs.Info($"[AudioLab] '{provider.Name}' weights missing — auto-redownloading '{modelDef?.Id ?? "default"}' before generating…");
             bool restored = await TryAutoRedownloadWeights(provider.Id, modelDef?.Id, msg => Logs.Info($"[AudioLab] {msg}"));
-            if (!restored || !AudioEngine.WeightsPresent(provider.Id, modelDef?.Id))
+            if (!restored || !AudioEngineBridge.WeightsPresent(provider.Id, modelDef?.Id))
             {
                 takeOutput(new JObject
                 {
@@ -659,8 +659,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
         RemoteModels.Clear();
         _providers.Clear();
         _supportedFeatureSet.Clear();
-        // No Python servers / Docker containers to stop — the C# engine is owned by the HartsyInference
-        // backend extension and lives independently of this routing backend.
+        // No processes to stop — but the Engine may hold multi-GB of resident audio models plus device memory,
+        // so hand those back. The engine object survives and reloads on the next request.
+        AudioEngineBridge.FreeMemory();
         Status = BackendStatus.DISABLED;
     }
 
@@ -691,11 +692,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
             // no Python server. This is the migration path; it takes precedence over the Python provisioning
             // below whenever the engine boundary advertises support for the provider.
             bool engineBacked = !definition.IsApiProvider && !definition.RequiresDocker
-                && AudioEngine.IsProviderSupported(definition.Id);
+                && AudioEngineBridge.IsProviderSupported(definition.Id);
 
             if (engineBacked)
             {
-                if (AudioEngine.ProviderManagesOwnWeights(definition.Id))
+                if (AudioEngineBridge.ProviderManagesOwnWeights(definition.Id))
                 {
                     // HF-auto-download providers (Whisper, Kokoro, ...). Prefetch now — per distinct weight set —
                     // so the download AND any load error surface here with progress, not mid-generation. A failure
@@ -712,13 +713,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     {
                         cancel.ThrowIfCancellationRequested();
                         // Dedup models that share one weight set (e.g. multiple voices of one TTS repo).
-                        IReadOnlyList<string> locs = AudioEngine.GetWeightLocations(definition.Id, modelDef.Id);
+                        IReadOnlyList<string> locs = AudioEngineBridge.GetWeightLocations(definition.Id, modelDef.Id);
                         string dedupKey = locs.Count > 0 ? string.Join("|", locs) : modelDef.Id;
                         if (!fetched.Add(dedupKey))
                         {
                             continue;
                         }
-                        JObject result = await AudioEngine.EnsureWeightsAsync(definition.Id, modelDef.Id, msg => onProgress?.Invoke(msg), cancel);
+                        JObject result = await AudioEngineBridge.EnsureWeightsAsync(definition.Id, modelDef.Id, msg => onProgress?.Invoke(msg), cancel);
                         if (result?["success"]?.Value<bool>() != true)
                         {
                             string err = result?["error"]?.ToString() ?? "unknown error";
@@ -727,7 +728,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                             return false;
                         }
                         // Release the prefetched pipeline so installing many models doesn't pin RAM/VRAM.
-                        AudioEngine.Unload(definition.Id, modelDef.Id);
+                        AudioEngineBridge.Unload(definition.Id, modelDef.Id);
                     }
                 }
                 else
@@ -867,7 +868,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
         foreach (AudioModelDefinition modelDef in definition.Models)
         {
-            foreach (string loc in AudioEngine.GetWeightLocations(providerId, modelDef.Id))
+            foreach (string loc in AudioEngineBridge.GetWeightLocations(providerId, modelDef.Id))
             {
                 if (!string.IsNullOrEmpty(loc))
                 {
@@ -893,7 +894,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
         {
             foreach (AudioModelDefinition modelDef in definition.Models)
             {
-                AudioEngine.Unload(providerId, modelDef.Id);
+                AudioEngineBridge.Unload(providerId, modelDef.Id);
             }
         }
         // Union of locations still needed by other installed providers (providerId already removed above).
@@ -944,7 +945,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             return;
         }
         HashSet<string> mine = new(StringComparer.OrdinalIgnoreCase);
-        foreach (string loc in AudioEngine.GetWeightLocations(providerId, modelId))
+        foreach (string loc in AudioEngineBridge.GetWeightLocations(providerId, modelId))
         {
             if (!string.IsNullOrEmpty(loc))
             {
@@ -957,7 +958,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             return;
         }
         // Release any resident pipeline holding this model's files before deleting.
-        AudioEngine.Unload(providerId, modelId);
+        AudioEngineBridge.Unload(providerId, modelId);
 
         // Locations still needed by a sibling model of THIS provider, or by any other installed provider.
         HashSet<string> stillNeeded = new(StringComparer.OrdinalIgnoreCase);
@@ -967,7 +968,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             {
                 continue;
             }
-            foreach (string loc in AudioEngine.GetWeightLocations(providerId, sibling.Id))
+            foreach (string loc in AudioEngineBridge.GetWeightLocations(providerId, sibling.Id))
             {
                 if (!string.IsNullOrEmpty(loc))
                 {
@@ -1041,7 +1042,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             foreach (AudioModelDefinition modelDef in def.Models)
             {
                 // Self-managed models fetch their own weights at first load — never "missing"
-                if (modelDef.SelfManaged || AudioEngine.WeightsPresent(providerId, modelDef.Id))
+                if (modelDef.SelfManaged || AudioEngineBridge.WeightsPresent(providerId, modelDef.Id))
                 {
                     anyPresent = true;
                     break;
@@ -1092,13 +1093,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
             }
             return string.IsNullOrEmpty(modelId)
                 ? !_weightsMissing.ContainsKey(providerId)
-                : AudioEngine.WeightsPresent(providerId, modelId);
+                : AudioEngineBridge.WeightsPresent(providerId, modelId);
         }
         try
         {
             bool ok = await InstallAndRegisterEngine(providerId, onProgress, Program.GlobalProgramCancel, modelId);
             AudioProviderDefinition def = AudioProviderRegistry.GetById(providerId);
-            bool anyPresent = def is not null && def.Models.Any(m => AudioEngine.WeightsPresent(providerId, m.Id));
+            bool anyPresent = def is not null && def.Models.Any(m => AudioEngineBridge.WeightsPresent(providerId, m.Id));
             if (anyPresent)
             {
                 _weightsMissing.TryRemove(providerId, out _);
