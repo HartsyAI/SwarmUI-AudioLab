@@ -50,6 +50,9 @@ public static class AudioEngine
         map["cosyvoice_tts"] = new TtsHandler(CosyVoiceModel.Descriptor);
         // F5-TTS — zero-shot voice clone (DiT + Vocos 24 kHz); reference clip + its transcript required.
         map["f5_tts"] = new TtsHandler(F5TtsModel.Descriptor);
+        // ZipVoice — zero-shot voice clone (Zipformer fm_decoder/text_encoder + Vocos 24 kHz), English only;
+        // reference clip + its transcript required.
+        map["zipvoice_tts"] = new TtsHandler(ZipVoiceModel.Descriptor);
 
         // Newly-wired engine TTS. Real synth where the engine recipe is verified (Qwen3 custom/design, Chatterbox
         // load); the rest dispatch but throw a precise gate naming the missing engine/front-end piece (see each
