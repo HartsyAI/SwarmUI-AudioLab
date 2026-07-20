@@ -148,6 +148,17 @@ public static class AudioLabParams
 
     #endregion
 
+    #region TTS — ZipVoice (flag: zipvoice_tts_params)
+
+    /// <summary>Euler flow-matching step count for ZipVoice. Feature flag: <c>zipvoice_tts_params</c>.</summary>
+    public static T2IRegisteredParam<int> ZipVoiceSteps;
+    /// <summary>Speech speed multiplier for ZipVoice. Feature flag: <c>zipvoice_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> ZipVoiceSpeed;
+    /// <summary>Classifier-free guidance scale for ZipVoice. Feature flag: <c>zipvoice_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> ZipVoiceCFG;
+
+    #endregion
+
     #region TTS — Zonos (flag: zonos_tts_params)
 
     /// <summary>Language selection for Zonos TTS. Feature flag: <c>zonos_tts_params</c>.</summary>
@@ -679,6 +690,27 @@ public static class AudioLabParams
             "2.0",
             Min: 0.0, Max: 10.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -3, Group: TTSGroup, FeatureFlag: "f5_tts_params"));
+
+        #endregion
+
+        #region TTS — ZipVoice
+        ZipVoiceSteps = T2IParamTypes.Register<int>(new("ZipVoice Steps",
+            "Number of Euler flow-matching steps.\nMore steps = higher quality but slower.",
+            "16",
+            Min: 1, Max: 100, Step: 1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "zipvoice_tts_params"));
+
+        ZipVoiceSpeed = T2IParamTypes.Register<double>(new("ZipVoice Speed",
+            "Speech speed multiplier.\n1.0 = normal, 0.5 = half speed, 2.0 = double speed.",
+            "1.0",
+            Min: 0.25, Max: 4.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "zipvoice_tts_params"));
+
+        ZipVoiceCFG = T2IParamTypes.Register<double>(new("ZipVoice CFG",
+            "Classifier-free guidance for flow matching.\n1.0 is the base checkpoint's default. Higher = stronger prompt adherence.",
+            "1.0",
+            Min: 0.0, Max: 10.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -3, Group: TTSGroup, FeatureFlag: "zipvoice_tts_params"));
 
         #endregion
 
