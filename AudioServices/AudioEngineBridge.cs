@@ -51,6 +51,7 @@ public static class AudioEngineBridge
         ["whisper_stt"] = new AudioEngineBinding("whisper", AudioEngineService.Transcribe, true),
         ["distilwhisper_stt"] = new AudioEngineBinding("distilwhisper", AudioEngineService.Transcribe, true),
         ["moonshine_stt"] = new AudioEngineBinding("moonshine", AudioEngineService.Transcribe, true),
+        ["moonshinestreaming_stt"] = new AudioEngineBinding("moonshinestreaming", AudioEngineService.Transcribe, true),
         ["kyutaistt_stt"] = new AudioEngineBinding("kyutaistt", AudioEngineService.Transcribe, true),
         ["whisperstreaming_stt"] = new AudioEngineBinding("whisperstreaming", AudioEngineService.Transcribe, true),
         // Text-to-speech.
@@ -82,6 +83,7 @@ public static class AudioEngineBridge
         ["acestep_music"] = new AudioEngineBinding("acestep", AudioEngineService.Music, false),
         ["yue_music"] = new AudioEngineBinding("yue", AudioEngineService.Music, false),
         ["heartlib_music"] = new AudioEngineBinding("heartmula", AudioEngineService.Music, true),
+        ["stableaudio_music"] = new AudioEngineBinding("stableaudio", AudioEngineService.Music, true),
         // Voice conversion.
         ["rvc_clone"] = new AudioEngineBinding("rvc", AudioEngineService.VoiceConversion, false),
         ["openvoice_clone"] = new AudioEngineBinding("openvoice", AudioEngineService.VoiceConversion, true),

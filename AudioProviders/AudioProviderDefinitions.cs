@@ -35,6 +35,7 @@ public static class AudioProviderDefinitions
         RealtimeSTTProvider.Instance,
         WhisperStreamingProvider.Instance,
         MoonshineProvider.Instance,
+        MoonshineStreamingProvider.Instance,
         DistilWhisperProvider.Instance,
         // Local audio generation providers
         AceStepProvider.Instance,
