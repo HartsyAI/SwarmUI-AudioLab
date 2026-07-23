@@ -4,7 +4,7 @@ using Hartsy.Extensions.AudioLab.WebAPI.Models;
 namespace Hartsy.Extensions.AudioLab.AudioProviders;
 
 /// <summary>Whisper Streaming provider — Whisper weights driven through the engine's streaming pipeline
-/// (LocalAgreement-2 stabilizer), 16 kHz. Engine-hosted (see <see cref="AudioServices.Stt.SttModels.WhisperStreaming"/>).</summary>
+/// (LocalAgreement-2 stabilizer), 16 kHz. Engine-hosted (engine STT catalog id "whisperstreaming").</summary>
 public sealed class WhisperStreamingProvider : IAudioProviderSource
 {
     /// <summary>Singleton instance of the Whisper Streaming provider.</summary>

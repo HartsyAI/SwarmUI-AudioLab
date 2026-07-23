@@ -10,9 +10,9 @@ namespace Hartsy.Extensions.AudioLab.AudioServices;
 ///
 /// <para>Historically this spawned per-group Python HTTP servers; that machinery is gone. Requests now go
 /// one of two ways: cloud <b>API providers</b> (ElevenLabs, OpenAI, …) run through their C# <see cref="IApiEngineHandler"/>;
-/// everything else runs <b>in-process on the HartsyInference C# engine</b> via <see cref="AudioEngine"/>
-/// (AudioLab references the engine NuGet directly and owns its own compute device). A provider the engine
-/// can't service yet returns a clear error rather than falling back to Python.</para>
+/// everything else is delegated to <b>HartsyInference.Engine</b> through <see cref="AudioEngineBridge"/>, which
+/// owns the model lifecycle, the compute device, and the generation itself. A provider the Engine can't service
+/// yet returns a clear error.</para>
 ///
 /// <para>The class name is retained because many call sites use <c>AudioServerManager.Instance.ProcessAsync</c>;
 /// it is no longer a "server manager" in any literal sense.</para></summary>
@@ -35,15 +35,15 @@ public class AudioServerManager
             return await ProcessViaApiAsync(provider, args, cancelToken);
         }
 
-        // In-process C# inference via the HartsyInference engine (compiled into AudioLab; the engine
-        // auto-downloads each provider's weights into its HuggingFace cache on first use).
-        if (AudioEngine.IsProviderSupported(provider.Id))
+        // Everything local is delegated to the Engine's typed audio services (it auto-downloads each
+        // provider's weights into its own model cache on first use).
+        if (AudioEngineBridge.IsProviderSupported(provider.Id))
         {
-            if (!AudioEngine.EngineReady())
+            if (!AudioEngineBridge.EngineReady())
             {
                 return CreateErrorResponse($"{provider.Name} needs a compute backend, but none could be initialized. Check the SwarmUI logs for the audio engine startup error.");
             }
-            return await AudioEngine.ProcessAsync(provider.Id, args, cancelToken);
+            return await AudioEngineBridge.ProcessAsync(provider.Id, args, cancelToken);
         }
 
         // Not an API provider and not yet wired into the in-process engine — name the specific blocker.

@@ -9,17 +9,12 @@ public static class AudioUnsupportedReasons
     /// <summary>Provider-id → why it can't run in-process yet. Absent ⇒ generic fallback.</summary>
     private static readonly Dictionary<string, string> _reasons = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["piper_tts"] =
-            "Piper needs an espeak-ng phonemizer and each voice's phoneme map; the engine ships no espeak phonemizer "
-            + "(its built-in G2P is CMU-dictionary based and uses different phoneme ids).",
-        ["zonos_tts"] =
-            "Zonos needs espeak-ng phonemes to build its conditioning prefix; the engine ships no espeak phonemizer.",
         ["realtimestt_stt"] =
             "RealtimeSTT needs a streaming/chunked transcription loop; the engine's Whisper currently exposes only "
             + "whole-clip transcription. Use the Whisper provider in the meantime.",
-        ["resemble_enhance_fx"] =
-            "Resemble Enhance publishes only a DeepSpeed .pt checkpoint and the engine's DeepSpeed .pt loader isn't "
-            + "implemented yet, so its weights can't be loaded.",
+        ["stableaudio_music"] =
+            "Stable Audio Open has no descriptor in the engine's music catalog, so there is no model id to dispatch "
+            + "to. It lights up as soon as the engine registers the family.",
     };
 
     /// <summary>A full user-facing message for an unsupported local provider, naming the specific blocker when known.</summary>

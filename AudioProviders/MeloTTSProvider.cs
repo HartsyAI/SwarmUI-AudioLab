@@ -4,7 +4,7 @@ using Hartsy.Extensions.AudioLab.WebAPI.Models;
 namespace Hartsy.Extensions.AudioLab.AudioProviders;
 
 /// <summary>MeloTTS provider — multilingual VITS TTS (MyShell), 44.1 kHz. Engine-hosted; synth gated on the
-/// espeak + tone + BERT front-end (see <see cref="AudioServices.Tts.MeloTtsModel"/>).</summary>
+/// espeak + tone + BERT front-end (engine TTS catalog id "melotts").</summary>
 public sealed class MeloTTSProvider : IAudioProviderSource
 {
     /// <summary>Singleton instance of the MeloTTS provider.</summary>

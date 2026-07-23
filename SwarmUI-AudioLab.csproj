@@ -42,29 +42,40 @@
          intelligible-e2e fix + ACE-Step DiT GPU-residency). If a build hits NU1603, the version hasn't
          indexed yet — wait for the flat-container index, then rebuild with a cleared package cache.
          Verify at https://api.nuget.org/v3-flatcontainer/hartsyinference/index.json -->
-    <PackageReference Include="HartsyInference" Version="1.0.0-alpha.52" />
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.2" />
   </ItemGroup>
 
-  <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs (NOT ProjectReferences — see SwarmUI-LLMAssistant.csproj
-       for why). FIRST build the engine: dotnet build src/HartsyInference.{Audio,Cpu,Cuda,Vulkan}/*.csproj
-       -c Release -f net8.0 (in HartsyInference). -->
+  <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
+       SwarmUI's global obj/output MSBuild properties into the engine projects and break their build).
+       The Cli bin is the full engine closure (every HartsyInference.* assembly + private deps in one folder) —
+       the Engine assembly is not emitted to its own project bin, and Engine transitively needs every modality
+       assembly at runtime, so the closure is the only complete source. Same pattern SwarmUI-LLMAssistant uses.
+       Build it first:
+       dotnet build src/HartsyInference.Cli/HartsyInference.Cli.csproj -c Release -f net8.0 -->
   <PropertyGroup Condition="'$(UseLocalHartsy)' == 'true'">
-    <HartsyAudioBin>$(HartsyRepo)/src/HartsyInference.Audio/bin/Release/net8.0</HartsyAudioBin>
-    <HartsyCpuBin>$(HartsyRepo)/src/HartsyInference.Cpu/bin/Release/net8.0</HartsyCpuBin>
-    <HartsyCudaBin>$(HartsyRepo)/src/HartsyInference.Cuda/bin/Release/net8.0</HartsyCudaBin>
-    <HartsyVulkanBin>$(HartsyRepo)/src/HartsyInference.Vulkan/bin/Release/net8.0</HartsyVulkanBin>
+    <HartsyCfg Condition="'$(HartsyCfg)' == '' and Exists('$(HartsyRepo)/src/HartsyInference.Cli/bin/Release/net8.0/HartsyInference.Engine.dll')">Release</HartsyCfg>
+    <HartsyCfg Condition="'$(HartsyCfg)' == ''">Debug</HartsyCfg>
+    <HartsyLocalBin>$(HartsyRepo)/src/HartsyInference.Cli/bin/$(HartsyCfg)/net8.0</HartsyLocalBin>
   </PropertyGroup>
   <ItemGroup Condition="'$(UseLocalHartsy)' == 'true'">
-    <Reference Include="HartsyInference.Audio"><HintPath>$(HartsyAudioBin)/HartsyInference.Audio.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="HartsyInference.Core"><HintPath>$(HartsyAudioBin)/HartsyInference.Core.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="HartsyInference.ModelHandler"><HintPath>$(HartsyAudioBin)/HartsyInference.ModelHandler.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="HartsyInference.Tokenizers"><HintPath>$(HartsyAudioBin)/HartsyInference.Tokenizers.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="HartsyInference.LLM"><HintPath>$(HartsyAudioBin)/HartsyInference.LLM.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="HartsyInference.Phonemizer"><HintPath>$(HartsyAudioBin)/HartsyInference.Phonemizer.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="HartsyInference.Diffusion"><HintPath>$(HartsyRepo)/src/HartsyInference.Diffusion/bin/Release/net8.0/HartsyInference.Diffusion.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="HartsyInference.Cpu"><HintPath>$(HartsyCpuBin)/HartsyInference.Cpu.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="HartsyInference.Cuda"><HintPath>$(HartsyCudaBin)/HartsyInference.Cuda.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="HartsyInference.Vulkan"><HintPath>$(HartsyVulkanBin)/HartsyInference.Vulkan.dll</HintPath><Private>true</Private></Reference>
+    <!-- The Engine is the single source of truth for load+generate; AudioLab talks only to its audio services.
+         The rest are the Engine's runtime closure (it references every modality package), copied so Swarm's
+         per-extension AssemblyLoadContext can resolve them. -->
+    <Reference Include="HartsyInference.Engine"><HintPath>$(HartsyLocalBin)/HartsyInference.Engine.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="HartsyInference.Core"><HintPath>$(HartsyLocalBin)/HartsyInference.Core.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="HartsyInference.ModelAssets"><HintPath>$(HartsyLocalBin)/HartsyInference.ModelAssets.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="HartsyInference.LLM"><HintPath>$(HartsyLocalBin)/HartsyInference.LLM.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="HartsyInference.Diffusion"><HintPath>$(HartsyLocalBin)/HartsyInference.Diffusion.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="HartsyInference.Audio"><HintPath>$(HartsyLocalBin)/HartsyInference.Audio.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="HartsyInference.Video"><HintPath>$(HartsyLocalBin)/HartsyInference.Video.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="HartsyInference.Vision"><HintPath>$(HartsyLocalBin)/HartsyInference.Vision.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="HartsyInference.World"><HintPath>$(HartsyLocalBin)/HartsyInference.World.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="HartsyInference.ThreeD"><HintPath>$(HartsyLocalBin)/HartsyInference.ThreeD.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="HartsyInference.Cpu"><HintPath>$(HartsyLocalBin)/HartsyInference.Cpu.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="HartsyInference.Cuda"><HintPath>$(HartsyLocalBin)/HartsyInference.Cuda.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="HartsyInference.Vulkan"><HintPath>$(HartsyLocalBin)/HartsyInference.Vulkan.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Google.Protobuf"><HintPath>$(HartsyLocalBin)/Google.Protobuf.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.ML.Tokenizers"><HintPath>$(HartsyLocalBin)/Microsoft.ML.Tokenizers.dll</HintPath><Private>true</Private></Reference>
     <!-- CUDA PTX kernels + Vulkan SPIR-V from engine source (the NuGet copies these via its targets). -->
     <Content Include="$(HartsyRepo)/src/HartsyInference.Cuda/Ptx/*.ptx" Link="Ptx/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="$(HartsyRepo)/src/HartsyInference.Vulkan/Spv/*.spv" Link="Spv/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Condition="Exists('$(HartsyRepo)/src/HartsyInference.Vulkan/Spv')" />
