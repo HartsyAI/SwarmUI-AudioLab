@@ -20,7 +20,6 @@ public sealed class GPTSoVITSProvider : IAudioProviderSource
         .AddFeatureFlag("gptsovits_clone_params")
         .AddModels(Models)
         .WithEngineGroup("linux_docker")
-        .WithRequiresDocker()
         .Build();
 
     #region Models

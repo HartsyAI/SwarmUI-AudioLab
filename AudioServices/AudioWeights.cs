@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using SwarmUI.Utils;
 
@@ -27,9 +28,30 @@ public static class AudioWeights
     };
 
     /// <summary>The conventional directory a provider's local weights live in:
-    /// <c>{ModelRoot}/{category}/{ModelPrefix}/</c>.</summary>
+    /// <c>{ModelRoot}/{category}/{ModelPrefix}/</c>. Tolerates a differently-cased directory already on disk
+    /// (older installs/manual placement used lowercase provider ids, e.g. <c>fx/demucs</c> vs the canonical
+    /// <c>fx/Demucs</c>) — Linux is case-sensitive, so an exact-case miss would otherwise report weights as
+    /// absent even though the files are right there. Falls back to the canonical (as-yet-nonexistent) path so
+    /// fresh downloads still land in the ModelPrefix-cased directory.</summary>
     public static string WeightsDirectory(AudioProviderDefinition provider)
-        => Path.Combine(Path.GetFullPath(AudioConfiguration.ModelRoot), CategorySubfolder(provider.Category), provider.ModelPrefix);
+    {
+        string category = Path.Combine(Path.GetFullPath(AudioConfiguration.ModelRoot), CategorySubfolder(provider.Category));
+        string canonical = Path.Combine(category, provider.ModelPrefix);
+        if (Directory.Exists(canonical))
+        {
+            return canonical;
+        }
+        if (Directory.Exists(category))
+        {
+            string existing = Directory.EnumerateDirectories(category)
+                .FirstOrDefault(d => string.Equals(Path.GetFileName(d), provider.ModelPrefix, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null)
+            {
+                return existing;
+            }
+        }
+        return canonical;
+    }
 
     /// <summary>Returns the local checkpoint path for the request, or null if none is usable.
     /// When the request carries a model id (<c>__model_id</c>, injected by <c>BuildEngineArgs</c>) we

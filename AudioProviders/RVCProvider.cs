@@ -20,7 +20,6 @@ public sealed class RVCProvider : IAudioProviderSource
         .AddFeatureFlag("rvc_clone_params")
         .AddModels(Models)
         .WithEngineGroup("linux_docker")
-        .WithRequiresDocker()
         .Build();
 
     #region Models
