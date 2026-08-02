@@ -48,7 +48,7 @@
          Pinned here to 2.0.0-alpha.4 in step with that fix and the other two SwarmUI-Hartsy extensions,
          ahead of the engine repo's manual publish of that version — restore will 404 until that push
          lands on nuget.org. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.4" />
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.8" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak

@@ -117,6 +117,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// <summary>Path to the installed engines config file.</summary>
     private static string InstalledEnginesConfigPath => Path.Combine(Program.DataDir, "AudioLabInstalledEngines.json");
 
+    /// <summary>VRAM headroom kept free on top of the incoming model's own estimate, covering activations,
+    /// the codec/vocoder stage and pool fragmentation. Measured: a 90s ACE-Step XL run peaks roughly 2GB above
+    /// the checkpoint itself.</summary>
+    private const long VramSafetyMarginBytes = 2L * 1024 * 1024 * 1024;
+
     #endregion
 
     #region Initialization
@@ -629,16 +634,115 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
     #region Model Loading and Shutdown
 
-    /// <summary>Loads a model by matching its name against provider prefixes.</summary>
+    /// <summary>Loads a model by matching its name against provider prefixes.
+    /// <para>Swarm calls this only when the resident model actually changes, so it is the switch hook: before
+    /// accepting the new model we make sure the card has room for it, evicting the outgoing pipelines when it
+    /// does not. Without this the engine's own resident-pipeline cache accumulates across families (measured:
+    /// 1.9GB → 14.1GB over five different models) and the next multi-GB checkpoint OOMs on load.</para></summary>
     public override Task<bool> LoadModel(T2IModel model, T2IParamInput input)
     {
         string providerId = GetProviderIdFromModel(model.Name);
         if (providerId != null && _providers.ContainsKey(providerId))
         {
+            EnsureVramHeadroom(providerId, model.Name);
             CurrentModelName = model.Name;
             return Task.FromResult(true);
         }
         return Task.FromResult(false);
+    }
+
+    /// <summary>Drops resident audio pipelines when the incoming model would not fit in free VRAM.
+    /// <para>The engine has its own pressure check, but it fires on a fixed low-VRAM floor rather than on the
+    /// incoming model's size — so a 10GB checkpoint arriving with 10GB free looks fine to it and then OOMs.
+    /// Here we know the model we are about to load and its declared VRAM need, so we can decide correctly.
+    /// A same-model reload never evicts, keeping repeat generations warm.</para></summary>
+    private void EnsureVramHeadroom(string providerId, string modelName)
+    {
+        if (CurrentModelName is null || CurrentModelName == modelName)
+        {
+            return;
+        }
+        if (!_providers.TryGetValue(providerId, out AudioProviderMetadata meta))
+        {
+            return;
+        }
+        AudioModelDefinition modelDef = GetModelDefinition(modelName, meta.Definition);
+        long needBytes = ParseEstimatedBytes(modelDef?.EstimatedVram);
+        if (needBytes <= 0)
+        {
+            // No declared estimate (API providers, CPU-only models): nothing to reason about, leave it resident.
+            return;
+        }
+        long freeBytes = FreeVramBytes();
+        if (freeBytes <= 0)
+        {
+            return;
+        }
+        long required = needBytes + VramSafetyMarginBytes;
+        if (freeBytes >= required)
+        {
+            return;
+        }
+        Logs.Info($"[AudioLab] Switching to '{modelName}' needs ~{required / 1073741824.0:0.0}GB but only "
+            + $"{freeBytes / 1073741824.0:0.0}GB VRAM is free — releasing resident audio models first.");
+        AudioEngineBridge.Unload(providerId, modelDef?.Id);
+    }
+
+    /// <summary>Free VRAM on the busiest CUDA device, or -1 when it cannot be determined (no NVIDIA GPU,
+    /// nvidia-smi absent). The engine runs on one device, so the card with the least free memory is the one
+    /// carrying the audio models.</summary>
+    private static long FreeVramBytes()
+    {
+        try
+        {
+            NvidiaUtil.NvidiaInfo[] gpus = NvidiaUtil.QueryNvidia();
+            if (gpus is null || gpus.Length == 0)
+            {
+                return -1;
+            }
+            return gpus.Min(g => g.FreeMemory.InBytes);
+        }
+        catch (Exception ex)
+        {
+            Logs.Debug($"[AudioLab] Could not read free VRAM: {ex.Message}");
+            return -1;
+        }
+    }
+
+    /// <summary>Parses the leading size out of an <see cref="AudioModelDefinition.EstimatedVram"/> string —
+    /// the field is human-facing prose ("~12GB", "~16GB (fp16)", "~12GB (lazy load)", "CPU only"), so we take
+    /// the first number with a GB/MB unit and ignore the rest. Returns 0 when there is no parseable size.</summary>
+    private static long ParseEstimatedBytes(string estimate)
+    {
+        if (string.IsNullOrWhiteSpace(estimate))
+        {
+            return 0;
+        }
+        Match m = Regex.Match(estimate, @"(\d+(?:\.\d+)?)\s*(GB|MB)", RegexOptions.IgnoreCase);
+        if (!m.Success || !double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out double value))
+        {
+            return 0;
+        }
+        double multiplier = m.Groups[2].Value.Equals("GB", StringComparison.OrdinalIgnoreCase) ? 1073741824.0 : 1048576.0;
+        return (long)(value * multiplier);
+    }
+
+    /// <summary>Hands the engine's resident audio models back on request.
+    /// <para>Without this override the base <see cref="AbstractBackend.FreeMemory"/> returns false and does
+    /// nothing, so Swarm's "free memory" API and its memory-pressure paths could never reclaim audio VRAM —
+    /// multi-GB pipelines stayed resident until the process exited.</para></summary>
+    public override async Task<bool> FreeMemory(bool systemRam)
+    {
+        AudioEngineBridge.FreeMemory();
+        if (systemRam)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+        CurrentModelName = null;
+        await Task.CompletedTask;
+        return true;
     }
 
     /// <summary>Shuts down the backend, removes models from registry, and cleans up.
