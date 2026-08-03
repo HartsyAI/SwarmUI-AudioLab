@@ -102,6 +102,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// <summary>Collection of all registered models, keyed by model name.</summary>
     private Dictionary<string, T2IModel> RegisteredAudioModels { get; set; } = [];
 
+    /// <summary>Guards <see cref="RemoteModels"/> and <see cref="RegisteredAudioModels"/>. Both are plain
+    /// Dictionaries reached concurrently from engine install, restart-all, and the background redownloads;
+    /// unsynchronized writes corrupted the Dictionary and aborted the process.</summary>
+    private readonly object _modelsLock = new();
+
     /// <summary>Set of installed engine provider IDs, persisted to JSON config.</summary>
     private HashSet<string> InstalledEngines { get; set; } = [];
 
@@ -141,8 +146,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
         Models = new ConcurrentDictionary<string, List<string>>();
         _supportedFeatureSet.Clear();
         _providers.Clear();
-        RegisteredAudioModels.Clear();
-        RemoteModels.Clear();
+        lock (_modelsLock)
+        {
+            RegisteredAudioModels.Clear();
+            RemoteModels.Clear();
+        }
         Program.ModelRefreshEvent -= ReRegisterModelsAfterRefresh;
 
         if (!string.IsNullOrEmpty(Settings.AudioModelRoot))
@@ -250,7 +258,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 Program.MainSDModels.Models[name] = model;
                 Logs.Debug($"[AudioLab] Added model to MainSDModels: {name}");
             }
-            RegisteredAudioModels[name] = model;
+            lock (_modelsLock)
+            {
+                RegisteredAudioModels[name] = model;
+            }
         }
         if (Models.TryGetValue("Stable-Diffusion", out List<string> existingModels))
         {
@@ -266,19 +277,24 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// Mirrors DynamicAPIBackend.UpdateRemoteModels().</summary>
     private void UpdateRemoteModels()
     {
-        if (!RegisteredAudioModels.Any())
+        int published;
+        lock (_modelsLock)
         {
-            Logs.Warning("[AudioLab] No registered audio models to publish");
-            return;
+            if (!RegisteredAudioModels.Any())
+            {
+                Logs.Warning("[AudioLab] No registered audio models to publish");
+                return;
+            }
+            Dictionary<string, JObject> remoteSD = RemoteModels.GetOrCreate("Stable-Diffusion", () => []);
+            remoteSD.Clear();
+            foreach (KeyValuePair<string, T2IModel> kvp in RegisteredAudioModels)
+            {
+                remoteSD[kvp.Key] = CreateModelMetadata(kvp.Value, kvp.Key);
+            }
+            ReRegisterModelsAfterRefresh();
+            published = remoteSD.Count;
         }
-        Dictionary<string, JObject> remoteSD = RemoteModels.GetOrCreate("Stable-Diffusion", () => []);
-        remoteSD.Clear();
-        foreach (KeyValuePair<string, T2IModel> kvp in RegisteredAudioModels)
-        {
-            remoteSD[kvp.Key] = CreateModelMetadata(kvp.Value, kvp.Key);
-        }
-        ReRegisterModelsAfterRefresh();
-        Logs.Verbose($"[AudioLab] Published {remoteSD.Count} audio models to RemoteModels");
+        Logs.Verbose($"[AudioLab] Published {published} audio models to RemoteModels");
     }
 
     /// <summary>Re-registers audio models into MainSDModels.Models after a filesystem refresh wipes them.
@@ -290,12 +306,16 @@ public class DynamicAudioBackend : AbstractT2IBackend
             return;
         }
         int added = 0;
-        foreach (KeyValuePair<string, T2IModel> kvp in RegisteredAudioModels)
+        // Also reached directly via Program.ModelRefreshEvent, not just from UpdateRemoteModels.
+        lock (_modelsLock)
         {
-            if (!Program.MainSDModels.Models.ContainsKey(kvp.Key))
+            foreach (KeyValuePair<string, T2IModel> kvp in RegisteredAudioModels)
             {
-                Program.MainSDModels.Models[kvp.Key] = kvp.Value;
-                added++;
+                if (!Program.MainSDModels.Models.ContainsKey(kvp.Key))
+                {
+                    Program.MainSDModels.Models[kvp.Key] = kvp.Value;
+                    added++;
+                }
             }
         }
         if (added > 0)
@@ -751,16 +771,19 @@ public class DynamicAudioBackend : AbstractT2IBackend
     {
         Logs.Info("[AudioLab] Shutting down audio backend");
         Program.ModelRefreshEvent -= ReRegisterModelsAfterRefresh;
-        foreach (string modelName in RegisteredAudioModels.Keys)
+        lock (_modelsLock)
         {
-            if (Program.MainSDModels.Models.ContainsKey(modelName))
+            foreach (string modelName in RegisteredAudioModels.Keys)
             {
-                Logs.Verbose($"[AudioLab] Removing audio model from global registry: {modelName}");
-                Program.MainSDModels.Models.Remove(modelName, out _);
+                if (Program.MainSDModels.Models.ContainsKey(modelName))
+                {
+                    Logs.Verbose($"[AudioLab] Removing audio model from global registry: {modelName}");
+                    Program.MainSDModels.Models.Remove(modelName, out _);
+                }
             }
+            RegisteredAudioModels.Clear();
+            RemoteModels.Clear();
         }
-        RegisteredAudioModels.Clear();
-        RemoteModels.Clear();
         _providers.Clear();
         _supportedFeatureSet.Clear();
         // No processes to stop — but the Engine may hold multi-GB of resident audio models plus device memory,
@@ -932,7 +955,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     Program.MainSDModels.Models.Remove(modelName, out _);
                     Logs.Debug($"[AudioLab] Removed model: {modelName}");
                 }
-                RegisteredAudioModels.Remove(modelName);
+                lock (_modelsLock)
+                {
+                    RegisteredAudioModels.Remove(modelName);
+                }
             }
         }
 
