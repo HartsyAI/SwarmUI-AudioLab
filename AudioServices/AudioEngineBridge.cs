@@ -344,7 +344,7 @@ public static class AudioEngineBridge
             AudioModelDefinition model = provider.Models.FirstOrDefault(m => string.Equals(m.Id, modelId, StringComparison.OrdinalIgnoreCase))
                 ?? provider.Models.FirstOrDefault();
             string repo = HuggingFaceRepo(model?.SourceUrl);
-            return repo is null ? [] : [AudioModelCache.GetRepoDirectory(repo)];
+            return repo is null ? [] : [AudioModelCache.GetRepoDirectory(repo, AudioWeights.CategorySubfolder(provider.Category))];
         }
         catch (Exception ex)
         {

@@ -16,8 +16,10 @@ namespace Hartsy.Extensions.AudioLab.AudioServices;
 /// </summary>
 public static class AudioWeights
 {
-    /// <summary>Per-category subfolder under the audio model root (mirrors the dirs AudioLab creates).</summary>
-    private static string CategorySubfolder(AudioCategory category) => category switch
+    /// <summary>Per-category subfolder under the audio model root (mirrors the dirs AudioLab creates). Also used
+    /// by <see cref="AudioEngineBridge.GetWeightLocations"/> for the HF-auto-download provider class, so both
+    /// weight-resolution paths agree on the same taxonomy.</summary>
+    internal static string CategorySubfolder(AudioCategory category) => category switch
     {
         AudioCategory.TTS => "tts",
         AudioCategory.STT => "stt",

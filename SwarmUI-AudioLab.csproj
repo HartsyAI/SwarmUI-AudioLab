@@ -47,8 +47,12 @@
          that made TextService.FindMmproj public (see SwarmUI-LLMAssistant's HartsyLocalLLMProvider).
          Pinned here to 2.0.0-alpha.4 in step with that fix and the other two SwarmUI-Hartsy extensions,
          ahead of the engine repo's manual publish of that version — restore will 404 until that push
-         lands on nuget.org. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.8" />
+         lands on nuget.org.
+         2.0.0-alpha.10 = AudioModelCache.GetRepoDirectory/GetAsync/Get now take a required category
+         parameter (tts/stt/music/clone/fx/misc) and default their cache root to
+         {HARTSYINFERENCE_MODELS}/audio — AudioEngineBridge.GetWeightLocations's HF-auto-download branch
+         requires this exact signature. Pinned ahead of publish, same as the alpha.4 precedent above. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.10" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
