@@ -52,7 +52,7 @@
          parameter (tts/stt/music/clone/fx/misc) and default their cache root to
          {HARTSYINFERENCE_MODELS}/audio — AudioEngineBridge.GetWeightLocations's HF-auto-download branch
          requires this exact signature. Pinned ahead of publish, same as the alpha.4 precedent above. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.10" />
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.11" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
