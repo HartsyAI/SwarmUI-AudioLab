@@ -83,6 +83,9 @@ public static class AudioEngineRequests
                 : args.ContainsKey("guidance_scale") ? Double(args, "guidance_scale", 7.0) : null,
             Temperature = args.ContainsKey("temperature") ? Double(args, "temperature", 1.0) : null,
             TopK = args.ContainsKey("topk") ? (int)Double(args, "topk", 50) : null,
+            // YuE's sampling knobs; the engine falls back to the reference defaults (0.93 / 1.1) when absent.
+            TopP = args.ContainsKey("top_p") ? Double(args, "top_p", 0.93) : null,
+            RepetitionPenalty = args.ContainsKey("repetition_penalty") ? Double(args, "repetition_penalty", 1.1) : null,
             // ACE-Step prompt-template metas (upstream SFT_GEN_PROMPT "# Metas" block + lyric language header).
             Bpm = args.ContainsKey("bpm") ? (int)Double(args, "bpm", 120) : null,
             KeyScale = AudioIo.Str(args, "key_scale"),
