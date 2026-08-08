@@ -35,15 +35,6 @@ const AudioLabAPI = (() => {
      * Install dependencies for a specific provider.
      * @param {string} providerId - e.g. "chatterbox_tts", "whisper_stt"
      */
-    async function installProviderDependencies(providerId) {
-        return await callAPI('InstallProviderDependencies', { provider_id: providerId });
-    }
-
-    /** @returns {Promise<Object>} Real-time installation progress. */
-    async function getInstallationProgress() {
-        return await callAPI('GetInstallationProgress');
-    }
-
     /**
      * Process audio through a specific provider.
      * @param {string} providerId
@@ -150,8 +141,6 @@ const AudioLabAPI = (() => {
         callAPI,
         getAllProvidersStatus,
         getInstallationStatus,
-        installProviderDependencies,
-        getInstallationProgress,
         processAudio,
         processSTT,
         processTTS,

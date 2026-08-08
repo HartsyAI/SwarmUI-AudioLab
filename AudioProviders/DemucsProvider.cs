@@ -24,10 +24,12 @@ public sealed class DemucsProvider : IAudioProviderSource
 
     #region Models
 
+    // htdemucs_ft is deliberately absent: upstream ships it as a 4-checkpoint Bag_of_models ensemble, not a
+    // single 4-stem checkpoint, and the engine's Demucs pipeline has no ensemble support. It was advertised as
+    // installable here but could never load.
     private static AudioModelDefinition[] Models =>
     [
         new() { Id = "htdemucs", Name = "HTDemucs", Description = "Hybrid Transformer Demucs — best quality 4-stem separation", SourceUrl = "https://github.com/facebookresearch/demucs", License = "MIT", EstimatedSize = "~80MB", EstimatedVram = "~2GB", SelfManaged = true, EngineConfig = new() { ["model_name"] = "htdemucs" } },
-        new() { Id = "htdemucs_ft", Name = "HTDemucs Fine-tuned", Description = "Fine-tuned variant, highest quality separation", SourceUrl = "https://github.com/facebookresearch/demucs", License = "MIT", EstimatedSize = "~80MB", EstimatedVram = "~2GB", SelfManaged = true, EngineConfig = new() { ["model_name"] = "htdemucs_ft" } },
         new() { Id = "htdemucs_6s", Name = "HTDemucs 6-Stem", Description = "6-stem separation (vocals, drums, bass, guitar, piano, other)", SourceUrl = "https://github.com/facebookresearch/demucs", License = "MIT", EstimatedSize = "~80MB", EstimatedVram = "~2GB", SelfManaged = true, EngineConfig = new() { ["model_name"] = "htdemucs_6s" } }
     ];
 

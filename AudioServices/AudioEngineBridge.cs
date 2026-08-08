@@ -88,7 +88,8 @@ public static class AudioEngineBridge
         ["rvc_clone"] = new AudioEngineBinding("rvc", AudioEngineService.VoiceConversion, false),
         ["openvoice_clone"] = new AudioEngineBinding("openvoice", AudioEngineService.VoiceConversion, true),
         // Effects.
-        ["demucs_fx"] = new AudioEngineBinding("demucs", AudioEngineService.Separate, false),
+        // FxCatalog.EnsureDemucsPathAsync auto-downloads both variants from Meta's public CDN on first load.
+        ["demucs_fx"] = new AudioEngineBinding("demucs", AudioEngineService.Separate, true),
         ["resemble_enhance_fx"] = new AudioEngineBinding("resemble-enhance", AudioEngineService.Enhance, true),
     };
 
@@ -339,7 +340,27 @@ public static class AudioEngineBridge
         {
             if (!binding.ManagesOwnWeights)
             {
-                return [AudioWeights.WeightsDirectory(provider)];
+                string dir = AudioWeights.WeightsDirectory(provider);
+                // Every ACE-Step / YuE variant is a distinct multi-GB checkpoint, so resolve THIS model's own
+                // files. Returning the shared directory for all of them marked every sibling variant installed
+                // as soon as one was.
+                AudioWeightsRegistry.DownloadSpec[] specs = AudioWeightsRegistry.SpecsFor(providerId, modelId);
+                if (specs.Length > 0)
+                {
+                    List<string> paths = [];
+                    foreach (AudioWeightsRegistry.DownloadSpec spec in specs)
+                    {
+                        // Walk the fallback chain: a spec that downloaded from its fallback source is on disk
+                        // under the FALLBACK's filename, and is just as present.
+                        for (AudioWeightsRegistry.DownloadSpec s = spec; s is not null; s = s.Fallback)
+                        {
+                            paths.Add(Path.Combine(dir, s.FileName));
+                        }
+                    }
+                    return paths;
+                }
+                // No registry entry (RVC and other user-placed checkpoints): the whole directory is the answer.
+                return [dir];
             }
             AudioModelDefinition model = provider.Models.FirstOrDefault(m => string.Equals(m.Id, modelId, StringComparison.OrdinalIgnoreCase))
                 ?? provider.Models.FirstOrDefault();
@@ -365,11 +386,23 @@ public static class AudioEngineBridge
         return parts.Length >= 2 ? $"{parts[0]}/{parts[1]}" : null;
     }
 
-    /// <summary>True if at least one of the model's weight locations exists on disk and is non-empty. Used by the
-    /// reconcile pass to flag "installed but weights missing". A provider with no known locations is treated as
-    /// present to avoid false negatives.</summary>
+    /// <summary>True if the model's weights are on disk. Used by the reconcile pass to flag "installed but
+    /// weights missing". A provider with no known locations is treated as present to avoid false negatives.
+    /// <para>Registry-backed variants require EVERY file in their set (each satisfied by itself or anything in
+    /// its fallback chain) — "any one file" would report a variant installed once only its small sidecar
+    /// config had downloaded. Everything else keeps the any-location heuristic.</para></summary>
     public static bool WeightsPresent(string providerId, string modelId)
     {
+        AudioWeightsRegistry.DownloadSpec[] specs = AudioWeightsRegistry.SpecsFor(providerId, modelId);
+        if (specs.Length > 0)
+        {
+            AudioProviderDefinition registryProvider = AudioProviderRegistry.GetById(providerId);
+            if (registryProvider is not null)
+            {
+                string dir = AudioWeights.WeightsDirectory(registryProvider);
+                return specs.All(spec => SpecSatisfied(spec, dir));
+            }
+        }
         IReadOnlyList<string> locations = GetWeightLocations(providerId, modelId);
         if (locations.Count == 0)
         {
@@ -397,6 +430,25 @@ public static class AudioEngineBridge
                 }
             }
             catch (Exception ex) { Logs.Debug($"[AudioLab] WeightsPresent probe of '{path}' threw: {ex.Message}"); }
+        }
+        return false;
+    }
+
+    /// <summary>True when a spec's file, or any file in its fallback chain, is on disk. A spec that downloaded
+    /// from its fallback source is stored under the fallback's name (YuE's xcodec repack vs the canonical .pth)
+    /// and is just as usable.</summary>
+    private static bool SpecSatisfied(AudioWeightsRegistry.DownloadSpec spec, string dir)
+    {
+        for (AudioWeightsRegistry.DownloadSpec s = spec; s is not null; s = s.Fallback)
+        {
+            try
+            {
+                if (File.Exists(Path.Combine(dir, s.FileName)))
+                {
+                    return true;
+                }
+            }
+            catch (Exception ex) { Logs.Debug($"[AudioLab] SpecSatisfied probe of '{s.FileName}' threw: {ex.Message}"); }
         }
         return false;
     }

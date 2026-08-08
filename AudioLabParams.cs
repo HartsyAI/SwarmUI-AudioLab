@@ -257,8 +257,10 @@ public static class AudioLabParams
     public static T2IRegisteredParam<int> InferStep;
     /// <summary>Classifier-free guidance strength for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<double> ACEGuidanceScale;
-    /// <summary>Instrumental-only toggle for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
+    /// <summary>Instrumental-only toggle, shared by ACE-Step and Suno. Feature flag: <c>music_instrumental_param</c>.</summary>
     public static T2IRegisteredParam<string> Instrumental;
+    /// <summary>Style/genre tags for cloud music providers (Suno, Udio). Feature flag: <c>music_style_params</c>.</summary>
+    public static T2IRegisteredParam<string> MusicStyle;
     /// <summary>Beats per minute for ACE-Step music. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<int> BPM;
     /// <summary>Musical key and scale for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
@@ -929,11 +931,21 @@ public static class AudioLabParams
             Min: 1.0, Max: 30.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
             OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
+        // Shared across every music provider whose API takes an instrumental toggle (ACE-Step, Suno) —
+        // one param on its own flag rather than a near-duplicate registered per provider.
         Instrumental = T2IParamTypes.Register<string>(new("Instrumental",
             "Generate instrumental-only track without vocals.",
             "false",
             GetValues: _ => ["false///No", "true///Yes"],
-            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "music_instrumental_param"));
+
+        // Shared by the cloud music providers that take a separate style/tags field. ACE-Step uses core's
+        // Text2AudioStyle instead (it has the whole text2audio group), so it does NOT get this flag.
+        MusicStyle = T2IParamTypes.Register<string>(new("Music Style",
+            "Style / genre tags for the generated music, comma-separated.\nExample: pop, electronic, upbeat, female vocals",
+            "",
+            ViewType: ParamViewType.PROMPT,
+            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "music_style_params"));
 
         BPM = T2IParamTypes.Register<int>(new("BPM",
             "Beats per minute for the generated music.",

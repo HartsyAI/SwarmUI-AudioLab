@@ -20,6 +20,7 @@ public sealed class AceStepProvider : IAudioProviderSource
         .AddFeatureFlag("acestep_music_params")
         .AddFeatureFlag("acestep_lm_params")
         .AddFeatureFlag("acestep_task_params")
+        .AddFeatureFlag("music_instrumental_param")
         .AddModels(Models)
         .WithEngineGroup("music")
         .Build();

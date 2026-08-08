@@ -51,8 +51,12 @@
          2.0.0-alpha.10 = AudioModelCache.GetRepoDirectory/GetAsync/Get now take a required category
          parameter (tts/stt/music/clone/fx/misc) and default their cache root to
          {HARTSYINFERENCE_MODELS}/audio — AudioEngineBridge.GetWeightLocations's HF-auto-download branch
-         requires this exact signature. Pinned ahead of publish, same as the alpha.4 precedent above. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.11" />
+         requires this exact signature. Pinned ahead of publish, same as the alpha.4 precedent above.
+         2.0.0-alpha.16 = first published version with MusicRequest.TopP/RepetitionPenalty, which
+         AudioEngineRequests.cs has referenced since the YuE sampling pass. The pin sat at alpha.11 in the
+         meantime, so ANY SwarmUI-driven rebuild (which never passes UseLocalHartsy) failed with CS0117 and
+         silently dropped the extension. alpha.15 does NOT contain these — do not pin below 16. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.16" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak

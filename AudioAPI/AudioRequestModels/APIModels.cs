@@ -225,7 +225,9 @@ public class TTSRequest : BaseRequest
             throw new ArgumentException("Pitch must be between 0.1 and 3.0");
         }
 
-        string[] validFormats = ["wav", "mp3"];
+        // Must stay in step with the AudioOutputFormat param's values and ConvertAudioFormat's allowlist —
+        // ogg and flac were both selectable in the UI but rejected here.
+        string[] validFormats = ["wav", "mp3", "ogg", "flac"];
         if (!validFormats.Contains(Options.Format.ToLowerInvariant()))
         {
             throw new ArgumentException($"Format must be one of: {string.Join(", ", validFormats)}");

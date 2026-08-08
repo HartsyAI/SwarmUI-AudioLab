@@ -16,8 +16,10 @@ public sealed class AzureTTSHandler : ApiEngineHandlerBase
         if (string.IsNullOrEmpty(text)) return Error("No text provided.");
         string voiceName = GetArg(args, "voice_name", "en-US-JennyNeural");
         string language = GetArg(args, "language", "en-US");
-        string ssml = $@"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{language}'>
-            <voice name='{voiceName}'>{System.Security.SecurityElement.Escape(text)}</voice>
+        // Every interpolated value is user-supplied, so all three must be escaped — an unescaped quote in
+        // voice_name or language breaks out of the attribute and lets arbitrary SSML through.
+        string ssml = $@"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{System.Security.SecurityElement.Escape(language)}'>
+            <voice name='{System.Security.SecurityElement.Escape(voiceName)}'>{System.Security.SecurityElement.Escape(text)}</voice>
         </speak>";
         Dictionary<string, string> headers = new()
         {

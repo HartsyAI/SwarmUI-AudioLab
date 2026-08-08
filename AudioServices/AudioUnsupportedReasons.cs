@@ -12,6 +12,11 @@ public static class AudioUnsupportedReasons
         ["realtimestt_stt"] =
             "RealtimeSTT needs a streaming/chunked transcription loop; the engine's Whisper currently exposes only "
             + "whole-clip transcription. Use the Whisper provider in the meantime.",
+        ["aws_transcribe"] =
+            "AWS Transcribe needs a real client: the batch API is asynchronous and requires the audio to be in S3 "
+            + "first (StartTranscriptionJob → poll → fetch), and the streaming API needs an HTTP/2 event-stream "
+            + "protocol. The previous single POST matched neither and could never have worked. Use Whisper, "
+            + "Deepgram, or AssemblyAI instead.",
         ["stableaudio_music"] =
             "Stable Audio Open has no descriptor in the engine's music catalog, so there is no model id to dispatch "
             + "to. It lights up as soon as the engine registers the family.",

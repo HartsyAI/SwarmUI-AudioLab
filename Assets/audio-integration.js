@@ -25,13 +25,25 @@ const AudioLabConfig = {
         qwen3_tts_clone: { category: 'audiolab_tts', providerFlag: 'qwen3tts_tts_params', extraFlags: ['tts_voice_ref'] },
         qwen3_tts_custom: { category: 'audiolab_tts', providerFlag: 'qwen3tts_tts_params', extraFlags: ['qwen3tts_speaker_params', 'qwen3tts_instruct_params'] },
         qwen3_tts_design: { category: 'audiolab_tts', providerFlag: 'qwen3tts_tts_params', extraFlags: ['qwen3tts_instruct_params'] },
+        sparktts_tts: { category: 'audiolab_tts' },
+        styletts2_tts: { category: 'audiolab_tts' },
+        melotts_tts: { category: 'audiolab_tts' },
+        zipvoice_tts: { category: 'audiolab_tts', providerFlag: 'zipvoice_tts_params', extraFlags: ['tts_voice_ref'] },
+        // Provider-level fallback: every Qwen3 model overrides ModelClassId, but an unmapped arch
+        // hides ALL audio params, so keep a safe entry in case a future variant forgets to.
+        qwen3_tts: { category: 'audiolab_tts', providerFlag: 'qwen3tts_tts_params' },
         whisper_stt: { category: 'audiolab_stt', providerFlag: 'whisper_stt_params' },
+        whisperstreaming_stt: { category: 'audiolab_stt' },
+        moonshinestreaming_stt: { category: 'audiolab_stt' },
         kyutaistt_stt: { category: 'audiolab_stt', providerFlag: 'kyutaistt_stt_params' },
         distilwhisper_stt: { category: 'audiolab_stt', providerFlag: 'distilwhisper_stt_params' },
         moonshine_stt: { category: 'audiolab_stt', providerFlag: 'moonshine_stt_params' },
         realtimestt_stt: { category: 'audiolab_stt', providerFlag: 'realtimestt_params' },
         musicgen_music: { category: 'audiolab_audiogen', providerFlag: 'musicgen_music_params', extraFlags: ['audiocraft_sampling'] },
-        acestep_music: { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params', extraFlags: ['acestep_lm_params', 'acestep_task_params'] },
+        // `text2audio` unlocks core's Text2Audio group (duration/BPM/key/time-sig/language/style), which
+        // BuildEngineArgs already prefers over AudioLab's bespoke equivalents. Only ACE-Step gets it —
+        // every param in that group is meaningful here, which isn't true of the other music providers.
+        acestep_music: { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params', extraFlags: ['acestep_lm_params', 'acestep_task_params', 'music_instrumental_param', 'text2audio'] },
         openvoice_clone: { category: 'audiolab_clone', providerFlag: 'openvoice_clone_params' },
         rvc_clone: { category: 'audiolab_clone', providerFlag: 'rvc_clone_params' },
         gptsovits_clone: { category: 'audiolab_clone', providerFlag: 'gptsovits_clone_params' },
@@ -40,6 +52,7 @@ const AudioLabConfig = {
         audiogen_sfx: { category: 'audiolab_audiogen', providerFlag: 'audiogen_sfx_params', extraFlags: ['audiocraft_sampling'] },
         yue_music: { category: 'audiolab_audiogen', providerFlag: 'yue_music_params' },
         heartlib_music: { category: 'audiolab_audiogen', providerFlag: 'heartlib_music_params' },
+        stableaudio_music: { category: 'audiolab_audiogen' },
         // API TTS providers
         elevenlabs_tts: { category: 'audiolab_tts', providerFlag: 'elevenlabs_tts_params' },
         openai_tts: { category: 'audiolab_tts', providerFlag: 'openai_tts_params' },
@@ -58,8 +71,8 @@ const AudioLabConfig = {
         deepgram_stt: { category: 'audiolab_stt', providerFlag: 'deepgram_stt_params' },
         // API audio generation providers
         elevenlabs_sfx: { category: 'audiolab_audiogen', providerFlag: 'elevenlabs_sfx_params' },
-        suno_music: { category: 'audiolab_audiogen', providerFlag: 'suno_music_params' },
-        udio_music: { category: 'audiolab_audiogen', providerFlag: 'udio_music_params' },
+        suno_music: { category: 'audiolab_audiogen', providerFlag: 'suno_music_params', extraFlags: ['music_style_params', 'music_instrumental_param'] },
+        udio_music: { category: 'audiolab_audiogen', providerFlag: 'udio_music_params', extraFlags: ['music_style_params'] },
         // API voice conversion providers
         elevenlabs_vc: { category: 'audiolab_clone', providerFlag: 'elevenlabs_vc_params' },
         // API audio processing providers
@@ -121,7 +134,7 @@ const AudioLabConfig = {
     get allAudioFlags() {
         const flags = new Set(this.categoryFlags);
         for (const v of Object.values(this.archToCategory)) {
-            flags.add(v.providerFlag);
+            if (v.providerFlag) flags.add(v.providerFlag);
             if (v.extraFlags) v.extraFlags.forEach(f => flags.add(f));
         }
         return [...flags];
@@ -177,15 +190,17 @@ featureSetChangers.push(() => {
     }
 
     if (!isAudioModel) {
-        return [[], AudioLabConfig.allAudioFlags];
+        // `text2audio` is a CORE flag that core itself grants to native ace-step-1_5 models. Removes are
+        // applied after adds, so listing it here would undo core's own grant — leave it to core.
+        return [[], AudioLabConfig.allAudioFlags.filter(f => f != 'text2audio')];
     }
 
     const config = AudioLabConfig.archToCategory[curArch];
-    const activeCategory = config.category;
-    const activeProviderFlag = config.providerFlag;
-
     const activeExtraFlags = config.extraFlags || [];
-    const activeSet = new Set([activeCategory, activeProviderFlag, ...activeExtraFlags]);
+    const activeSet = new Set([config.category, ...activeExtraFlags]);
+    if (config.providerFlag) {
+        activeSet.add(config.providerFlag);
+    }
     const otherAudioFlags = AudioLabConfig.allAudioFlags.filter(f => !activeSet.has(f));
     const removeFlags = [...AudioLabConfig.incompatibleFlags, ...otherAudioFlags];
     const addFlags = ['prompt', ...activeSet];

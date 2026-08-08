@@ -16,6 +16,8 @@ public sealed class SunoMusicProvider : IAudioProviderSource
         .WithModelClass("suno_music", "Suno Music")
         .AddFeatureFlag("audiolab_audiogen")
         .AddFeatureFlag("suno_music_params")
+        .AddFeatureFlag("music_style_params")
+        .AddFeatureFlag("music_instrumental_param")
         .WithApiProvider("suno_api")
         .AddModels(Models)
         .WithEngineGroup("api")

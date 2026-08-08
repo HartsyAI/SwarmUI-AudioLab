@@ -27,12 +27,14 @@ public class AudioServerManager
     }
 
     /// <summary>Routes a processing request to the appropriate C# backend.</summary>
-    public async Task<JObject> ProcessAsync(AudioProviderDefinition provider, Dictionary<string, object> args, CancellationToken cancelToken = default)
+    /// <param name="user">The requesting user, whose stored API key is used for cloud providers.
+    /// Null falls back to the local/admin user, which is only correct for single-user installs.</param>
+    public async Task<JObject> ProcessAsync(AudioProviderDefinition provider, Dictionary<string, object> args, User user, CancellationToken cancelToken = default)
     {
         // Cloud API providers are handled entirely in C# by their dedicated handler.
         if (provider.IsApiProvider)
         {
-            return await ProcessViaApiAsync(provider, args, cancelToken);
+            return await ProcessViaApiAsync(provider, args, user, cancelToken);
         }
 
         // Everything local is delegated to the Engine's typed audio services (it auto-downloads each
@@ -51,14 +53,15 @@ public class AudioServerManager
     }
 
     /// <summary>Routes an API provider request to its C# handler.</summary>
-    private async Task<JObject> ProcessViaApiAsync(AudioProviderDefinition provider, Dictionary<string, object> args, CancellationToken cancelToken)
+    private async Task<JObject> ProcessViaApiAsync(AudioProviderDefinition provider, Dictionary<string, object> args, User user, CancellationToken cancelToken)
     {
         IApiEngineHandler handler = ApiHandlerRegistry.GetHandler(provider.Id);
         if (handler == null)
         {
-            return CreateErrorResponse($"No API handler found for provider '{provider.Id}'.");
+            // Deliberately-unimplemented cloud providers (AWS Transcribe) have a specific documented reason.
+            return CreateErrorResponse(AudioUnsupportedReasons.Message(provider.Id, provider.Name));
         }
-        string apiKey = GetProviderApiKey(provider.ApiKeySettingsId);
+        string apiKey = GetProviderApiKey(provider.ApiKeySettingsId, user);
         if (string.IsNullOrEmpty(apiKey))
         {
             return CreateErrorResponse($"{provider.Name} requires an API key. Set your '{provider.ApiKeySettingsId}' key in Server > User Settings > API Keys.");
@@ -67,9 +70,11 @@ public class AudioServerManager
         {
             return await handler.ProcessAsync(args, apiKey, cancelToken);
         }
-        catch (TaskCanceledException)
+        catch (OperationCanceledException) when (cancelToken.IsCancellationRequested)
         {
-            return CreateErrorResponse("Request cancelled by user.");
+            // Must carry `cancelled` like the engine path's AudioIo.Cancelled(), or callers treat a
+            // user interrupt as a generation failure.
+            return AudioIo.Cancelled();
         }
         catch (Exception ex)
         {
@@ -80,7 +85,7 @@ public class AudioServerManager
 
     /// <summary>Retrieves a provider-specific API key from user settings.
     /// Called per-request so key changes take effect immediately.</summary>
-    private static string GetProviderApiKey(string settingsId)
+    private static string GetProviderApiKey(string settingsId, User user)
     {
         if (string.IsNullOrEmpty(settingsId))
         {
@@ -88,7 +93,9 @@ public class AudioServerManager
         }
         try
         {
-            User user = Program.Sessions?.GetUser(SessionHandler.LocalUserID);
+            // Only fall back to the local/admin user when the caller genuinely has no session —
+            // reading their key for every request leaked one user's keys to all others.
+            user ??= Program.Sessions?.GetUser(SessionHandler.LocalUserID);
             return user?.GetGenericData(settingsId, "key") ?? "";
         }
         catch

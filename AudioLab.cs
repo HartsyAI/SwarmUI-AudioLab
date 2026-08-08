@@ -41,6 +41,10 @@ public class AudioLab : Extension
             AudioProviderDefinitions.RegisterAll();
             Logs.Info($"[AudioLab] Registered {AudioProviderDefinitions.All.Count} audio providers");
 
+            // Must run before the user-settings page first renders — its key-entry table is generated
+            // from UserUpstreamApiKeys.KeysByType, so unregistered types have no input field at all.
+            AudioApiKeys.RegisterAll();
+
             // Register web assets — libraries first, then DAW modules, then integration
             ScriptFiles.Add("Assets/lib/wavesurfer.min.js");
             ScriptFiles.Add("Assets/lib/wavesurfer-record.min.js");

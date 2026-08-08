@@ -23,7 +23,6 @@ public static class ApiHandlerRegistry
         ["azure_stt"] = new AzureSTTHandler(),
         // AWS suite
         ["amazon_polly"] = new AmazonPollyHandler(),
-        ["aws_transcribe"] = new AWSTranscribeHandler(),
         // Deepgram suite
         ["deepgram_tts"] = new DeepgramTTSHandler(),
         ["deepgram_stt"] = new DeepgramSTTHandler(),

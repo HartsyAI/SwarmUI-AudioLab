@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net.Http;
 using System.Text;
 using Newtonsoft.Json.Linq;
@@ -164,6 +165,33 @@ public abstract class ApiEngineHandlerBase : IApiEngineHandler
 
     /// <summary>Convert raw bytes to base64.</summary>
     protected static string ToBase64(byte[] data) => Convert.ToBase64String(data);
+
+    /// <summary>Wraps raw PCM samples in a RIFF/WAVE header. Providers that return headerless PCM (Amazon
+    /// Polly's <c>pcm</c> output) must go through this before being reported as "wav" — the bytes are
+    /// unplayable otherwise.</summary>
+    protected static byte[] PcmToWav(byte[] pcm, int sampleRate, int channels = 1, int bitsPerSample = 16)
+    {
+        int byteRate = sampleRate * channels * (bitsPerSample / 8);
+        int blockAlign = channels * (bitsPerSample / 8);
+        using MemoryStream ms = new();
+        using BinaryWriter bw = new(ms);
+        bw.Write("RIFF"u8);
+        bw.Write(36 + pcm.Length);
+        bw.Write("WAVE"u8);
+        bw.Write("fmt "u8);
+        bw.Write(16);
+        bw.Write((short)1);
+        bw.Write((short)channels);
+        bw.Write(sampleRate);
+        bw.Write(byteRate);
+        bw.Write((short)blockAlign);
+        bw.Write((short)bitsPerSample);
+        bw.Write("data"u8);
+        bw.Write(pcm.Length);
+        bw.Write(pcm);
+        bw.Flush();
+        return ms.ToArray();
+    }
 
     /// <summary>POST multipart form data and return parsed JSON.</summary>
     protected async Task<JObject> PostMultipartForJsonAsync(string url, MultipartFormDataContent content, Dictionary<string, string> headers, CancellationToken cancel)

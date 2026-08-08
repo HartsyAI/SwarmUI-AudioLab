@@ -437,7 +437,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
         try
         {
-            JObject result = await AudioServerManager.Instance.ProcessAsync(provider, args, user_input.InterruptToken);
+            JObject result = await AudioServerManager.Instance.ProcessAsync(provider, args, user_input.SourceSession?.User, user_input.InterruptToken);
 
             if (result["cancelled"]?.Value<bool>() == true)
             {
@@ -499,10 +499,16 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 throw new SwarmReadableErrorException($"[AudioLab] {provider.Name}: {error}");
             }
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (user_input.InterruptToken.IsCancellationRequested)
         {
+            Logs.Info($"[AudioLab] Generation cancelled for {provider.Name}");
+        }
+        catch (Exception ex) when (ex is not SwarmReadableErrorException)
+        {
+            // Record then rethrow — swallowing here made every non-streaming failure look like an empty success.
             Logs.Error($"[AudioLab] Error processing with {provider.Name}: {ex.Message}");
             meta.LastError = ex.Message;
+            throw;
         }
     }
 
@@ -550,7 +556,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
             try
             {
-                JObject result = await AudioServerManager.Instance.ProcessAsync(provider, args, user_input.InterruptToken);
+                JObject result = await AudioServerManager.Instance.ProcessAsync(provider, args, user_input.SourceSession?.User, user_input.InterruptToken);
 
                 if (result["cancelled"]?.Value<bool>() == true)
                 {
@@ -1403,6 +1409,21 @@ public class DynamicAudioBackend : AbstractT2IBackend
             case AudioCategory.STT:
                 args["audio_data"] = GetBase64Audio(input, AudioLabParams.AudioInput);
                 args["language"] = input.TryGet(AudioLabParams.Language, out string sttLang) ? sttLang : "en";
+                // AssemblyAI reads `language_code` and takes the same bare ISO-639-1 code AudioLabParams.Language
+                // offers. Google/Azure also read `language_code` but require a BCP-47 region subtag ("en-US"),
+                // which this param can't express yet — forwarding a bare "en" there would be worse than their
+                // own defaults, so they keep them until the Language param gains region-qualified values.
+                if (provider.Id == "assemblyai_stt" && (string)args["language"] != "auto")
+                {
+                    args["language_code"] = args["language"];
+                }
+                // "default" is a single-model sentinel, not a real API model name — leaving model_id unset
+                // there keeps each handler's own correct default (e.g. Deepgram nova-3). Local providers
+                // carry their real name via EngineConfig["model_name"] instead.
+                if (provider.IsApiProvider && modelDef is not null && modelDef.Id != "default")
+                {
+                    args["model_id"] = modelDef.Id;
+                }
                 break;
 
             case AudioCategory.AudioGeneration:
@@ -1540,6 +1561,20 @@ public class DynamicAudioBackend : AbstractT2IBackend
             case "kyutaitts_tts":
                 if (input.TryGet(AudioLabParams.KyutaiTTSVoice, out string ktv))
                     args["voice"] = ktv;
+                break;
+
+            case "suno_music":
+            case "udio_music":
+                // Both cloud handlers read `text`, not the category block's `prompt`.
+                args["text"] = input.Get(T2IParamTypes.Prompt, "");
+                if (input.TryGet(AudioLabParams.MusicStyle, out string musicStyle) && !string.IsNullOrEmpty(musicStyle))
+                {
+                    args["style"] = musicStyle;
+                }
+                if (input.TryGet(AudioLabParams.Instrumental, out string musicInst))
+                {
+                    args["instrumental"] = musicInst;
+                }
                 break;
 
             case "acestep_music":

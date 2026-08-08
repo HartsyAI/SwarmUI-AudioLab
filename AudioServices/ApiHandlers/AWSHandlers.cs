@@ -47,66 +47,16 @@ public sealed class AmazonPollyHandler : ApiEngineHandlerBase
                 return Error($"AWS Polly HTTP {(int)resp.StatusCode}: {body[..Math.Min(body.Length, 300)]}");
             }
             byte[] audio = await resp.Content.ReadAsByteArrayAsync(cancel);
-            return AudioResult(ToBase64(audio), format == "pcm" ? "wav" : format, 24000);
+            // Polly's "pcm" output is headerless 16-bit mono LE — it must be wrapped before it can be called wav.
+            if (format == "pcm")
+            {
+                return AudioResult(ToBase64(PcmToWav(audio, 24000)), "wav", 24000);
+            }
+            return AudioResult(ToBase64(audio), format, 24000);
         }
         catch (HttpRequestException ex)
         {
             return Error($"AWS Polly request failed: {ex.Message}");
-        }
-    }
-
-    private static (string accessKey, string secretKey, string region) ParseAwsKey(string apiKey)
-    {
-        string[] parts = apiKey.Split('|');
-        return parts.Length >= 3 ? (parts[0], parts[1], parts[2]) : (null, null, null);
-    }
-}
-
-/// <summary>AWS Transcribe handler — speech-to-text via AWS Transcribe.
-/// API key format: "access_key_id|secret_access_key|region" (e.g. "AKIA...|wJalr...|us-east-1").</summary>
-public sealed class AWSTranscribeHandler : ApiEngineHandlerBase
-{
-    public override async Task<JObject> ProcessAsync(Dictionary<string, object> args, string apiKey, CancellationToken cancel = default)
-    {
-        (string accessKey, string secretKey, string region) = ParseAwsKey(apiKey);
-        if (accessKey == null) return Error("AWS API key must be in format: access_key_id|secret_access_key|region (e.g. AKIA...|wJalr...|us-east-1). Set this in Server > User Settings > API Keys.");
-        byte[] audioData = DecodeAudioArg(args);
-        if (audioData == null) return Error("No audio data provided.");
-        string language = GetArg(args, "language_code", "en-US");
-        string host = $"transcribe.{region}.amazonaws.com";
-        string url = $"https://{host}/stream-transcription";
-        JObject payload = new()
-        {
-            ["AudioStream"] = ToBase64(audioData),
-            ["LanguageCode"] = language,
-            ["MediaEncoding"] = "pcm",
-            ["MediaSampleRateHertz"] = 16000
-        };
-        try
-        {
-            byte[] bodyBytes = Encoding.UTF8.GetBytes(payload.ToString());
-            Dictionary<string, string> headers = AwsSigV4.Sign(accessKey, secretKey, region, "transcribe", "POST", host, "/stream-transcription", "", bodyBytes);
-            headers["Content-Type"] = "application/json";
-            using HttpRequestMessage req = new(HttpMethod.Post, url);
-            req.Content = new ByteArrayContent(bodyBytes);
-            req.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
-            foreach (KeyValuePair<string, string> h in headers)
-            {
-                req.Headers.TryAddWithoutValidation(h.Key, h.Value);
-            }
-            HttpResponseMessage resp = await Http.SendAsync(req, cancel);
-            string body = await resp.Content.ReadAsStringAsync(cancel);
-            if (!resp.IsSuccessStatusCode)
-            {
-                return Error($"AWS Transcribe HTTP {(int)resp.StatusCode}: {body[..Math.Min(body.Length, 300)]}");
-            }
-            JObject result = JObject.Parse(body);
-            string transcript = result["results"]?["transcripts"]?[0]?["transcript"]?.ToString() ?? "";
-            return SttResult(transcript, language);
-        }
-        catch (HttpRequestException ex)
-        {
-            return Error($"AWS Transcribe request failed: {ex.Message}");
         }
     }
 

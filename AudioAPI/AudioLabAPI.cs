@@ -3,7 +3,6 @@ using System.Runtime.InteropServices;
 using Hartsy.Extensions.AudioLab.AudioBackends;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using Hartsy.Extensions.AudioLab.AudioServices;
-using Hartsy.Extensions.AudioLab.Progress;
 using Hartsy.Extensions.AudioLab.WebAPI.Models;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Accounts;
@@ -38,6 +37,10 @@ public static class AudioLabPermissions
 [API.APIClass("AudioLab API with provider-based audio processing")]
 public static class AudioLabAPI
 {
+    /// <summary>Cap on any single string arg to ProcessAudio: 64 MB of base64 (~48 MB decoded), well above any
+    /// realistic reference clip while still rejecting a runaway payload.</summary>
+    private const int MaxArgStringLength = 64 * 1024 * 1024;
+
     /// <summary>Registers all API endpoints.</summary>
     public static void Register()
     {
@@ -49,7 +52,6 @@ public static class AudioLabAPI
             API.RegisterAPICall(ProcessWorkflow, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(GetAllProvidersStatus, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(GetInstallationStatus, false, AudioLabPermissions.PermCheckStatus);
-            API.RegisterAPICall(GetInstallationProgress, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(ConvertAudioFormat, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(AudioLabTimeStretch, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(AudioLabListEngines, false, AudioLabPermissions.PermCheckStatus);
@@ -273,16 +275,29 @@ public static class AudioLabAPI
                 return AudioLab.CreateErrorResponse($"Unknown provider: {providerId}", "unknown_provider");
             }
 
-            Dictionary<string, object> args = [];
-            if (input["args"] is JObject argsObj)
+            if (input["args"] is not JObject argsObj || !argsObj.Properties().Any())
             {
-                foreach (JProperty prop in argsObj.Properties())
+                return AudioLab.CreateErrorResponse("args is required and must be a non-empty object", "missing_args");
+            }
+            Dictionary<string, object> args = [];
+            foreach (JProperty prop in argsObj.Properties())
+            {
+                // This endpoint is a generic passthrough, so it can't validate per-provider shapes — but an
+                // oversized base64 blob must be rejected before it reaches a provider or an upstream API.
+                if (prop.Value?.Type == JTokenType.String)
                 {
-                    args[prop.Name] = prop.Value?.ToObject<object>();
+                    string value = prop.Value.ToString();
+                    if (value.Length > MaxArgStringLength)
+                    {
+                        return AudioLab.CreateErrorResponse(
+                            $"args.{prop.Name} is {value.Length / (1024 * 1024)} MB, over the {MaxArgStringLength / (1024 * 1024)} MB limit for a single argument.",
+                            "arg_too_large");
+                    }
                 }
+                args[prop.Name] = prop.Value?.ToObject<object>();
             }
 
-            JObject result = await AudioServerManager.Instance.ProcessAsync(provider, args);
+            JObject result = await AudioServerManager.Instance.ProcessAsync(provider, args, session?.User);
             return result;
         }
         catch (Exception ex)
@@ -319,7 +334,7 @@ public static class AudioLabAPI
             };
 
             long sttStart = Environment.TickCount64;
-            JObject result = await AudioServerManager.Instance.ProcessAsync(sttProvider, args);
+            JObject result = await AudioServerManager.Instance.ProcessAsync(sttProvider, args, session?.User);
 
             if (result["success"]?.Value<bool>() == true)
             {
@@ -380,7 +395,7 @@ public static class AudioLabAPI
                 args["ref_text"] = refText.ToString();
 
             long ttsStart = Environment.TickCount64;
-            JObject result = await AudioServerManager.Instance.ProcessAsync(ttsProvider, args);
+            JObject result = await AudioServerManager.Instance.ProcessAsync(ttsProvider, args, session?.User);
 
             if (result["success"]?.Value<bool>() == true)
             {
@@ -426,17 +441,29 @@ public static class AudioLabAPI
 
             foreach (WorkflowStep step in request.Steps.Where(s => s.Enabled).OrderBy(s => s.Order))
             {
-                AudioCategory category = step.Type.ToLowerInvariant() switch
+                // Unknown step types used to fall through to TTS, so an "llm" or misspelled step silently ran
+                // as text-to-speech and the response still reported success.
+                AudioCategory? mapped = step.Type.ToLowerInvariant() switch
                 {
                     "stt" => AudioCategory.STT,
                     "tts" => AudioCategory.TTS,
-                    _ => AudioCategory.TTS
+                    _ => null
                 };
+                if (mapped is null)
+                {
+                    results[step.Type] = new JObject { ["success"] = false, ["error"] = $"Unsupported workflow step type '{step.Type}'. Supported: stt, tts." };
+                    continue;
+                }
+                AudioCategory category = mapped.Value;
 
                 AudioProviderDefinition provider = AudioProviderRegistry.GetByCategory(category)
                     .FirstOrDefault();
 
-                if (provider == null) continue;
+                if (provider == null)
+                {
+                    results[step.Type] = new JObject { ["success"] = false, ["error"] = $"No {category} provider is registered to run step '{step.Type}'." };
+                    continue;
+                }
 
                 Dictionary<string, object> args = [];
                 if (category == AudioCategory.STT)
@@ -452,7 +479,7 @@ public static class AudioLabAPI
                     args["volume"] = step.Config?["volume"]?.Value<float>() ?? 0.8f;
                 }
 
-                JObject stepResult = await AudioServerManager.Instance.ProcessAsync(provider, args);
+                JObject stepResult = await AudioServerManager.Instance.ProcessAsync(provider, args, session?.User);
                 results[step.Type] = stepResult;
                 executedSteps.Add(step.Type);
 
@@ -468,10 +495,18 @@ public static class AudioLabAPI
                 }
             }
 
+            // A step that never ran, or ran and failed, must not be reported as an unqualified success.
+            List<string> failedSteps = [.. request.Steps.Where(s => s.Enabled).Select(s => s.Type)
+                .Where(t => !executedSteps.Contains(t)
+                    || (results.TryGetValue(t, out object r) && r is JObject ro && ro["success"]?.Value<bool>() == false))
+                .Distinct()];
             return new JObject
             {
-                ["success"] = true,
-                ["message"] = "Workflow completed successfully",
+                ["success"] = failedSteps.Count == 0,
+                ["message"] = failedSteps.Count == 0
+                    ? "Workflow completed successfully"
+                    : $"Workflow completed with {failedSteps.Count} failed step(s): {string.Join(", ", failedSteps)}",
+                ["failed_steps"] = JArray.FromObject(failedSteps),
                 ["workflow_results"] = JObject.FromObject(results),
                 ["executed_steps"] = JArray.FromObject(executedSteps),
                 ["total_processing_time"] = (DateTime.UtcNow - startTime).TotalSeconds,
@@ -548,31 +583,6 @@ public static class AudioLabAPI
         catch (Exception ex)
         {
             return AudioLab.CreateErrorResponse("Failed to check installation status", "status_error", ex);
-        }
-    }
-
-    /// <summary>Get real-time installation progress.</summary>
-    public static async Task<JObject> GetInstallationProgress(Session session, JObject input)
-    {
-        try
-        {
-            ProgressTracker tracker = ProgressTracking.Installation;
-
-            return new JObject
-            {
-                ["success"] = true,
-                ["progress"] = tracker.Progress,
-                ["current_step"] = tracker.CurrentStep,
-                ["current_package"] = tracker.CurrentPackage,
-                ["completed_packages"] = new JArray(tracker.CompletedPackages),
-                ["is_complete"] = tracker.IsComplete,
-                ["has_error"] = tracker.HasError,
-                ["error_message"] = tracker.ErrorMessage
-            };
-        }
-        catch (Exception ex)
-        {
-            return AudioLab.CreateErrorResponse("Failed to get installation progress", "status_error", ex);
         }
     }
 
