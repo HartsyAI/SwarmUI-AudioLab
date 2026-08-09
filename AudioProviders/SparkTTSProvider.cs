@@ -18,6 +18,8 @@ public sealed class SparkTTSProvider : IAudioProviderSource
         .WithModelPrefix("SparkTTS")
         .WithModelClass("sparktts_tts", "Spark-TTS")
         .AddFeatureFlag("audiolab_tts")
+        .AddFeatureFlag("sparktts_create_params")
+        .AddFeatureFlag("tts_voice_ref")
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();

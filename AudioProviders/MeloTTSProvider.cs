@@ -18,6 +18,7 @@ public sealed class MeloTTSProvider : IAudioProviderSource
         .WithModelPrefix("MeloTTS")
         .WithModelClass("melotts_tts", "MeloTTS")
         .AddFeatureFlag("audiolab_tts")
+        .AddFeatureFlag("melotts_tts_params")
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();

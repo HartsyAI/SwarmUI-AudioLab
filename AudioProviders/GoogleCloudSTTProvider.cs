@@ -23,6 +23,6 @@ public sealed class GoogleCloudSTTProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "default", Name = "Google Cloud STT (Chirp 3)", Description = "125+ languages with automatic punctuation", SourceUrl = "https://cloud.google.com/speech-to-text", License = "Commercial API", EstimatedSize = "API", EstimatedVram = "None (API)" }
+        new() { Id = "default", Name = "Google Cloud STT", Description = "Speech-to-Text v1: 125+ languages with automatic punctuation (Chirp 2/3 require the v2 API)", SourceUrl = "https://cloud.google.com/speech-to-text", License = "Commercial API", EstimatedSize = "API", EstimatedVram = "None (API)" }
     ];
 }

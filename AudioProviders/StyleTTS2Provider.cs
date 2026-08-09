@@ -18,6 +18,9 @@ public sealed class StyleTTS2Provider : IAudioProviderSource
         .WithModelPrefix("StyleTTS2")
         .WithModelClass("styletts2_tts", "StyleTTS 2")
         .AddFeatureFlag("audiolab_tts")
+        .AddFeatureFlag("styletts2_tts_params")
+        .AddFeatureFlag("tts_voice_ref")
+        .AddFeatureFlag("styletts2_clone_params")
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();

@@ -17,7 +17,6 @@ public sealed class MoonshineProvider : IAudioProviderSource
         .WithModelPrefix("Moonshine")
         .WithModelClass("moonshine_stt", "Moonshine STT")
         .AddFeatureFlag("audiolab_stt")
-        .AddFeatureFlag("moonshine_stt_params")
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();

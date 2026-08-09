@@ -10,7 +10,7 @@ public sealed class CartesiaTTSHandler : ApiEngineHandlerBase
     {
         string text = GetArg(args, "text");
         if (string.IsNullOrEmpty(text)) return Error("No text provided.");
-        string modelId = GetArg(args, "model_id", "sonic-2");
+        string modelId = GetArg(args, "model_id", "sonic-3.5");
         string voiceId = GetArg(args, "voice_id", "a0e99841-438c-4a64-b679-ae501e7d6091");
         string language = GetArg(args, "language", "en");
         Dictionary<string, string> headers = new()

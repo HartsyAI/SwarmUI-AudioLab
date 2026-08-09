@@ -601,7 +601,6 @@ public static class AudioLabAPI
                 .Select(b => b.AbstractBackend as DynamicAudioBackend)
                 .FirstOrDefault(b => b is not null);
             IReadOnlySet<string> installedIds = backend?.GetInstalledEngineIds() ?? new HashSet<string>();
-            IReadOnlySet<string> weightsMissingIds = backend?.GetWeightsMissingEngineIds() ?? new HashSet<string>();
 
             JArray engines = [];
             foreach (AudioProviderDefinition provider in AudioProviderRegistry.All)
@@ -650,7 +649,6 @@ public static class AudioLabAPI
                     ["platform_note"] = platformNote,
                     ["installed"] = installedIds.Contains(provider.Id),
                     // Installed but weights absent on disk (e.g. user freed space) — UI shows a repair prompt.
-                    ["weights_missing"] = weightsMissingIds.Contains(provider.Id),
                     // In-process C# engines have no Python dependencies; only the model weights download.
                     ["in_process"] = !provider.IsApiProvider,
                     // Weights fetched on first use — no explicit per-model install/remove for this engine.

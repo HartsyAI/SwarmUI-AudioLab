@@ -15,7 +15,6 @@ public sealed class AWSTranscribeProvider : IAudioProviderSource
         .WithModelPrefix("AWSTranscribe")
         .WithModelClass("aws_transcribe", "AWS Transcribe")
         .AddFeatureFlag("audiolab_stt")
-        .AddFeatureFlag("aws_stt_params")
         .WithApiProvider("aws_api")
         .AddModels(Models)
         .WithEngineGroup("api")

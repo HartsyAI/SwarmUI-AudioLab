@@ -25,7 +25,10 @@ public sealed class AssemblyAIHandler : ApiEngineHandlerBase
             ["audio_url"] = uploadUrl,
             ["language_code"] = language,
             ["punctuate"] = true,
-            ["format_text"] = true
+            ["format_text"] = true,
+            // Both features require punctuation, which is already on above.
+            ["speaker_labels"] = GetArgBool(args, "speaker_labels", false),
+            ["sentiment_analysis"] = GetArgBool(args, "sentiment_analysis", false)
         };
         JObject transcript = await PostJsonAsync($"{BaseUrl}/transcript", transcriptPayload, headers, cancel);
         if (IsError(transcript)) return transcript;

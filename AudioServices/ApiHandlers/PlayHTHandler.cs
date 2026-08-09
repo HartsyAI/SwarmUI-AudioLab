@@ -16,6 +16,7 @@ public sealed class PlayHTTTSHandler : ApiEngineHandlerBase
         string voice = GetArg(args, "voice", "s3://voice-cloning-zero-shot/775ae416-49bb-4fb6-bd45-740f205d3559/sadfranksaad/manifest.json");
         string quality = GetArg(args, "quality", "premium");
         double speed = GetArgDouble(args, "speed", 1.0);
+        string voiceEngine = GetArg(args, "voice_engine", "PlayHT2.0");
         Dictionary<string, string> headers = new()
         {
             ["Authorization"] = $"Bearer {key}",
@@ -28,7 +29,7 @@ public sealed class PlayHTTTSHandler : ApiEngineHandlerBase
             ["quality"] = quality,
             ["output_format"] = "mp3",
             ["speed"] = speed,
-            ["voice_engine"] = "PlayHT2.0-turbo"
+            ["voice_engine"] = voiceEngine
         };
         try
         {

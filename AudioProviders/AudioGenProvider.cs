@@ -17,7 +17,6 @@ public sealed class AudioGenProvider : IAudioProviderSource
         .WithModelPrefix("AudioGen")
         .WithModelClass("audiogen_sfx", "AudioGen SFX")
         .AddFeatureFlag("audiolab_audiogen")
-        .AddFeatureFlag("audiogen_sfx_params")
         .AddFeatureFlag("audiocraft_sampling")
         .AddModels(Models)
         .WithEngineGroup("audiocraft")

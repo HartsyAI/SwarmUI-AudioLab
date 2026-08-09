@@ -17,7 +17,6 @@ public sealed class NeuTTSProvider : IAudioProviderSource
         .WithModelPrefix("NeuTTS")
         .WithModelClass("neutts_tts", "NeuTTS Air")
         .AddFeatureFlag("audiolab_tts")
-        .AddFeatureFlag("neutts_tts_params")
         .AddFeatureFlag("tts_voice_ref")
         .AddModels(Models)
         .WithEngineGroup("main")

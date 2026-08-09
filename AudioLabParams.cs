@@ -134,6 +134,8 @@ public static class AudioLabParams
 
     /// <summary>Top-K filtering for Dia CFG guidance. Feature flag: <c>dia_tts_params</c>.</summary>
     public static T2IRegisteredParam<int> CFGFilterTopK;
+    /// <summary>Classifier-free guidance scale for Dia. Feature flag: <c>dia_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> DiaCFGScale;
 
     #endregion
 
@@ -145,6 +147,8 @@ public static class AudioLabParams
     public static T2IRegisteredParam<double> F5Speed;
     /// <summary>Classifier-free guidance scale for F5-TTS. Feature flag: <c>f5_tts_params</c>.</summary>
     public static T2IRegisteredParam<double> F5CFG;
+    /// <summary>Sway-sampling coefficient for F5-TTS flow matching. Feature flag: <c>f5_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> F5SwaySampling;
 
     #endregion
 
@@ -165,6 +169,8 @@ public static class AudioLabParams
     public static T2IRegisteredParam<string> ZonosLanguage;
     /// <summary>Emotional tone for Zonos TTS. Feature flag: <c>zonos_tts_params</c>.</summary>
     public static T2IRegisteredParam<string> ZonosEmotion;
+    /// <summary>Pitch standard deviation for Zonos. Feature flag: <c>zonos_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> ZonosPitchStd;
     /// <summary>Speaking rate for Zonos TTS. Feature flag: <c>zonos_tts_params</c>.</summary>
     public static T2IRegisteredParam<double> SpeakingRate;
 
@@ -178,6 +184,46 @@ public static class AudioLabParams
     public static T2IRegisteredParam<string> Qwen3Speaker;
     /// <summary>Natural language instruction for Qwen3-TTS voice style/emotion. Feature flag: <c>qwen3tts_instruct_params</c>.</summary>
     public static T2IRegisteredParam<string> Qwen3Instruct;
+
+    #endregion
+
+    #region TTS — MeloTTS (flag: melotts_tts_params)
+
+    /// <summary>Speaker/accent selection within a MeloTTS checkpoint. Feature flag: <c>melotts_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> MeloSpeaker;
+    /// <summary>Speech speed multiplier for MeloTTS. Feature flag: <c>melotts_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> MeloSpeed;
+
+    #endregion
+
+    #region TTS — StyleTTS 2 (flag: styletts2_tts_params)
+
+    /// <summary>Diffusion sampler step count for StyleTTS 2. Feature flag: <c>styletts2_tts_params</c>.</summary>
+    public static T2IRegisteredParam<int> StyleTTS2DiffusionSteps;
+    /// <summary>Classifier-free-style embedding scale for StyleTTS 2. Feature flag: <c>styletts2_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> StyleTTS2EmbeddingScale;
+    /// <summary>Timbre blend toward the reference voice. Feature flag: <c>styletts2_clone_params</c>.</summary>
+    public static T2IRegisteredParam<double> StyleTTS2Alpha;
+    /// <summary>Prosody blend toward the reference voice. Feature flag: <c>styletts2_clone_params</c>.</summary>
+    public static T2IRegisteredParam<double> StyleTTS2Beta;
+
+    #endregion
+
+    #region TTS — Spark-TTS (flag: sparktts_tts_params)
+
+    /// <summary>Voice gender for Spark-TTS voice creation. Feature flag: <c>sparktts_create_params</c>.</summary>
+    public static T2IRegisteredParam<string> SparkGender;
+    /// <summary>Pitch level for Spark-TTS voice creation. Feature flag: <c>sparktts_create_params</c>.</summary>
+    public static T2IRegisteredParam<string> SparkPitch;
+    /// <summary>Speed level for Spark-TTS voice creation. Feature flag: <c>sparktts_create_params</c>.</summary>
+    public static T2IRegisteredParam<string> SparkSpeed;
+
+    #endregion
+
+    #region TTS — Qwen3-TTS extras
+
+    /// <summary>Faster clone mode that conditions on the speaker vector only, at some prosody cost.</summary>
+    public static T2IRegisteredParam<string> Qwen3XVectorOnly;
 
     #endregion
 
@@ -226,6 +272,105 @@ public static class AudioLabParams
 
     /// <summary>Whisper task type (transcribe or translate). Feature flag: <c>whisper_stt_params</c>.</summary>
     public static T2IRegisteredParam<string> WhisperTask;
+
+    #endregion
+
+    #region STT — Whisper extras (flag: whisper_stt_params)
+
+    /// <summary>Beam count for Whisper beam search. Feature flag: <c>whisper_stt_params</c>.</summary>
+    public static T2IRegisteredParam<int> WhisperBeamSize;
+    /// <summary>Optional text prompt biasing Whisper's vocabulary. Feature flag: <c>whisper_stt_params</c>.</summary>
+    public static T2IRegisteredParam<string> WhisperInitialPrompt;
+
+    #endregion
+
+    #region STT — AssemblyAI (flag: assemblyai_stt_params)
+
+    /// <summary>Per-speaker labelling. Feature flag: <c>assemblyai_stt_params</c>.</summary>
+    public static T2IRegisteredParam<string> AssemblySpeakerLabels;
+    /// <summary>Per-utterance sentiment analysis. Feature flag: <c>assemblyai_stt_params</c>.</summary>
+    public static T2IRegisteredParam<string> AssemblySentiment;
+
+    #endregion
+
+    #region TTS — ElevenLabs (flag: elevenlabs_tts_params)
+
+    /// <summary>Voice consistency vs expressiveness. Feature flag: <c>elevenlabs_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> ElevenStability;
+    /// <summary>Adherence to the original voice. Feature flag: <c>elevenlabs_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> ElevenSimilarity;
+    /// <summary>Style exaggeration. Feature flag: <c>elevenlabs_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> ElevenStyle;
+    /// <summary>Speaker-boost toggle. Feature flag: <c>elevenlabs_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> ElevenSpeakerBoost;
+
+    #endregion
+
+    #region TTS — Azure (flag: azure_tts_params)
+
+    /// <summary>mstts express-as speaking style. Feature flag: <c>azure_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> AzureStyle;
+    /// <summary>Intensity of the selected Azure style. Feature flag: <c>azure_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> AzureStyleDegree;
+
+    #endregion
+
+    #region TTS — Amazon Polly (flag: polly_tts_params)
+
+    /// <summary>Polly synthesis engine. Feature flag: <c>polly_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> PollyEngine;
+    /// <summary>Polly voice id. Feature flag: <c>polly_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> PollyVoice;
+
+    #endregion
+
+    /// <summary>Azure STT profanity handling. Feature flag: <c>azure_stt_params</c>.</summary>
+    public static T2IRegisteredParam<string> AzureProfanity;
+    /// <summary>Deepgram STT model. Feature flag: <c>deepgram_stt_params</c>.</summary>
+    public static T2IRegisteredParam<string> DeepgramSTTModel;
+    /// <summary>Google Cloud STT v1 model. Feature flag: <c>google_stt_params</c>.</summary>
+    public static T2IRegisteredParam<string> GoogleSTTModel;
+    /// <summary>Optional vocabulary hint for OpenAI transcription. Feature flag: <c>openai_stt_params</c>.</summary>
+    public static T2IRegisteredParam<string> OpenAISTTPrompt;
+
+    #region TTS — Cloud voice/style extras
+
+    /// <summary>OpenAI TTS voice. Feature flag: <c>openai_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> OpenAIVoice;
+    /// <summary>Free-form delivery instructions (gpt-4o-mini-tts only). Feature flag: <c>openai_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> OpenAIInstructions;
+    /// <summary>Speech speed for OpenAI TTS. Feature flag: <c>openai_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> OpenAISpeed;
+    /// <summary>Google Cloud TTS voice name. Feature flag: <c>google_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> GoogleVoiceName;
+    /// <summary>Google Cloud TTS speaking rate. Feature flag: <c>google_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> GoogleSpeakingRate;
+    /// <summary>Google Cloud TTS pitch offset in semitones. Feature flag: <c>google_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> GooglePitch;
+    /// <summary>Deepgram Aura voice model. Feature flag: <c>deepgram_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> DeepgramVoice;
+    /// <summary>Cartesia voice id. Feature flag: <c>cartesia_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> CartesiaVoice;
+    /// <summary>Cartesia speech speed (generation_config, 0.6-1.5). Feature flag: <c>cartesia_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> CartesiaSpeed;
+    /// <summary>Cartesia model id. Feature flag: <c>cartesia_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> CartesiaModel;
+    /// <summary>PlayHT voice id. Feature flag: <c>playht_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> PlayHTVoice;
+    /// <summary>PlayHT voice engine. Feature flag: <c>playht_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> PlayHTEngine;
+    /// <summary>PlayHT speech speed. Feature flag: <c>playht_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> PlayHTSpeed;
+    /// <summary>PlayHT output quality tier. Feature flag: <c>playht_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> PlayHTQuality;
+    /// <summary>Dolby.io Media Enhance preset. Feature flag: <c>dolby_audioproc_params</c>.</summary>
+    public static T2IRegisteredParam<string> DolbyPreset;
+    /// <summary>Strip background noise before voice conversion. Feature flag: <c>elevenlabs_vc_params</c>.</summary>
+    public static T2IRegisteredParam<string> ElevenRemoveNoise;
+    /// <summary>ElevenLabs SFX clip length in seconds. Feature flag: <c>elevenlabs_sfx_params</c>.</summary>
+    public static T2IRegisteredParam<double> ElevenSFXDuration;
+    /// <summary>How literally ElevenLabs SFX follows the prompt. Feature flag: <c>elevenlabs_sfx_params</c>.</summary>
+    public static T2IRegisteredParam<double> ElevenSFXInfluence;
 
     #endregion
 
@@ -327,6 +472,13 @@ public static class AudioLabParams
 
     #endregion
 
+    #region Music — Stable Audio (flag: stableaudio_music_params)
+
+    /// <summary>Diffusion steps for Stable Audio Open Small. Feature flag: <c>stableaudio_music_params</c>.</summary>
+    public static T2IRegisteredParam<int> StableAudioSteps;
+
+    #endregion
+
     #region Music — MusicGen (flag: musicgen_music_params)
 
     #endregion
@@ -411,6 +563,8 @@ public static class AudioLabParams
     public static T2IRegisteredParam<double> Overlap;
     /// <summary>Random shift count for Demucs equivariant stabilization. Feature flag: <c>demucs_fx_params</c>.</summary>
     public static T2IRegisteredParam<int> Shifts;
+    /// <summary>Demucs segment length in seconds (lower = less memory). Feature flag: <c>demucs_fx_params</c>.</summary>
+    public static T2IRegisteredParam<double> DemucsSegment;
 
     #endregion
 
@@ -471,7 +625,7 @@ public static class AudioLabParams
                 "high///High (256kbps MP3)",
                 "max///Maximum (320kbps MP3)"
             ],
-            OrderPriority: -9, Group: OutputGroup, FeatureFlag: "audiolab_output"));
+            OrderPriority: -9, Group: OutputGroup, FeatureFlag: "audiolab_output", IsAdvanced: true));
 
         #endregion
 
@@ -492,7 +646,7 @@ public static class AudioLabParams
                 "sentence///Per Sentence",
                 "paragraph///Per Paragraph"
             ],
-            OrderPriority: -9, Group: TTSGroup, FeatureFlag: "audiolab_tts"));
+            OrderPriority: -9, Group: TTSGroup, FeatureFlag: "audiolab_tts", IsAdvanced: true));
 
         #endregion
 
@@ -501,31 +655,31 @@ public static class AudioLabParams
             "Sampling temperature.\nHigher = more varied/creative speech. Lower = more consistent.",
             "0.8",
             Min: 0.1, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -8, Group: TTSGroup, FeatureFlag: "tts_sampling"));
+            OrderPriority: -8, Group: TTSGroup, FeatureFlag: "tts_sampling", IsAdvanced: true));
 
         TopP = T2IParamTypes.Register<double>(new("Top P",
             "Nucleus sampling threshold.\n1.0 = no filtering. Lower values restrict to higher probability tokens.",
             "1.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -7, Group: TTSGroup, FeatureFlag: "tts_sampling"));
+            OrderPriority: -7, Group: TTSGroup, FeatureFlag: "tts_sampling", IsAdvanced: true));
 
         RepetitionPenalty = T2IParamTypes.Register<double>(new("Repetition Penalty",
             "Penalizes repeated tokens.\nHigher values reduce stuttering and repetitive speech patterns.",
             "1.2",
             Min: 1.0, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -6, Group: TTSGroup, FeatureFlag: "tts_sampling"));
+            OrderPriority: -6, Group: TTSGroup, FeatureFlag: "tts_sampling", IsAdvanced: true));
 
         TopK = T2IParamTypes.Register<int>(new("Top K",
             "Top-K token sampling.\nLimits sampling to the K most likely tokens. 0 = disabled.",
             "50",
             Min: 0, Max: 1000, Step: 10, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "tts_sampling"));
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "tts_sampling", IsAdvanced: true));
 
         MinP = T2IParamTypes.Register<double>(new("Min P",
             "Minimum probability threshold.\nTokens below this probability are excluded from sampling.",
             "0.05",
             Min: 0.0, Max: 1.0, Step: 0.01, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "tts_sampling"));
+            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "tts_sampling", IsAdvanced: true));
 
         #endregion
 
@@ -563,13 +717,13 @@ public static class AudioLabParams
             "Controls randomness of text token generation.\nHigher = more varied speech patterns.",
             "0.7",
             Min: 0.0, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -8, Group: TTSGroup, FeatureFlag: "bark_tts_params"));
+            OrderPriority: -8, Group: TTSGroup, FeatureFlag: "bark_tts_params", IsAdvanced: true));
 
         WaveformTemp = T2IParamTypes.Register<double>(new("Waveform Temperature",
             "Controls randomness of audio waveform generation.\nHigher = more varied audio quality.",
             "0.7",
             Min: 0.0, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -7, Group: TTSGroup, FeatureFlag: "bark_tts_params"));
+            OrderPriority: -7, Group: TTSGroup, FeatureFlag: "bark_tts_params", IsAdvanced: true));
 
         #endregion
 
@@ -584,21 +738,69 @@ public static class AudioLabParams
             "Classifier-free guidance weight.\nHigher = more controlled/stable. Lower = more variation.",
             "0.5",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "chatterbox_tts_params"));
+            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "chatterbox_tts_params", IsAdvanced: true));
 
         #endregion
 
         #region TTS — Kokoro
         KokoroVoice = T2IParamTypes.Register<string>(new("Kokoro Voice",
-            "Voice preset for Kokoro TTS.",
+            "Voice to synthesize with. The first letter is the language (a=American, b=British, j=Japanese, z=Mandarin, e=Spanish, f=French, h=Hindi, i=Italian, p=Portuguese); the second is f=female / m=male.\nAll 54 official voices from the model card are listed.",
             "af_heart",
             GetValues: _ => [
-                "af_heart///Heart (Female)", "af_bella///Bella (Female)",
-                "af_nicole///Nicole (Female)", "af_sarah///Sarah (Female)",
-                "af_sky///Sky (Female)", "am_adam///Adam (Male)",
-                "am_michael///Michael (Male)", "bf_emma///Emma (British F)",
-                "bf_isabella///Isabella (British F)", "bm_george///George (British M)",
-                "bm_lewis///Lewis (British M)"
+                "af_heart///American English — Heart (F)",
+                "af_alloy///American English — Alloy (F)",
+                "af_aoede///American English — Aoede (F)",
+                "af_bella///American English — Bella (F)",
+                "af_jessica///American English — Jessica (F)",
+                "af_kore///American English — Kore (F)",
+                "af_nicole///American English — Nicole (F)",
+                "af_nova///American English — Nova (F)",
+                "af_river///American English — River (F)",
+                "af_sarah///American English — Sarah (F)",
+                "af_sky///American English — Sky (F)",
+                "am_adam///American English — Adam (M)",
+                "am_echo///American English — Echo (M)",
+                "am_eric///American English — Eric (M)",
+                "am_fenrir///American English — Fenrir (M)",
+                "am_liam///American English — Liam (M)",
+                "am_michael///American English — Michael (M)",
+                "am_onyx///American English — Onyx (M)",
+                "am_puck///American English — Puck (M)",
+                "am_santa///American English — Santa (M)",
+                "bf_alice///British English — Alice (F)",
+                "bf_emma///British English — Emma (F)",
+                "bf_isabella///British English — Isabella (F)",
+                "bf_lily///British English — Lily (F)",
+                "bm_daniel///British English — Daniel (M)",
+                "bm_fable///British English — Fable (M)",
+                "bm_george///British English — George (M)",
+                "bm_lewis///British English — Lewis (M)",
+                "jf_alpha///Japanese — Alpha (F)",
+                "jf_gongitsune///Japanese — Gongitsune (F)",
+                "jf_nezumi///Japanese — Nezumi (F)",
+                "jf_tebukuro///Japanese — Tebukuro (F)",
+                "jm_kumo///Japanese — Kumo (M)",
+                "zf_xiaobei///Mandarin — Xiaobei (F)",
+                "zf_xiaoni///Mandarin — Xiaoni (F)",
+                "zf_xiaoxiao///Mandarin — Xiaoxiao (F)",
+                "zf_xiaoyi///Mandarin — Xiaoyi (F)",
+                "zm_yunjian///Mandarin — Yunjian (M)",
+                "zm_yunxi///Mandarin — Yunxi (M)",
+                "zm_yunxia///Mandarin — Yunxia (M)",
+                "zm_yunyang///Mandarin — Yunyang (M)",
+                "ef_dora///Spanish — Dora (F)",
+                "em_alex///Spanish — Alex (M)",
+                "em_santa///Spanish — Santa (M)",
+                "ff_siwis///French — Siwis (F)",
+                "hf_alpha///Hindi — Alpha (F)",
+                "hf_beta///Hindi — Beta (F)",
+                "hm_omega///Hindi — Omega (M)",
+                "hm_psi///Hindi — Psi (M)",
+                "if_sara///Italian — Sara (F)",
+                "im_nicola///Italian — Nicola (M)",
+                "pf_dora///Brazilian Portuguese — Dora (F)",
+                "pm_alex///Brazilian Portuguese — Alex (M)",
+                "pm_santa///Brazilian Portuguese — Santa (M)"
             ],
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "kokoro_tts_params"));
 
@@ -612,12 +814,46 @@ public static class AudioLabParams
 
         #region TTS — Piper
         PiperVoice = T2IParamTypes.Register<string>(new("Piper Voice",
-            "Piper voice model. CPU-only ONNX voices, auto-downloaded on first use.",
+            "Piper voice. Each voice is a separate download, named language-speaker-quality.\nAll 37 English voices from the official VOICES.md are listed; higher quality is larger and slower.",
             "en_US-amy-medium",
             GetValues: _ => [
-                "en_US-amy-medium///Amy (US Female)",
-                "en_US-danny-low///Danny (US Male)",
-                "en_GB-alba-medium///Alba (GB Female)"
+                "en_US-amy-low///US amy (low)",
+                "en_US-amy-medium///US amy (medium)",
+                "en_US-arctic-medium///US arctic (medium)",
+                "en_US-bryce-medium///US bryce (medium)",
+                "en_US-danny-low///US danny (low)",
+                "en_US-hfc_female-medium///US hfc female (medium)",
+                "en_US-hfc_male-medium///US hfc male (medium)",
+                "en_US-joe-medium///US joe (medium)",
+                "en_US-john-medium///US john (medium)",
+                "en_US-kathleen-low///US kathleen (low)",
+                "en_US-kristin-medium///US kristin (medium)",
+                "en_US-kusal-medium///US kusal (medium)",
+                "en_US-l2arctic-medium///US l2arctic (medium)",
+                "en_US-lessac-low///US lessac (low)",
+                "en_US-lessac-medium///US lessac (medium)",
+                "en_US-lessac-high///US lessac (high)",
+                "en_US-libritts-high///US libritts (high)",
+                "en_US-libritts_r-medium///US libritts r (medium)",
+                "en_US-ljspeech-medium///US ljspeech (medium)",
+                "en_US-ljspeech-high///US ljspeech (high)",
+                "en_US-norman-medium///US norman (medium)",
+                "en_US-reza_ibrahim-medium///US reza ibrahim (medium)",
+                "en_US-ryan-low///US ryan (low)",
+                "en_US-ryan-medium///US ryan (medium)",
+                "en_US-ryan-high///US ryan (high)",
+                "en_US-sam-medium///US sam (medium)",
+                "en_GB-alan-low///GB alan (low)",
+                "en_GB-alan-medium///GB alan (medium)",
+                "en_GB-alba-medium///GB alba (medium)",
+                "en_GB-aru-medium///GB aru (medium)",
+                "en_GB-cori-medium///GB cori (medium)",
+                "en_GB-cori-high///GB cori (high)",
+                "en_GB-jenny_dioco-medium///GB jenny dioco (medium)",
+                "en_GB-northern_english_male-medium///GB northern english male (medium)",
+                "en_GB-semaine-medium///GB semaine (medium)",
+                "en_GB-southern_english_female-low///GB southern english female (low)",
+                "en_GB-vctk-medium///GB vctk (medium)"
             ],
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "piper_tts_params"));
 
@@ -655,7 +891,7 @@ public static class AudioLabParams
             "Number of DDPM denoising steps.\nMore steps = higher quality but slower. 10 is recommended.",
             "10",
             Min: 5, Max: 100, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "vibevoice_tts_params"));
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "vibevoice_tts_params", IsAdvanced: true));
 
         VibeVoiceCFG = T2IParamTypes.Register<double>(new("VibeVoice CFG",
             "Classifier-free guidance scale for speech diffusion.\n1.3 is recommended for standard models, 1.5 for streaming.",
@@ -667,10 +903,16 @@ public static class AudioLabParams
 
         #region TTS — Dia
         CFGFilterTopK = T2IParamTypes.Register<int>(new("CFG Filter Top K",
-            "Top-K filtering for classifier-free guidance.\nLimits CFG to top K tokens. Higher = less filtering.",
-            "35",
+            "Top-K filtering for classifier-free guidance (Dia\'s cfg_filter_top_k).\nUpstream default is 45.",
+            "45",
             Min: 0, Max: 500, Step: 5, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "dia_tts_params"));
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "dia_tts_params", IsAdvanced: true));
+
+        DiaCFGScale = T2IParamTypes.Register<double>(new("Dia CFG Scale",
+            "Classifier-free guidance strength for Dia.\nHigher = closer to the prompt, lower = more natural variation.",
+            "3.0",
+            Min: 1.0, Max: 10.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -6, Group: TTSGroup, FeatureFlag: "dia_tts_params"));
 
         #endregion
 
@@ -679,7 +921,7 @@ public static class AudioLabParams
             "Number of function evaluation steps for flow matching.\nMore steps = higher quality but slower.",
             "32",
             Min: 1, Max: 100, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "f5_tts_params"));
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "f5_tts_params", IsAdvanced: true));
 
         F5Speed = T2IParamTypes.Register<double>(new("Speed",
             "Speech speed multiplier.\n1.0 = normal, 0.5 = half speed, 2.0 = double speed.",
@@ -691,16 +933,22 @@ public static class AudioLabParams
             "Classifier-free guidance for flow matching.\n2.0 is recommended. Higher = stronger prompt adherence.",
             "2.0",
             Min: 0.0, Max: 10.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -3, Group: TTSGroup, FeatureFlag: "f5_tts_params"));
+            OrderPriority: -3, Group: TTSGroup, FeatureFlag: "f5_tts_params", IsAdvanced: true));
+
+        F5SwaySampling = T2IParamTypes.Register<double>(new("F5 Sway Sampling",
+            "Sway-sampling coefficient.\nNegative values bias sampling toward earlier flow steps; -1.0 is the upstream default.",
+            "-1.0",
+            Min: -1.0, Max: 1.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -2, Group: TTSGroup, FeatureFlag: "f5_tts_params", IsAdvanced: true));
 
         #endregion
 
         #region TTS — ZipVoice
         ZipVoiceSteps = T2IParamTypes.Register<int>(new("ZipVoice Steps",
-            "Number of Euler flow-matching steps.\nMore steps = higher quality but slower.",
-            "16",
+            "Flow-matching sampling steps.\nUpstream default is 8; the distill model can go as low as 4.",
+            "8",
             Min: 1, Max: 100, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "zipvoice_tts_params"));
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "zipvoice_tts_params", IsAdvanced: true));
 
         ZipVoiceSpeed = T2IParamTypes.Register<double>(new("ZipVoice Speed",
             "Speech speed multiplier.\n1.0 = normal, 0.5 = half speed, 2.0 = double speed.",
@@ -712,7 +960,7 @@ public static class AudioLabParams
             "Classifier-free guidance for flow matching.\n1.0 is the base checkpoint's default. Higher = stronger prompt adherence.",
             "1.0",
             Min: 0.0, Max: 10.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -3, Group: TTSGroup, FeatureFlag: "zipvoice_tts_params"));
+            OrderPriority: -3, Group: TTSGroup, FeatureFlag: "zipvoice_tts_params", IsAdvanced: true));
 
         #endregion
 
@@ -729,7 +977,7 @@ public static class AudioLabParams
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "zonos_tts_params"));
 
         ZonosEmotion = T2IParamTypes.Register<string>(new("Emotion",
-            "Emotional tone for Zonos speech synthesis.\nControls the emotional expression of the generated voice.",
+            "Emotion preset. Zonos conditions on an 8-way vector (Happiness, Sadness, Disgust, Fear, Surprise, Anger, Other, Neutral);\neach preset weights that vector, which is then renormalized to sum 1.",
             "neutral",
             GetValues: _ => [
                 "neutral///Neutral", "happy///Happy", "sad///Sad",
@@ -739,31 +987,37 @@ public static class AudioLabParams
             OrderPriority: -4, Group: TTSGroup, FeatureFlag: "zonos_tts_params"));
 
         SpeakingRate = T2IParamTypes.Register<double>(new("Speaking Rate",
-            "Speaking rate for Zonos TTS.\nHigher values produce faster speech.",
+            "Speaking rate in phonemes per second.\nReference range is 0-40: 15 is the default, 30 is very fast, 10 is slow.",
             "15.0",
-            Min: 5.0, Max: 30.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
+            Min: 0.0, Max: 40.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
             OrderPriority: -3, Group: TTSGroup, FeatureFlag: "zonos_tts_params"));
+
+        ZonosPitchStd = T2IParamTypes.Register<double>(new("Pitch Variation",
+            "Pitch standard deviation.\nReference guidance: 20-45 for normal speech, 60-150 for expressive delivery.",
+            "20.0",
+            Min: 0.0, Max: 400.0, Step: 5.0, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -2, Group: TTSGroup, FeatureFlag: "zonos_tts_params", IsAdvanced: true));
 
         #endregion
 
         #region TTS — Fish Speech
         FishSpeechMaxTokens = T2IParamTypes.Register<int>(new("FishSpeech Max Tokens",
-            "Maximum new tokens to generate.\nHigher values allow longer audio output but take more time.",
-            "1024",
-            Min: 256, Max: 4096, Step: 64, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "fishspeech_tts_params"));
+            "Cap on generated tokens.\nUpstream default is 0, which means generate until the stop token.",
+            "0",
+            Min: 0, Max: 4096, Step: 64, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "fishspeech_tts_params", IsAdvanced: true));
 
         FishSpeechChunkLength = T2IParamTypes.Register<int>(new("FishSpeech Chunk Length",
-            "Text chunk size in bytes for batched generation.\nSmaller = faster first audio, larger = better coherence.",
-            "200",
+            "Text chunk size for long-form synthesis (upstream default 300).\nNOTE: the in-process engine does not chunk text yet, so this currently has no effect.",
+            "300",
             Min: 100, Max: 1000, Step: 10, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "fishspeech_tts_params"));
+            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "fishspeech_tts_params", IsAdvanced: true));
 
         FishSpeechNormalize = T2IParamTypes.Register<string>(new("FishSpeech Normalize",
             "Normalize text before synthesis.\nImproves handling of numbers, abbreviations, and special characters.",
             "true",
             GetValues: _ => ["true///Yes (Recommended)", "false///No"],
-            OrderPriority: -3, Group: TTSGroup, FeatureFlag: "fishspeech_tts_params"));
+            OrderPriority: -3, Group: TTSGroup, FeatureFlag: "fishspeech_tts_params", IsAdvanced: true));
 
         #endregion
 
@@ -782,7 +1036,7 @@ public static class AudioLabParams
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "qwen3tts_tts_params"));
 
         Qwen3Speaker = T2IParamTypes.Register<string>(new("Qwen3 Speaker",
-            "Built-in speaker for CustomVoice models.\nIgnored for Base (voice clone) and VoiceDesign models.",
+            "Built-in CustomVoice speaker.\nFour are confirmed against the checkpoint (Ryan, Serena, Ono_Anna, Sohee); the others fall back to the default voice until their ids are verified.",
             "Ryan",
             GetValues: _ => [
                 "Ryan///Ryan (English Male)",
@@ -802,11 +1056,81 @@ public static class AudioLabParams
             "",
             OrderPriority: -3, Group: TTSGroup, FeatureFlag: "qwen3tts_instruct_params"));
 
+        Qwen3XVectorOnly = T2IParamTypes.Register<string>(new("Qwen3 X-Vector Only",
+            "Condition on the speaker vector alone instead of the full reference encoding.\nFaster, with less prosody transfer. Clone (Base) models only.",
+            "false",
+            GetValues: _ => ["false///No", "true///Yes"],
+            OrderPriority: -2, Group: TTSGroup, FeatureFlag: "qwen3tts_tts_params", IsAdvanced: true));
+
+        #endregion
+
+        #region TTS — MeloTTS
+        MeloSpeaker = T2IParamTypes.Register<string>(new("MeloTTS Speaker",
+            "Speaker/accent within the selected MeloTTS checkpoint.\nEnglish ships EN-US, EN-BR, EN-AU, EN-Default and EN-India; other languages have a single speaker.",
+            "EN-US",
+            GetValues: _ => ["EN-US///English (US)", "EN-BR///English (British)", "EN-AU///English (Australian)",
+                "EN-Default///English (Default)", "EN_INDIA///English (Indian)"],
+            OrderPriority: -10, Group: TTSGroup, FeatureFlag: "melotts_tts_params"));
+
+        MeloSpeed = T2IParamTypes.Register<double>(new("MeloTTS Speed",
+            "Speech speed multiplier.",
+            "1.0",
+            Min: 0.5, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -9, Group: TTSGroup, FeatureFlag: "melotts_tts_params"));
+
+        #endregion
+
+        #region TTS — StyleTTS 2
+        StyleTTS2DiffusionSteps = T2IParamTypes.Register<int>(new("StyleTTS2 Diffusion Steps",
+            "Style-diffusion sampler steps.\nUpstream inference uses 5; more steps trade speed for style stability.",
+            "5",
+            Min: 1, Max: 100, Step: 1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -10, Group: TTSGroup, FeatureFlag: "styletts2_tts_params", IsAdvanced: true));
+
+        StyleTTS2EmbeddingScale = T2IParamTypes.Register<double>(new("StyleTTS2 Embedding Scale",
+            "Classifier-free-style guidance on the text embedding.\nHigher = more emotive delivery. This is NOT the alpha/beta reference blend.",
+            "1.0",
+            Min: 0.5, Max: 5.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -9, Group: TTSGroup, FeatureFlag: "styletts2_tts_params", IsAdvanced: true));
+
+        StyleTTS2Alpha = T2IParamTypes.Register<double>(new("StyleTTS2 Alpha (Timbre)",
+            "Timbre balance between the reference clip and the sampled style.\nUpstream: 0 matches the reference deterministically, 1 is maximum diversity and least similarity. Default 0.3.",
+            "0.3",
+            Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -8, Group: VoiceRefGroup, FeatureFlag: "styletts2_clone_params"));
+
+        StyleTTS2Beta = T2IParamTypes.Register<double>(new("StyleTTS2 Beta (Prosody)",
+            "Prosody balance between the reference clip and the sampled style.\nUpstream: 0 matches the reference deterministically, 1 is maximum diversity. Default 0.7.",
+            "0.7",
+            Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -7, Group: VoiceRefGroup, FeatureFlag: "styletts2_clone_params"));
+
+        #endregion
+
+        #region TTS — Spark-TTS
+        SparkGender = T2IParamTypes.Register<string>(new("Spark Voice Gender",
+            "Voice gender for Spark-TTS voice CREATION.\nIgnored when a reference clip is supplied (that switches it to cloning).",
+            "female",
+            GetValues: _ => ["female///Female", "male///Male"],
+            OrderPriority: -10, Group: TTSGroup, FeatureFlag: "sparktts_create_params"));
+
+        SparkPitch = T2IParamTypes.Register<string>(new("Spark Pitch",
+            "Pitch level for Spark-TTS voice creation.",
+            "moderate",
+            GetValues: _ => ["very_low///Very Low", "low///Low", "moderate///Moderate", "high///High", "very_high///Very High"],
+            OrderPriority: -9, Group: TTSGroup, FeatureFlag: "sparktts_create_params"));
+
+        SparkSpeed = T2IParamTypes.Register<string>(new("Spark Speed",
+            "Speed level for Spark-TTS voice creation.",
+            "moderate",
+            GetValues: _ => ["very_low///Very Slow", "low///Slow", "moderate///Moderate", "high///Fast", "very_high///Very Fast"],
+            OrderPriority: -8, Group: TTSGroup, FeatureFlag: "sparktts_create_params"));
+
         #endregion
 
         #region TTS — CosyVoice
         CosyVoiceVoice = T2IParamTypes.Register<string>(new("CosyVoice Voice",
-            "Built-in voice for CosyVoice TTS.\nUsed when no reference audio is provided.",
+            "Preset speaker. NOTE: these presets belong to the CosyVoice-300M-SFT checkpoint.\nThe shipped CosyVoice2-0.5B has no built-in presets and works zero-shot — supply a Reference Audio clip and its transcript instead; this selection is ignored.",
             "中文女",
             GetValues: _ => [
                 "中文女///Chinese Female", "中文男///Chinese Male",
@@ -820,13 +1144,35 @@ public static class AudioLabParams
 
         #region TTS — Pocket TTS
         PocketTTSVoice = T2IParamTypes.Register<string>(new("Pocket TTS Voice",
-            "Built-in voice for Pocket TTS.\n8 voices from Les Misérables characters.\nIgnored when reference audio is provided for voice cloning.",
+            "Built-in voice embedding. All 26 voices published in the model repo are listed.",
             "alba",
             GetValues: _ => [
-                "alba///Alba (Female)", "cosette///Cosette (Female)",
-                "eponine///Eponine (Female)", "fantine///Fantine (Female)",
-                "azelma///Azelma (Female)", "marius///Marius (Male)",
-                "javert///Javert (Male)", "jean///Jean (Male)"
+                "alba///Alba",
+                "anna///Anna",
+                "azelma///Azelma",
+                "bill_boerst///Bill Boerst",
+                "caro_davy///Caro Davy",
+                "charles///Charles",
+                "cosette///Cosette",
+                "eponine///Eponine",
+                "estelle///Estelle",
+                "eve///Eve",
+                "fantine///Fantine",
+                "george///George",
+                "giovanni///Giovanni",
+                "jane///Jane",
+                "javert///Javert",
+                "jean///Jean",
+                "juergen///Juergen",
+                "lola///Lola",
+                "marius///Marius",
+                "mary///Mary",
+                "michael///Michael",
+                "paul///Paul",
+                "peter_yearsley///Peter Yearsley",
+                "rafael///Rafael",
+                "stuart_bell///Stuart Bell",
+                "vera///Vera"
             ],
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "pockettts_tts_params"));
 
@@ -834,7 +1180,7 @@ public static class AudioLabParams
 
         #region TTS — Kyutai TTS
         KyutaiTTSVoice = T2IParamTypes.Register<string>(new("Kyutai TTS Voice",
-            "Voice from the Kyutai tts-voices repository.\nPath relative to the HF repo root (e.g. 'expresso/ex03-...').\nIgnored when reference audio is provided.",
+            "Voice file path within the kyutai/tts-voices repo.\nFolders: expresso/ (emotive), ears/ (per-speaker emotion), vctk/ (speaker ids), voice-donations/ (named).\nExamples: expresso/ex03-ex01_happy_001_channel1_334s.wav, vctk/p225_023.wav, voice-donations/James.wav",
             "expresso/ex03-ex01_happy_001_channel1_334s.wav",
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "kyutaitts_tts_params"));
 
@@ -867,6 +1213,311 @@ public static class AudioLabParams
             GetValues: _ => ["transcribe///Transcribe", "translate///Translate to English"],
             OrderPriority: -8, Group: STTGroup, FeatureFlag: "whisper_stt_params"));
 
+        WhisperBeamSize = T2IParamTypes.Register<int>(new("Whisper Beam Size",
+            "Beam-search width.\n1 = greedy (fastest); 5 is the upstream default for best accuracy.",
+            "5",
+            Min: 1, Max: 10, Step: 1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -7, Group: STTGroup, FeatureFlag: "whisper_stt_params", IsAdvanced: true));
+
+        WhisperInitialPrompt = T2IParamTypes.Register<string>(new("Whisper Initial Prompt",
+            "Optional text to bias vocabulary and spelling — useful for names, jargon and acronyms.",
+            "",
+            OrderPriority: -6, Group: STTGroup, FeatureFlag: "whisper_stt_params", IsAdvanced: true));
+
+        #endregion
+
+        #region STT — AssemblyAI
+        AssemblySpeakerLabels = T2IParamTypes.Register<string>(new("Speaker Labels",
+            "Label each utterance with a speaker id (diarization).",
+            "false",
+            GetValues: _ => ["false///No", "true///Yes"],
+            OrderPriority: -8, Group: STTGroup, FeatureFlag: "assemblyai_stt_params"));
+
+        AssemblySentiment = T2IParamTypes.Register<string>(new("Sentiment Analysis",
+            "Return per-utterance sentiment alongside the transcript.",
+            "false",
+            GetValues: _ => ["false///No", "true///Yes"],
+            OrderPriority: -7, Group: STTGroup, FeatureFlag: "assemblyai_stt_params"));
+
+        #endregion
+
+        #region TTS — ElevenLabs
+        ElevenStability = T2IParamTypes.Register<double>(new("ElevenLabs Stability",
+            "Lower = more expressive and variable, higher = more consistent and monotone.",
+            "0.5",
+            Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -10, Group: TTSGroup, FeatureFlag: "elevenlabs_tts_params"));
+
+        ElevenSimilarity = T2IParamTypes.Register<double>(new("ElevenLabs Similarity Boost",
+            "How closely to match the original voice.\nVery high values can reproduce artifacts present in the source recording.",
+            "0.75",
+            Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -9, Group: TTSGroup, FeatureFlag: "elevenlabs_tts_params"));
+
+        ElevenStyle = T2IParamTypes.Register<double>(new("ElevenLabs Style",
+            "Style exaggeration. 0 disables it and is fastest.",
+            "0.0",
+            Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -8, Group: TTSGroup, FeatureFlag: "elevenlabs_tts_params"));
+
+        ElevenSpeakerBoost = T2IParamTypes.Register<string>(new("ElevenLabs Speaker Boost",
+            "Boost similarity to the original speaker, at some latency cost.",
+            "true",
+            GetValues: _ => ["false///No", "true///Yes"],
+            OrderPriority: -7, Group: TTSGroup, FeatureFlag: "elevenlabs_tts_params"));
+
+        #endregion
+
+        #region TTS — Azure
+        AzureStyle = T2IParamTypes.Register<string>(new("Azure Speaking Style",
+            "mstts express-as style. Availability depends on the chosen neural voice.",
+            "",
+            GetValues: _ => ["///Default", "cheerful///Cheerful", "sad///Sad", "angry///Angry", "excited///Excited",
+                "friendly///Friendly", "hopeful///Hopeful", "shouting///Shouting", "whispering///Whispering",
+                "terrified///Terrified", "unfriendly///Unfriendly", "newscast///Newscast", "customerservice///Customer Service"],
+            OrderPriority: -10, Group: TTSGroup, FeatureFlag: "azure_tts_params"));
+
+        AzureStyleDegree = T2IParamTypes.Register<double>(new("Azure Style Degree",
+            "Intensity of the selected speaking style. 1.0 is normal.",
+            "1.0",
+            Min: 0.01, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -9, Group: TTSGroup, FeatureFlag: "azure_tts_params"));
+
+        #endregion
+
+        #region STT — Cloud model selection
+        AzureProfanity = T2IParamTypes.Register<string>(new("Azure Profanity Handling",
+            "How Azure handles profanity in the transcript.\nAPI default is masked (asterisks); removed strips it; raw leaves it in.",
+            "masked",
+            GetValues: _ => ["masked///Masked", "removed///Removed", "raw///Raw"],
+            OrderPriority: -10, Group: STTGroup, FeatureFlag: "azure_stt_params"));
+
+        DeepgramSTTModel = T2IParamTypes.Register<string>(new("Deepgram Model",
+            "Deepgram speech-to-text model. Nova-3 is the current general-purpose recommendation.",
+            "nova-3",
+            GetValues: _ => ["nova-3///Nova-3 (recommended)", "nova-3-medical///Nova-3 Medical",
+                "nova-2///Nova-2", "flux-general-en///Flux General (EN)", "flux-general-multi///Flux General (multi)",
+                "whisper-large///Whisper Cloud (large)"],
+            OrderPriority: -10, Group: STTGroup, FeatureFlag: "deepgram_stt_params"));
+
+        GoogleSTTModel = T2IParamTypes.Register<string>(new("Google STT Model",
+            "Google Speech-to-Text v1 model.\nChirp 2/3 are Speech-to-Text v2 only and are not reachable from this v1 endpoint.",
+            "latest_long",
+            GetValues: _ => ["latest_long///Latest Long", "latest_short///Latest Short", "telephony///Telephony",
+                "telephony_short///Telephony Short", "medical_dictation///Medical Dictation",
+                "medical_conversation///Medical Conversation", "command_and_search///Command & Search",
+                "video///Video", "phone_call///Phone Call", "default///Default"],
+            OrderPriority: -10, Group: STTGroup, FeatureFlag: "google_stt_params"));
+
+        OpenAISTTPrompt = T2IParamTypes.Register<string>(new("Transcription Prompt",
+            "Optional text biasing the transcript's vocabulary and spelling — names, jargon, acronyms.",
+            "",
+            OrderPriority: -10, Group: STTGroup, FeatureFlag: "openai_stt_params"));
+
+        #endregion
+
+        #region TTS — Cloud voice/style extras
+        OpenAIVoice = T2IParamTypes.Register<string>(new("OpenAI Voice",
+            "Voice for OpenAI text-to-speech. All 13 documented voices are listed.\ntts-1 and tts-1-hd support only 9 of them — ballad, marin and cedar are gpt-4o-mini-tts only.",
+            "alloy",
+            GetValues: _ => [
+                "alloy///Alloy",
+                "ash///Ash",
+                "ballad///Ballad (gpt-4o-mini-tts only)",
+                "coral///Coral",
+                "echo///Echo",
+                "fable///Fable",
+                "nova///Nova",
+                "onyx///Onyx",
+                "sage///Sage",
+                "shimmer///Shimmer",
+                "verse///Verse",
+                "marin///Marin (gpt-4o-mini-tts only)",
+                "cedar///Cedar (gpt-4o-mini-tts only)"
+            ],
+            OrderPriority: -10, Group: TTSGroup, FeatureFlag: "openai_tts_params"));
+
+        OpenAIInstructions = T2IParamTypes.Register<string>(new("OpenAI Instructions",
+            "Free-form delivery direction, e.g. 'Speak slowly and sound apologetic'.\nSupported by gpt-4o-mini-tts only — tts-1 and tts-1-hd ignore it.",
+            "",
+            OrderPriority: -9, Group: TTSGroup, FeatureFlag: "openai_tts_params"));
+
+        OpenAISpeed = T2IParamTypes.Register<double>(new("OpenAI Speed",
+            "Speech speed multiplier.",
+            "1.0",
+            Min: 0.25, Max: 4.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -8, Group: TTSGroup, FeatureFlag: "openai_tts_params"));
+
+        GoogleVoiceName = T2IParamTypes.Register<string>(new("Google Voice Name",
+            "Google Cloud voice name. Must match the selected language.",
+            "en-US-Neural2-F",
+            OrderPriority: -10, Group: TTSGroup, FeatureFlag: "google_tts_params"));
+
+        GoogleSpeakingRate = T2IParamTypes.Register<double>(new("Google Speaking Rate",
+            "Speaking rate. 1.0 is the voice's natural speed.\nThe API accepts 0.25 to 2.0.",
+            "1.0",
+            Min: 0.25, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -9, Group: TTSGroup, FeatureFlag: "google_tts_params"));
+
+        GooglePitch = T2IParamTypes.Register<double>(new("Google Pitch",
+            "Pitch offset in semitones.",
+            "0.0",
+            Min: -20.0, Max: 20.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -8, Group: TTSGroup, FeatureFlag: "google_tts_params"));
+
+        DeepgramVoice = T2IParamTypes.Register<string>(new("Deepgram Voice",
+            "Deepgram Aura voice model.\nAura-2 is the newer generation; the Aura-1 voices remain available.",
+            "aura-2-thalia-en",
+            GetValues: _ => [
+                "aura-2-thalia-en///Thalia (Aura-2)",
+                "aura-2-andromeda-en///Andromeda (Aura-2)",
+                "aura-2-helena-en///Helena (Aura-2)",
+                "aura-2-apollo-en///Apollo (Aura-2)",
+                "aura-2-arcas-en///Arcas (Aura-2)",
+                "aura-2-asteria-en///Asteria (Aura-2)",
+                "aura-2-athena-en///Athena (Aura-2)",
+                "aura-2-atlas-en///Atlas (Aura-2)",
+                "aura-2-aurora-en///Aurora (Aura-2)",
+                "aura-2-cora-en///Cora (Aura-2)",
+                "aura-2-draco-en///Draco (Aura-2)",
+                "aura-2-electra-en///Electra (Aura-2)",
+                "aura-2-hera-en///Hera (Aura-2)",
+                "aura-2-hermes-en///Hermes (Aura-2)",
+                "aura-2-iris-en///Iris (Aura-2)",
+                "aura-2-juno-en///Juno (Aura-2)",
+                "aura-2-jupiter-en///Jupiter (Aura-2)",
+                "aura-2-luna-en///Luna (Aura-2)",
+                "aura-2-mars-en///Mars (Aura-2)",
+                "aura-2-minerva-en///Minerva (Aura-2)",
+                "aura-2-neptune-en///Neptune (Aura-2)",
+                "aura-2-orion-en///Orion (Aura-2)",
+                "aura-2-orpheus-en///Orpheus (Aura-2)",
+                "aura-2-phoebe-en///Phoebe (Aura-2)",
+                "aura-2-saturn-en///Saturn (Aura-2)",
+                "aura-2-selene-en///Selene (Aura-2)",
+                "aura-2-theia-en///Theia (Aura-2)",
+                "aura-2-vesta-en///Vesta (Aura-2)",
+                "aura-2-zeus-en///Zeus (Aura-2)",
+                "aura-asteria-en///Asteria (Aura-1)", "aura-luna-en///Luna (F)", "aura-stella-en///Stella (F)",
+                "aura-athena-en///Athena (F)", "aura-hera-en///Hera (F)", "aura-orion-en///Orion (M)",
+                "aura-arcas-en///Arcas (M)", "aura-perseus-en///Perseus (M)", "aura-angus-en///Angus (M)",
+                "aura-orpheus-en///Orpheus (M)", "aura-helios-en///Helios (M)", "aura-zeus-en///Zeus (M)"],
+            OrderPriority: -10, Group: TTSGroup, FeatureFlag: "deepgram_tts_params"));
+
+        CartesiaVoice = T2IParamTypes.Register<string>(new("Cartesia Voice ID",
+            "Cartesia voice id from your voice library.",
+            "",
+            OrderPriority: -10, Group: TTSGroup, FeatureFlag: "cartesia_tts_params"));
+
+        CartesiaModel = T2IParamTypes.Register<string>(new("Cartesia Model",
+            "Cartesia Sonic model id.\nsonic-3.5 is the current API default.",
+            "sonic-3.5",
+            GetValues: _ => ["sonic-3.5///Sonic 3.5 (default)", "sonic-3///Sonic 3",
+                "sonic-preview///Sonic Preview", "sonic-latest///Sonic Latest"],
+            OrderPriority: -9, Group: TTSGroup, FeatureFlag: "cartesia_tts_params"));
+
+        CartesiaSpeed = T2IParamTypes.Register<double>(new("Cartesia Speed",
+            "Speech speed via generation_config.\nThe API accepts 0.6x to 1.5x.",
+            "1.0",
+            Min: 0.6, Max: 1.5, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -8, Group: TTSGroup, FeatureFlag: "cartesia_tts_params"));
+
+        PlayHTVoice = T2IParamTypes.Register<string>(new("PlayHT Voice",
+            "PlayHT voice id or manifest URL.",
+            "",
+            OrderPriority: -10, Group: TTSGroup, FeatureFlag: "playht_tts_params"));
+
+        PlayHTQuality = T2IParamTypes.Register<string>(new("PlayHT Quality",
+            "Output quality tier. Higher costs more and is slower.",
+            "medium",
+            GetValues: _ => ["draft///Draft", "low///Low", "medium///Medium", "high///High", "premium///Premium"],
+            OrderPriority: -9, Group: TTSGroup, FeatureFlag: "playht_tts_params"));
+
+        PlayHTEngine = T2IParamTypes.Register<string>(new("PlayHT Voice Engine",
+            "Synthesis engine. The API default is PlayHT2.0; the Play3.0/PlayDialog engines are newer.",
+            "PlayHT2.0",
+            GetValues: _ => ["PlayDialog-turbo///PlayDialog Turbo", "PlayDialog///PlayDialog",
+                "Play3.0-mini///Play 3.0 Mini", "PlayHT2.0-turbo///PlayHT 2.0 Turbo",
+                "PlayHT2.0///PlayHT 2.0 (default)", "PlayHT1.0///PlayHT 1.0"],
+            OrderPriority: -8, Group: TTSGroup, FeatureFlag: "playht_tts_params"));
+
+        PlayHTSpeed = T2IParamTypes.Register<double>(new("PlayHT Speed",
+            "Speech speed. The API accepts 0.1 to 5.0.",
+            "1.0",
+            Min: 0.1, Max: 5.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -7, Group: TTSGroup, FeatureFlag: "playht_tts_params"));
+
+        DolbyPreset = T2IParamTypes.Register<string>(new("Dolby Enhance Preset",
+            "Dolby.io Media Enhance content.type preset.\nNOTE: the public Media Enhance reference is currently unreachable, so this list could not be verified — an unsupported value will be rejected by the API.",
+            "voice_over",
+            GetValues: _ => [
+                "voice_over///Voice Over", "conference///Conference", "interview///Interview",
+                "lecture///Lecture", "meeting///Meeting", "mobile_phone///Mobile Phone",
+                "music///Music", "podcast///Podcast", "studio///Studio"
+            ],
+            OrderPriority: -10, Group: AudioProcGroup, FeatureFlag: "dolby_audioproc_params"));
+
+        ElevenSFXDuration = T2IParamTypes.Register<double>(new("SFX Duration",
+            "Length of the generated sound effect, in seconds.\nThe API accepts 0.5-30; 0 lets it choose the optimal duration, which is the API default.",
+            "0",
+            Min: 0.0, Max: 30.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "elevenlabs_sfx_params"));
+
+        ElevenSFXInfluence = T2IParamTypes.Register<double>(new("SFX Prompt Influence",
+            "How literally the result follows the prompt. Higher = more literal, less creative.",
+            "0.3",
+            Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "elevenlabs_sfx_params"));
+
+        ElevenRemoveNoise = T2IParamTypes.Register<string>(new("Remove Background Noise",
+            "Run the audio-isolation model on the input before converting.\nDocumented for Voice Changer only.",
+            "false",
+            GetValues: _ => ["false///No", "true///Yes"],
+            OrderPriority: -10, Group: CloneGroup, FeatureFlag: "elevenlabs_vc_params"));
+
+        #endregion
+
+        #region TTS — Amazon Polly
+        PollyEngine = T2IParamTypes.Register<string>(new("Polly Engine",
+            "Polly synthesis engine. Neural sounds better; standard covers more voices.",
+            "neural",
+            GetValues: _ => ["neural///Neural", "standard///Standard", "long-form///Long Form", "generative///Generative"],
+            OrderPriority: -10, Group: TTSGroup, FeatureFlag: "polly_tts_params"));
+
+        PollyVoice = T2IParamTypes.Register<string>(new("Polly Voice",
+            "Polly voice id. Each voice supports only some engines — the label lists which, so pair them correctly.",
+            "Joanna",
+            GetValues: _ => [
+                "Joanna///Joanna (en-US F, neural/standard/generative)",
+                "Matthew///Matthew (en-US M, neural/generative)",
+                "Ruth///Ruth (en-US F, neural/long-form/generative)",
+                "Stephen///Stephen (en-US M, neural/generative)",
+                "Danielle///Danielle (en-US F, neural/long-form/generative)",
+                "Gregory///Gregory (en-US M, neural/long-form)",
+                "Patrick///Patrick (en-US M, long-form)",
+                "Tiffany///Tiffany (en-US F, generative)",
+                "Salli///Salli (en-US F, neural/standard/generative)",
+                "Kimberly///Kimberly (en-US F, neural/standard)",
+                "Kendra///Kendra (en-US F, neural/standard)",
+                "Ivy///Ivy (en-US F child, neural/standard)",
+                "Joey///Joey (en-US M, neural/standard)",
+                "Justin///Justin (en-US M child, neural)",
+                "Kevin///Kevin (en-US M child, neural/standard)",
+                "Amy///Amy (en-GB F, neural/standard/generative)",
+                "Emma///Emma (en-GB F, neural/standard)",
+                "Brian///Brian (en-GB M, neural/standard/generative)",
+                "Arthur///Arthur (en-GB M, neural)",
+                "Olivia///Olivia (en-AU F, neural/generative)",
+                "Nicole///Nicole (en-AU F, standard)",
+                "Russell///Russell (en-AU M, standard)",
+                "Aria///Aria (en-NZ F, neural/generative)",
+                "Ayanda///Ayanda (en-ZA F, neural/generative)",
+                "Niamh///Niamh (en-IE F, neural/generative)",
+                "Kajal///Kajal (en-IN F, neural/generative)",
+                "Raveena///Raveena (en-IN F, standard)"
+            ],
+            OrderPriority: -9, Group: TTSGroup, FeatureFlag: "polly_tts_params"));
+
         #endregion
 
         #region Music Shared
@@ -883,25 +1534,25 @@ public static class AudioLabParams
             "Classifier-free guidance for music/sound generation.\nHigher values increase prompt adherence.",
             "3.0",
             Min: 0.0, Max: 10.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "audiocraft_sampling"));
+            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "audiocraft_sampling", IsAdvanced: true));
 
         AudioCraftTemperature = T2IParamTypes.Register<double>(new("AudioCraft Temperature",
             "Sampling temperature for audio generation.\nHigher = more varied/creative. Lower = more predictable.",
             "1.0",
             Min: 0.0, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "audiocraft_sampling"));
+            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "audiocraft_sampling", IsAdvanced: true));
 
         AudioCraftTopK = T2IParamTypes.Register<int>(new("AudioCraft Top K",
             "Top-K token sampling for audio generation.\nLimits sampling to the K most likely tokens. 250 is the AudioCraft default.",
             "250",
             Min: 0, Max: 1000, Step: 10, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "audiocraft_sampling"));
+            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "audiocraft_sampling", IsAdvanced: true));
 
         AudioCraftTopP = T2IParamTypes.Register<double>(new("AudioCraft Top P",
             "Nucleus sampling for audio generation.\n0.0 = disabled (use Top K instead). Values > 0 enable nucleus sampling.",
             "0.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "audiocraft_sampling"));
+            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "audiocraft_sampling", IsAdvanced: true));
 
         #endregion
 
@@ -920,16 +1571,16 @@ public static class AudioLabParams
 
 
         InferStep = T2IParamTypes.Register<int>(new("Infer Steps",
-            "Number of diffusion inference steps.\n0 = model default (turbo: 8, SFT: 50, Base: 32).",
+            "Denoising steps. 0 uses the checkpoint default.\nUpstream guidance: turbo 1-20 (8 recommended), base 1-200 (32-64 recommended).",
             "0",
             Min: 0, Max: 200, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "acestep_music_params", IsAdvanced: true));
 
         ACEGuidanceScale = T2IParamTypes.Register<double>(new("ACE Guidance",
-            "Classifier-free guidance strength.\nOnly effective with SFT/Base models that support CFG.",
+            "Classifier-free guidance scale (documented range 1.0-15.0, default 7.0).\nTurbo checkpoints bake guidance into distillation and auto-correct this to 1.0.",
             "7.0",
-            Min: 1.0, Max: 30.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
+            Min: 1.0, Max: 15.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "acestep_music_params", IsAdvanced: true));
 
         // Shared across every music provider whose API takes an instrumental toggle (ACE-Step, Suno) —
         // one param on its own flag rather than a near-duplicate registered per provider.
@@ -948,9 +1599,9 @@ public static class AudioLabParams
             OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "music_style_params"));
 
         BPM = T2IParamTypes.Register<int>(new("BPM",
-            "Beats per minute for the generated music.",
-            "120",
-            Min: 30, Max: 300, Step: 1, ViewType: ParamViewType.SLIDER,
+            "Beats per minute (30-300).\n0 = auto-detect via the LM planner, matching upstream\'s default of none.",
+            "0",
+            Min: 0, Max: 300, Step: 1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -4, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         KeyScale = T2IParamTypes.Register<string>(new("Key / Scale",
@@ -982,9 +1633,10 @@ public static class AudioLabParams
             OrderPriority: -2, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         VocalLanguage = T2IParamTypes.Register<string>(new("Vocal Language",
-            "Language for vocal content in the generated music.",
-            "en",
+            "Language for generated vocals.\nUpstream defaults to auto-detect, letting the LM infer it from the lyrics.",
+            "unknown",
             GetValues: _ => [
+                "unknown///Auto-detect", 
                 "en///English", "zh///Chinese", "es///Spanish", "fr///French",
                 "de///German", "ja///Japanese", "ko///Korean", "pt///Portuguese",
                 "ru///Russian", "it///Italian", "ar///Arabic", "tr///Turkish",
@@ -1002,34 +1654,34 @@ public static class AudioLabParams
             OrderPriority: -1, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         ACEShift = T2IParamTypes.Register<double>(new("Shift",
-            "Noise schedule shift factor.\n0 = model default (turbo: 3, shift1 variant: 1, SFT/Base: 1). Turbo snaps to 1/2/3.",
+            "Timestep shift factor (documented range 1.0-5.0, default 1.0). 0 uses the checkpoint default.\nUpstream recommends 3.0 for turbo checkpoints, and it is NOT auto-corrected.",
             "0",
             Min: 0, Max: 5.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: 0, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: 0, Group: AudioGenGroup, FeatureFlag: "acestep_music_params", IsAdvanced: true));
 
         InferMethod = T2IParamTypes.Register<string>(new("Infer Method",
             "ODE solver method for diffusion inference.\nODE = deterministic. SDE = stochastic (more varied).",
             "ode",
             GetValues: _ => ["ode///ODE (Default)", "sde///SDE (Stochastic)"],
-            OrderPriority: 1, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: 1, Group: AudioGenGroup, FeatureFlag: "acestep_music_params", IsAdvanced: true));
 
         UseADG = T2IParamTypes.Register<string>(new("Use ADG",
             "Enable Adaptive Diffusion Guidance.\nCan improve prompt adherence for some models.",
             "false",
             GetValues: _ => ["false///No", "true///Yes"],
-            OrderPriority: 2, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: 2, Group: AudioGenGroup, FeatureFlag: "acestep_music_params", IsAdvanced: true));
 
         CFGIntervalStart = T2IParamTypes.Register<double>(new("CFG Interval Start",
             "Start of the CFG application interval.\n0.0 = apply from beginning of denoising.",
             "0.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: 3, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: 3, Group: AudioGenGroup, FeatureFlag: "acestep_music_params", IsAdvanced: true));
 
         CFGIntervalEnd = T2IParamTypes.Register<double>(new("CFG Interval End",
             "End of the CFG application interval.\n1.0 = apply through end of denoising.",
             "1.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: 4, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
+            OrderPriority: 4, Group: AudioGenGroup, FeatureFlag: "acestep_music_params", IsAdvanced: true));
 
         #endregion
 
@@ -1044,60 +1696,60 @@ public static class AudioLabParams
                 "none///None (Disabled)", "0.6B///Qwen3 0.6B (Fast)",
                 "1.7B///Qwen3 1.7B (Balanced)", "4B///Qwen3 4B (Best)"
             ],
-            OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params", IsAdvanced: true));
 
         Thinking = T2IParamTypes.Register<string>(new("LM Thinking",
             "Enable chain-of-thought reasoning in the LM planner.",
             "true",
             GetValues: _ => ["true///Yes", "false///No"],
-            OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params", IsAdvanced: true));
 
         LMTemperature = T2IParamTypes.Register<double>(new("LM Temperature",
             "Sampling temperature for the LM planner.\nHigher = more creative metadata generation.",
             "0.85",
             Min: 0.0, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params", IsAdvanced: true));
 
         LMCFGScale = T2IParamTypes.Register<double>(new("LM CFG Scale",
             "Classifier-free guidance scale for the LM planner.",
             "2.0",
             Min: 1.0, Max: 5.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params", IsAdvanced: true));
 
         LMTopK = T2IParamTypes.Register<int>(new("LM Top K",
             "Top-K sampling for the LM planner.\n0 = disabled.",
             "0",
             Min: 0, Max: 500, Step: 10, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params", IsAdvanced: true));
 
         LMTopP = T2IParamTypes.Register<double>(new("LM Top P",
             "Nucleus sampling threshold for the LM planner.",
             "0.9",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params", IsAdvanced: true));
 
         LMNegativePrompt = T2IParamTypes.Register<string>(new("LM Negative Prompt",
             "Negative prompt for the LM planner.\nDescribes unwanted characteristics to avoid.",
             "",
-            OrderPriority: -4, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -4, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params", IsAdvanced: true));
 
         UseCotMetas = T2IParamTypes.Register<string>(new("CoT Metas",
             "Include meta tags (genre, mood, instruments) in chain-of-thought.",
             "true",
             GetValues: _ => ["true///Yes", "false///No"],
-            OrderPriority: -3, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -3, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params", IsAdvanced: true));
 
         UseCotCaption = T2IParamTypes.Register<string>(new("CoT Caption",
             "Include music description caption in chain-of-thought.",
             "true",
             GetValues: _ => ["true///Yes", "false///No"],
-            OrderPriority: -2, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -2, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params", IsAdvanced: true));
 
         UseCotLanguage = T2IParamTypes.Register<string>(new("CoT Language",
             "Include language detection in chain-of-thought.",
             "true",
             GetValues: _ => ["true///Yes", "false///No"],
-            OrderPriority: -1, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params"));
+            OrderPriority: -1, Group: AudioGenGroup, FeatureFlag: "acestep_lm_params", IsAdvanced: true));
 
         #endregion
 
@@ -1126,25 +1778,25 @@ public static class AudioLabParams
             "Start time in seconds for repaint task.\nThe section from this point will be regenerated.",
             "0.0",
             Min: 0.0, Max: 600.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
+            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "acestep_task_params", IsAdvanced: true));
 
         RepaintEnd = T2IParamTypes.Register<double>(new("Repaint End",
             "End time in seconds for repaint task.\n-1 = auto (repaint to end of audio).",
             "-1.0",
             Min: -1.0, Max: 600.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
+            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "acestep_task_params", IsAdvanced: true));
 
         CoverStrength = T2IParamTypes.Register<double>(new("Cover Strength",
             "Style transfer strength for cover task.\n1.0 = full transfer. Lower = more of original.",
             "1.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
+            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "acestep_task_params", IsAdvanced: true));
 
         CoverNoiseStrength = T2IParamTypes.Register<double>(new("Cover Noise",
             "Noise injection strength for cover task.\nAdds variation to the style transfer.",
             "0.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -4, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
+            OrderPriority: -4, Group: AudioGenGroup, FeatureFlag: "acestep_task_params", IsAdvanced: true));
 
         #endregion
 
@@ -1167,43 +1819,43 @@ public static class AudioLabParams
             "Maximum new tokens for Stage-1 generation.\nControls output length. Higher = longer songs but slower.\n3000 ≈ ~30s of audio.",
             "3000",
             Min: 1000, Max: 12000, Step: 500, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
+            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "yue_music_params", IsAdvanced: true));
 
         YuEQuantization = T2IParamTypes.Register<string>(new("Quantization",
-            "Model quantization for Stage-1 (7B params).\nfp16: best quality, ~16GB VRAM.\n8-bit: balanced, ~10GB VRAM.\n4-bit: lowest VRAM, ~8GB.",
+            "Weight quantization for the Stage-1 LM.\nThis is a HartsyInference engine feature, not an upstream YuE flag.",
             "fp16",
             GetValues: _ => ["fp16///FP16 (Best Quality)", "8bit///8-bit (Balanced)", "4bit///4-bit (Low VRAM)"],
-            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
+            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "yue_music_params", IsAdvanced: true));
 
         YuEStage2BatchSize = T2IParamTypes.Register<int>(new("Stage-2 Batch Size",
             "Batch size for Stage-2 refinement.\nLower = less VRAM but slower. Higher = faster but more VRAM.\nProcesses in 6-second chunks.",
             "4",
             Min: 1, Max: 32, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
+            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "yue_music_params", IsAdvanced: true));
 
         YuETemperature = T2IParamTypes.Register<double>(new("YuE Temperature",
             "Sampling temperature for music generation.\nHigher = more creative/varied. Lower = more predictable.",
             "0.9",
             Min: 0.1, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -4, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
+            OrderPriority: -4, Group: AudioGenGroup, FeatureFlag: "yue_music_params", IsAdvanced: true));
 
         YuETopP = T2IParamTypes.Register<double>(new("YuE Top P",
             "Nucleus sampling threshold.\nLower values produce more focused, deterministic output.",
             "0.93",
             Min: 0.0, Max: 1.0, Step: 0.01, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -3, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
+            OrderPriority: -3, Group: AudioGenGroup, FeatureFlag: "yue_music_params", IsAdvanced: true));
 
         YuERepetitionPenalty = T2IParamTypes.Register<double>(new("YuE Repetition Penalty",
-            "Penalizes repeated audio tokens.\nHigher values reduce musical repetition and looping.",
-            "1.2",
+            "Penalty on repeated tokens.\nUpstream inference uses 1.1.",
+            "1.1",
             Min: 1.0, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -2, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
+            OrderPriority: -2, Group: AudioGenGroup, FeatureFlag: "yue_music_params", IsAdvanced: true));
 
         YuESegments = T2IParamTypes.Register<int>(new("Segments",
             "Number of lyric segments to generate.\nMore segments = longer song. 0 = generate all segments from lyrics.",
             "2",
             Min: 0, Max: 10, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -1, Group: AudioGenGroup, FeatureFlag: "yue_music_params"));
+            OrderPriority: -1, Group: AudioGenGroup, FeatureFlag: "yue_music_params", IsAdvanced: true));
 
         #endregion
 
@@ -1232,22 +1884,22 @@ public static class AudioLabParams
             OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params"));
 
         HeartLibCFGScale = T2IParamTypes.Register<double>(new("HeartLib CFG Scale",
-            "Classifier-free guidance strength.\nHigher = stronger adherence to tags/lyrics. Lower = more creative variation.\n1.0 disables CFG — roughly 2x faster (skips the unconditional pass).",
-            "1.0",
+            "Classifier-free guidance strength.\nUpstream inference uses 1.5.",
+            "1.5",
             Min: 0.1, Max: 10.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params"));
+            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params", IsAdvanced: true));
 
         HeartLibTemperature = T2IParamTypes.Register<double>(new("HeartLib Temperature",
             "Sampling temperature for music generation.\nHigher = more creative/varied. Lower = more predictable.",
             "1.0",
             Min: 0.1, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params"));
+            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params", IsAdvanced: true));
 
         HeartLibTopK = T2IParamTypes.Register<int>(new("HeartLib Top K",
             "Top-K token sampling limit.\nLower values produce more focused output. Higher values increase variety.",
             "50",
             Min: 1, Max: 500, Step: 10, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params"));
+            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params", IsAdvanced: true));
 
         #endregion
 
@@ -1272,31 +1924,31 @@ public static class AudioLabParams
             OrderPriority: -5, Group: CloneGroup, FeatureFlag: "rvc_clone_params"));
 
         F0Method = T2IParamTypes.Register<string>(new("F0 Method",
-            "Pitch extraction algorithm for RVC.\nRMVPE = best quality. PM = fastest.",
-            "rmvpe",
+            "Pitch-extraction algorithm.\nNOTE: the in-process engine currently estimates F0 with YIN regardless of this setting; the other methods are listed for when they land and will fall back to YIN today.",
+            "yin",
             GetValues: _ => [
-                "rmvpe///RMVPE (Best Quality)", "pm///PM (Fastest)",
-                "harvest///Harvest", "crepe///CREPE (GPU)"
+                "yin///YIN (in use today)", "rmvpe///RMVPE (pending)", "pm///PM (pending)",
+                "harvest///Harvest (pending)", "crepe///CREPE (pending)"
             ],
             OrderPriority: -4, Group: CloneGroup, FeatureFlag: "rvc_clone_params"));
 
         IndexRate = T2IParamTypes.Register<double>(new("Index Rate",
-            "Influence of the RVC feature index.\nHigher values strengthen voice characteristics from the model.",
-            "0.5",
+            "How much the index file influences the result.\nUpstream default is 0.75; lower values can reduce artifacts.\nNOTE: index retrieval is not implemented in the engine yet.",
+            "0.75",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -3, Group: CloneGroup, FeatureFlag: "rvc_clone_params"));
+            OrderPriority: -3, Group: CloneGroup, FeatureFlag: "rvc_clone_params", IsAdvanced: true));
 
         RMSMixRate = T2IParamTypes.Register<double>(new("RMS Mix Rate",
             "Volume envelope mixing ratio.\n1.0 = use original input volume. 0.0 = use model output volume.",
             "1.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -2, Group: CloneGroup, FeatureFlag: "rvc_clone_params"));
+            OrderPriority: -2, Group: CloneGroup, FeatureFlag: "rvc_clone_params", IsAdvanced: true));
 
         Protect = T2IParamTypes.Register<double>(new("Protect",
             "Protects voiceless consonants and breath sounds.\nHigher values preserve more consonant detail. 0.5 = max protection.",
             "0.33",
             Min: 0.0, Max: 0.5, Step: 0.01, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -1, Group: CloneGroup, FeatureFlag: "rvc_clone_params"));
+            OrderPriority: -1, Group: CloneGroup, FeatureFlag: "rvc_clone_params", IsAdvanced: true));
 
         #endregion
 
@@ -1326,26 +1978,32 @@ public static class AudioLabParams
         #endregion
 
         #region FX — Demucs
-        Overlap = T2IParamTypes.Register<double>(new("Overlap",
-            "Overlap between processing chunks.\nHigher values improve quality at boundaries but take longer.",
+        Overlap = T2IParamTypes.Register<double>(new("Demucs Overlap",
+            "Fractional overlap between processing segments.\nUpstream default is 0.25; its README notes this can be reduced to about 0.1 for a bit more speed.",
             "0.25",
-            Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -5, Group: AudioProcGroup, FeatureFlag: "demucs_fx_params"));
+            Min: 0.0, Max: 0.95, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -5, Group: AudioProcGroup, FeatureFlag: "demucs_fx_params", IsAdvanced: true));
 
-        Shifts = T2IParamTypes.Register<int>(new("Shifts",
-            "Random shifts for equivariant stabilization.\nMore shifts improve quality but take longer. 0 = disabled.",
-            "1",
+        DemucsSegment = T2IParamTypes.Register<double>(new("Demucs Segment",
+            "Length of each processing segment, in seconds.\nLower it if you run out of memory. Hybrid Transformer checkpoints support at most 7.8s, so larger values are clamped.",
+            "7.8",
+            Min: 1.0, Max: 7.8, Step: 0.1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -4, Group: AudioProcGroup, FeatureFlag: "demucs_fx_params", IsAdvanced: true));
+
+        Shifts = T2IParamTypes.Register<int>(new("Demucs Shifts",
+            "Demucs \"shift trick\" repetitions: separate several randomly time-shifted copies and average them.\nUpstream documents this as worth up to 0.2 SDR, and it makes the run exactly this many times slower. 0 = off.",
+            "0",
             Min: 0, Max: 10, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -4, Group: AudioProcGroup, FeatureFlag: "demucs_fx_params"));
+            OrderPriority: -3, Group: AudioProcGroup, FeatureFlag: "demucs_fx_params", IsAdvanced: true));
 
         #endregion
 
         #region FX — Resemble Enhance
-        EnhanceNFE = T2IParamTypes.Register<int>(new("Enhancement Steps",
-            "Number of function evaluations for audio enhancement.\nMore steps = higher quality but slower.",
+        EnhanceNFE = T2IParamTypes.Register<int>(new("Enhancement Steps (NFE)",
+            "CFM function-evaluation budget.\nUpstream's own interface exposes 1-128 with a default of 64. More = slower, generally cleaner.",
             "64",
             Min: 1, Max: 128, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -5, Group: AudioProcGroup, FeatureFlag: "resemble_enhance_fx_params"));
+            OrderPriority: -5, Group: AudioProcGroup, FeatureFlag: "resemble_enhance_fx_params", IsAdvanced: true));
 
         EnhanceSolver = T2IParamTypes.Register<string>(new("Solver",
             "ODE solver method for enhancement.\nMidpoint is recommended for best quality/speed balance.",
@@ -1353,19 +2011,19 @@ public static class AudioLabParams
             GetValues: _ => [
                 "midpoint///Midpoint (Recommended)", "euler///Euler", "rk4///RK4"
             ],
-            OrderPriority: -4, Group: AudioProcGroup, FeatureFlag: "resemble_enhance_fx_params"));
+            OrderPriority: -4, Group: AudioProcGroup, FeatureFlag: "resemble_enhance_fx_params", IsAdvanced: true));
 
-        EnhanceLambda = T2IParamTypes.Register<double>(new("Lambda",
-            "Prior temperature.\nControls balance between denoising and super-resolution.",
+        EnhanceLambda = T2IParamTypes.Register<double>(new("Lambda (Denoise Blend)",
+            "How much the denoiser output is blended in before enhancement.\nThis is NOT the temperature — that is Tau.",
             "0.1",
             Min: 0.0, Max: 1.0, Step: 0.01, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -3, Group: AudioProcGroup, FeatureFlag: "resemble_enhance_fx_params"));
+            OrderPriority: -3, Group: AudioProcGroup, FeatureFlag: "resemble_enhance_fx_params", IsAdvanced: true));
 
-        EnhanceTau = T2IParamTypes.Register<double>(new("Tau",
-            "CFM posterior temperature.\nControls the level of enhancement applied.",
+        EnhanceTau = T2IParamTypes.Register<double>(new("Tau (Prior Temperature)",
+            "CFM prior temperature.\nUpstream's interface exposes 0-1 with a default of 0.5.",
             "0.5",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -2, Group: AudioProcGroup, FeatureFlag: "resemble_enhance_fx_params"));
+            OrderPriority: -2, Group: AudioProcGroup, FeatureFlag: "resemble_enhance_fx_params", IsAdvanced: true));
 
         #endregion
 

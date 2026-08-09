@@ -11,13 +11,13 @@ const AudioLabConfig = {
         chatterbox_tts: { category: 'audiolab_tts', providerFlag: 'chatterbox_tts_params', extraFlags: ['tts_sampling'] }, // no tts_voice_ref: engine lacks the voice-encoder front-end
         bark_tts: { category: 'audiolab_tts', providerFlag: 'bark_tts_params' },
         piper_tts: { category: 'audiolab_tts', providerFlag: 'piper_tts_params' },
-        dia_tts: { category: 'audiolab_tts', providerFlag: 'dia_tts_params', extraFlags: ['tts_sampling', 'tts_cfg'] },
+        dia_tts: { category: 'audiolab_tts', providerFlag: 'dia_tts_params', extraFlags: ['tts_sampling'] },
         csm_tts: { category: 'audiolab_tts', providerFlag: 'csm_tts_params', extraFlags: ['tts_sampling'] },
         orpheus_tts: { category: 'audiolab_tts', providerFlag: 'orpheus_tts_params', extraFlags: ['tts_sampling'] },
         vibevoice_tts: { category: 'audiolab_tts', providerFlag: 'vibevoice_tts_params', extraFlags: ['tts_voice_ref'] },
         zonos_tts: { category: 'audiolab_tts', providerFlag: 'zonos_tts_params', extraFlags: ['tts_voice_ref'] },
         f5_tts: { category: 'audiolab_tts', providerFlag: 'f5_tts_params', extraFlags: ['tts_voice_ref'] },
-        neutts_tts: { category: 'audiolab_tts', providerFlag: 'neutts_tts_params', extraFlags: ['tts_voice_ref'] },
+        neutts_tts: { category: 'audiolab_tts', extraFlags: ['tts_voice_ref'] },
         cosyvoice_tts: { category: 'audiolab_tts', providerFlag: 'cosyvoice_tts_params', extraFlags: ['tts_voice_ref'] },
         pockettts_tts: { category: 'audiolab_tts', providerFlag: 'pockettts_tts_params', extraFlags: ['tts_voice_ref'] },
         kyutaitts_tts: { category: 'audiolab_tts', providerFlag: 'kyutaitts_tts_params', extraFlags: ['tts_voice_ref'] },
@@ -25,9 +25,9 @@ const AudioLabConfig = {
         qwen3_tts_clone: { category: 'audiolab_tts', providerFlag: 'qwen3tts_tts_params', extraFlags: ['tts_voice_ref'] },
         qwen3_tts_custom: { category: 'audiolab_tts', providerFlag: 'qwen3tts_tts_params', extraFlags: ['qwen3tts_speaker_params', 'qwen3tts_instruct_params'] },
         qwen3_tts_design: { category: 'audiolab_tts', providerFlag: 'qwen3tts_tts_params', extraFlags: ['qwen3tts_instruct_params'] },
-        sparktts_tts: { category: 'audiolab_tts' },
-        styletts2_tts: { category: 'audiolab_tts' },
-        melotts_tts: { category: 'audiolab_tts' },
+        sparktts_tts: { category: 'audiolab_tts', extraFlags: ['sparktts_create_params', 'tts_voice_ref'] },
+        styletts2_tts: { category: 'audiolab_tts', providerFlag: 'styletts2_tts_params', extraFlags: ['tts_voice_ref', 'styletts2_clone_params'] },
+        melotts_tts: { category: 'audiolab_tts', providerFlag: 'melotts_tts_params' },
         zipvoice_tts: { category: 'audiolab_tts', providerFlag: 'zipvoice_tts_params', extraFlags: ['tts_voice_ref'] },
         // Provider-level fallback: every Qwen3 model overrides ModelClassId, but an unmapped arch
         // hides ALL audio params, so keep a safe entry in case a future variant forgets to.
@@ -35,24 +35,24 @@ const AudioLabConfig = {
         whisper_stt: { category: 'audiolab_stt', providerFlag: 'whisper_stt_params' },
         whisperstreaming_stt: { category: 'audiolab_stt' },
         moonshinestreaming_stt: { category: 'audiolab_stt' },
-        kyutaistt_stt: { category: 'audiolab_stt', providerFlag: 'kyutaistt_stt_params' },
-        distilwhisper_stt: { category: 'audiolab_stt', providerFlag: 'distilwhisper_stt_params' },
-        moonshine_stt: { category: 'audiolab_stt', providerFlag: 'moonshine_stt_params' },
-        realtimestt_stt: { category: 'audiolab_stt', providerFlag: 'realtimestt_params' },
-        musicgen_music: { category: 'audiolab_audiogen', providerFlag: 'musicgen_music_params', extraFlags: ['audiocraft_sampling'] },
+        kyutaistt_stt: { category: 'audiolab_stt' },
+        distilwhisper_stt: { category: 'audiolab_stt' },
+        moonshine_stt: { category: 'audiolab_stt' },
+        realtimestt_stt: { category: 'audiolab_stt' },
+        musicgen_music: { category: 'audiolab_audiogen', extraFlags: ['audiocraft_sampling'] },
         // `text2audio` unlocks core's Text2Audio group (duration/BPM/key/time-sig/language/style), which
         // BuildEngineArgs already prefers over AudioLab's bespoke equivalents. Only ACE-Step gets it —
         // every param in that group is meaningful here, which isn't true of the other music providers.
         acestep_music: { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params', extraFlags: ['acestep_lm_params', 'acestep_task_params', 'music_instrumental_param', 'text2audio'] },
-        openvoice_clone: { category: 'audiolab_clone', providerFlag: 'openvoice_clone_params' },
+        openvoice_clone: { category: 'audiolab_clone' },
         rvc_clone: { category: 'audiolab_clone', providerFlag: 'rvc_clone_params' },
         gptsovits_clone: { category: 'audiolab_clone', providerFlag: 'gptsovits_clone_params' },
         demucs_fx: { category: 'audiolab_audioproc', providerFlag: 'demucs_fx_params' },
         resemble_enhance_fx: { category: 'audiolab_audioproc', providerFlag: 'resemble_enhance_fx_params' },
-        audiogen_sfx: { category: 'audiolab_audiogen', providerFlag: 'audiogen_sfx_params', extraFlags: ['audiocraft_sampling'] },
+        audiogen_sfx: { category: 'audiolab_audiogen', extraFlags: ['audiocraft_sampling'] },
         yue_music: { category: 'audiolab_audiogen', providerFlag: 'yue_music_params' },
         heartlib_music: { category: 'audiolab_audiogen', providerFlag: 'heartlib_music_params' },
-        stableaudio_music: { category: 'audiolab_audiogen' },
+        stableaudio_music: { category: 'audiolab_audiogen', providerFlag: 'stableaudio_music_params' },
         // API TTS providers
         elevenlabs_tts: { category: 'audiolab_tts', providerFlag: 'elevenlabs_tts_params' },
         openai_tts: { category: 'audiolab_tts', providerFlag: 'openai_tts_params' },
@@ -66,17 +66,17 @@ const AudioLabConfig = {
         openai_stt: { category: 'audiolab_stt', providerFlag: 'openai_stt_params' },
         google_stt: { category: 'audiolab_stt', providerFlag: 'google_stt_params' },
         azure_stt: { category: 'audiolab_stt', providerFlag: 'azure_stt_params' },
-        aws_transcribe: { category: 'audiolab_stt', providerFlag: 'aws_stt_params' },
+        aws_transcribe: { category: 'audiolab_stt' },
         assemblyai_stt: { category: 'audiolab_stt', providerFlag: 'assemblyai_stt_params' },
         deepgram_stt: { category: 'audiolab_stt', providerFlag: 'deepgram_stt_params' },
         // API audio generation providers
         elevenlabs_sfx: { category: 'audiolab_audiogen', providerFlag: 'elevenlabs_sfx_params' },
-        suno_music: { category: 'audiolab_audiogen', providerFlag: 'suno_music_params', extraFlags: ['music_style_params', 'music_instrumental_param'] },
-        udio_music: { category: 'audiolab_audiogen', providerFlag: 'udio_music_params', extraFlags: ['music_style_params'] },
+        suno_music: { category: 'audiolab_audiogen', extraFlags: ['music_style_params', 'music_instrumental_param'] },
+        udio_music: { category: 'audiolab_audiogen', extraFlags: ['music_style_params'] },
         // API voice conversion providers
         elevenlabs_vc: { category: 'audiolab_clone', providerFlag: 'elevenlabs_vc_params' },
         // API audio processing providers
-        elevenlabs_isolator: { category: 'audiolab_audioproc', providerFlag: 'elevenlabs_isolator_params' },
+        elevenlabs_isolator: { category: 'audiolab_audioproc' },
         dolby_audioproc: { category: 'audiolab_audioproc', providerFlag: 'dolby_audioproc_params' }
     },
 
@@ -398,10 +398,7 @@ function audioLabBuildEngineCard(engine) {
 
     const cardHeader = createDiv(null, 'audiolab-engine-card-header');
     const status = createDiv(null, 'audiolab-engine-status-dot');
-    if (engine.installed && engine.weights_missing) {
-        status.style.backgroundColor = 'var(--backend-loading, orange)';
-        status.title = 'Installed, but weights are missing on disk — click Repair to re-download';
-    } else if (engine.installed) {
+    if (engine.installed) {
         status.style.backgroundColor = 'var(--backend-running)';
         status.title = 'Installed';
     } else if (!engine.platform_compatible) {
@@ -446,14 +443,7 @@ function audioLabBuildEngineCard(engine) {
         note.innerText = 'Requires Docker';
         footer.appendChild(note);
     } else if (engine.installed) {
-        if (engine.weights_missing) {
-            const repairBtn = document.createElement('button');
-            repairBtn.className = 'basic-button btn-primary';
-            repairBtn.innerText = 'Repair';
-            repairBtn.title = 'Re-download this engine\'s missing weights';
-            repairBtn.addEventListener('click', (e) => { e.stopPropagation(); audioLabRepair(engine); });
-            footer.appendChild(repairBtn);
-        }
+
         // Checkpoint engines can hold several variants — let the user add/remove individual models.
         const perModel = !engine.self_managed && !engine.is_api_provider && (engine.models || []).length > 1;
         if (perModel) {
@@ -869,16 +859,6 @@ function audioLabConfirmUninstall(engine) {
 
 /** Repairs an engine whose weights are missing: clears the stale registration + any partial files, then
  * reopens the install flow (which re-downloads). */
-function audioLabRepair(engine) {
-    genericRequest('AudioLabUninstallEngine', { provider_id: engine.id, delete_weights: true }, data => {
-        if (data.success) {
-            audioLabShowInstallModal(engine);
-        } else {
-            showError(`Failed to start repair for ${engine.name}: ${data.error || 'Unknown error'}`);
-        }
-    });
-}
-
 /** Refreshes the engine manager UI by reloading data from the API. */
 function audioLabRefreshEngineManager() {
     audioLabLoadEngines(engines => {

@@ -15,7 +15,6 @@ public sealed class UdioMusicProvider : IAudioProviderSource
         .WithModelPrefix("Udio")
         .WithModelClass("udio_music", "Udio Music")
         .AddFeatureFlag("audiolab_audiogen")
-        .AddFeatureFlag("udio_music_params")
         .AddFeatureFlag("music_style_params")
         .WithApiProvider("udio_api")
         .AddModels(Models)

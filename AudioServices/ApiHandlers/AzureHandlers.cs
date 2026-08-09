@@ -16,10 +16,19 @@ public sealed class AzureTTSHandler : ApiEngineHandlerBase
         if (string.IsNullOrEmpty(text)) return Error("No text provided.");
         string voiceName = GetArg(args, "voice_name", "en-US-JennyNeural");
         string language = GetArg(args, "language", "en-US");
-        // Every interpolated value is user-supplied, so all three must be escaped — an unescaped quote in
-        // voice_name or language breaks out of the attribute and lets arbitrary SSML through.
-        string ssml = $@"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{System.Security.SecurityElement.Escape(language)}'>
-            <voice name='{System.Security.SecurityElement.Escape(voiceName)}'>{System.Security.SecurityElement.Escape(text)}</voice>
+        string style = GetArg(args, "style", "");
+        string spoken = System.Security.SecurityElement.Escape(text);
+        if (!string.IsNullOrEmpty(style))
+        {
+            // express-as needs the mstts namespace declared on <speak>, added below when a style is in play.
+            string degree = GetArgDouble(args, "style_degree", 1.0).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+            spoken = $"<mstts:express-as style='{System.Security.SecurityElement.Escape(style)}' styledegree='{degree}'>{spoken}</mstts:express-as>";
+        }
+        // Every interpolated value is user-supplied, so all of them are escaped — an unescaped quote in
+        // voice_name, language or style breaks out of the attribute and lets arbitrary SSML through.
+        string mstts = string.IsNullOrEmpty(style) ? "" : " xmlns:mstts='http://www.w3.org/2001/mstts'";
+        string ssml = $@"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis'{mstts} xml:lang='{System.Security.SecurityElement.Escape(language)}'>
+            <voice name='{System.Security.SecurityElement.Escape(voiceName)}'>{spoken}</voice>
         </speak>";
         Dictionary<string, string> headers = new()
         {
@@ -68,7 +77,8 @@ public sealed class AzureSTTHandler : ApiEngineHandlerBase
         byte[] audioData = DecodeAudioArg(args);
         if (audioData == null) return Error("No audio data provided.");
         string language = GetArg(args, "language", "en-US");
-        string url = $"https://{region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language={language}&format=detailed";
+        string profanity = GetArg(args, "profanity", "masked");
+        string url = $"https://{region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language={language}&format=detailed&profanity={profanity}";
         Dictionary<string, string> headers = new()
         {
             ["Ocp-Apim-Subscription-Key"] = key

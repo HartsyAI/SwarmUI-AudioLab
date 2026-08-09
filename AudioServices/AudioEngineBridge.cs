@@ -93,6 +93,28 @@ public static class AudioEngineBridge
         ["resemble_enhance_fx"] = new AudioEngineBinding("resemble-enhance", AudioEngineService.Enhance, true),
     };
 
+    /// <summary>Engine-managed providers whose weights the Engine fetches from a HuggingFace repo that the
+    /// provider's <c>SourceUrl</c> does not name (SourceUrl is a human "learn more" link, usually GitHub).
+    /// Without this the repo can't be resolved, <see cref="GetWeightLocations"/> returns nothing, and
+    /// <see cref="WeightsPresent"/> reports every model installed regardless of what's on disk.
+    /// Values must match the repo the matching engine descriptor downloads from.</summary>
+    private static readonly Dictionary<string, string> _engineWeightRepos = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["chatterbox_tts"] = "ResembleAI/chatterbox",
+        ["piper_tts"] = "rhasspy/piper-voices",
+        ["pockettts_tts"] = "kyutai/pocket-tts-without-voice-cloning",
+        ["gptsovits_clone"] = "lj1995/GPT-SoVITS",
+        ["openvoice_clone"] = "myshell-ai/OpenVoiceV2",
+        ["resemble_enhance_fx"] = "ResembleAI/resemble-enhance",
+    };
+
+    /// <summary>Engine-managed providers that don't use the HuggingFace cache at all, mapped to the
+    /// (category, folder) the Engine writes them to. Demucs comes from Meta's CDN via FxCatalog.</summary>
+    private static readonly Dictionary<string, (string Category, string Folder)> _engineWeightFolders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["demucs_fx"] = ("fx", "demucs"),
+    };
+
     private static IInferenceEngine _engine;
     private static readonly object _engineLock = new();
 
@@ -362,10 +384,20 @@ public static class AudioEngineBridge
                 // No registry entry (RVC and other user-placed checkpoints): the whole directory is the answer.
                 return [dir];
             }
+            if (_engineWeightFolders.TryGetValue(providerId, out (string Category, string Folder) placed))
+            {
+                return [Path.Combine(Path.GetFullPath(AudioConfiguration.ModelRoot), placed.Category, placed.Folder)];
+            }
             AudioModelDefinition model = provider.Models.FirstOrDefault(m => string.Equals(m.Id, modelId, StringComparison.OrdinalIgnoreCase))
                 ?? provider.Models.FirstOrDefault();
-            string repo = HuggingFaceRepo(model?.SourceUrl);
-            return repo is null ? [] : [AudioModelCache.GetRepoDirectory(repo, AudioWeights.CategorySubfolder(provider.Category))];
+            // Prefer the explicit map: a provider's SourceUrl is a docs link, not necessarily its weights repo.
+            string repo = _engineWeightRepos.TryGetValue(providerId, out string mapped) ? mapped : HuggingFaceRepo(model?.SourceUrl);
+            if (repo is null)
+            {
+                Logs.Debug($"[AudioLab] No weights location known for engine-managed '{providerId}' — presence cannot be determined. Add it to _engineWeightRepos/_engineWeightFolders.");
+                return [];
+            }
+            return [AudioModelCache.GetRepoDirectory(repo, AudioWeights.CategorySubfolder(provider.Category))];
         }
         catch (Exception ex)
         {

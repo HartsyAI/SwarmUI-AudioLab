@@ -16,7 +16,6 @@ public sealed class ElevenLabsVoiceIsolatorProvider : IAudioProviderSource
         .WithModelPrefix("ElevenLabsIsolator")
         .WithModelClass("elevenlabs_isolator", "ElevenLabs Voice Isolator")
         .AddFeatureFlag("audiolab_audioproc")
-        .AddFeatureFlag("elevenlabs_isolator_params")
         .WithApiProvider("elevenlabs_api")
         .AddModels(Models)
         .WithEngineGroup("api")

@@ -16,12 +16,20 @@ public sealed class ElevenLabsTTSHandler : ApiEngineHandlerBase
         string modelId = GetArg(args, "model_id", "eleven_multilingual_v2");
         double stability = GetArgDouble(args, "stability", 0.5);
         double similarity = GetArgDouble(args, "similarity_boost", 0.75);
+        double style = GetArgDouble(args, "style", 0.0);
+        bool speakerBoost = GetArgBool(args, "use_speaker_boost", true);
         Dictionary<string, string> headers = new() { ["xi-api-key"] = apiKey };
         JObject payload = new()
         {
             ["text"] = text,
             ["model_id"] = modelId,
-            ["voice_settings"] = new JObject { ["stability"] = stability, ["similarity_boost"] = similarity }
+            ["voice_settings"] = new JObject
+            {
+                ["stability"] = stability,
+                ["similarity_boost"] = similarity,
+                ["style"] = style,
+                ["use_speaker_boost"] = speakerBoost
+            }
         };
         try
         {
@@ -72,10 +80,12 @@ public sealed class ElevenLabsVCHandler : ApiEngineHandlerBase
         if (audioData == null) return Error("No audio data provided.");
         string voiceId = GetArg(args, "voice_id", "21m00Tcm4TlvDq8ikWAM");
         string modelId = GetArg(args, "model_id", "eleven_english_sts_v2");
+        bool removeNoise = GetArgBool(args, "remove_background_noise", false);
         Dictionary<string, string> headers = new() { ["xi-api-key"] = apiKey };
         using MultipartFormDataContent content = new();
         content.Add(new ByteArrayContent(audioData), "audio", "audio.wav");
         content.Add(new StringContent(modelId), "model_id");
+        content.Add(new StringContent(removeNoise ? "true" : "false"), "remove_background_noise");
         try
         {
             byte[] result = await PostMultipartForBytesAsync($"https://api.elevenlabs.io/v1/speech-to-speech/{voiceId}", content, headers, cancel);

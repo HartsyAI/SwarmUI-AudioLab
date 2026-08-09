@@ -31,6 +31,16 @@ public static class AudioEngineRequests
             // "default" is the API layer's placeholder (ProcessTTS's voice default), not a real voice name.
             Voice = string.IsNullOrEmpty(voice) || voice.Equals("default", StringComparison.OrdinalIgnoreCase) ? null : voice,
             Speed = Number(args, "speed"),
+            SpeakerId = Integer(args, "speaker_id"),
+            NormalizeLoudness = args.ContainsKey("normalize_loudness") ? Flag(args, "normalize_loudness", true) : null,
+            Temperature = Number(args, "temperature"),
+            WaveformTemperature = Number(args, "waveform_temp"),
+            TopP = Number(args, "top_p"),
+            TopK = Integer(args, "top_k"),
+            MaxTokens = Integer(args, "max_new_tokens"),
+            Emotion = ZonosEmotionVector(AudioIo.Str(args, "emotion")),
+            SpeakingRate = Number(args, "speaking_rate"),
+            PitchStd = Number(args, "pitch_std"),
             Exaggeration = Number(args, "exaggeration"),
             NfeStep = Integer(args, "nfe_step"),
             CfgScale = Number(args, "cfg_scale"),
@@ -138,11 +148,14 @@ public static class AudioEngineRequests
         {
             Audio = audio,
             Model = string.IsNullOrWhiteSpace(model) ? null : model,
+            Shifts = Integer(args, "shifts") ?? 0,
+            Overlap = Number(args, "overlap"),
+            Segment = Number(args, "segment"),
+            Seed = Integer(args, "seed") ?? 0,
         };
     }
 
-    /// <summary>Builds the speech-enhancement request. <c>nfe</c> and <c>solver</c> have no Engine counterpart
-    /// (the LCFM step count / solver are not on <see cref="FxEnhanceRequest"/>) and are dropped.</summary>
+    /// <summary>Builds the speech-enhancement request.</summary>
     public static FxEnhanceRequest Enhance(IReadOnlyDictionary<string, object> args)
     {
         AudioClip audio = Clip(args, "audio_data") ?? throw new ArgumentException("No audio supplied to enhance.");
@@ -151,9 +164,28 @@ public static class AudioEngineRequests
             Audio = audio,
             Lambd = Number(args, "lambd"),
             Tau = Number(args, "tau"),
+            Nfe = Integer(args, "nfe"),
+            Solver = AudioIo.Str(args, "solver", ""),
             Seed = Seed(args),
         };
     }
+
+    /// <summary>Maps an emotion preset name onto Zonos's 8-way vector, in the reference order
+    /// (Happiness, Sadness, Disgust, Fear, Surprise, Anger, Other, Neutral). The engine renormalizes it to
+    /// sum 1. Null (unknown/empty preset) leaves the model default in place.</summary>
+    private static IReadOnlyList<double>? ZonosEmotionVector(string preset) => (preset ?? "").ToLowerInvariant() switch
+    {
+        //                   happy  sad   disg  fear  surp  ang   other neut
+        "happy" =>        [0.80, 0.02, 0.02, 0.02, 0.05, 0.02, 0.05, 0.02],
+        "sad" =>          [0.02, 0.80, 0.02, 0.05, 0.02, 0.02, 0.05, 0.02],
+        "disgusted" =>    [0.02, 0.05, 0.80, 0.02, 0.02, 0.05, 0.02, 0.02],
+        "fearful" =>      [0.02, 0.05, 0.02, 0.80, 0.05, 0.02, 0.02, 0.02],
+        "surprised" =>    [0.05, 0.02, 0.02, 0.05, 0.80, 0.02, 0.02, 0.02],
+        "angry" =>        [0.02, 0.05, 0.05, 0.02, 0.02, 0.80, 0.02, 0.02],
+        // The reference make_cond_dict default, i.e. "no particular emotion".
+        "neutral" =>      [0.3077, 0.0256, 0.0256, 0.0256, 0.0256, 0.0256, 0.2564, 0.3077],
+        _ => null,
+    };
 
     /// <summary>The source clip an editing task requires, or a precise error naming what is missing.</summary>
     private static AudioClip RequireSource(AudioClip source, string task)

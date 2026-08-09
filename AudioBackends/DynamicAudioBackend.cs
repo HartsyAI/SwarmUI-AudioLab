@@ -70,8 +70,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
         [ConfigComment("Enable debug logging for audio processing.")]
         public bool DebugMode = false;
 
-        [ConfigComment("When a model's weights are missing at generation time (e.g. you deleted them to free space), automatically re-download them.\nWhen disabled, generation refuses with a clear message instead of downloading.\nNote: engine-managed (HuggingFace-cache) models may still auto-download on first use regardless of this setting.")]
-        public bool AutoRedownloadMissingWeights = true;
     }
 
     /// <summary>Maps AudioCategory enum to category-level feature flag names.</summary>
@@ -114,11 +112,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// and read by reconcile, delete and the API thread, so every access goes through <see cref="_modelsLock"/>
     /// and every enumeration takes a snapshot — iterating it live while an install added to it threw.</summary>
     private HashSet<string> InstalledEngines { get; set; } = [];
-
-    /// <summary>Installed provider IDs whose weights are missing on disk, per the last reconcile pass.
-    /// These are surfaced in the UI as "weights missing" — never auto-uninstalled. Concurrent because it's
-    /// read on the API thread and written from reconcile, generation, and the background redownload.</summary>
-    private readonly ConcurrentDictionary<string, byte> _weightsMissing = new(StringComparer.Ordinal);
 
     /// <summary>Provider IDs with an auto-redownload currently in flight — guards the startup (reconcile) and
     /// on-demand (generation) redownload paths from racing/duplicating a fetch for the same engine.</summary>
@@ -217,7 +210,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 UpdateRemoteModels();
             }
             ReconcileWeights();
-            HealMissingWeightsInBackground();
             Program.ModelRefreshEvent += ReRegisterModelsAfterRefresh;
 
             // Nothing to start — local inference is delegated to HartsyInference.Engine (via
@@ -374,39 +366,18 @@ public class DynamicAudioBackend : AbstractT2IBackend
         AudioProviderDefinition provider = meta.Definition;
         AudioModelDefinition modelDef = GetModelDefinition(modelName, provider);
 
-        // Missing-weights handling: when auto-redownload is OFF, refuse up front. When ON (default), actually
-        // fetch the requested model's weights now (await) and only proceed if they land — the old "fall through
-        // and hope the engine self-heals" only worked for HF-cache models, not AudioLab-managed weights.
-        // ManagesOwnWeights providers (HeartMuLa etc.) download lazily from the HF cache inside their LoadAsync,
-        // so on-disk WeightsPresent is always false pre-first-gen — fall through and let the loader fetch them.
-        if (!provider.IsApiProvider && !AudioEngineBridge.ProviderManagesOwnWeights(provider.Id) && !AudioEngineBridge.WeightsPresent(provider.Id, modelDef?.Id))
+        // No weights means not installed — reset it and say so. Engine-managed providers fetch lazily inside
+        // their own loader, so their on-disk state before a first generation says nothing.
+        if (!provider.IsApiProvider && !AudioEngineBridge.ProviderManagesOwnWeights(provider.Id)
+            && !AudioEngineBridge.WeightsPresent(provider.Id, modelDef?.Id))
         {
-            _weightsMissing[provider.Id] = 0;
-            if (!Settings.AutoRedownloadMissingWeights)
+            Logs.Debug($"[AudioLab] '{provider.Name}' has no weights on disk — resetting it to not-installed.");
+            UnregisterEngine(provider.Id, deleteWeights: false);
+            takeOutput(new JObject
             {
-                Logs.Warning($"[AudioLab] '{provider.Name}' weights missing and auto-redownload disabled — refusing generation.");
-                takeOutput(new JObject
-                {
-                    ["error"] = $"{provider.Name} weights are missing on disk and 'Auto Redownload Missing Weights' is disabled. "
-                        + "Reinstall it from the Audio backend settings, or enable auto-redownload."
-                });
-                return;
-            }
-            Logs.Info($"[AudioLab] '{provider.Name}' weights missing — auto-redownloading '{modelDef?.Id ?? "default"}' before generating…");
-            bool restored = await TryAutoRedownloadWeights(provider.Id, modelDef?.Id, msg => { Logs.Info($"[AudioLab] {msg}"); return Task.CompletedTask; });
-            if (!restored || !AudioEngineBridge.WeightsPresent(provider.Id, modelDef?.Id))
-            {
-                takeOutput(new JObject
-                {
-                    ["error"] = $"{provider.Name} weights are missing and could not be re-downloaded automatically. Check the server logs, then reinstall it from the Audio backend settings."
-                });
-                return;
-            }
-            _weightsMissing.TryRemove(provider.Id, out _);
-        }
-        else
-        {
-            _weightsMissing.TryRemove(provider.Id, out _);
+                ["error"] = $"{provider.Name} is not installed — its weights are not on disk. Install it from the Audio backend settings and try again."
+            });
+            return;
         }
 
         if (provider.Category == AudioCategory.TTS
@@ -999,14 +970,16 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
 
         _providers.TryRemove(providerId, out _);
-        RebuildFeatureFlags();
-        UpdateRemoteModels();
-
+        // Must come BEFORE UpdateRemoteModels: that call ends in ReconcileWeights, which would still see
+        // this provider installed and recurse straight back into UnregisterEngine.
         lock (_modelsLock)
         {
             InstalledEngines.Remove(providerId);
         }
         SaveInstalledEnginesConfig();
+
+        RebuildFeatureFlags();
+        UpdateRemoteModels();
 
         // Delete on-disk weights AFTER removing from InstalledEngines, so the "still needed by another
         // installed provider" guard below correctly excludes this provider.
@@ -1197,27 +1170,36 @@ public class DynamicAudioBackend : AbstractT2IBackend
     }
 
     /// <summary>Returns the installed provider IDs flagged "weights missing" by the last reconcile pass.</summary>
-    public IReadOnlySet<string> GetWeightsMissingEngineIds() => _weightsMissing.Keys.ToHashSet();
 
-    /// <summary>Recomputes which installed providers have no weights on disk. Records state for the UI —
-    /// NEVER auto-uninstalls (a missing file is recoverable: the user may have freed space, unmounted a drive,
-    /// etc.). When AutoRedownloadMissingWeights is ON, kicks off a background re-download for each flagged
-    /// engine so a restart heals itself. API providers are treated as present.</summary>
+    /// <summary>Drops any installed provider whose weights are gone, resetting it to exactly the state it had
+    /// before it was ever installed. There is no "repair" concept: with the Python dependency era over, an
+    /// install IS just the weight download, so a provider without weights is simply not installed and the normal
+    /// Install button brings it back.
+    /// <para>Engine-managed (<see cref="AudioEngineBridge.ProviderManagesOwnWeights"/>) and API providers are
+    /// skipped — the engine fetches their weights lazily on first load, so "not on disk yet" is the normal
+    /// state and says nothing about whether they're installed.</para></summary>
     private void ReconcileWeights()
     {
-        _weightsMissing.Clear();
+        // UnregisterEngine republishes models, which routes back here; without this guard a single missing
+        // provider recursed thousands of times.
+        if (Interlocked.Exchange(ref _reconciling, 1) == 1)
+        {
+            return;
+        }
+        try
+        {
         foreach (string providerId in InstalledEnginesSnapshot())
         {
             AudioProviderDefinition def = AudioProviderRegistry.GetById(providerId);
-            if (def is null || def.IsApiProvider || def.Models.Count == 0)
+            if (def is null || def.IsApiProvider || def.Models.Count == 0
+                || AudioEngineBridge.ProviderManagesOwnWeights(providerId))
             {
                 continue;
             }
-            // Missing only if EVERY model's weights are absent — a partial set is still usable.
+            // A partial set is still usable — only reset when nothing at all is on disk.
             bool anyPresent = false;
             foreach (AudioModelDefinition modelDef in def.Models)
             {
-                // Self-managed models fetch their own weights at first load — never "missing"
                 if (modelDef.SelfManaged || AudioEngineBridge.WeightsPresent(providerId, modelDef.Id))
                 {
                     anyPresent = true;
@@ -1226,83 +1208,19 @@ public class DynamicAudioBackend : AbstractT2IBackend
             }
             if (!anyPresent)
             {
-                _weightsMissing[providerId] = 0;
-                Logs.Warning($"[AudioLab] Installed engine '{def.Name}' has no weights on disk — flagged for repair (not auto-uninstalled).");
+                Logs.Debug($"[AudioLab] '{def.Name}' has no weights on disk — resetting it to not-installed.");
+                UnregisterEngine(providerId, deleteWeights: false);
             }
         }
-    }
-
-    /// <summary>With auto-redownload ON, fetches each currently-flagged engine's default weight set in the
-    /// background so a restart heals itself. Called at startup only — NOT from <see cref="ReconcileWeights"/>,
-    /// which also runs right after a deliberate delete (we must not re-download what the user just removed).</summary>
-    private void HealMissingWeightsInBackground()
-    {
-        if (!Settings.AutoRedownloadMissingWeights)
-        {
-            return;
-        }
-        foreach (string providerId in _weightsMissing.Keys.ToList())
-        {
-            string pid = providerId;
-            _ = Task.Run(async () =>
-            {
-                Logs.Info($"[AudioLab] Auto-redownloading missing weights for '{pid}' in the background…");
-                bool ok = await TryAutoRedownloadWeights(pid, null, msg => { Logs.Info($"[AudioLab] {msg}"); return Task.CompletedTask; });
-                Logs.Info(ok
-                    ? $"[AudioLab] Background auto-redownload complete for '{pid}'."
-                    : $"[AudioLab] Background auto-redownload failed for '{pid}' — left flagged for manual repair.");
-            });
-        }
-    }
-
-    /// <summary>How long a caller will wait on someone else's in-flight download before giving up. Sized for the
-    /// largest realistic audio checkpoint (YuE Stage-1 is ~12.5 GB) on a slow link.</summary>
-    private static readonly TimeSpan RedownloadWaitLimit = TimeSpan.FromMinutes(30);
-
-    /// <summary>Re-downloads a provider's missing weights via the installer, guarded by <see cref="_redownloading"/>
-    /// so the startup and on-demand paths never fetch the same engine twice. Clears the weights-missing flag on
-    /// success. Returns true if weights are present afterwards. <paramref name="modelId"/> null = default set.</summary>
-    private async Task<bool> TryAutoRedownloadWeights(string providerId, string modelId, Func<string, Task> onProgress)
-    {
-        if (!_redownloading.TryAdd(providerId, 0))
-        {
-            // Another path is already fetching this engine — wait for it instead of starting a duplicate.
-            // Bounded: a wedged download used to park this loop forever, taking the caller with it.
-            DateTime waitDeadline = DateTime.UtcNow + RedownloadWaitLimit;
-            while (_redownloading.ContainsKey(providerId))
-            {
-                if (DateTime.UtcNow > waitDeadline)
-                {
-                    Logs.Error($"[AudioLab] Timed out after {RedownloadWaitLimit.TotalMinutes:0} min waiting on an in-flight download of '{providerId}'. It may be stalled — check the server logs and retry.");
-                    return false;
-                }
-                await Task.Delay(500, Program.GlobalProgramCancel);
-            }
-            return string.IsNullOrEmpty(modelId)
-                ? !_weightsMissing.ContainsKey(providerId)
-                : AudioEngineBridge.WeightsPresent(providerId, modelId);
-        }
-        try
-        {
-            bool ok = await InstallAndRegisterEngine(providerId, onProgress, Program.GlobalProgramCancel, modelId);
-            AudioProviderDefinition def = AudioProviderRegistry.GetById(providerId);
-            bool anyPresent = def is not null && def.Models.Any(m => AudioEngineBridge.WeightsPresent(providerId, m.Id));
-            if (anyPresent)
-            {
-                _weightsMissing.TryRemove(providerId, out _);
-            }
-            return ok && anyPresent;
-        }
-        catch (Exception ex)
-        {
-            Logs.Error($"[AudioLab] Auto-redownload of '{providerId}' failed: {ex.Message}");
-            return false;
         }
         finally
         {
-            _redownloading.TryRemove(providerId, out _);
+            Interlocked.Exchange(ref _reconciling, 0);
         }
     }
+
+    /// <summary>Re-entrancy guard for <see cref="ReconcileWeights"/>.</summary>
+    private int _reconciling;
 
     /// <summary>Rebuilds the supported feature flags from currently active providers.</summary>
     private void RebuildFeatureFlags()
@@ -1450,9 +1368,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     args["top_k"] = sharedTopK;
                 if (input.TryGet(AudioLabParams.MinP, out double sharedMinP))
                     args["min_p"] = sharedMinP;
-                // Use SwarmUI's built-in CFG Scale
-                if (input.TryGet(T2IParamTypes.CFGScale, out double sharedCfg))
-                    args["cfg_scale"] = sharedCfg;
+                // NOTE: no shared cfg_scale here. Core's CFGScale is hidden for audio models, yet it always
+                // carries a default, so setting it unconditionally sent an unrequested cfg_scale to Kokoro,
+                // Piper, Bark, Orpheus, CSM, CosyVoice, PocketTTS, KyutaiTTS and Zonos, none of which take one.
+                // Providers with a real CFG knob set it in their own case below.
                 // Shared voice reference (tts_voice_ref flag)
                 string sharedRef = GetBase64Audio(input, AudioLabParams.ReferenceAudio);
                 if (!string.IsNullOrEmpty(sharedRef))
@@ -1558,23 +1477,26 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
             case "bark_tts":
                 args["voice"] = input.TryGet(AudioLabParams.BarkVoice, out string bv) ? bv : "v2/en_speaker_6";
-                args["text_temp"] = input.TryGet(AudioLabParams.TextTemp, out double tt) ? tt : 0.7;
+                args["temperature"] = input.TryGet(AudioLabParams.TextTemp, out double tt) ? tt : 0.7;
                 args["waveform_temp"] = input.TryGet(AudioLabParams.WaveformTemp, out double wt) ? wt : 0.7;
                 break;
 
             case "vibevoice_tts":
-                args["diffusion_steps"] = input.TryGet(AudioLabParams.DiffusionSteps, out int diffSteps) ? diffSteps : 10;
+                args["nfe_step"] = input.TryGet(AudioLabParams.DiffusionSteps, out int diffSteps) ? diffSteps : 10;
                 args["cfg_scale"] = input.TryGet(AudioLabParams.VibeVoiceCFG, out double vvCfg) ? vvCfg : 1.3;
                 break;
 
             case "dia_tts":
-                args["cfg_filter_top_k"] = input.TryGet(AudioLabParams.CFGFilterTopK, out int cfgTopK) ? cfgTopK : 35;
+                args["top_k"] = input.TryGet(AudioLabParams.CFGFilterTopK, out int cfgTopK) ? cfgTopK : 45;
+                args["cfg_scale"] = input.TryGet(AudioLabParams.DiaCFGScale, out double diaCfg) ? diaCfg : 3.0;
                 break;
 
             case "f5_tts":
                 args["nfe_step"] = input.TryGet(AudioLabParams.NFEStep, out int nfeStep) ? nfeStep : 32;
                 args["speed"] = input.TryGet(AudioLabParams.F5Speed, out double f5spd) ? f5spd : 1.0;
                 args["cfg_scale"] = input.TryGet(AudioLabParams.F5CFG, out double f5Cfg) ? f5Cfg : 2.0;
+                if (input.TryGet(AudioLabParams.F5SwaySampling, out double f5Sway))
+                    args["sway_sampling_coef"] = f5Sway;
                 break;
 
             case "zipvoice_tts":
@@ -1589,20 +1511,23 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 if (input.TryGet(AudioLabParams.ZonosEmotion, out string ze))
                     args["emotion"] = ze;
                 args["speaking_rate"] = input.TryGet(AudioLabParams.SpeakingRate, out double sr) ? sr : 15.0;
+                args["pitch_std"] = input.TryGet(AudioLabParams.ZonosPitchStd, out double zps) ? zps : 20.0;
                 break;
 
             case "fishspeech_tts":
-                args["max_new_tokens"] = input.TryGet(AudioLabParams.FishSpeechMaxTokens, out int fsMaxTok) ? fsMaxTok : 1024;
+                args["max_new_tokens"] = input.TryGet(AudioLabParams.FishSpeechMaxTokens, out int fsMaxTok) ? fsMaxTok : 0;
                 args["chunk_length"] = input.TryGet(AudioLabParams.FishSpeechChunkLength, out int fsChunk) ? fsChunk : 200;
-                args["normalize"] = input.TryGet(AudioLabParams.FishSpeechNormalize, out string fsNorm) ? fsNorm == "true" : true;
+                args["normalize_loudness"] = input.TryGet(AudioLabParams.FishSpeechNormalize, out string fsNorm) ? fsNorm == "true" : true;
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long fsSeed) ? fsSeed : -1L;
                 break;
 
             case "qwen3_tts":
                 args["qwen3_language"] = input.TryGet(AudioLabParams.Qwen3Language, out string q3Lang) ? q3Lang : "Auto";
-                args["qwen3_speaker"] = input.TryGet(AudioLabParams.Qwen3Speaker, out string q3Spk) ? q3Spk : "Ryan";
+                args["voice"] = input.TryGet(AudioLabParams.Qwen3Speaker, out string q3Spk) ? q3Spk : "Ryan";
                 if (input.TryGet(AudioLabParams.Qwen3Instruct, out string q3Inst) && !string.IsNullOrEmpty(q3Inst))
                     args["qwen3_instruct"] = q3Inst;
+                if (input.TryGet(AudioLabParams.Qwen3XVectorOnly, out string q3Xv))
+                    args["x_vector_only_mode"] = q3Xv == "true";
                 break;
 
             case "cosyvoice_tts":
@@ -1618,6 +1543,145 @@ public class DynamicAudioBackend : AbstractT2IBackend
             case "kyutaitts_tts":
                 if (input.TryGet(AudioLabParams.KyutaiTTSVoice, out string ktv))
                     args["voice"] = ktv;
+                break;
+
+            case "melotts_tts":
+                // The engine takes a numeric slot; these are the checkpoint's spk2id values.
+                args["speaker_id"] = (input.TryGet(AudioLabParams.MeloSpeaker, out string meloSpk) ? meloSpk : "EN-US") switch
+                {
+                    "EN-BR" => 1,
+                    "EN_INDIA" => 2,
+                    "EN-AU" => 3,
+                    "EN-Default" => 4,
+                    _ => 0,
+                };
+                args["speed"] = input.TryGet(AudioLabParams.MeloSpeed, out double meloSpd) ? meloSpd : 1.0;
+                break;
+
+            case "styletts2_tts":
+                args["diffusion_steps"] = input.TryGet(AudioLabParams.StyleTTS2DiffusionSteps, out int st2Steps) ? st2Steps : 10;
+                args["embedding_scale"] = input.TryGet(AudioLabParams.StyleTTS2EmbeddingScale, out double st2Emb) ? st2Emb : 1.0;
+                // alpha/beta only mean anything against a reference clip (multi-speaker checkpoints).
+                if (input.TryGet(AudioLabParams.StyleTTS2Alpha, out double st2Alpha))
+                    args["alpha"] = st2Alpha;
+                if (input.TryGet(AudioLabParams.StyleTTS2Beta, out double st2Beta))
+                    args["beta"] = st2Beta;
+                break;
+
+            case "sparktts_tts":
+                // A reference clip switches Spark-TTS from voice-creation to cloning; the creation knobs are
+                // then ignored upstream, so only send them when no reference was supplied.
+                if (string.IsNullOrEmpty(GetBase64Audio(input, AudioLabParams.ReferenceAudio)))
+                {
+                    args["gender"] = input.TryGet(AudioLabParams.SparkGender, out string spkGen) ? spkGen : "female";
+                    args["pitch"] = input.TryGet(AudioLabParams.SparkPitch, out string spkPitch) ? spkPitch : "moderate";
+                    args["speed"] = input.TryGet(AudioLabParams.SparkSpeed, out string spkSpeed) ? spkSpeed : "moderate";
+                }
+                break;
+
+            case "openai_tts":
+                args["voice"] = input.TryGet(AudioLabParams.OpenAIVoice, out string oaVoice) ? oaVoice : "alloy";
+                args["speed"] = input.TryGet(AudioLabParams.OpenAISpeed, out double oaSpeed) ? oaSpeed : 1.0;
+                // Only gpt-4o-mini-tts accepts instructions; sending it to tts-1 is an API error.
+                if (modelDef?.Id == "gpt-4o-mini-tts"
+                    && input.TryGet(AudioLabParams.OpenAIInstructions, out string oaInstr) && !string.IsNullOrEmpty(oaInstr))
+                {
+                    args["instructions"] = oaInstr;
+                }
+                break;
+
+            case "google_tts":
+                args["voice_name"] = input.TryGet(AudioLabParams.GoogleVoiceName, out string gVoice) ? gVoice : "en-US-Neural2-F";
+                args["speaking_rate"] = input.TryGet(AudioLabParams.GoogleSpeakingRate, out double gRate) ? gRate : 1.0;
+                args["pitch"] = input.TryGet(AudioLabParams.GooglePitch, out double gPitch) ? gPitch : 0.0;
+                break;
+
+            case "deepgram_tts":
+                if (input.TryGet(AudioLabParams.DeepgramVoice, out string dgVoice) && !string.IsNullOrEmpty(dgVoice))
+                    args["model_id"] = dgVoice;
+                break;
+
+            case "cartesia_tts":
+                if (input.TryGet(AudioLabParams.CartesiaVoice, out string ctVoice) && !string.IsNullOrEmpty(ctVoice))
+                    args["voice_id"] = ctVoice;
+                if (input.TryGet(AudioLabParams.CartesiaModel, out string ctModel) && !string.IsNullOrEmpty(ctModel))
+                    args["model_id"] = ctModel;
+                args["speed"] = input.TryGet(AudioLabParams.CartesiaSpeed, out double ctSpd) ? ctSpd : 1.0;
+                break;
+
+            case "playht_tts":
+                if (input.TryGet(AudioLabParams.PlayHTVoice, out string phVoice) && !string.IsNullOrEmpty(phVoice))
+                    args["voice"] = phVoice;
+                args["quality"] = input.TryGet(AudioLabParams.PlayHTQuality, out string phQual) ? phQual : "medium";
+                args["voice_engine"] = input.TryGet(AudioLabParams.PlayHTEngine, out string phEng) ? phEng : "PlayHT2.0";
+                args["speed"] = input.TryGet(AudioLabParams.PlayHTSpeed, out double phSpd) ? phSpd : 1.0;
+                break;
+
+            case "dolby_audioproc":
+                args["preset"] = input.TryGet(AudioLabParams.DolbyPreset, out string dbPreset) ? dbPreset : "speech";
+                break;
+
+            case "elevenlabs_sfx":
+                // 0 = omit so the API picks the optimal duration, which is its documented default.
+                double sfxDurVal = input.TryGet(AudioLabParams.ElevenSFXDuration, out double sfxDur) ? sfxDur : 0.0;
+                if (sfxDurVal > 0) args["duration_seconds"] = sfxDurVal;
+                args["prompt_influence"] = input.TryGet(AudioLabParams.ElevenSFXInfluence, out double sfxInf) ? sfxInf : 0.3;
+                break;
+
+            case "elevenlabs_vc":
+                args["remove_background_noise"] = input.TryGet(AudioLabParams.ElevenRemoveNoise, out string elRn) && elRn == "true";
+                break;
+
+            case "azure_stt":
+                args["profanity"] = input.TryGet(AudioLabParams.AzureProfanity, out string azProf) ? azProf : "masked";
+                break;
+
+            case "deepgram_stt":
+                args["model_id"] = input.TryGet(AudioLabParams.DeepgramSTTModel, out string dgm) ? dgm : "nova-3";
+                break;
+
+            case "google_cloud_stt":
+                args["model_id"] = input.TryGet(AudioLabParams.GoogleSTTModel, out string gsm) ? gsm : "latest_long";
+                break;
+
+            case "openai_stt":
+                if (input.TryGet(AudioLabParams.OpenAISTTPrompt, out string oaP) && !string.IsNullOrEmpty(oaP))
+                    args["prompt"] = oaP;
+                break;
+
+            case "assemblyai_stt":
+                args["speaker_labels"] = input.TryGet(AudioLabParams.AssemblySpeakerLabels, out string aaLbl) && aaLbl == "true";
+                args["sentiment_analysis"] = input.TryGet(AudioLabParams.AssemblySentiment, out string aaSent) && aaSent == "true";
+                break;
+
+            case "elevenlabs_tts":
+                args["stability"] = input.TryGet(AudioLabParams.ElevenStability, out double elStab) ? elStab : 0.5;
+                args["similarity_boost"] = input.TryGet(AudioLabParams.ElevenSimilarity, out double elSim) ? elSim : 0.75;
+                args["style"] = input.TryGet(AudioLabParams.ElevenStyle, out double elStyle) ? elStyle : 0.0;
+                args["use_speaker_boost"] = !input.TryGet(AudioLabParams.ElevenSpeakerBoost, out string elBoost) || elBoost == "true";
+                break;
+
+            case "azure_tts":
+                if (input.TryGet(AudioLabParams.AzureStyle, out string azStyle) && !string.IsNullOrEmpty(azStyle))
+                {
+                    args["style"] = azStyle;
+                    args["style_degree"] = input.TryGet(AudioLabParams.AzureStyleDegree, out double azDeg) ? azDeg : 1.0;
+                }
+                break;
+
+            case "amazon_polly":
+                args["engine"] = input.TryGet(AudioLabParams.PollyEngine, out string polEng) ? polEng : "neural";
+                args["voice_id"] = input.TryGet(AudioLabParams.PollyVoice, out string polVoice) ? polVoice : "Joanna";
+                break;
+
+            case "stableaudio_music":
+                args["infer_step"] = input.TryGet(AudioLabParams.StableAudioSteps, out int saSteps) ? saSteps : 8;
+                // Stable Audio Open Small is documented as variable-length up to 11 s; asking for more
+                // than it was trained for produces truncated or degraded output.
+                if (args.TryGetValue("duration", out object saDur) && saDur is double sd && sd > 11.0)
+                {
+                    args["duration"] = 11.0;
+                }
                 break;
 
             case "suno_music":
@@ -1650,15 +1714,17 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["instrumental"] = input.TryGet(AudioLabParams.Instrumental, out string aceInst) ? aceInst : "false";
                 // Prefer the CORE Swarm audio params (what Swarm users expect + the HartsyInference ACE-Step path
                 // reads); fall back to AudioLab's own params for existing AudioLab-UI workflows.
-                args["bpm"] = input.TryGet(T2IParamTypes.Text2AudioBPM, out long coreBpm) ? (int)coreBpm
-                    : input.TryGet(AudioLabParams.BPM, out int aceBpm) ? aceBpm : 120;
+                int aceBpmVal = input.TryGet(T2IParamTypes.Text2AudioBPM, out long coreBpm) ? (int)coreBpm
+                    : input.TryGet(AudioLabParams.BPM, out int aceBpm) ? aceBpm : 0;
+                // 0 = omit so the LM auto-detects, matching upstream's default of none.
+                if (aceBpmVal > 0) args["bpm"] = aceBpmVal;
                 string keyScale = input.TryGet(T2IParamTypes.Text2AudioKeyScale, out string coreKey) && !string.IsNullOrEmpty(coreKey) ? coreKey
                     : input.TryGet(AudioLabParams.KeyScale, out string aceKey) ? aceKey : null;
                 if (!string.IsNullOrEmpty(keyScale)) args["key_scale"] = keyScale;
                 args["time_signature"] = input.TryGet(T2IParamTypes.Text2AudioTimeSignature, out string coreTs) && !string.IsNullOrEmpty(coreTs) ? coreTs
                     : input.TryGet(AudioLabParams.TimeSignature, out string aceTs) ? aceTs : "4";
                 args["vocal_language"] = input.TryGet(T2IParamTypes.Text2AudioLanguage, out string coreLang) && !string.IsNullOrEmpty(coreLang) ? coreLang
-                    : input.TryGet(AudioLabParams.VocalLanguage, out string aceVl) ? aceVl : "en";
+                    : input.TryGet(AudioLabParams.VocalLanguage, out string aceVl) ? aceVl : "unknown";
                 // 0 = let the model decide; the shift1/shift3 checkpoints are trained at those exact values,
                 // so name them explicitly rather than relying on the engine to infer from the checkpoint.
                 double aceShiftDefault = modelDef?.Id switch
@@ -1727,6 +1793,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
             case "whisper_stt":
                 args["task"] = input.TryGet(AudioLabParams.WhisperTask, out string whisperTask) ? whisperTask : "transcribe";
+                args["beam_size"] = input.TryGet(AudioLabParams.WhisperBeamSize, out int wBeam) ? wBeam : 5;
+                if (input.TryGet(AudioLabParams.WhisperInitialPrompt, out string wPrompt) && !string.IsNullOrEmpty(wPrompt))
+                    args["initial_prompt"] = wPrompt;
                 break;
 
             case "rvc_clone":
@@ -1739,14 +1808,18 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
             case "gptsovits_clone":
                 args["text"] = input.Get(T2IParamTypes.Prompt, "");
+                // Must be ref_text: that is the key SpeechRequest reads into RefText, which GptSoVitsModel
+                // aligns the reference clip against. As "prompt_text" it was silently dropped.
                 if (input.TryGet(AudioLabParams.ClonePromptText, out string gpt) && !string.IsNullOrEmpty(gpt))
-                    args["prompt_text"] = gpt;
+                    args["ref_text"] = gpt;
                 args["language"] = input.TryGet(AudioLabParams.CloneLanguage, out string gl) ? gl : "en";
                 break;
 
             case "demucs_fx":
                 args["overlap"] = input.TryGet(AudioLabParams.Overlap, out double overlap) ? overlap : 0.25;
-                args["shifts"] = input.TryGet(AudioLabParams.Shifts, out int shifts) ? shifts : 1;
+                args["shifts"] = input.TryGet(AudioLabParams.Shifts, out int shifts) ? shifts : 0;
+                args["segment"] = input.TryGet(AudioLabParams.DemucsSegment, out double demSeg) ? demSeg : 7.8;
+                args["seed"] = input.TryGet(T2IParamTypes.Seed, out long demSeed) ? demSeed : 0L;
                 break;
 
             case "resemble_enhance_fx":

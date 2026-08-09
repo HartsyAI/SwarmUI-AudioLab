@@ -17,7 +17,6 @@ public sealed class MusicGenProvider : IAudioProviderSource
         .WithModelPrefix("MusicGen")
         .WithModelClass("musicgen_music", "MusicGen")
         .AddFeatureFlag("audiolab_audiogen")
-        .AddFeatureFlag("musicgen_music_params")
         .AddFeatureFlag("audiocraft_sampling")
         .AddModels(Models)
         .WithEngineGroup("audiocraft")

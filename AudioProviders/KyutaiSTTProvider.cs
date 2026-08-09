@@ -17,7 +17,6 @@ public sealed class KyutaiSTTProvider : IAudioProviderSource
         .WithModelPrefix("KyutaiSTT")
         .WithModelClass("kyutaistt_stt", "Kyutai STT")
         .AddFeatureFlag("audiolab_stt")
-        .AddFeatureFlag("kyutaistt_stt_params")
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();
