@@ -72,24 +72,33 @@ public class AudioLab : Extension
     }
 
     /// <summary>Main initialization — registers backend, T2I params, feature flags, and API endpoints.</summary>
-    public override async void OnInit()
+    // Not async: nothing here awaits, and `async void` turned any startup failure into an unobservable
+    // crash on the synchronization context instead of a logged error.
+    public override void OnInit()
     {
-        // Register T2I parameters for audio workflows (TTS, STT, Music, Clone, FX, SFX)
-        AudioLabParams.RegisterAll();
-        Logs.Info("[AudioLab] Registered audio T2I parameters");
+        try
+        {
+            // Register T2I parameters for audio workflows (TTS, STT, Music, Clone, FX, SFX)
+            AudioLabParams.RegisterAll();
+            Logs.Info("[AudioLab] Registered audio T2I parameters");
 
-        // Register feature flags so SwarmUI knows these are extension-managed
-        RegisterFeatureFlags();
-        Logs.Info("[AudioLab] Registered feature flags");
+            // Register feature flags so SwarmUI knows these are extension-managed
+            RegisterFeatureFlags();
+            Logs.Info("[AudioLab] Registered feature flags");
 
-        // Register ONE unified backend
-        Program.Backends.RegisterBackendType<DynamicAudioBackend>(
-            "audio-backend", "Audio Backend",
-            "Dynamic audio backend supporting TTS, STT, music generation, and more.", true);
+            // Register ONE unified backend
+            Program.Backends.RegisterBackendType<DynamicAudioBackend>(
+                "audio-backend", "Audio Backend",
+                "Dynamic audio backend supporting TTS, STT, music generation, and more.", true);
 
-        // Register API endpoints
-        AudioLabAPI.Register();
-        VideoAudioEndpoints.Register();
+            // Register API endpoints
+            AudioLabAPI.Register();
+            VideoAudioEndpoints.Register();
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] Critical error during initialization: {ex.Message}");
+        }
     }
 
     /// <summary>Registers all feature flags that should be disregarded for audio backends.

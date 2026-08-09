@@ -1642,7 +1642,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["prompt"] = input.TryGet(AudioLabParams.Lyrics, out string ly) ? ly : "[Instrumental]";
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long aceSeed) ? aceSeed : -1L;
                 args["infer_step"] = input.TryGet(AudioLabParams.InferStep, out int infStep) ? infStep : 0;   // 0 = model default
-                args["guidance_scale"] = input.TryGet(AudioLabParams.ACEGuidanceScale, out double aceGuide) ? aceGuide : 7.0;
+                // turbo* variants are distilled for no-CFG sampling, so the 7.0 default actively degrades them.
+                // An explicit user value always wins; only the fallback is variant-aware.
+                bool aceIsTurbo = modelDef?.Id?.StartsWith("turbo", StringComparison.OrdinalIgnoreCase) == true
+                    || modelDef?.Id?.StartsWith("xl-turbo", StringComparison.OrdinalIgnoreCase) == true;
+                args["guidance_scale"] = input.TryGet(AudioLabParams.ACEGuidanceScale, out double aceGuide) ? aceGuide : (aceIsTurbo ? 1.0 : 7.0);
                 args["instrumental"] = input.TryGet(AudioLabParams.Instrumental, out string aceInst) ? aceInst : "false";
                 // Prefer the CORE Swarm audio params (what Swarm users expect + the HartsyInference ACE-Step path
                 // reads); fall back to AudioLab's own params for existing AudioLab-UI workflows.
@@ -1655,7 +1659,15 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     : input.TryGet(AudioLabParams.TimeSignature, out string aceTs) ? aceTs : "4";
                 args["vocal_language"] = input.TryGet(T2IParamTypes.Text2AudioLanguage, out string coreLang) && !string.IsNullOrEmpty(coreLang) ? coreLang
                     : input.TryGet(AudioLabParams.VocalLanguage, out string aceVl) ? aceVl : "en";
-                args["shift"] = input.TryGet(AudioLabParams.ACEShift, out double aceShift) ? aceShift : 0.0;   // 0 = model default
+                // 0 = let the model decide; the shift1/shift3 checkpoints are trained at those exact values,
+                // so name them explicitly rather than relying on the engine to infer from the checkpoint.
+                double aceShiftDefault = modelDef?.Id switch
+                {
+                    "turbo-shift1" => 1.0,
+                    "turbo-shift3" => 3.0,
+                    _ => 0.0,
+                };
+                args["shift"] = input.TryGet(AudioLabParams.ACEShift, out double aceShift) ? aceShift : aceShiftDefault;
                 args["infer_method"] = input.TryGet(AudioLabParams.InferMethod, out string aceIm) ? aceIm : "ode";
                 args["use_adg"] = input.TryGet(AudioLabParams.UseADG, out string aceAdg) ? aceAdg : "false";
                 args["cfg_interval_start"] = input.TryGet(AudioLabParams.CFGIntervalStart, out double aceCfgS) ? aceCfgS : 0.0;

@@ -1,5 +1,6 @@
 using System.IO;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
+using Hartsy.Extensions.AudioLab.AudioServices;
 using SwarmUI.Text2Image;
 using SwarmUI.Utils;
 
@@ -10,7 +11,6 @@ namespace Hartsy.Extensions.AudioLab.AudioModels;
 public static class AudioModelFactory
 {
     private static readonly Dictionary<string, T2IModelClass> _modelClasses = [];
-    private const string ExtensionRoot = "src/Extensions/SwarmUI-AudioLab";
 
     /// <summary>Creates a T2IModel from an AudioModelDefinition and AudioProviderDefinition.</summary>
     public static T2IModel Create(AudioModelDefinition model, AudioProviderDefinition provider)
@@ -110,7 +110,9 @@ public static class AudioModelFactory
     /// <summary>Loads a preview image from Assets/previews/{providerId}.png or falls back to placeholder.</summary>
     private static string LoadPreviewImage(string providerId)
     {
-        string fullPath = Path.Combine(ExtensionRoot, "Assets", "previews", $"{providerId}.png");
+        // AudioConfiguration.ExtensionDirectory is absolute (resolved in OnPreInit); the old relative
+        // "src/Extensions/SwarmUI-AudioLab" only resolved when the process CWD happened to be the Swarm root.
+        string fullPath = Path.Combine(AudioConfiguration.ExtensionDirectory, "Assets", "previews", $"{providerId}.png");
         if (!File.Exists(fullPath))
         {
             return PlaceholderImage;

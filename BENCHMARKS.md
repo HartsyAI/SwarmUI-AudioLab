@@ -154,11 +154,11 @@ All on GPU (verified GPU util 30–90%), transcribing an 8.65s clip. RTF = audio
 | moonshine_stt | base | ✅ | 1.29 | 1.24 | 7.0 | clean |
 | moonshine_stt | tiny | ✅ | 8.59 | 0.68 | 12.7 | fastest |
 | whisperstreaming_stt | base | ✅ | 1.68 | 1.63 | 5.3 | LocalAgreement-2 streaming over Whisper base |
-| kyutaistt_stt | 1b-en-fr | ❌ loader | — | — | — | `-trfs` checkpoint key layout (`model.layers.0.self_attn.q_proj.weight` not found) ≠ engine's Kyutai loader expectation. Repo has the file; key-mapping fix needed (open-item) |
+| kyutaistt_stt | 1b-en-fr | ✅ | — | — | — | **Re-verified 2026-08-08: loads and transcribes correctly.** `KyutaiSttModel.ReconcileHeliumLayout` already handles the `-trfs` layout (`{q,k,v,o}_proj.linear.weight` → `.weight`, fused `mlp.fc1` → gate/up), and `SttCatalog` already strips the `codec_model.` Mimi prefix. Verified every expected key against the real checkpoint header, then ran it: round-tripped Kokoro TTS word-perfect with Kyutai's own capitalization/punctuation. The "no depformer" note was a misread — an STT model legitimately has none. |
 
 **STT verdict:** every Whisper/Distil/Moonshine/streaming variant works on GPU at speeds squarely in the
 faster-whisper reference range (turbo ~5x RT, large-v3 ~3.8x RT) — no engine work was needed here beyond the
-systemic residency/ProjectLinear fixes. Only Kyutai STT has a key-layout mismatch.
+systemic residency/ProjectLinear fixes.
 
 ## Music / Audio generation
 
@@ -167,7 +167,7 @@ systemic residency/ProjectLinear fixes. Only Kyutai STT has a key-layout mismatc
 | acestep_music | turbo | ✅ | 22.6 | **1.33** | 5192 | was OOM-every-time at 11.9GB (stale weights left no room); synchronous GPU-cache eviction on provider switch → fits at 5.2GB, faster-than-realtime. 30s music (flow-matching DiT — few steps, fast) |
 | heartlib_music | 3b-hny | ⚠️ correct but impractically slow | ~3600 | ~0.008 | — | generates the full 30s (frame 375/375, no crash) but ~1hr wall on a 3060. 3B autoregressive at F32 = per-op-launch-overhead bound (same class as F5, ×3B). Needs op-fusion/CUDA-graphs/BF16 |
 | musicgen_music | small | ✅ | 78 (8s audio) | 0.10 | 3606 | works; ~0.3x RT in Python on T4-class, ours 0.10 (F32, per-op overhead). Functional audio |
-| audiogen_sfx | medium | ❌ loader bug | — | — | — | `PytorchPickleLoader` can't find EOCD in audiogen's 3.68GB zip (file IS valid + complete). MusicGen uses the same loader and works → narrow robustness bug (likely false-positive `PK\x05\x06` in uncompressed weight data fooling .NET's backward EOCD scan). Engine open-item |
+| audiogen_sfx | medium | ✅ | 248 (30s audio) | 0.12 | — | **Re-verified 2026-08-08: the previously-recorded EOCD loader bug does NOT reproduce.** The full 3.68GB `state_dict.bin` loads through `PytorchPickleLoader` and generates real audio (30s @ 16 kHz mono, peak 0.97, impulsive envelope matching the prompt). ~3m17 of that is the one-time pickle parse, ~50s is generation. The original failure was most likely a truncated/corrupt download, not a code defect. |
 | yue_music | en-cot | ⛔ user-placed | — | — | — | by design no auto-download: user places `m-a-p/YuE-s1-7B-anneal-*` folder + `xcodec.safetensors`. Clear error message. (7B AR — would also be HeartMuLa-class slow) |
 
 ## Voice conversion
@@ -259,9 +259,10 @@ The real levers, in priority:
   (EOS/conditioning calibration; the crash/OOM bugs are fixed, this is quality refinement).
 - **VibeVoice text-conditioning** — runs cleanly but hallucinates content (WER 2.3); needs the same faithful-port
   audit the other models got.
-- **AudioGen loader** — `PytorchPickleLoader` EOCD detection fails on its specific 3.68GB zip (MusicGen, same
-  loader, works); needs a more robust EOCD scan.
-- **Kyutai STT** — `-trfs` checkpoint key layout doesn't match the engine's Kyutai loader.
+- ~~**AudioGen loader**~~ — RESOLVED 2026-08-08, was not a real bug: re-run end-to-end against a full
+  `facebook/audiogen-medium` download and it loads and generates correctly. `MODEL_STATUS_AUDIO.md` was right
+  and this file was stale. Do not re-chase.
+- ~~**Kyutai STT**~~ — RESOLVED 2026-08-08, was not a real bug; the `-trfs` layout is already reconciled and it transcribes correctly. Do not re-chase.
 - **NeuTTS** — residual WER from espeak-punctuation gap + best-effort no-reference voice; full cloning needs the
   X-Codec2 encoder port. **RVC** and **Resemble-Enhance** handlers are engine-pending.
 
