@@ -1800,6 +1800,15 @@ public static class AudioLabParams
 
         #endregion
 
+        #region Music — Stable Audio
+        StableAudioSteps = T2IParamTypes.Register<int>(new("Stable Audio Steps",
+            "Diffusion steps.\nThe official example uses 8; this is a distilled small model tuned for few steps.",
+            "8",
+            Min: 1, Max: 100, Step: 1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "stableaudio_music_params", IsAdvanced: true));
+
+        #endregion
+
         #region Music — YuE
         YuELyrics = T2IParamTypes.Register<string>(new("YuE Lyrics",
             "Song lyrics for YuE. Structure them with SECTION MARKERS — each becomes its own generated segment:\n"

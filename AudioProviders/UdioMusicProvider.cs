@@ -23,6 +23,6 @@ public sealed class UdioMusicProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "default", Name = "Udio v1.5", Description = "High-quality AI music generation with style control", SourceUrl = "https://www.udio.com", License = "Commercial API", EstimatedSize = "API", EstimatedVram = "None (API)" }
+        new() { Id = "default", Name = "Udio v1.5", Description = "High-quality AI music generation with style control Udio publishes no official public API; this calls its web endpoint, which can change without notice.", SourceUrl = "https://www.udio.com", License = "Commercial API", EstimatedSize = "API", EstimatedVram = "None (API)" }
     ];
 }

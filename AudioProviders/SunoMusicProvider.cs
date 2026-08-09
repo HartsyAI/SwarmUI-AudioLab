@@ -24,6 +24,6 @@ public sealed class SunoMusicProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "default", Name = "Suno v4", Description = "Full AI-generated songs with vocals, lyrics, and instrumentals", SourceUrl = "https://suno.com", License = "Commercial API", EstimatedSize = "API", EstimatedVram = "None (API)" }
+        new() { Id = "default", Name = "Suno v4", Description = "Full AI-generated songs with vocals, lyrics, and instrumentals Suno publishes no official public API; this calls its web endpoint, which can change without notice.", SourceUrl = "https://suno.com", License = "Commercial API", EstimatedSize = "API", EstimatedVram = "None (API)" }
     ];
 }

@@ -44,11 +44,13 @@ public sealed class OpenAISTTHandler : ApiEngineHandlerBase
         if (audioData == null) return Error("No audio data provided.");
         string model = GetArg(args, "model_id", "whisper-1");
         string language = GetArg(args, "language");
+        string sttPrompt = GetArg(args, "prompt");
         Dictionary<string, string> headers = new() { ["Authorization"] = $"Bearer {apiKey}" };
         using MultipartFormDataContent content = new();
         content.Add(new ByteArrayContent(audioData), "file", "audio.wav");
         content.Add(new StringContent(model), "model");
         content.Add(new StringContent("json"), "response_format");
+        if (!string.IsNullOrEmpty(sttPrompt)) content.Add(new StringContent(sttPrompt), "prompt");
         if (!string.IsNullOrEmpty(language))
         {
             content.Add(new StringContent(language), "language");
