@@ -710,10 +710,10 @@ public static class AudioLabAPI
                 return null;
             }
 
-            bool success = await backend.InstallAndRegisterEngine(provider_id, msg =>
+            bool success = await backend.InstallAndRegisterEngine(provider_id, async msg =>
             {
                 Logs.Info($"[AudioLab] Install progress: {msg}");
-                ws.SendJson(new JObject { ["info"] = msg }, API.WebsocketTimeout).Wait();
+                await ws.SendJson(new JObject { ["info"] = msg }, API.WebsocketTimeout);
             }, Program.GlobalProgramCancel, model_id);
 
             if (success)
@@ -841,7 +841,7 @@ public static class AudioLabAPI
             {
                 await ws.SendJson(new JObject { ["info"] = $"Installing {model.Name}…" }, API.WebsocketTimeout);
                 bool success = await backend.InstallAndRegisterEngine(provider_id,
-                    msg => ws.SendJson(new JObject { ["info"] = msg }, API.WebsocketTimeout).Wait(),
+                    async msg => await ws.SendJson(new JObject { ["info"] = msg }, API.WebsocketTimeout),
                     Program.GlobalProgramCancel, model.Id);
                 if (success)
                 {

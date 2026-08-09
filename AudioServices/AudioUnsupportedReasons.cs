@@ -17,9 +17,6 @@ public static class AudioUnsupportedReasons
             + "first (StartTranscriptionJob → poll → fetch), and the streaming API needs an HTTP/2 event-stream "
             + "protocol. The previous single POST matched neither and could never have worked. Use Whisper, "
             + "Deepgram, or AssemblyAI instead.",
-        ["stableaudio_music"] =
-            "Stable Audio Open has no descriptor in the engine's music catalog, so there is no model id to dispatch "
-            + "to. It lights up as soon as the engine registers the family.",
     };
 
     /// <summary>A full user-facing message for an unsupported local provider, naming the specific blocker when known.</summary>

@@ -19,7 +19,7 @@ public sealed class ResembleEnhanceProvider : IAudioProviderSource
         .AddFeatureFlag("audiolab_audioproc")
         .AddFeatureFlag("resemble_enhance_fx_params")
         .AddModels(Models)
-        .WithEngineGroup("linux_docker")
+        .WithEngineGroup("main")
         .Build();
 
     #region Models

@@ -84,17 +84,20 @@ public class DynamicAudioBackend : AbstractT2IBackend
         [AudioCategory.AudioProcessing] = "audiolab_audioproc",
     };
 
-    /// <summary>Runtime state for initialized providers, keyed by provider ID.</summary>
-    private readonly Dictionary<string, AudioProviderMetadata> _providers = [];
+    /// <summary>Runtime state for initialized providers, keyed by provider ID. Concurrent: reached from Init,
+    /// install/uninstall, reconcile, the background redownloads and every generation — the same unsynchronized
+    /// access that previously corrupted RegisteredAudioModels and aborted the process.</summary>
+    private readonly ConcurrentDictionary<string, AudioProviderMetadata> _providers = new(StringComparer.Ordinal);
 
-    /// <summary>Supported feature flags, populated in Init().</summary>
-    private readonly HashSet<string> _supportedFeatureSet = [];
+    /// <summary>Supported feature flags, populated in Init(). Concurrent for the same reason as
+    /// <see cref="_providers"/>: SupportedFeatures is enumerated by the API thread while installs rebuild it.</summary>
+    private readonly ConcurrentDictionary<string, byte> _supportedFeatureSet = new(StringComparer.Ordinal);
 
     /// <summary>Current settings accessor.</summary>
     public DynamicAudioSettings Settings => SettingsRaw as DynamicAudioSettings;
 
     /// <summary>Feature flags from all enabled providers.</summary>
-    public override IEnumerable<string> SupportedFeatures => _supportedFeatureSet;
+    public override IEnumerable<string> SupportedFeatures => _supportedFeatureSet.Keys;
 
     /// <summary>Dictionary of remote models this backend provides, by type.</summary>
     public Dictionary<string, Dictionary<string, JObject>> RemoteModels { get; set; } = [];
@@ -107,7 +110,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// unsynchronized writes corrupted the Dictionary and aborted the process.</summary>
     private readonly object _modelsLock = new();
 
-    /// <summary>Set of installed engine provider IDs, persisted to JSON config.</summary>
+    /// <summary>Set of installed engine provider IDs, persisted to JSON config. Mutated by install/uninstall
+    /// and read by reconcile, delete and the API thread, so every access goes through <see cref="_modelsLock"/>
+    /// and every enumeration takes a snapshot — iterating it live while an install added to it threw.</summary>
     private HashSet<string> InstalledEngines { get; set; } = [];
 
     /// <summary>Installed provider IDs whose weights are missing on disk, per the last reconcile pass.
@@ -162,7 +167,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
         try
         {
-            foreach (string providerId in InstalledEngines)
+            foreach (string providerId in InstalledEnginesSnapshot())
             {
                 AudioProviderDefinition definition = AudioProviderRegistry.GetById(providerId);
                 if (definition == null)
@@ -190,15 +195,15 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
                 if (CategoryFlags.TryGetValue(definition.Category, out string categoryFlag))
                 {
-                    _supportedFeatureSet.Add(categoryFlag);
+                    _supportedFeatureSet.TryAdd(categoryFlag, 0);
                 }
                 if (definition.Category != AudioCategory.STT)
                 {
-                    _supportedFeatureSet.Add("audiolab_output");
+                    _supportedFeatureSet.TryAdd("audiolab_output", 0);
                 }
                 foreach (string flag in definition.FeatureFlags)
                 {
-                    _supportedFeatureSet.Add(flag);
+                    _supportedFeatureSet.TryAdd(flag, 0);
                 }
 
                 if (Settings.DebugMode)
@@ -388,7 +393,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 return;
             }
             Logs.Info($"[AudioLab] '{provider.Name}' weights missing — auto-redownloading '{modelDef?.Id ?? "default"}' before generating…");
-            bool restored = await TryAutoRedownloadWeights(provider.Id, modelDef?.Id, msg => Logs.Info($"[AudioLab] {msg}"));
+            bool restored = await TryAutoRedownloadWeights(provider.Id, modelDef?.Id, msg => { Logs.Info($"[AudioLab] {msg}"); return Task.CompletedTask; });
             if (!restored || !AudioEngineBridge.WeightsPresent(provider.Id, modelDef?.Id))
             {
                 takeOutput(new JObject
@@ -684,7 +689,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// A same-model reload never evicts, keeping repeat generations warm.</para></summary>
     private void EnsureVramHeadroom(string providerId, string modelName)
     {
-        if (CurrentModelName is null || CurrentModelName == modelName)
+        // Only a same-model reload is safe to skip. A null CurrentModelName used to skip too, which left the
+        // very first load on a fresh backend with no headroom check at all — the exact case where another
+        // extension's image/video model may already own most of the card.
+        if (CurrentModelName == modelName)
         {
             return;
         }
@@ -716,7 +724,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
     /// <summary>Free VRAM on the busiest CUDA device, or -1 when it cannot be determined (no NVIDIA GPU,
     /// nvidia-smi absent). The engine runs on one device, so the card with the least free memory is the one
-    /// carrying the audio models.</summary>
+    /// carrying the audio models.
+    /// <para>KNOWN LIMITATION: this is a heuristic, not a real device query. Audio can be pinned to a specific
+    /// card via <c>HARTSY_AUDIO_CUDA_DEVICE</c>, but the engine exposes no way to ask which device a pipeline
+    /// actually landed on, so on a multi-GPU box the min-free card may not be the audio card and the headroom
+    /// check can free memory on the wrong reasoning. Fixing it properly needs engine-side device reporting.</para></summary>
     private static long FreeVramBytes()
     {
         try
@@ -748,6 +760,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
         if (!m.Success || !double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float,
             System.Globalization.CultureInfo.InvariantCulture, out double value))
         {
+            // Returning 0 disables the headroom check for this model, which is right for the genuine
+            // no-GPU forms but would silently hide a typo in a new provider's value.
+            if (!estimate.Contains("CPU", StringComparison.OrdinalIgnoreCase)
+                && !estimate.Contains("None", StringComparison.OrdinalIgnoreCase))
+            {
+                Logs.Warning($"[AudioLab] Unparseable EstimatedVram '{estimate}' — VRAM headroom checking is disabled for that model. Use a form like \"~4GB\".");
+            }
             return 0;
         }
         double multiplier = m.Groups[2].Value.Equals("GB", StringComparison.OrdinalIgnoreCase) ? 1073741824.0 : 1048576.0;
@@ -808,7 +827,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// <summary>Installs an engine: fetches its weights via the in-process C# engine,
     /// registers models, and persists the installed state. When <paramref name="modelId"/> is given, only
     /// that model's file set downloads (multi-GB variants are distinct checkpoints — never pull them all).</summary>
-    public async Task<bool> InstallAndRegisterEngine(string providerId, Action<string> onProgress = null, CancellationToken cancel = default, string modelId = null)
+    public async Task<bool> InstallAndRegisterEngine(string providerId, Func<string, Task> onProgress = null, CancellationToken cancel = default, string modelId = null)
     {
         AudioProviderDefinition definition = AudioProviderRegistry.GetById(providerId);
         if (definition == null)
@@ -817,7 +836,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             return false;
         }
 
-        onProgress?.Invoke($"Installing {definition.Name}...");
+        await AudioWeights.Report(onProgress, $"Installing {definition.Name}...");
 
         try
         {
@@ -835,7 +854,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     // so the download AND any load error surface here with progress, not mid-generation. A failure
                     // aborts install (we don't register a provider whose weights can't be fetched). Handlers that
                     // must bind a compute device to download (music) no-op here and fetch on first generation.
-                    onProgress?.Invoke($"Downloading weights for {definition.Name} (in-process C# engine)...");
+                    await AudioWeights.Report(onProgress, $"Downloading weights for {definition.Name} (in-process C# engine)...");
                     HashSet<string> fetched = new(StringComparer.Ordinal);
                     // With a model_id, prefetch only that variant — each can be its own multi-GB weight set
                     // (Whisper alone has 7); a bare provider install prefetches the full registered set.
@@ -852,11 +871,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
                         {
                             continue;
                         }
-                        JObject result = await AudioEngineBridge.EnsureWeightsAsync(definition.Id, modelDef.Id, msg => onProgress?.Invoke(msg), cancel);
+                        JObject result = await AudioEngineBridge.EnsureWeightsAsync(definition.Id, modelDef.Id, onProgress, cancel);
                         if (result?["success"]?.Value<bool>() != true)
                         {
                             string err = result?["error"]?.ToString() ?? "unknown error";
-                            onProgress?.Invoke($"Failed to fetch weights for {definition.Name}: {err}");
+                            await AudioWeights.Report(onProgress, $"Failed to fetch weights for {definition.Name}: {err}");
                             Logs.Error($"[AudioLab] Weight prefetch failed for '{definition.Id}'/'{modelDef.Id}': {err}");
                             return false;
                         }
@@ -874,11 +893,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     {
                         installModel = definition.Models.FirstOrDefault(m => AudioWeightsRegistry.SpecsFor(definition.Id, m.Id).Length > 0)?.Id;
                     }
-                    onProgress?.Invoke($"Downloading weights for {definition.Name}{(installModel is null ? "" : $" ({installModel})")} (in-process C# engine)...");
-                    bool registered = await AudioWeights.EnsureProviderWeightsAsync(definition, msg => onProgress?.Invoke(msg), cancel, installModel);
+                    await AudioWeights.Report(onProgress, $"Downloading weights for {definition.Name}{(installModel is null ? "" : $" ({installModel})")} (in-process C# engine)...");
+                    bool registered = await AudioWeights.EnsureProviderWeightsAsync(definition, onProgress, cancel, installModel);
                     if (!registered)
                     {
-                        onProgress?.Invoke($"No auto-download is registered for {definition.Name} yet — place its .safetensors in {AudioWeights.WeightsDirectory(definition)} to enable it.");
+                        await AudioWeights.Report(onProgress, $"No auto-download is registered for {definition.Name} yet — place its .safetensors in {AudioWeights.WeightsDirectory(definition)} to enable it.");
                     }
                 }
             }
@@ -886,7 +905,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             {
                 // API providers use external cloud APIs — no venv, no deps, no model downloads needed.
                 // The lightweight "api" group server starts lazily on first request via EnsureGroupRunningAsync.
-                onProgress?.Invoke($"Registering {definition.Name} (cloud API — no local setup needed)...");
+                await AudioWeights.Report(onProgress, $"Registering {definition.Name} (cloud API — no local setup needed)...");
             }
             else
             {
@@ -895,11 +914,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 // that can't generate.
                 string reason = AudioServices.AudioUnsupportedReasons.Message(definition.Id, definition.Name);
                 Logs.Error($"[AudioLab] {reason}");
-                onProgress?.Invoke(reason);
+                await AudioWeights.Report(onProgress, reason);
                 return false;
             }
 
-            onProgress?.Invoke($"Registering models for {definition.Name}...");
+            await AudioWeights.Report(onProgress, $"Registering models for {definition.Name}...");
             AudioProviderMetadata meta = new()
             {
                 Definition = definition,
@@ -911,34 +930,37 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
             if (CategoryFlags.TryGetValue(definition.Category, out string categoryFlag))
             {
-                _supportedFeatureSet.Add(categoryFlag);
+                _supportedFeatureSet.TryAdd(categoryFlag, 0);
             }
             foreach (string flag in definition.FeatureFlags)
             {
-                _supportedFeatureSet.Add(flag);
+                _supportedFeatureSet.TryAdd(flag, 0);
             }
 
             UpdateRemoteModels();
 
-            InstalledEngines.Add(providerId);
+            lock (_modelsLock)
+            {
+                InstalledEngines.Add(providerId);
+            }
             SaveInstalledEnginesConfig();
 
             Program.ModelRefreshEvent?.Invoke();
 
-            onProgress?.Invoke($"{definition.Name} installed successfully!");
+            await AudioWeights.Report(onProgress, $"{definition.Name} installed successfully!");
             Logs.Info($"[AudioLab] Engine '{definition.Name}' installed and registered.");
             return true;
         }
         catch (OperationCanceledException) when (cancel.IsCancellationRequested)
         {
             Logs.Info($"[AudioLab] Install of '{providerId}' cancelled.");
-            onProgress?.Invoke("Installation cancelled.");
+            await AudioWeights.Report(onProgress, "Installation cancelled.");
             return false;
         }
         catch (Exception ex)
         {
             Logs.Error($"[AudioLab] Failed to install engine '{providerId}': {ex}");
-            onProgress?.Invoke($"Error: {ex.Message}");
+            await AudioWeights.Report(onProgress, $"Error: {ex.Message}");
             return false;
         }
     }
@@ -976,11 +998,14 @@ public class DynamicAudioBackend : AbstractT2IBackend
             }
         }
 
-        _providers.Remove(providerId);
+        _providers.TryRemove(providerId, out _);
         RebuildFeatureFlags();
         UpdateRemoteModels();
 
-        InstalledEngines.Remove(providerId);
+        lock (_modelsLock)
+        {
+            InstalledEngines.Remove(providerId);
+        }
         SaveInstalledEnginesConfig();
 
         // Delete on-disk weights AFTER removing from InstalledEngines, so the "still needed by another
@@ -1035,7 +1060,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
         // Union of locations still needed by other installed providers (providerId already removed above).
         HashSet<string> stillNeeded = new(StringComparer.OrdinalIgnoreCase);
-        foreach (string otherId in InstalledEngines)
+        foreach (string otherId in InstalledEnginesSnapshot())
         {
             foreach (string loc in WeightLocationsForProvider(otherId, AudioProviderRegistry.GetById(otherId)))
             {
@@ -1112,7 +1137,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 }
             }
         }
-        foreach (string otherId in InstalledEngines)
+        foreach (string otherId in InstalledEnginesSnapshot())
         {
             if (string.Equals(otherId, providerId, StringComparison.OrdinalIgnoreCase))
             {
@@ -1154,7 +1179,22 @@ public class DynamicAudioBackend : AbstractT2IBackend
     }
 
     /// <summary>Returns the set of currently installed engine IDs.</summary>
-    public IReadOnlySet<string> GetInstalledEngineIds() => InstalledEngines;
+    public IReadOnlySet<string> GetInstalledEngineIds()
+    {
+        lock (_modelsLock)
+        {
+            return new HashSet<string>(InstalledEngines, StringComparer.Ordinal);
+        }
+    }
+
+    /// <summary>A point-in-time copy, so callers can iterate without racing an install.</summary>
+    private HashSet<string> InstalledEnginesSnapshot()
+    {
+        lock (_modelsLock)
+        {
+            return new HashSet<string>(InstalledEngines, StringComparer.Ordinal);
+        }
+    }
 
     /// <summary>Returns the installed provider IDs flagged "weights missing" by the last reconcile pass.</summary>
     public IReadOnlySet<string> GetWeightsMissingEngineIds() => _weightsMissing.Keys.ToHashSet();
@@ -1166,7 +1206,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
     private void ReconcileWeights()
     {
         _weightsMissing.Clear();
-        foreach (string providerId in InstalledEngines)
+        foreach (string providerId in InstalledEnginesSnapshot())
         {
             AudioProviderDefinition def = AudioProviderRegistry.GetById(providerId);
             if (def is null || def.IsApiProvider || def.Models.Count == 0)
@@ -1207,7 +1247,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             _ = Task.Run(async () =>
             {
                 Logs.Info($"[AudioLab] Auto-redownloading missing weights for '{pid}' in the background…");
-                bool ok = await TryAutoRedownloadWeights(pid, null, msg => Logs.Info($"[AudioLab] {msg}"));
+                bool ok = await TryAutoRedownloadWeights(pid, null, msg => { Logs.Info($"[AudioLab] {msg}"); return Task.CompletedTask; });
                 Logs.Info(ok
                     ? $"[AudioLab] Background auto-redownload complete for '{pid}'."
                     : $"[AudioLab] Background auto-redownload failed for '{pid}' — left flagged for manual repair.");
@@ -1215,16 +1255,27 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
     }
 
+    /// <summary>How long a caller will wait on someone else's in-flight download before giving up. Sized for the
+    /// largest realistic audio checkpoint (YuE Stage-1 is ~12.5 GB) on a slow link.</summary>
+    private static readonly TimeSpan RedownloadWaitLimit = TimeSpan.FromMinutes(30);
+
     /// <summary>Re-downloads a provider's missing weights via the installer, guarded by <see cref="_redownloading"/>
     /// so the startup and on-demand paths never fetch the same engine twice. Clears the weights-missing flag on
     /// success. Returns true if weights are present afterwards. <paramref name="modelId"/> null = default set.</summary>
-    private async Task<bool> TryAutoRedownloadWeights(string providerId, string modelId, Action<string> onProgress)
+    private async Task<bool> TryAutoRedownloadWeights(string providerId, string modelId, Func<string, Task> onProgress)
     {
         if (!_redownloading.TryAdd(providerId, 0))
         {
             // Another path is already fetching this engine — wait for it instead of starting a duplicate.
+            // Bounded: a wedged download used to park this loop forever, taking the caller with it.
+            DateTime waitDeadline = DateTime.UtcNow + RedownloadWaitLimit;
             while (_redownloading.ContainsKey(providerId))
             {
+                if (DateTime.UtcNow > waitDeadline)
+                {
+                    Logs.Error($"[AudioLab] Timed out after {RedownloadWaitLimit.TotalMinutes:0} min waiting on an in-flight download of '{providerId}'. It may be stalled — check the server logs and retry.");
+                    return false;
+                }
                 await Task.Delay(500, Program.GlobalProgramCancel);
             }
             return string.IsNullOrEmpty(modelId)
@@ -1261,15 +1312,15 @@ public class DynamicAudioBackend : AbstractT2IBackend
         {
             if (CategoryFlags.TryGetValue(meta.Definition.Category, out string categoryFlag))
             {
-                _supportedFeatureSet.Add(categoryFlag);
+                _supportedFeatureSet.TryAdd(categoryFlag, 0);
             }
             if (meta.Definition.Category != AudioCategory.STT)
             {
-                _supportedFeatureSet.Add("audiolab_output");
+                _supportedFeatureSet.TryAdd("audiolab_output", 0);
             }
             foreach (string flag in meta.Definition.FeatureFlags)
             {
-                _supportedFeatureSet.Add(flag);
+                _supportedFeatureSet.TryAdd(flag, 0);
             }
         }
     }
@@ -1281,7 +1332,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// <summary>Loads the installed engines set from the JSON config file.</summary>
     private void LoadInstalledEnginesConfig()
     {
-        InstalledEngines.Clear();
+        lock (_modelsLock)
+        {
+            InstalledEngines.Clear();
+        }
         try
         {
             if (File.Exists(InstalledEnginesConfigPath))
@@ -1296,11 +1350,14 @@ public class DynamicAudioBackend : AbstractT2IBackend
                         string id = token.ToString();
                         if (!string.IsNullOrEmpty(id))
                         {
-                            InstalledEngines.Add(id);
+                            lock (_modelsLock)
+                            {
+                                InstalledEngines.Add(id);
+                            }
                         }
                     }
                 }
-                Logs.Debug($"[AudioLab] Loaded {InstalledEngines.Count} installed engine(s) from config.");
+                Logs.Debug($"[AudioLab] Loaded {InstalledEnginesSnapshot().Count} installed engine(s) from config.");
             }
         }
         catch (Exception ex)
@@ -1316,11 +1373,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
         {
             JObject config = new()
             {
-                ["installed"] = new JArray(InstalledEngines.OrderBy(id => id).ToArray())
+                ["installed"] = new JArray(InstalledEnginesSnapshot().OrderBy(id => id).ToArray())
             };
             Directory.CreateDirectory(Path.GetDirectoryName(InstalledEnginesConfigPath));
             File.WriteAllText(InstalledEnginesConfigPath, config.ToString());
-            Logs.Debug($"[AudioLab] Saved {InstalledEngines.Count} installed engine(s) to config.");
+            Logs.Debug($"[AudioLab] Saved {InstalledEnginesSnapshot().Count} installed engine(s) to config.");
         }
         catch (Exception ex)
         {

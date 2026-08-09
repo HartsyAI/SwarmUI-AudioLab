@@ -66,14 +66,14 @@ install button surfaces a clear message when a model isn't wired yet.
 
 ## Supported Engines
 
-### Text-to-Speech (16 Providers, 30+ Models)
+### Text-to-Speech (20 Local Providers, 35+ Models)
 
 | Engine | Voice Reference | Streaming | VRAM | Notes |
 | --- | --- | --- | --- | --- |
 | Chatterbox | Optional | Yes | ~4 GB | Expressive with exaggeration/CFG controls |
 | Kokoro | No | Yes | ~1 GB | 96x real-time on GPU, CPU-capable, multiple built-in voices |
 | Pocket TTS | Optional | No | CPU (~200MB) | 100M params, 8 built-in voices, voice cloning, MIT license, ~6x real-time on CPU |
-| Kyutai TTS | Optional | No | ~8 GB | 1.8B params, English+French, voice conditioning, 75x real-time, ~200ms latency |
+| Kyutai TTS | Optional | No | ~8 GB | 1.6B params, English+French, voice conditioning, 75x real-time, ~200ms latency |
 | Piper | No | Yes | CPU only | CPU-only ONNX runtime, lightweight, auto-downloads voices |
 | Bark | No | Yes | ~5 GB | Multi-language, emotion/music/SFX support |
 | Orpheus | No | Yes | ~16 GB | 3B params, emotion tags (`<laugh>`, `<sigh>`, etc.) |
@@ -86,8 +86,12 @@ install button surfaces a clear message when a model isn't wired yet.
 | Zonos | Optional | Yes | ~4 GB | Emotion control, transformer and hybrid variants (EN/JP/CN/FR/DE) |
 | CosyVoice | Optional | Yes | ~8 GB | Ultra-low latency streaming, multilingual |
 | NeuTTS | Required | Yes | ~2 GB | 0.5B params, instant voice cloning, CPU-capable |
+| StyleTTS 2 | Optional | No | ~2 GB | Style-diffusion TTS; single-speaker and multi-speaker/cloning checkpoints |
+| Spark-TTS | Optional | No | ~3 GB | Two modes: voice creation (gender/pitch/speed) and voice cloning from a reference clip |
+| MeloTTS | No | No | ~1 GB | Multi-accent/multi-speaker single-language checkpoints, CPU-capable |
+| ZipVoice | Required | No | ~2 GB | Flow-matching zero-shot cloning, few-step inference |
 
-### Speech-to-Text (5 Providers, 14 Models)
+### Speech-to-Text (7 Local Providers, 17 Models)
 
 | Engine | Models | VRAM | Notes |
 | --- | --- | --- | --- |
@@ -95,15 +99,20 @@ install button surfaces a clear message when a model isn't wired yet.
 | Kyutai STT | 1B (en+fr), 2.6B (en) | 3–6 GB | Auto capitalization/punctuation, 1B has voice activity detection |
 | Distil-Whisper | large-v3, large-v3.5 | ~2 GB | 6x faster than Whisper large-v3 |
 | Moonshine | base, tiny | ~1 GB / CPU | Lightweight, CPU-capable |
+| Moonshine Streaming | tiny, small, medium | 1–2 GB | Streaming variants of Moonshine; medium outperforms Whisper large-v3 per its model card |
+| Whisper Streaming | base | ~1 GB | Chunked streaming transcription |
 | RealtimeSTT | default | ~2 GB | Real-time streaming with wake word detection (not yet runnable on the C# engine — use Whisper) |
 
-### Audio Generation (3 Providers, 17 Models)
+### Audio Generation (6 Local Providers, 25+ Models)
 
 | Engine | Models | VRAM | Notes |
 | --- | --- | --- | --- |
 | ACE-Step 1.5 | 6 DiT variants (turbo/sft/base) | 8–10 GB | 6 task types (text2music, cover, repaint, extract, lego, complete), lyrics alignment, 50 languages, optional LM planner |
 | MusicGen | 10 variants (mono/stereo/melody) | 4–10 GB | Text-to-music with optional melody conditioning, sampling controls |
-| AudioGen | medium (1.5B) | ~4 GB | Text-to-sound-effect generation |
+| AudioGen | medium (1.5B) | ~4 GB | Text-to-sound-effect generation (10s default duration, unlike MusicGen's 30s) |
+| YuE | 4 variants (en/zh × cot/icl) | 12+ GB | Long-form song generation with lyrics; Stage-1 7B + X-Codec decoder |
+| HeartLib | 3B base (+ Q8/Q4 GGUF) | 4–8 GB | Lyric-conditioned music generation |
+| Stable Audio | open-small | ~4 GB | Rectified-flow text-to-audio (T5 prompt encode → DiT → Oobleck VAE) |
 
 ### Voice Conversion (3 Providers)
 
@@ -117,12 +126,42 @@ These engines transform voice characteristics. **RVC and OpenVoice** are post-pr
 | OpenVoice V2 | Audio → Audio | ~2 GB | Transfers the tone/style of a reference voice onto existing audio. Zero-shot (no model training, just a wav clip). |
 | GPT-SoVITS | Text → Audio | ~4 GB | Generates new speech from text in a cloned voice using a reference clip + its transcript. English today (CJK pending). |
 
-### Audio Processing (2 Providers, 5 Models)
+### Audio Processing (2 Local Providers, 4 Models)
 
 | Engine | Models | VRAM | Notes |
 | --- | --- | --- | --- |
-| Demucs | htdemucs, htdemucs_ft, htdemucs_6s | ~2 GB | Source separation (vocals, drums, bass, other; 6-stem variant adds guitar + piano) |
+| Demucs | htdemucs, htdemucs_6s | ~2 GB | Source separation (vocals, drums, bass, other; 6-stem variant adds guitar + piano) |
 | Resemble Enhance | denoise, enhance | ~2 GB | Speech denoising and super-resolution to 44.1 kHz (engine support pending — DeepSpeed checkpoint loader) |
+
+### Cloud API Providers (19 Providers)
+
+These need no local weights and no VRAM — they call a vendor API. Each requires its key under
+**Server > User Settings > API Keys**; the field appears automatically once the extension loads.
+Providers sharing a key type (both ElevenLabs entries, Polly, both Azure entries, …) only need it entered once.
+
+| Engine | Category | API Key | Notes |
+| --- | --- | --- | --- |
+| ElevenLabs TTS | TTS | `elevenlabs_api` | Stability / similarity / style / speaker-boost controls, multiple model tiers |
+| OpenAI TTS | TTS | `openai_api` | `tts-1`, `tts-1-hd`, `gpt-4o-mini-tts` (the last also takes free-form `instructions`) |
+| Azure Neural TTS | TTS | `azure_speech_api` | Key format `subscription_key\|region`. SSML with `mstts:express-as` styles |
+| Amazon Polly | TTS | `aws_api` | Key format `access_key\|secret\|region`. Neural and standard engines |
+| Google Cloud TTS | TTS | `google_cloud_api` | Neural2 / WaveNet voices, BCP-47 language codes |
+| Deepgram TTS | TTS | `deepgram_api` | Aura voices, low latency |
+| Cartesia | TTS | `cartesia_api` | Sonic family, speed / volume / emotion controls |
+| PlayHT | TTS | `playht_api` | Voice library + cloning |
+| OpenAI STT | STT | `openai_api` | `whisper-1`, `gpt-4o-transcribe`, `gpt-4o-mini-transcribe` |
+| Google Cloud STT | STT | `google_cloud_api` | Chirp 3, 125+ languages. Needs a region-qualified language code |
+| Azure STT | STT | `azure_speech_api` | Cognitive Services speech-to-text |
+| Deepgram STT | STT | `deepgram_api` | Nova-3, diarization and smart formatting |
+| AssemblyAI | STT | `assemblyai_api` | Speaker labels and sentiment analysis |
+| AWS Transcribe | STT | — | **Unsupported.** The batch API needs S3 + polling and the streaming API needs an HTTP/2 event stream; neither is implemented. Use Whisper, Deepgram or AssemblyAI |
+| ElevenLabs SFX | Audio Gen | `elevenlabs_api` | Text-to-sound-effects |
+| Suno | Audio Gen | `suno_api` | Song generation with vocals; style tags and an instrumental toggle |
+| Udio | Audio Gen | `udio_api` | Song generation; style tags |
+| ElevenLabs Voice Changer | Voice Conversion | `elevenlabs_api` | Speech-to-speech re-voicing |
+| ElevenLabs Voice Isolator | Audio Processing | `elevenlabs_api` | Strips background noise from speech |
+| Dolby.io | Audio Processing | `dolby_api` | Media Enhance loudness/noise processing |
+
 
 ## Performance (Pure-C# engine vs. Python reference)
 
@@ -250,7 +289,6 @@ All endpoints require authentication and use SwarmUI's permission system.
 | `AudioLabUninstallEngine` | POST | Remove engine from registry (optionally delete its weights) |
 | `GetAllProvidersStatus` | GET | List all registered providers with metadata |
 | `GetInstallationStatus` | GET | Per-provider install status |
-| `GetInstallationProgress` | GET | Poll real-time installation/download progress |
 
 ### Audio Format Conversion
 
@@ -271,7 +309,7 @@ All endpoints require authentication and use SwarmUI's permission system.
 | --- | --- | --- |
 | `audio_process` | Power Users | ProcessAudio, ProcessTTS, ProcessSTT, ProcessWorkflow, CombineVideoAudio, ExtractAudioFromVideo, ConvertAudioFormat |
 | `audio_manage_backends` | Power Users | AudioLabInstallEngine, AudioLabUninstallEngine |
-| `audio_check_status` | Power Users | GetAllProvidersStatus, GetInstallationStatus, GetInstallationProgress, AudioLabListEngines |
+| `audio_check_status` | Power Users | GetAllProvidersStatus, GetInstallationStatus, AudioLabListEngines |
 
 ## Architecture
 

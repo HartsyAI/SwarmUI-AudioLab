@@ -98,7 +98,12 @@ public static class AudioWeights
     /// registered file for the provider is ensured (legacy behavior). Returns true if anything was
     /// registered and all files resolved; false if nothing is registered (caller should surface a
     /// "place the file manually" message).</summary>
-    public static async Task<bool> EnsureProviderWeightsAsync(AudioProviderDefinition provider, Action<string> onProgress, CancellationToken cancel = default, string modelId = null)
+    /// <summary>Null-safe await of a progress callback. The callback is async so websocket callers can send
+    /// without blocking their thread on .Wait().</summary>
+    internal static Task Report(Func<string, Task> onProgress, string message)
+        => onProgress?.Invoke(message) ?? Task.CompletedTask;
+
+    public static async Task<bool> EnsureProviderWeightsAsync(AudioProviderDefinition provider, Func<string, Task> onProgress, CancellationToken cancel = default, string modelId = null)
     {
         IReadOnlyCollection<AudioWeightsRegistry.DownloadSpec> specs = string.IsNullOrEmpty(modelId)
             ? AudioWeightsRegistry.DistinctFor(provider.Id)
@@ -125,7 +130,7 @@ public static class AudioWeights
     /// (.tmp stage + move) so an interrupted download never masquerades as complete. An already-present file
     /// is integrity-checked (hash when the spec has one, else a size floor); a bad file is deleted and
     /// re-downloaded rather than silently accepted.</summary>
-    public static async Task EnsureWeightAsync(AudioWeightsRegistry.DownloadSpec spec, string dir, Action<string> onProgress, CancellationToken cancel = default)
+    public static async Task EnsureWeightAsync(AudioWeightsRegistry.DownloadSpec spec, string dir, Func<string, Task> onProgress, CancellationToken cancel = default)
     {
         string targetPath = Path.Combine(dir, spec.FileName);
         if (File.Exists(targetPath))
@@ -151,10 +156,10 @@ public static class AudioWeights
             }
             if (ok)
             {
-                onProgress?.Invoke($"{spec.FileName} already present.");
+                await Report(onProgress, $"{spec.FileName} already present.");
                 return;
             }
-            onProgress?.Invoke($"{spec.FileName} failed integrity check — re-downloading.");
+            await Report(onProgress, $"{spec.FileName} failed integrity check — re-downloading.");
             try { File.Delete(targetPath); } catch (Exception ex) { Logs.Warning($"[AudioLab] Could not delete bad '{targetPath}': {ex.Message}"); }
         }
         string tmpPath = targetPath + ".tmp";
@@ -163,7 +168,7 @@ public static class AudioWeights
             try { File.Delete(tmpPath); } catch { }
         }
 
-        onProgress?.Invoke($"Downloading {spec.FileName}...");
+        await Report(onProgress, $"Downloading {spec.FileName}...");
         Logs.Info($"[AudioLab] Downloading audio checkpoint '{spec.FileName}' from {spec.Url}");
         try
         {
@@ -175,12 +180,14 @@ public static class AudioWeights
                 double pct = bytes / (double)total;
                 if (pct >= nextLoggedPct)
                 {
-                    onProgress?.Invoke($"{spec.FileName}: {pct * 100:0.0}% ({bytes / (1024.0 * 1024.0):F0}/{total / (1024.0 * 1024.0):F0} MB, {perSec / (1024.0 * 1024.0):F1} MB/s)");
+                    // DownloadFile's progress hook is a sync Action, so this can't await; percentage
+                    // updates are advisory and must never block or fault the transfer.
+                    _ = Report(onProgress, $"{spec.FileName}: {pct * 100:0.0}% ({bytes / (1024.0 * 1024.0):F0}/{total / (1024.0 * 1024.0):F0} MB, {perSec / (1024.0 * 1024.0):F1} MB/s)");
                     nextLoggedPct = Math.Round(pct / 0.05) * 0.05 + 0.05;
                 }
             }, cancel: cts, verifyHash: spec.HasHash ? spec.Sha256 : null);
             File.Move(tmpPath, targetPath);
-            onProgress?.Invoke($"{spec.FileName} download complete.");
+            await Report(onProgress, $"{spec.FileName} download complete.");
             Logs.Info($"[AudioLab] Audio checkpoint '{spec.FileName}' downloaded to {targetPath}");
         }
         catch (Exception ex)
@@ -195,7 +202,7 @@ public static class AudioWeights
             if (spec.Fallback is not null && !cancel.IsCancellationRequested)
             {
                 Logs.Warning($"[AudioLab] Primary source for '{spec.FileName}' failed ({ex.Message}); falling back to '{spec.Fallback.FileName}'.");
-                onProgress?.Invoke($"{spec.FileName} unavailable from the preferred source — using fallback...");
+                await Report(onProgress, $"{spec.FileName} unavailable from the preferred source — using fallback...");
                 await EnsureWeightAsync(spec.Fallback, dir, onProgress, cancel);
                 return;
             }

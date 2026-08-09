@@ -267,7 +267,7 @@ public static class AudioEngineBridge
     /// which is reachable only through a real generation. So this reports the state truthfully instead of
     /// pretending to download: the weights fetch inside the Engine's loader on the first generation. Restore the
     /// install-time download (with progress) once the Engine ships a prefetch entry point.</para></summary>
-    public static Task<JObject> EnsureWeightsAsync(string providerId, string modelId, Action<string> onProgress, CancellationToken cancel)
+    public static Task<JObject> EnsureWeightsAsync(string providerId, string modelId, Func<string, Task> onProgress, CancellationToken cancel)
     {
         if (!_bindings.TryGetValue(providerId ?? "", out AudioEngineBinding binding))
         {
