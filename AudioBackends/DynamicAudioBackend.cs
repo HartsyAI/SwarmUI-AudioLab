@@ -1427,6 +1427,15 @@ public class DynamicAudioBackend : AbstractT2IBackend
         return null;
     }
 
+    /// <summary>Default generation length when neither the core "Duration" param nor AudioLab's "Max Duration"
+    /// was set, per provider. Everything not listed keeps the general-purpose 30s default.</summary>
+    private static double DefaultDurationFor(string providerId) => providerId switch
+    {
+        "audiogen_sfx" => 10.0,
+        "stableaudio_music" => 11.0,
+        _ => 30.0,
+    };
+
     /// <summary>Gets the AudioModelDefinition for a model by extracting the model ID from the full name.</summary>
     private static AudioModelDefinition GetModelDefinition(string modelName, AudioProviderDefinition provider)
     {
@@ -1509,9 +1518,14 @@ public class DynamicAudioBackend : AbstractT2IBackend
             case AudioCategory.AudioGeneration:
                 args["prompt"] = input.Get(T2IParamTypes.Prompt, "");
                 // Prefer the CORE Swarm audio param (what Swarm users + the HartsyInference ACE-Step path use);
-                // fall back to AudioLab's own "Max Duration" for existing AudioLab-UI workflows, then 30s.
+                // fall back to AudioLab's own "Max Duration" for existing AudioLab-UI workflows, then a
+                // per-provider default — a flat 30s silently truncated on providers with a lower real ceiling
+                // (Stable Audio Open Small's DiT physically caps at 11.89s; anything past that is clamped
+                // inside StableAudioPipeline.Generate) or ran past what the model was tuned for (AudioGen was
+                // trained on 10s clips per Meta's release; quality degrades noticeably beyond that).
                 args["duration"] = input.TryGet(T2IParamTypes.Text2AudioDuration, out double coreDur) ? coreDur
-                    : input.TryGet(AudioLabParams.Duration, out double genDur) ? genDur : 30.0;
+                    : input.TryGet(AudioLabParams.Duration, out double genDur) ? genDur
+                    : DefaultDurationFor(provider.Id);
                 // Shared AudioCraft sampling (audiocraft_sampling flag)
                 if (input.TryGet(AudioLabParams.GuidanceScale, out double genGuidance))
                     args["cfg_coef"] = genGuidance;
@@ -1558,7 +1572,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
         {
             case "chatterbox_tts":
                 args["exaggeration"] = input.TryGet(AudioLabParams.Exaggeration, out double exag) ? exag : 0.5;
-                args["cfg_weight"] = input.TryGet(AudioLabParams.CFGWeight, out double cfgw) ? cfgw : 0.5;
+                // Engine's SpeechRequest field is CfgScale, read via the "cfg_scale" key by AudioEngineRequests.Speech
+                // — "cfg_weight" was silently dropped at this boundary and the value never arrived.
+                args["cfg_scale"] = input.TryGet(AudioLabParams.CFGWeight, out double cfgw) ? cfgw : 0.5;
                 break;
 
             case "kokoro_tts":

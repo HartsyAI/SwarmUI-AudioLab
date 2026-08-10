@@ -76,6 +76,12 @@ public static class AudioEngineRequests
             throw new ArgumentException("No prompt supplied to generate music.");
         }
         string task = AudioIo.Str(args, "task_type", "text2music");
+        if (task.Equals("extract", StringComparison.OrdinalIgnoreCase) || task.Equals("lego", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException($"ACE-Step '{task}' has no Engine counterpart yet (only text2music, "
+                + "cover, repaint, and complete are wired) — falling through to plain text2music would silently "
+                + "generate the wrong thing. Switch Task Type back to one of those, or to text2music.");
+        }
         AudioClip source = Clip(args, "src_audio");
         double shift = Double(args, "shift", 0d);
         double steps = Double(args, "infer_step", 0d);

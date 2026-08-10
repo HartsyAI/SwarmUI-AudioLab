@@ -1338,9 +1338,9 @@ public static class AudioLabParams
             OrderPriority: -10, Group: TTSGroup, FeatureFlag: "openai_tts_params"));
 
         OpenAIInstructions = T2IParamTypes.Register<string>(new("OpenAI Instructions",
-            "Free-form delivery direction, e.g. 'Speak slowly and sound apologetic'.\nSupported by gpt-4o-mini-tts only — tts-1 and tts-1-hd ignore it.",
+            "Free-form delivery direction, e.g. 'Speak slowly and sound apologetic'.\nSupported by gpt-4o-mini-tts only.",
             "",
-            OrderPriority: -9, Group: TTSGroup, FeatureFlag: "openai_tts_params"));
+            OrderPriority: -9, Group: TTSGroup, FeatureFlag: "openai_tts_instructions_params"));
 
         OpenAISpeed = T2IParamTypes.Register<double>(new("OpenAI Speed",
             "Speech speed multiplier.",
@@ -1577,10 +1577,10 @@ public static class AudioLabParams
             OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "acestep_music_params", IsAdvanced: true));
 
         ACEGuidanceScale = T2IParamTypes.Register<double>(new("ACE Guidance",
-            "Classifier-free guidance scale (documented range 1.0-15.0, default 7.0).\nTurbo checkpoints bake guidance into distillation and auto-correct this to 1.0.",
+            "Classifier-free guidance scale (documented range 1.0-15.0, default 7.0).\nNot shown for Turbo checkpoints — they bake guidance into distillation and run without CFG.",
             "7.0",
             Min: 1.0, Max: 15.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "acestep_music_params", IsAdvanced: true));
+            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "acestep_cfg_params", IsAdvanced: true));
 
         // Shared across every music provider whose API takes an instrumental toggle (ACE-Step, Suno) —
         // one param on its own flag rather than a near-duplicate registered per provider.
@@ -1672,16 +1672,16 @@ public static class AudioLabParams
             OrderPriority: 2, Group: AudioGenGroup, FeatureFlag: "acestep_music_params", IsAdvanced: true));
 
         CFGIntervalStart = T2IParamTypes.Register<double>(new("CFG Interval Start",
-            "Start of the CFG application interval.\n0.0 = apply from beginning of denoising.",
+            "Start of the CFG application interval.\n0.0 = apply from beginning of denoising.\nNot shown for Turbo checkpoints — they run without CFG.",
             "0.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: 3, Group: AudioGenGroup, FeatureFlag: "acestep_music_params", IsAdvanced: true));
+            OrderPriority: 3, Group: AudioGenGroup, FeatureFlag: "acestep_cfg_params", IsAdvanced: true));
 
         CFGIntervalEnd = T2IParamTypes.Register<double>(new("CFG Interval End",
-            "End of the CFG application interval.\n1.0 = apply through end of denoising.",
+            "End of the CFG application interval.\n1.0 = apply through end of denoising.\nNot shown for Turbo checkpoints — they run without CFG.",
             "1.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
-            OrderPriority: 4, Group: AudioGenGroup, FeatureFlag: "acestep_music_params", IsAdvanced: true));
+            OrderPriority: 4, Group: AudioGenGroup, FeatureFlag: "acestep_cfg_params", IsAdvanced: true));
 
         #endregion
 
@@ -1755,17 +1755,17 @@ public static class AudioLabParams
 
         #region Music — ACE-Step Tasks
         ACETaskType = T2IParamTypes.Register<string>(new("Task Type",
-            "ACE-Step generation task type.\ntext2music = generate from prompt. cover = style transfer.\nrepaint = regenerate a section. extract = extract elements.\nlego = combine elements. complete = extend/continue.",
+            "ACE-Step generation task type.\ntext2music = generate from prompt. cover = style transfer.\nrepaint = regenerate a section. complete = extend/continue."
+            + "\n'Extract Elements' and 'Lego (Combine)' are not listed — the Engine has no implementation for either yet (would silently fall back to plain text2music instead of erroring, which is worse than not offering them).",
             "text2music",
             GetValues: _ => [
                 "text2music///Text to Music", "cover///Cover (Style Transfer)",
-                "repaint///Repaint (Section Regen)", "extract///Extract Elements",
-                "lego///Lego (Combine)", "complete///Complete (Extend)"
+                "repaint///Repaint (Section Regen)", "complete///Complete (Extend)"
             ],
             OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
 
         ACESourceAudio = T2IParamTypes.Register<AudioFile>(new("ACE Source Audio",
-            "Source audio for cover, repaint, extract, lego, and complete tasks.\nRequired for all tasks except text2music.",
+            "Source audio for cover, repaint, and complete tasks.\nRequired for all tasks except text2music.",
             null,
             OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "acestep_task_params"));
 

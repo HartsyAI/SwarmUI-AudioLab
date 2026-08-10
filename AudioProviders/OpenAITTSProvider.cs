@@ -25,6 +25,7 @@ public sealed class OpenAITTSProvider : IAudioProviderSource
     [
         new() { Id = "tts-1", Name = "OpenAI TTS-1", Description = "Fast, affordable TTS with 6 voices", SourceUrl = "https://platform.openai.com/docs/guides/text-to-speech", License = "Commercial API", EstimatedSize = "API", EstimatedVram = "None (API)" },
         new() { Id = "tts-1-hd", Name = "OpenAI TTS-1 HD", Description = "Higher quality TTS", SourceUrl = "https://platform.openai.com/docs/guides/text-to-speech", License = "Commercial API", EstimatedSize = "API", EstimatedVram = "None (API)" },
-        new() { Id = "gpt-4o-mini-tts", Name = "OpenAI GPT-4o Mini TTS", Description = "Instruction-following TTS with custom voice directions", SourceUrl = "https://platform.openai.com/docs/guides/text-to-speech", License = "Commercial API", EstimatedSize = "API", EstimatedVram = "None (API)" }
+        new() { Id = "gpt-4o-mini-tts", Name = "OpenAI GPT-4o Mini TTS", Description = "Instruction-following TTS with custom voice directions", SourceUrl = "https://platform.openai.com/docs/guides/text-to-speech", License = "Commercial API", EstimatedSize = "API", EstimatedVram = "None (API)",
+            ModelClassId = "openai_tts_gpt4o_mini", ModelClassName = "OpenAI GPT-4o Mini TTS" }
     ];
 }

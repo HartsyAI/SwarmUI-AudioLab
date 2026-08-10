@@ -43,7 +43,8 @@ const AudioLabConfig = {
         // `text2audio` unlocks core's Text2Audio group (duration/BPM/key/time-sig/language/style), which
         // BuildEngineArgs already prefers over AudioLab's bespoke equivalents. Only ACE-Step gets it —
         // every param in that group is meaningful here, which isn't true of the other music providers.
-        acestep_music: { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params', extraFlags: ['acestep_lm_params', 'acestep_task_params', 'music_instrumental_param', 'text2audio'] },
+        acestep_music: { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params', extraFlags: ['acestep_cfg_params', 'acestep_lm_params', 'acestep_task_params', 'music_instrumental_param', 'text2audio'] },
+        acestep_music_turbo: { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params', extraFlags: ['acestep_lm_params', 'acestep_task_params', 'music_instrumental_param', 'text2audio'] },
         openvoice_clone: { category: 'audiolab_clone' },
         rvc_clone: { category: 'audiolab_clone', providerFlag: 'rvc_clone_params' },
         gptsovits_clone: { category: 'audiolab_clone', providerFlag: 'gptsovits_clone_params' },
@@ -56,6 +57,7 @@ const AudioLabConfig = {
         // API TTS providers
         elevenlabs_tts: { category: 'audiolab_tts', providerFlag: 'elevenlabs_tts_params' },
         openai_tts: { category: 'audiolab_tts', providerFlag: 'openai_tts_params' },
+        openai_tts_gpt4o_mini: { category: 'audiolab_tts', providerFlag: 'openai_tts_params', extraFlags: ['openai_tts_instructions_params'] },
         google_tts: { category: 'audiolab_tts', providerFlag: 'google_tts_params' },
         azure_tts: { category: 'audiolab_tts', providerFlag: 'azure_tts_params' },
         amazon_polly: { category: 'audiolab_tts', providerFlag: 'polly_tts_params' },
