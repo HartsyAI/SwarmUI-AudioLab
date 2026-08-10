@@ -12,15 +12,15 @@ const AudioLabConfig = {
         bark_tts: { category: 'audiolab_tts', providerFlag: 'bark_tts_params' },
         piper_tts: { category: 'audiolab_tts', providerFlag: 'piper_tts_params' },
         dia_tts: { category: 'audiolab_tts', providerFlag: 'dia_tts_params', extraFlags: ['tts_sampling'] },
-        csm_tts: { category: 'audiolab_tts', providerFlag: 'csm_tts_params', extraFlags: ['tts_sampling'] },
-        orpheus_tts: { category: 'audiolab_tts', providerFlag: 'orpheus_tts_params', extraFlags: ['tts_sampling'] },
+        csm_tts: { category: 'audiolab_tts', providerFlag: 'csm_tts_params', extraFlags: ['tts_sampling', 'tts_streaming'] },
+        orpheus_tts: { category: 'audiolab_tts', providerFlag: 'orpheus_tts_params', extraFlags: ['tts_sampling', 'tts_streaming'] },
         vibevoice_tts: { category: 'audiolab_tts', providerFlag: 'vibevoice_tts_params', extraFlags: ['tts_voice_ref'] },
         zonos_tts: { category: 'audiolab_tts', providerFlag: 'zonos_tts_params', extraFlags: ['tts_voice_ref'] },
         f5_tts: { category: 'audiolab_tts', providerFlag: 'f5_tts_params', extraFlags: ['tts_voice_ref'] },
         neutts_tts: { category: 'audiolab_tts', extraFlags: ['tts_voice_ref'] },
         cosyvoice_tts: { category: 'audiolab_tts', providerFlag: 'cosyvoice_tts_params', extraFlags: ['tts_voice_ref'] },
         pockettts_tts: { category: 'audiolab_tts', providerFlag: 'pockettts_tts_params', extraFlags: ['tts_voice_ref'] },
-        kyutaitts_tts: { category: 'audiolab_tts', providerFlag: 'kyutaitts_tts_params', extraFlags: ['tts_voice_ref'] },
+        kyutaitts_tts: { category: 'audiolab_tts', providerFlag: 'kyutaitts_tts_params', extraFlags: ['tts_voice_ref', 'tts_streaming'] },
         fishspeech_tts: { category: 'audiolab_tts', providerFlag: 'fishspeech_tts_params', extraFlags: ['tts_voice_ref'] },
         qwen3_tts_clone: { category: 'audiolab_tts', providerFlag: 'qwen3tts_tts_params', extraFlags: ['tts_voice_ref'] },
         qwen3_tts_custom: { category: 'audiolab_tts', providerFlag: 'qwen3tts_tts_params', extraFlags: ['qwen3tts_speaker_params', 'qwen3tts_instruct_params'] },
@@ -208,64 +208,81 @@ featureSetChangers.push(() => {
     return [addFlags, removeFlags];
 });
 
-/** Auto-play queue for streaming TTS chunks. */
+/** Auto-play queue for streaming TTS chunks. Uses the Web Audio API (AudioContext + decodeAudioData +
+ * AudioBufferSourceNode.start(scheduledTime)) instead of chaining discrete <audio> elements on their 'ended'
+ * event — each <audio> element carries its own decode/startup latency, which is exactly the audible seam a
+ * "streaming" player shouldn't have. Scheduling every chunk against a running nextStartTime cursor (start it the
+ * instant the previous chunk's audio ends, not when its 'ended' EVENT fires) is what makes this gapless. */
 const AudioStreamPlayer = {
-    /** @type {string[]} */
-    queue: [],
-    /** @type {HTMLAudioElement|null} */
-    current: null,
+    /** @type {AudioContext|null} */
+    ctx: null,
     /** @type {boolean} */
     active: false,
+    /** @type {number} AudioContext-clock time the next scheduled chunk should start at. */
+    nextStartTime: 0,
+    /** @type {AudioBufferSourceNode[]} currently scheduled/playing sources, for stop(). */
+    scheduled: [],
+    /** @type {Promise<void>} serializes fetch+decode+schedule so out-of-order decode completion (chunk 2's
+     * network/decode finishing before chunk 1's) can never schedule chunks out of order. */
+    chain: Promise.resolve(),
 
     /** Reset state and prepare for a new streaming session. */
     start() {
         this.stop();
         this.active = true;
+        this.chain = Promise.resolve();
+        this.nextStartTime = 0;
+        if (!this.ctx || this.ctx.state === 'closed') {
+            this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (this.ctx.state === 'suspended') {
+            // Called from doGenerate's synchronous call chain (a button click), so this is still within the
+            // user-gesture window autoplay policies require.
+            this.ctx.resume().catch(err => console.warn('[audiolab] AudioContext resume failed:', err.message));
+        }
         console.log('[audiolab] Stream playback started');
     },
 
-    /** Add a chunk to the queue; begin playback if idle. */
+    /** Queues a chunk's fetch+decode+schedule onto the serialization chain; begins playback the instant the
+     * previous chunk's scheduled end time, not whenever this chunk happens to finish decoding. */
     enqueue(dataUrl) {
         if (!this.active) return;
-        this.queue.push(dataUrl);
-        if (!this.current) {
-            this.playNext();
-        }
+        this.chain = this.chain.then(() => this._decodeAndSchedule(dataUrl))
+            .catch(err => console.warn('[audiolab] Stream chunk failed:', err.message));
     },
 
-    /** Play the next chunk. Chains via the 'ended' event. */
-    playNext() {
-        if (!this.active || this.queue.length === 0) {
-            this.current = null;
-            return;
-        }
-        const src = this.queue.shift();
-        const audio = new Audio(src);
-        this.current = audio;
-        audio.addEventListener('ended', () => {
-            this.current = null;
-            this.playNext();
-        });
-        audio.addEventListener('error', (e) => {
-            console.warn('[audiolab] Chunk playback error:', e);
-            this.current = null;
-            this.playNext();
-        });
-        audio.play().catch(err => {
-            console.warn('[audiolab] Autoplay blocked:', err.message);
-            this.current = null;
-            this.playNext();
+    /** Fetches (a no-network no-op for the data: URIs these chunks actually arrive as), decodes, and schedules
+     * one chunk to start exactly when the previous one's audio ends. Bails silently at every await point once
+     * playback has been stopped, so a decode already in flight when stop() is called can't schedule late audio. */
+    async _decodeAndSchedule(dataUrl) {
+        if (!this.active || !this.ctx) return;
+        const response = await fetch(dataUrl);
+        const bytes = await response.arrayBuffer();
+        if (!this.active) return;
+        const buffer = await this.ctx.decodeAudioData(bytes);
+        if (!this.active) return;
+        const source = this.ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(this.ctx.destination);
+        const startAt = Math.max(this.nextStartTime, this.ctx.currentTime);
+        source.start(startAt);
+        this.nextStartTime = startAt + buffer.duration;
+        this.scheduled.push(source);
+        source.addEventListener('ended', () => {
+            const idx = this.scheduled.indexOf(source);
+            if (idx >= 0) this.scheduled.splice(idx, 1);
         });
     },
 
-    /** Stop playback and clear queue. */
+    /** Stop playback: cuts every currently-scheduled source and drops the queue. In-flight fetch/decode calls
+     * check `active` on their next await and become no-ops instead of scheduling after this point. */
     stop() {
         this.active = false;
-        if (this.current) {
-            this.current.pause();
-            this.current = null;
+        for (const source of this.scheduled) {
+            try { source.stop(); } catch { /* already ended/stopped */ }
         }
-        this.queue = [];
+        this.scheduled = [];
+        this.nextStartTime = 0;
     }
 };
 
@@ -284,8 +301,11 @@ setTimeout(() => {
         if (AudioLabConfig.isAudioModel(curArch)) {
             const config = AudioLabConfig.archToCategory[curArch];
             if (config.category === 'audiolab_tts') {
+                // StreamChunkSize is a string dropdown ("off"/"word"/"phrase"/"sentence"/"paragraph"), not a
+                // number — parseInt(...) > 0 was always NaN > 0 = false here, so the player never actually
+                // started. Match the C# gate (DynamicAudioBackend.GenerateLive: chunkMode != "off") exactly.
                 const streamParam = document.getElementById('input_streamchunksize');
-                if (streamParam && parseInt(streamParam.value) > 0) {
+                if (streamParam && streamParam.value && streamParam.value !== 'off') {
                     AudioStreamPlayer.start();
                 }
             }

@@ -1,8 +1,10 @@
 using System.IO;
+using System.Runtime.CompilerServices;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Utils;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using HartsyInference.Audio.Cache;
+using HartsyInference.Audio.Streaming;
 using HartsyInference.Engine;
 using HartsyInference.Engine.Dispatch;
 using HartsyInference.Engine.Requests;
@@ -157,6 +159,22 @@ public static class AudioEngineBridge
     public static bool ProviderManagesOwnWeights(string providerId)
         => providerId is not null && _bindings.TryGetValue(providerId, out AudioEngineBinding binding) && binding.ManagesOwnWeights;
 
+    /// <summary>Whether this provider has a real Engine-native streaming implementation
+    /// (<c>IStreamingTtsRunner</c>, incremental audio as generation happens) rather than AudioLab's own
+    /// text-chunk-and-regenerate-each-piece loop. Read off the provider's own <c>tts_streaming</c> feature flag —
+    /// the same flag that gates the streaming-specific UI, so adding native streaming for a model always means
+    /// adding the flag on its <see cref="AudioProviderDefinition"/> too (see <c>KyutaiTTSProvider.cs</c>) and
+    /// there is exactly one place that says a model streams natively, not two that can drift apart.</summary>
+    public static bool SupportsNativeStreaming(string providerId)
+    {
+        if (string.IsNullOrEmpty(providerId) || !_bindings.TryGetValue(providerId, out AudioEngineBinding binding) || binding.Service != AudioEngineService.Speech)
+        {
+            return false;
+        }
+        AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId);
+        return provider is not null && provider.FeatureFlags.Contains("tts_streaming", StringComparer.OrdinalIgnoreCase);
+    }
+
     /// <summary>Runs an audio request on the Engine, returning the JObject shape AudioLab's generation path
     /// parses (<c>success</c> + <c>audio_data</c>/<c>text</c>/<c>stems</c>, or <c>error</c>).</summary>
     public static async Task<JObject> ProcessAsync(string providerId, IReadOnlyDictionary<string, object> args, CancellationToken cancel)
@@ -214,6 +232,26 @@ public static class AudioEngineBridge
     /// container bytes, so this is just base64.</summary>
     private static JObject Audio(AudioResult result)
         => AudioIo.AudioResult(Convert.ToBase64String(result.Data), result.Format, result.DurationSeconds);
+
+    /// <summary>Streams a TTS provider's audio incrementally via the Engine's native streaming path
+    /// (<c>ISpeechService.SynthesizeStreamAsync</c>) — one call with the full prompt, chunks arrive as generation
+    /// progresses. Callers MUST check <see cref="SupportsNativeStreaming"/> first; this throws for anything else
+    /// (unlike <see cref="ProcessAsync"/>, which converts every failure into a JObject error — there is no
+    /// per-chunk JObject shape here for a raw <see cref="AudioChunk"/> stream, so the caller owns catching and
+    /// reporting exceptions the way <c>DynamicAudioBackend.GenerateLiveNativeStreaming</c> does).</summary>
+    public static async IAsyncEnumerable<AudioChunk> ProcessStreamAsync(string providerId,
+        IReadOnlyDictionary<string, object> args, [EnumeratorCancellation] CancellationToken cancel)
+    {
+        if (!_bindings.TryGetValue(providerId ?? "", out AudioEngineBinding binding) || binding.Service != AudioEngineService.Speech)
+        {
+            throw new InvalidOperationException($"Provider '{providerId}' has no native streaming Engine binding.");
+        }
+        ModelSpec spec = BuildSpec(providerId, binding, args);
+        await foreach (AudioChunk chunk in Engine.Speech.SynthesizeStreamAsync(spec, AudioEngineRequests.Speech(args), cancel).ConfigureAwait(false))
+        {
+            yield return chunk;
+        }
+    }
 
     /// <summary>Builds the Engine model token for a request: <c>engineId</c> or <c>engineId:variant</c>, where the
     /// variant is AudioLab's model id (<c>__model_id</c>, injected by <c>BuildEngineArgs</c>). For user-placed

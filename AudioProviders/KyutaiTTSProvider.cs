@@ -19,6 +19,10 @@ public sealed class KyutaiTTSProvider : IAudioProviderSource
         .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("kyutaitts_tts_params")
         .AddFeatureFlag("tts_voice_ref")
+        // Real incremental generation (IStreamingTtsRunner, chunks arrive as the model generates them), not
+        // AudioLab's own text-chunk-and-regenerate loop — see AudioEngineBridge.SupportsNativeStreaming, the
+        // single source of truth this flag also drives.
+        .AddFeatureFlag("tts_streaming")
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();

@@ -8,6 +8,7 @@ using Hartsy.Extensions.AudioLab.AudioModels;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using Hartsy.Extensions.AudioLab.AudioServices;
 using Hartsy.Extensions.AudioLab.WebAPI.Models;
+using HartsyInference.Audio.Streaming;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Backends;
 using SwarmUI.Core;
@@ -383,6 +384,15 @@ public class DynamicAudioBackend : AbstractT2IBackend
         if (provider.Category == AudioCategory.TTS
             && user_input.TryGet(AudioLabParams.StreamChunkSize, out string chunkMode) && chunkMode != "off")
         {
+            // Engine-native streaming (real incremental generation, chunks arrive as the model produces them —
+            // see AudioEngineBridge.SupportsNativeStreaming) takes priority over AudioLab's own text-chunk-and-
+            // regenerate-each-piece loop below. StreamChunkSize's "off" switch still applies to both paths; a
+            // native-streaming model just doesn't need text splitting to get the "off" behavior's opposite.
+            if (AudioEngineBridge.SupportsNativeStreaming(provider.Id))
+            {
+                await GenerateLiveNativeStreaming(user_input, batchId, takeOutput, meta, provider, modelDef);
+                return;
+            }
             string text = user_input.Get(T2IParamTypes.Prompt, "");
             List<string> chunks = SplitIntoChunks(text, chunkMode);
             if (chunks != null)
@@ -612,6 +622,100 @@ public class DynamicAudioBackend : AbstractT2IBackend
             string errorMsg = firstError ?? meta.LastError ?? "Streaming generation produced no audio";
             Logs.Error($"[AudioLab] Streaming TTS produced no audio via {provider.Name}: {errorMsg}");
             meta.LastError ??= errorMsg;
+            throw new SwarmReadableErrorException($"[AudioLab] {provider.Name}: {errorMsg}");
+        }
+
+        takeOutput(new JObject
+        {
+            ["gen_progress"] = new JObject
+            {
+                ["batch_index"] = batchId,
+                ["overall_percent"] = 100.0,
+                ["current_status"] = "Complete"
+            }
+        });
+    }
+
+    /// <summary>Native streaming path for Engine-backed models with a real <c>IStreamingTtsRunner</c> (the
+    /// <c>tts_streaming</c> feature flag) — calls <see cref="AudioEngineBridge.ProcessStreamAsync"/> ONCE with the
+    /// full prompt and emits each <see cref="AudioChunk"/> as it arrives, instead of <see cref="GenerateLiveStreaming"/>'s
+    /// text-chunk-and-regenerate-each-piece loop. Mirrors that method's takeOutput/final-WAV shape so the rest of
+    /// the pipeline (intermediate playback, the saved final file) behaves identically either way.</summary>
+    private async Task GenerateLiveNativeStreaming(T2IParamInput user_input, string batchId, Action<object> takeOutput,
+        AudioProviderMetadata meta, AudioProviderDefinition provider, AudioModelDefinition modelDef)
+    {
+        Logs.Info($"[AudioLab] Native streaming TTS via {provider.Name}");
+        user_input.Set(T2IParamTypes.DoNotSaveIntermediates, true);
+
+        Dictionary<string, object> args = BuildEngineArgs(user_input, provider, modelDef);
+
+        List<byte[]> pcmChunks = [];
+        int sampleRate = 24000;
+        int channels = 1;
+        double totalDuration = 0;
+        int chunkIndex = 0;
+
+        try
+        {
+            await foreach (AudioChunk chunk in AudioEngineBridge.ProcessStreamAsync(provider.Id, args, user_input.InterruptToken))
+            {
+                if (user_input.InterruptToken.IsCancellationRequested)
+                {
+                    Logs.Info($"[AudioLab] Native streaming cancelled after {chunkIndex} chunks for {provider.Name}");
+                    break;
+                }
+                if (chunk.Samples.Length == 0)
+                {
+                    continue;
+                }
+
+                sampleRate = chunk.SampleRate;
+                channels = Math.Max(chunk.Channels, 1);
+                byte[] pcm16 = FloatToPcm16(chunk.Samples);
+                pcmChunks.Add(pcm16);
+                totalDuration += chunk.Samples.Length / (double)(sampleRate * channels);
+                chunkIndex++;
+
+                byte[] chunkWav = BuildWavFromPcm([pcm16], sampleRate, channels, bitsPerSample: 16);
+                takeOutput(new T2IEngine.ImageOutput { File = new AudioFile(chunkWav, MediaType.AudioWav), IsReal = false });
+                takeOutput(new JObject
+                {
+                    ["gen_progress"] = new JObject
+                    {
+                        ["batch_index"] = batchId,
+                        ["current_status"] = $"Streaming chunk {chunkIndex}..."
+                    }
+                });
+                Logs.Debug($"[AudioLab] Native stream chunk {chunkIndex}: {chunk.Samples.Length / (double)sampleRate:F2}s @ offset {chunk.StartSampleOffset}");
+            }
+        }
+        catch (OperationCanceledException) when (user_input.InterruptToken.IsCancellationRequested)
+        {
+            Logs.Info($"[AudioLab] Native streaming cancelled for {provider.Name}");
+        }
+        catch (Exception ex) when (ex is not SwarmReadableErrorException)
+        {
+            Logs.Error($"[AudioLab] Native streaming error for {provider.Name}: {ex.Message}");
+            meta.LastError = ex.Message;
+            // A stream that produced nothing before failing has no partial result worth keeping; one that
+            // already emitted real audio finalizes with what it has rather than discarding it outright.
+            if (pcmChunks.Count == 0)
+            {
+                throw;
+            }
+        }
+
+        if (pcmChunks.Count > 0)
+        {
+            byte[] finalWav = BuildWavFromPcm(pcmChunks, sampleRate, channels, bitsPerSample: 16);
+            takeOutput(new AudioFile(finalWav, MediaType.AudioWav));
+            meta.LastUsed = DateTime.UtcNow;
+            Logs.Info($"[AudioLab] Native streaming TTS complete: {totalDuration:F2}s total via {provider.Name}");
+        }
+        else
+        {
+            string errorMsg = meta.LastError ?? "Native streaming generation produced no audio";
+            Logs.Error($"[AudioLab] Native streaming TTS produced no audio via {provider.Name}: {errorMsg}");
             throw new SwarmReadableErrorException($"[AudioLab] {provider.Name}: {errorMsg}");
         }
 
@@ -2098,6 +2202,20 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
 
         return ms.ToArray();
+    }
+
+    /// <summary>Converts normalized <c>[-1,1]</c> float samples (an Engine <see cref="AudioChunk"/>'s native
+    /// format) to little-endian 16-bit PCM bytes, the format every WAV helper in this file already works in.</summary>
+    private static byte[] FloatToPcm16(float[] samples)
+    {
+        byte[] pcm = new byte[samples.Length * 2];
+        for (int i = 0; i < samples.Length; i++)
+        {
+            short s = (short)Math.Clamp(MathF.Round(samples[i] * 32767f), -32768f, 32767f);
+            pcm[i * 2] = (byte)(s & 0xFF);
+            pcm[i * 2 + 1] = (byte)((s >> 8) & 0xFF);
+        }
+        return pcm;
     }
 
     /// <summary>Generates a minimal silent WAV file (all zeros) for use as a placeholder output.</summary>

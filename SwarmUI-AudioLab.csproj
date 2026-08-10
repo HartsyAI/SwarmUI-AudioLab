@@ -55,8 +55,18 @@
          2.0.0-alpha.16 = first published version with MusicRequest.TopP/RepetitionPenalty, which
          AudioEngineRequests.cs has referenced since the YuE sampling pass. The pin sat at alpha.11 in the
          meantime, so ANY SwarmUI-driven rebuild (which never passes UseLocalHartsy) failed with CS0117 and
-         silently dropped the extension. alpha.15 does NOT contain these — do not pin below 16. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.16" />
+         silently dropped the extension. alpha.15 does NOT contain these — do not pin below 16.
+         2.0.0-alpha.17 = adds SpeechRequest/TtsJob SpeakerId/NormalizeLoudness/Temperature/
+         WaveformTemperature/TopP/TopK/MaxTokens/Emotion/SpeakingRate/PitchStd, FxSeparateRequest
+         Shifts/Overlap/Segment/Seed, FxEnhanceRequest Nfe/Solver, and TtsModelDescriptor.
+         VoiceSelectsWeights — needed since the Demucs/Enhance/Piper-voice work landed.
+         2.0.0-alpha.18 = adds ISpeechService.SynthesizeStreamAsync + the public AudioChunk streaming
+         surface (real incremental TTS — chunks arrive as the model generates them, not AudioLab's own
+         text-chunk-and-regenerate loop), used by AudioEngineBridge.ProcessStreamAsync /
+         DynamicAudioBackend.GenerateLiveNativeStreaming for the first `tts_streaming`-flagged model
+         (Kyutai TTS). Packed to the local feed (`hartsy-local-nuget`) 2026-08-09; not yet pushed to
+         nuget.org (that requires a git push in the read-only-git engine repo, left to the user). -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.18" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak

@@ -19,6 +19,7 @@ public sealed class OrpheusTTSProvider : IAudioProviderSource
         .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("orpheus_tts_params")
         .AddFeatureFlag("tts_sampling")
+        .AddFeatureFlag("tts_streaming")
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();

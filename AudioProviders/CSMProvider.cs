@@ -19,6 +19,10 @@ public sealed class CSMProvider : IAudioProviderSource
         .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("csm_tts_params")
         .AddFeatureFlag("tts_sampling")
+        // Real incremental generation via the shared Mimi-codec streaming state (same mechanism as Kyutai TTS,
+        // verified against real weights: streamed output matches monolithic synthesis to ~3e-4 maxAbs) — see
+        // AudioEngineBridge.SupportsNativeStreaming, the single source of truth this flag also drives.
+        .AddFeatureFlag("tts_streaming")
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();
@@ -27,7 +31,8 @@ public sealed class CSMProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "1b", Name = "CSM 1B", Description = "Conversational speech, multi-turn dialogue", SourceUrl = "https://huggingface.co/sesame/csm-1b", License = "Apache 2.0", EstimatedSize = "~2GB", EstimatedVram = "~4.5GB", EngineConfig = new() { ["model_name"] = "sesame/csm-1b" } }
+        // EstimatedSize corrected from ~2GB: the actual unsloth/csm-1b model.safetensors alone is ~3.96GB.
+        new() { Id = "1b", Name = "CSM 1B", Description = "Conversational speech, multi-turn dialogue", SourceUrl = "https://huggingface.co/sesame/csm-1b", License = "Apache 2.0", EstimatedSize = "~4GB", EstimatedVram = "~4.5GB", EngineConfig = new() { ["model_name"] = "sesame/csm-1b" } }
     ];
 
     #endregion
