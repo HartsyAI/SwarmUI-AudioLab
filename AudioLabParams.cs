@@ -1933,10 +1933,10 @@ public static class AudioLabParams
             OrderPriority: -5, Group: CloneGroup, FeatureFlag: "rvc_clone_params"));
 
         F0Method = T2IParamTypes.Register<string>(new("F0 Method",
-            "Pitch-extraction algorithm.\nNOTE: the in-process engine currently estimates F0 with YIN regardless of this setting; the other methods are listed for when they land and will fall back to YIN today.",
-            "yin",
+            "Pitch-extraction algorithm.\nRMVPE tracks pitch (incl. octave errors and unvoiced segments) more robustly than YIN; pm/harvest/crepe are not implemented in the engine yet and fall back to YIN.",
+            "rmvpe",
             GetValues: _ => [
-                "yin///YIN (in use today)", "rmvpe///RMVPE (pending)", "pm///PM (pending)",
+                "rmvpe///RMVPE (in use today)", "yin///YIN (in use today)", "pm///PM (pending)",
                 "harvest///Harvest (pending)", "crepe///CREPE (pending)"
             ],
             OrderPriority: -4, Group: CloneGroup, FeatureFlag: "rvc_clone_params"));

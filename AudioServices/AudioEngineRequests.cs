@@ -130,8 +130,9 @@ public static class AudioEngineRequests
         };
     }
 
-    /// <summary>Builds the voice-conversion request. RVC's retrieval knobs (<c>f0method</c>, <c>index_rate</c>,
-    /// <c>rms_mix_rate</c>, <c>protect</c>) have no Engine counterpart and are dropped, as they were before.</summary>
+    /// <summary>Builds the voice-conversion request. RVC's remaining retrieval knobs (<c>index_rate</c>,
+    /// <c>rms_mix_rate</c>, <c>protect</c>) have no Engine counterpart and are dropped, as they were before —
+    /// <c>f0method</c> now has one (<see cref="VoiceConversionRequest.F0Method"/>).</summary>
     public static VoiceConversionRequest VoiceConversion(IReadOnlyDictionary<string, object> args)
     {
         AudioClip source = Clip(args, "source_audio")
@@ -141,6 +142,7 @@ public static class AudioEngineRequests
             Source = source,
             Target = Clip(args, "target_voice"),
             PitchShift = Double(args, "pitch_shift", 0d),
+            F0Method = AudioIo.Str(args, "f0method"),
         };
     }
 
