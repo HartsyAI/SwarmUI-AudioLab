@@ -19,6 +19,12 @@ public sealed class CosyVoiceProvider : IAudioProviderSource
         .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("cosyvoice_tts_params")
         .AddFeatureFlag("tts_voice_ref")
+        // Real incremental generation (IStreamingTtsRunner, chunks arrive as the model generates them), not
+        // AudioLab's own text-chunk-and-regenerate loop — see AudioEngineBridge.SupportsNativeStreaming, the
+        // single source of truth this flag also drives. CosyVoicePipeline.SynthesizeStream ships with one
+        // known, quantified, accepted quality limitation (see CosyVoiceFlow.InferenceGrowingWindowed's doc
+        // comment) -- real, not silent, but not blocking.
+        .AddFeatureFlag("tts_streaming")
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();
