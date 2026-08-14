@@ -86,6 +86,8 @@ public static class AudioEngineBridge
         ["yue_music"] = new AudioEngineBinding("yue", AudioEngineService.Music, false),
         ["heartlib_music"] = new AudioEngineBinding("heartmula", AudioEngineService.Music, true),
         ["stableaudio_music"] = new AudioEngineBinding("stableaudio", AudioEngineService.Music, true),
+        // Self-downloading: the engine fetches the diffusers-format subfolders on first generation.
+        ["minimax_music3"] = new AudioEngineBinding("minimaxmusic3", AudioEngineService.Music, true),
         // Voice conversion.
         ["rvc_clone"] = new AudioEngineBinding("rvc", AudioEngineService.VoiceConversion, false),
         ["openvoice_clone"] = new AudioEngineBinding("openvoice", AudioEngineService.VoiceConversion, true),
