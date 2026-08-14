@@ -140,7 +140,7 @@ public static class AudioEngineBridge
                 if (_engine is null)
                 {
                     AlignModelsRoot();
-                    _engine = new InferenceEngine("auto");
+                    _engine = new InferenceEngine(DeviceSelector());
                     Logs.Init($"[AudioLab] HartsyInference engine created (backend: {_engine.BackendDescription}).");
                 }
                 return _engine;
@@ -550,5 +550,13 @@ public static class AudioEngineBridge
         {
             Logs.Warning($"[AudioLab] Could not align the engine models root: {ex.Message}");
         }
+    }
+
+    /// <summary>The configured compute device for audio work, or <c>auto</c>. Read from the audio backend's own
+    /// settings so audio can be pinned off a card another backend is occupying.</summary>
+    private static string DeviceSelector()
+    {
+        string configured = Environment.GetEnvironmentVariable("AUDIOLAB_DEVICE");
+        return string.IsNullOrWhiteSpace(configured) ? "auto" : configured.Trim();
     }
 }
