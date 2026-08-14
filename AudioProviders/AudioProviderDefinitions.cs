@@ -51,6 +51,7 @@ public static class AudioProviderDefinitions
         DemucsProvider.Instance,
         ResembleEnhanceProvider.Instance,
         HeartLibProvider.Instance,
+        MiniMaxMusic3Provider.Instance,
         // API TTS providers
         ElevenLabsTTSProvider.Instance,
         OpenAITTSProvider.Instance,

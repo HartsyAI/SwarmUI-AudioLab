@@ -53,6 +53,7 @@ const AudioLabConfig = {
         audiogen_sfx: { category: 'audiolab_audiogen', extraFlags: ['audiocraft_sampling'] },
         yue_music: { category: 'audiolab_audiogen', providerFlag: 'yue_music_params' },
         heartlib_music: { category: 'audiolab_audiogen', providerFlag: 'heartlib_music_params' },
+        minimax_music3: { category: 'audiolab_audiogen', providerFlag: 'minimax_music3_params' },
         stableaudio_music: { category: 'audiolab_audiogen', providerFlag: 'stableaudio_music_params' },
         // API TTS providers
         elevenlabs_tts: { category: 'audiolab_tts', providerFlag: 'elevenlabs_tts_params' },

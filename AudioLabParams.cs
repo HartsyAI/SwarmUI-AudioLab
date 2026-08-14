@@ -517,6 +517,17 @@ public static class AudioLabParams
 
     #endregion
 
+    #region Music — MiniMax Music 3 (flag: minimax_music3_params)
+
+    /// <summary>Song lyrics with section tags for MiniMax Music 3. Feature flag: <c>minimax_music3_params</c>.</summary>
+    public static T2IRegisteredParam<string> MiniMaxMusic3Lyrics;
+    /// <summary>Flow-matching guidance strength. Feature flag: <c>minimax_music3_params</c>.</summary>
+    public static T2IRegisteredParam<double> MiniMaxMusic3CFGScale;
+    /// <summary>Flow-matching Euler steps per window. Feature flag: <c>minimax_music3_params</c>.</summary>
+    public static T2IRegisteredParam<int> MiniMaxMusic3Steps;
+
+    #endregion
+
     #region Clone Shared (flag: audiolab_clone)
 
     /// <summary>Source audio for voice cloning or conversion. Feature flag: <c>audiolab_clone</c>.</summary>
@@ -1909,6 +1920,40 @@ public static class AudioLabParams
             "50",
             Min: 1, Max: 500, Step: 10, ViewType: ParamViewType.SLIDER,
             OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "heartlib_music_params", IsAdvanced: true));
+
+        #endregion
+
+        #region Music — MiniMax Music 3
+        MiniMaxMusic3Lyrics = T2IParamTypes.Register<string>(new("MiniMax Music 3 Lyrics",
+            "Song lyrics for MiniMax Music 3.\n\n"
+            + "SECTION TAGS:\n"
+            + "  [Intro] [Verse] [Pre-Chorus] [Chorus] [Post-Chorus] [Bridge] [Instrumental] [Solo] [Outro]\n"
+            + "  Each tag must be on its OWN line. Text sharing a line with a leading tag is DISCARDED by the\n"
+            + "  model's input contract, so '[Verse] first line' loses 'first line' entirely.\n"
+            + "  Repeat tags for multiple sections; do not number them.\n\n"
+            + "THE MUSIC DESCRIPTION goes in the main Prompt box, not here. For the best results use the\n"
+            + "  Structured Caption the model card recommends — three sections, in this order:\n"
+            + "    Global Metadata: genre, bpm, key, scale, emotional progression, production profile\n"
+            + "    Vocal Details: gender, timbre, performance style, harmonies, vocal FX\n"
+            + "    Arrangement: primary/secondary instruments, groove, textures, spatial FX\n"
+            + "  A plain one-line description works too, with less control.\n\n"
+            + "EXAMPLE:\n"
+            + "  [verse]\n  Morning light filtering through the pine\n  [chorus]\n  Softly the world begins to breathe",
+            "",
+            ViewType: ParamViewType.PROMPT,
+            OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "minimax_music3_params"));
+
+        MiniMaxMusic3CFGScale = T2IParamTypes.Register<double>(new("MiniMax Music 3 CFG Scale",
+            "Flow-matching guidance strength.\nThe reference recipe uses 1.7; the autoregressive stage's own guidance is fixed at 1.5.",
+            "1.7",
+            Min: 0.1, Max: 10.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "minimax_music3_params", IsAdvanced: true));
+
+        MiniMaxMusic3Steps = T2IParamTypes.Register<int>(new("MiniMax Music 3 Steps",
+            "Flow-matching Euler steps per 200-frame window.\nThe reference recipe uses 30. Fewer is faster and grainier.",
+            "30",
+            Min: 4, Max: 100, Step: 1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "minimax_music3_params", IsAdvanced: true));
 
         #endregion
 

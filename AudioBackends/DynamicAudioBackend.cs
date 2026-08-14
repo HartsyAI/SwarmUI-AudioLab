@@ -1911,6 +1911,17 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long hlSeed) ? hlSeed : -1L;
                 break;
 
+            case "minimax_music3":
+                // Same split ACE-Step and HeartMuLa use, and the one the engine's MusicRequest already speaks:
+                // the main Prompt carries the music description (genre), the dedicated Lyrics param carries the
+                // words (prompt).
+                args["genre"] = input.Get(T2IParamTypes.Prompt, "");
+                args["prompt"] = input.TryGet(AudioLabParams.MiniMaxMusic3Lyrics, out string mmLy) ? mmLy : "";
+                args["cfg_scale"] = input.TryGet(AudioLabParams.MiniMaxMusic3CFGScale, out double mmCfg) ? mmCfg : 1.7;
+                args["infer_step"] = input.TryGet(AudioLabParams.MiniMaxMusic3Steps, out int mmSteps) ? mmSteps : 30;
+                args["seed"] = input.TryGet(T2IParamTypes.Seed, out long mmSeed) ? mmSeed : -1L;
+                break;
+
             case "whisper_stt":
                 args["task"] = input.TryGet(AudioLabParams.WhisperTask, out string whisperTask) ? whisperTask : "transcribe";
                 args["beam_size"] = input.TryGet(AudioLabParams.WhisperBeamSize, out int wBeam) ? wBeam : 5;
