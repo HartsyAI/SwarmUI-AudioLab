@@ -1937,9 +1937,13 @@ public static class AudioLabParams
             + "    Vocal Details: gender, timbre, performance style, harmonies, vocal FX\n"
             + "    Arrangement: primary/secondary instruments, groove, textures, spatial FX\n"
             + "  A plain one-line description works too, with less control.\n\n"
-            + "EXAMPLE:\n"
-            + "  [verse]\n  Morning light filtering through the pine\n  [chorus]\n  Softly the world begins to breathe",
+            + "AUTOMATIC: a leading [start] is added for you and every tag is lowercased — do not type either.",
             "",
+            Examples: [
+                "[verse]\nMorning light filtering through the pine\n[chorus]\nSoftly the world begins to breathe",
+                "[intro]\n[verse]\nI counted every streetlight on the way\n[pre-chorus]\nAnd none of them were yours\n[chorus]\nSo I drove until the radio gave out\n[bridge]\nThe map said turn around\n[outro]\nI did not turn around",
+                "[instrumental]\n[solo]\n[outro]",
+            ],
             ViewType: ParamViewType.PROMPT,
             OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "minimax_music3_params"));
 
