@@ -29,11 +29,11 @@ public sealed class AudioProviderDefinition
     /// <summary>Available models for this provider.</summary>
     public required IReadOnlyList<AudioModelDefinition> Models { get; init; }
 
-    /// <summary>Engine group for in-process model grouping (e.g. "main", "audiocraft", "linux_docker").</summary>
+    /// <summary>Engine group for in-process model grouping (e.g. "main", "audiocraft", "music").</summary>
     public string EngineGroup { get; init; } = "default";
 
-    /// <summary>Whether this provider requires Docker to run (Linux-only engines).</summary>
-    public bool RequiresDocker { get; init; } = false;
+    /// <summary>Whether this provider has no C# engine implementation yet, so it cannot run in this build.</summary>
+    public bool NotImplemented { get; init; } = false;
 
     /// <summary>Whether this provider is API-based (no local models, requires API key).</summary>
     public bool IsApiProvider { get; init; } = false;

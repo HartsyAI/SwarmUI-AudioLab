@@ -605,12 +605,13 @@ public static class AudioLabAPI
             JArray engines = [];
             foreach (AudioProviderDefinition provider in AudioProviderRegistry.All)
             {
-                // Legacy Docker/Python engines aren't ported to the in-process C# engine, so they can't run in
-                // this build — surface them as incompatible instead of installable.
-                bool platformCompatible = !provider.RequiresDocker;
-                string platformNote = provider.RequiresDocker
-                    ? "Legacy Docker-based engine — not available in the in-process build."
-                    : "";
+                // Two reasons an engine can't be installed: no C# implementation yet, or it's a cloud API
+                // provider (none of which are tested, so they're all held back). Both render as a disabled
+                // card carrying the note below.
+                bool available = !provider.NotImplemented && !provider.IsApiProvider;
+                string unavailableNote = provider.NotImplemented
+                    ? "Not built in the C# engine yet."
+                    : provider.IsApiProvider ? "Cloud API engines are untested and disabled for now." : "";
 
                 // Self-managed (HF auto-download) providers fetch weights on first use, so per-model
                 // presence is meaningless — the UI shows "Downloads on first use" instead of install buttons.
@@ -631,8 +632,8 @@ public static class AudioLabAPI
                         ["estimated_vram"] = modelDef.EstimatedVram,
                         // Name in Swarm's model registry, for generating via the core T2I pipeline.
                         ["swarm_model"] = provider.GetFullModelName(modelDef.Id),
-                        // Per-model: are this variant's weights on disk? (API/self-managed report true.)
-                        ["installed"] = provider.IsApiProvider || AudioEngineBridge.WeightsPresent(provider.Id, modelDef.Id)
+                        // Per-model: are this variant's weights on disk? Unavailable engines never are.
+                        ["installed"] = available && AudioEngineBridge.WeightsPresent(provider.Id, modelDef.Id)
                     });
                 }
 
@@ -642,15 +643,12 @@ public static class AudioLabAPI
                     ["name"] = provider.Name,
                     ["category"] = provider.Category.ToString(),
                     ["engine_group"] = provider.EngineGroup,
-                    ["requires_docker"] = provider.RequiresDocker,
                     ["is_api_provider"] = provider.IsApiProvider,
                     ["api_key_settings_id"] = provider.ApiKeySettingsId,
-                    ["platform_compatible"] = platformCompatible,
-                    ["platform_note"] = platformNote,
-                    ["installed"] = installedIds.Contains(provider.Id),
-                    // Installed but weights absent on disk (e.g. user freed space) — UI shows a repair prompt.
-                    // In-process C# engines have no Python dependencies; only the model weights download.
-                    ["in_process"] = !provider.IsApiProvider,
+                    // Whether this engine can be installed and used at all in this build.
+                    ["available"] = available,
+                    ["unavailable_note"] = unavailableNote,
+                    ["installed"] = available && installedIds.Contains(provider.Id),
                     // Weights fetched on first use — no explicit per-model install/remove for this engine.
                     ["self_managed"] = selfManaged,
                     // Capability flags (e.g. tts_voice_ref) so the UI only offers what the engine supports.
@@ -672,6 +670,22 @@ public static class AudioLabAPI
         }
     }
 
+    /// <summary>Why this provider can't be installed in this build, or null when it can. Mirrors the
+    /// <c>available</c> flag AudioLabListEngines sends, so the UI's disabled state and the server's refusal
+    /// can't drift apart.</summary>
+    private static string UnavailableReason(AudioProviderDefinition provider)
+    {
+        if (provider.NotImplemented)
+        {
+            return "it is not built in the C# engine yet.";
+        }
+        if (provider.IsApiProvider)
+        {
+            return "cloud API engines are untested and disabled for now.";
+        }
+        return null;
+    }
+
     /// <summary>Installs an audio engine via WebSocket with streaming progress. Optional
     /// <paramref name="model_id"/> installs one specific model's weights (variants are distinct multi-GB
     /// checkpoints); without it the provider's default model set is fetched.
@@ -690,6 +704,13 @@ public static class AudioLabAPI
             if (provider == null)
             {
                 await ws.SendJson(new JObject { ["error"] = $"Unknown provider: {provider_id}" }, API.WebsocketTimeout);
+                return null;
+            }
+
+            string unavailable = UnavailableReason(provider);
+            if (unavailable is not null)
+            {
+                await ws.SendJson(new JObject { ["error"] = $"{provider.Name} cannot be installed: {unavailable}" }, API.WebsocketTimeout);
                 return null;
             }
 
@@ -820,6 +841,12 @@ public static class AudioLabAPI
                 await ws.SendJson(new JObject { ["error"] = $"Unknown provider: {provider_id}" }, API.WebsocketTimeout);
                 return null;
             }
+            string unavailable = UnavailableReason(provider);
+            if (unavailable is not null)
+            {
+                await ws.SendJson(new JObject { ["error"] = $"{provider.Name} cannot be installed: {unavailable}" }, API.WebsocketTimeout);
+                return null;
+            }
             DynamicAudioBackend backend = Program.Backends.RunningBackendsOfType<DynamicAudioBackend>().FirstOrDefault();
             if (backend == null)
             {
@@ -827,7 +854,7 @@ public static class AudioLabAPI
                 return null;
             }
             List<AudioModelDefinition> pending = provider.Models
-                .Where(m => !(provider.IsApiProvider || AudioEngineBridge.WeightsPresent(provider.Id, m.Id)))
+                .Where(m => !AudioEngineBridge.WeightsPresent(provider.Id, m.Id))
                 .ToList();
             if (pending.Count == 0)
             {
@@ -882,7 +909,7 @@ public static class AudioLabAPI
                 return AudioLab.CreateErrorResponse("Audio backend is not running.", "no_backend");
             }
             List<AudioModelDefinition> present = provider.Models
-                .Where(m => !provider.IsApiProvider && AudioEngineBridge.WeightsPresent(provider.Id, m.Id))
+                .Where(m => AudioEngineBridge.WeightsPresent(provider.Id, m.Id))
                 .ToList();
             if (present.Count == 0)
             {

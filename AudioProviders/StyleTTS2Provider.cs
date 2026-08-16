@@ -27,6 +27,6 @@ public sealed class StyleTTS2Provider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "libritts", Name = "StyleTTS 2 LibriTTS", Description = "Multi-speaker TTS, 24 kHz, zero-shot voice cloning — supply a Reference Audio clip and it speaks your text in that voice. For best quality use a CLEAN, full-bandwidth 24 kHz reference (studio/podcast); it faithfully clones the reference's recording character, so a phone-quality or old/band-limited clip yields tinny output. MIT via the yl4579/StyleTTS2 GitHub repo (the HF weights repo declares no license).", SourceUrl = "https://huggingface.co/yl4579/StyleTTS2-LibriTTS", License = "MIT", EstimatedSize = "~750MB", EstimatedVram = "~2GB" }
+        new() { Id = "libritts", Name = "StyleTTS 2 LibriTTS", Description = "Multi-speaker TTS, 24 kHz, zero-shot voice cloning. Supply a Reference Audio clip and it speaks your text in that voice. For best quality use a CLEAN, full-bandwidth 24 kHz reference (studio/podcast); it faithfully clones the reference's recording character, so a phone-quality or old/band-limited clip yields tinny output. MIT via the yl4579/StyleTTS2 GitHub repo (the HF weights repo declares no license).", SourceUrl = "https://huggingface.co/yl4579/StyleTTS2-LibriTTS", License = "MIT", EstimatedSize = "~750MB", EstimatedVram = "~2GB" }
     ];
 }

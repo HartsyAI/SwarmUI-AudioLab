@@ -141,7 +141,7 @@ public static class AudioWeights
                 ok = await FileMatchesHashAsync(targetPath, spec.Sha256, cancel);
                 if (!ok)
                 {
-                    Logs.Warning($"[AudioLab] '{spec.FileName}' failed SHA-256 verification — re-downloading.");
+                    Logs.Warning($"[AudioLab] '{spec.FileName}' failed SHA-256 verification, re-downloading.");
                 }
             }
             else
@@ -151,7 +151,7 @@ public static class AudioWeights
                 ok = len >= MinPlausibleCheckpointBytes;
                 if (!ok)
                 {
-                    Logs.Warning($"[AudioLab] '{spec.FileName}' is implausibly small ({len} bytes) — re-downloading.");
+                    Logs.Warning($"[AudioLab] '{spec.FileName}' is implausibly small ({len} bytes), re-downloading.");
                 }
             }
             if (ok)
@@ -159,7 +159,7 @@ public static class AudioWeights
                 await Report(onProgress, $"{spec.FileName} already present.");
                 return;
             }
-            await Report(onProgress, $"{spec.FileName} failed integrity check — re-downloading.");
+            await Report(onProgress, $"{spec.FileName} failed integrity check, re-downloading.");
             try { File.Delete(targetPath); } catch (Exception ex) { Logs.Warning($"[AudioLab] Could not delete bad '{targetPath}': {ex.Message}"); }
         }
         string tmpPath = targetPath + ".tmp";
@@ -202,7 +202,7 @@ public static class AudioWeights
             if (spec.Fallback is not null && !cancel.IsCancellationRequested)
             {
                 Logs.Warning($"[AudioLab] Primary source for '{spec.FileName}' failed ({ex.Message}); falling back to '{spec.Fallback.FileName}'.");
-                await Report(onProgress, $"{spec.FileName} unavailable from the preferred source — using fallback...");
+                await Report(onProgress, $"{spec.FileName} unavailable from the preferred source, using fallback...");
                 await EnsureWeightAsync(spec.Fallback, dir, onProgress, cancel);
                 return;
             }

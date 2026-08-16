@@ -494,7 +494,7 @@ const AudioDaw = (() => {
         const palBtn = document.createElement('button');
         palBtn.className = 'daw-transport-btn daw-btn-text daw-btn-palette';
         palBtn.textContent = 'SOUNDS';
-        palBtn.title = 'Sound Palette — generate SFX/loops on demand (audition, then add)';
+        palBtn.title = 'Sound Palette: generate SFX/loops on demand (audition, then add)';
         palBtn.addEventListener('click', () => togglePalette(palBtn));
         togGroup.appendChild(palBtn);
 
@@ -518,7 +518,7 @@ const AudioDaw = (() => {
             return b;
         };
         mkFileBtn('PROJECT', 'Save, load, or start projects', (e) => showProjectMenu(e));
-        mkFileBtn('IMPORT', 'Add audio — from your outputs or your computer', (e) => showImportMenu(e));
+        mkFileBtn('IMPORT', 'Add audio from your outputs or your computer', (e) => showImportMenu(e));
         mkFileBtn('EXPORT', 'Export the mixdown (WAV/MP3/OGG/FLAC/AAC or to Outputs)', (e) => showExportMenu(e));
         const closeBtn = document.createElement('button');
         closeBtn.className = 'daw-transport-btn daw-btn-close';
@@ -645,7 +645,7 @@ const AudioDaw = (() => {
                 const chains = JSON.parse(localStorage.getItem('audiolab_fx_chains') || '{}');
                 const names = Object.keys(chains);
                 if (!names.length) {
-                    if (typeof doNoticePopover === 'function') doNoticePopover('No saved chains yet — build one and hit Save Chain', 'notice-pop-yellow');
+                    if (typeof doNoticePopover === 'function') doNoticePopover('No saved chains yet. Build one and hit Save Chain', 'notice-pop-yellow');
                     return;
                 }
                 dawMenu(e, names.map(n => ({
@@ -878,7 +878,7 @@ const AudioDaw = (() => {
                 mixTitle.textContent = 'Clip Mix';
                 mixCard.appendChild(mixTitle);
                 const mixNote = createDiv(null, 'daw-clip-card-meta');
-                mixNote.textContent = 'Level and fades for this clip only — track volume lives in the Mixer.';
+                mixNote.textContent = 'Level and fades for this clip only. Track volume lives in the Mixer.';
                 mixCard.appendChild(mixNote);
                 mixCard.appendChild(mixRow);
                 mixCard.appendChild(fadeRow);
@@ -1072,7 +1072,7 @@ const AudioDaw = (() => {
         header.innerHTML = '<strong>Stem Separation (Demucs)</strong>';
         left.appendChild(header);
         const desc = createDiv(null, 'daw-stems-desc');
-        desc.textContent = 'AI source separation splits a mixed clip into its component parts — each chosen stem becomes a new track in the DAW.';
+        desc.textContent = 'AI source separation splits a mixed clip into its component parts. Each chosen stem becomes a new track in the DAW.';
         left.appendChild(desc);
 
         // Model picker
@@ -1151,7 +1151,7 @@ const AudioDaw = (() => {
             for (const c of t.clips) allClips.push({ clip: c, track: t });
         }
         if (!allClips.length) {
-            actionRow.innerHTML = '<span class="daw-stems-clipinfo">Add or import a clip first — stem separation splits one clip into new tracks</span>';
+            actionRow.innerHTML = '<span class="daw-stems-clipinfo">Add or import a clip first. Stem separation splits one clip into new tracks</span>';
         } else {
             const srcLabel = document.createElement('label');
             srcLabel.className = 'daw-stems-ctl-label';
@@ -1162,7 +1162,7 @@ const AudioDaw = (() => {
                 const opt = document.createElement('option');
                 opt.value = clip.id;
                 const dur = formatTimePrecise(clip.duration - clip.offset - clip.trimEnd);
-                opt.textContent = `${track.name} — ${clip.name} (${dur}s)`;
+                opt.textContent = `${track.name}: ${clip.name} (${dur}s)`;
                 srcSelect.appendChild(opt);
             }
             if (state.selectedClipId && allClips.some(x => x.clip.id === state.selectedClipId)) {
@@ -1204,9 +1204,9 @@ const AudioDaw = (() => {
 
     // Stem sets each Demucs model produces (names match what the backend returns).
     const STEM_MODELS = {
-        htdemucs: { label: 'HTDemucs — 4 stems', stems: ['vocals', 'drums', 'bass', 'other'] },
-        htdemucs_ft: { label: 'HTDemucs Fine-tuned — 4 stems (best quality)', stems: ['vocals', 'drums', 'bass', 'other'] },
-        htdemucs_6s: { label: 'HTDemucs 6-stem — adds guitar + piano', stems: ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'] }
+        htdemucs: { label: 'HTDemucs, 4 stems', stems: ['vocals', 'drums', 'bass', 'other'] },
+        htdemucs_ft: { label: 'HTDemucs Fine-tuned, 4 stems (best quality)', stems: ['vocals', 'drums', 'bass', 'other'] },
+        htdemucs_6s: { label: 'HTDemucs 6-stem, adds guitar + piano', stems: ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'] }
     };
 
     // Track colors per stem name (+ the synthesized "instrumental" combine track).
@@ -1217,11 +1217,11 @@ const AudioDaw = (() => {
 
     // Output presets. `plan(stems)` → [{name, parts}]; a `parts` list longer than 1 is summed into one track.
     const STEM_PRESETS = [
-        { id: 'split', label: 'Full split — every stem as its own track', plan: (s) => s.map(x => ({ name: x, parts: [x] })) },
-        { id: 'karaoke', label: 'Karaoke — vocals + combined instrumental', plan: (s) => [{ name: 'vocals', parts: ['vocals'] }, { name: 'instrumental', parts: s.filter(x => x !== 'vocals') }] },
-        { id: 'acapella', label: 'Acapella — vocals only', plan: (s) => [{ name: 'vocals', parts: ['vocals'] }] },
-        { id: 'instrumental', label: 'Instrumental — everything except vocals', plan: (s) => [{ name: 'instrumental', parts: s.filter(x => x !== 'vocals') }] },
-        { id: 'custom', label: 'Custom — pick stems below', plan: null }
+        { id: 'split', label: 'Full split: every stem as its own track', plan: (s) => s.map(x => ({ name: x, parts: [x] })) },
+        { id: 'karaoke', label: 'Karaoke: vocals + combined instrumental', plan: (s) => [{ name: 'vocals', parts: ['vocals'] }, { name: 'instrumental', parts: s.filter(x => x !== 'vocals') }] },
+        { id: 'acapella', label: 'Acapella: vocals only', plan: (s) => [{ name: 'vocals', parts: ['vocals'] }] },
+        { id: 'instrumental', label: 'Instrumental: everything except vocals', plan: (s) => [{ name: 'instrumental', parts: s.filter(x => x !== 'vocals') }] },
+        { id: 'custom', label: 'Custom: pick stems below', plan: null }
     ];
 
     function capStem(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
@@ -1292,7 +1292,7 @@ const AudioDaw = (() => {
     // Generate tab: category cards (TTS / Music / SFX / STT) — each shows only
     // its engines and the params that type actually needs.
     const GEN_CATEGORIES = [
-        { id: 'tts', name: 'Text to Speech', desc: 'Speak any text — optionally clone a voice' },
+        { id: 'tts', name: 'Text to Speech', desc: 'Speak any text, optionally clone a voice' },
         { id: 'music', name: 'Music', desc: 'Songs and loops from a style prompt + lyrics' },
         { id: 'sfx', name: 'Sound FX', desc: 'One-shots and foley from a description' },
         { id: 'stt', name: 'Speech to Text', desc: 'Transcribe the selected clip' }
@@ -1338,7 +1338,7 @@ const AudioDaw = (() => {
                 + `<span class="daw-fx-pick-desc">${count ? cat.desc : 'No engine installed'}</span>`;
             pick.addEventListener('click', () => {
                 if (!count) {
-                    if (typeof doNoticePopover === 'function') doNoticePopover(`No installed ${cat.name} engine — add one under Server -> Backends`, 'notice-pop-yellow');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(`No installed ${cat.name} engine. Add one under Server -> Backends`, 'notice-pop-yellow');
                     return;
                 }
                 generateCategory = cat.id;
@@ -1351,7 +1351,7 @@ const AudioDaw = (() => {
         const engines = enginesForCategory(generateCategory);
         if (!engines.length) {
             const none = createDiv(null, 'daw-stems-desc');
-            none.textContent = 'No audio engines installed — add one from the Audio Backend card under Server -> Backends.';
+            none.textContent = 'No audio engines installed. Add one from the Audio Backend card under Server -> Backends.';
             panel.appendChild(none);
             return;
         }
@@ -1477,7 +1477,7 @@ const AudioDaw = (() => {
             lyricsArea = document.createElement('textarea');
             lyricsArea.className = 'daw-generate-text';
             lyricsArea.rows = 3;
-            lyricsArea.placeholder = 'Lyrics (optional — leave empty for instrumental)';
+            lyricsArea.placeholder = 'Lyrics (optional, leave empty for instrumental)';
             mainCol.appendChild(lyricsArea);
         }
 
@@ -1543,7 +1543,7 @@ const AudioDaw = (() => {
             sttBtn.type = 'button';
             sttBtn.className = 'basic-button btn-sm daw-reftext-stt';
             sttBtn.textContent = 'Transcribe';
-            sttBtn.title = 'Fill the transcript automatically — runs the selected clip through speech-to-text';
+            sttBtn.title = 'Fill the transcript automatically by running the selected clip through speech-to-text';
             sttBtn.style.display = enginesForCategory('stt').length ? '' : 'none';
             sttBtn.addEventListener('click', async () => {
                 const sel = findClipById(state.selectedClipId);
@@ -1576,7 +1576,7 @@ const AudioDaw = (() => {
             sideCol.appendChild(refRow);
 
             refNote = createDiv(null, 'daw-stems-clipinfo');
-            refNote.textContent = 'This engine uses its built-in voice — voice cloning is not supported.';
+            refNote.textContent = 'This engine uses its built-in voice. Voice cloning is not supported.';
             sideCol.appendChild(refNote);
         }
 
@@ -3223,7 +3223,7 @@ const AudioDaw = (() => {
 
             for (const b of built) {
                 const newTrack = addTrack({
-                    name: `${capStem(b.name)} — ${clip.name}`,
+                    name: `${capStem(b.name)}: ${clip.name}`,
                     color: STEM_COLORS[b.name] || undefined
                 });
                 await addClipToTrack(newTrack, b.blob, {
@@ -3291,7 +3291,7 @@ const AudioDaw = (() => {
         } catch (_) {} // permissions.query('microphone') is not universal (e.g. Firefox)
         const items = [];
         if (labelsHidden && permState === 'denied') {
-            items.push({ label: 'Mic blocked — allow it in browser site settings', disabled: true, action: () => {} });
+            items.push({ label: 'Mic blocked. Allow it in browser site settings', disabled: true, action: () => {} });
         } else if (labelsHidden) {
             // No permission yet: show nothing but the grant action — device names
             // are meaningless placeholders until the browser unlocks them.
@@ -3783,7 +3783,7 @@ const AudioDaw = (() => {
     // flipping ready:true and rendering their UI in renderBeatsPanel.
     const DAW_INSTRUMENTS = [
         { id: 'drums', name: 'Drum Machine', desc: '16/32-step sample sequencer', ready: true },
-        { id: 'keys', name: 'Piano / Keys', desc: 'Piano roll — coming soon', ready: false },
+        { id: 'keys', name: 'Piano / Keys', desc: 'Piano roll, coming soon', ready: false },
         { id: 'bass', name: 'Bass', desc: 'Coming soon', ready: false },
         { id: 'synth', name: 'Synth', desc: 'Coming soon', ready: false }
     ];
@@ -3808,7 +3808,7 @@ const AudioDaw = (() => {
                 + `<span class="daw-fx-pick-desc">${inst.desc}</span>`;
             pick.addEventListener('click', () => {
                 if (!inst.ready) {
-                    if (typeof doNoticePopover === 'function') doNoticePopover(`${inst.name} is on the roadmap — the Drum Machine is ready today`, 'notice-pop-yellow');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(`${inst.name} is on the roadmap. The Drum Machine is ready today`, 'notice-pop-yellow');
                     return;
                 }
                 activeInstrument = inst.id;
@@ -3933,7 +3933,7 @@ const AudioDaw = (() => {
         });
         if (!p.lanes.length) {
             const empty = createDiv(null, 'daw-stems-desc');
-            empty.textContent = 'No pads yet — describe a one-shot below and hit Generate Pad, or import a sample.';
+            empty.textContent = 'No pads yet. Describe a one-shot below and hit Generate Pad, or import a sample.';
             instCard.appendChild(empty);
         }
         instCard.appendChild(grid);
@@ -4111,7 +4111,7 @@ const AudioDaw = (() => {
             try {
                 const results = await paletteGenerate(prompt, typeSel.value, parseInt(durSel.value), parseInt(countSel.value));
                 if (!results.length && typeof doNoticePopover === 'function') {
-                    doNoticePopover('Generation returned nothing — check the engine is installed', 'notice-pop-red');
+                    doNoticePopover('Generation returned nothing. Check the engine is installed', 'notice-pop-red');
                 }
                 paletteResults.unshift(...results);
                 paletteResults = paletteResults.slice(0, 12);
@@ -4183,7 +4183,7 @@ const AudioDaw = (() => {
             list.appendChild(card);
         }
         if (!paletteResults.length) {
-            list.innerHTML = '<div class="daw-stems-clipinfo" style="padding:0.5rem;">Generated sounds appear here — audition, then add to a track or beat pad.</div>';
+            list.innerHTML = '<div class="daw-stems-clipinfo" style="padding:0.5rem;">Generated sounds appear here. Audition, then add to a track or beat pad.</div>';
         }
         paletteEl.appendChild(list);
     }
@@ -4427,7 +4427,7 @@ const AudioDaw = (() => {
         quickAppendButton(actions, 'Discard', () => {
             bar.remove();
             AudioDawStore.deleteProject(AUTOSAVE_SLOT).catch(() => {});
-        }, ' basic-button', 'Delete the autosave — start fresh');
+        }, ' basic-button', 'Delete the autosave and start fresh');
         bar.appendChild(actions);
         body.appendChild(bar);
     }

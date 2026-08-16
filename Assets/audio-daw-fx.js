@@ -447,10 +447,10 @@ const AudioDawFx = (() => {
      */
     // One-line pitches for the effect browser (shown when a chain is empty)
     const FX_DESCS = {
-        eq: '5-band shape — cut mud, add air',
+        eq: '5-band shape: cut mud, add air',
         compressor: 'Even out dynamics, add punch',
         reverb: 'Space and depth (procedural room)',
-        delay: 'Echoes — free or tempo-synced',
+        delay: 'Echoes, free or tempo-synced',
         saturation: 'Analog-style warmth and drive'
     };
 
@@ -464,7 +464,7 @@ const AudioDawFx = (() => {
         // Toolbar: track context + chain save/load + master limiter
         const bar = createDiv(null, 'daw-fx-toolbar');
         const barTitle = createSpan(null, 'daw-fx-toolbar-title');
-        barTitle.textContent = `FX — ${track.name}`;
+        barTitle.textContent = `FX: ${track.name}`;
         bar.appendChild(barTitle);
         const saveChainBtn = document.createElement('button');
         saveChainBtn.className = 'basic-button btn-sm';

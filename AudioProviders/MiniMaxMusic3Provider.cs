@@ -36,13 +36,13 @@ public sealed class MiniMaxMusic3Provider : IAudioProviderSource
     [
         Make("base", "MiniMax Music 3", null,
             "8B autoregressive + 2.4B flow-matching, 44.1 kHz stereo, songs to six minutes. Full checkpoint "
-            + "precision — this is the parity baseline and wants a 24GB card.", "~28GB", "~22GB"),
-        Make("q8", "MiniMax Music 3 — Q8 (recommended)", "q8_0",
+            + "precision. This is the parity baseline and wants a 24GB card.", "~28GB", "~22GB"),
+        Make("q8", "MiniMax Music 3 Q8 (recommended)", "q8_0",
             "8B autoregressive + 2.4B flow-matching, 44.1 kHz stereo. Q8 language model, BF16 transformer, F16 KV "
             + "cache. Near-lossless and the practical default. Converted once to a local cache on first use.",
             "~28GB download / ~8GB cache", "~12GB"),
-        Make("q4", "MiniMax Music 3 — Q4 (smallest)", "q4_k",
-            "8B autoregressive + 2.4B flow-matching, 44.1 kHz stereo. Q4 language model — smallest and fastest, "
+        Make("q4", "MiniMax Music 3 Q4 (smallest)", "q4_k",
+            "8B autoregressive + 2.4B flow-matching, 44.1 kHz stereo. Q4 language model, smallest and fastest with "
             + "some quality loss. Converted once to a local cache on first use.",
             "~28GB download / ~5GB cache", "~10GB"),
     ];

@@ -26,7 +26,7 @@ public sealed class RVCProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "v2", Name = "RVC V2", Description = "Voice conversion: re-voices existing audio using a trained .pth voice model. Does not generate new speech — takes audio in, outputs the same speech in a different voice.", SourceUrl = "https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~4GB", EngineConfig = new() { ["model_version"] = "v2" } }
+        new() { Id = "v2", Name = "RVC V2", Description = "Voice conversion: re-voices existing audio using a trained .pth voice model. Does not generate new speech: takes audio in, outputs the same speech in a different voice.", SourceUrl = "https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~4GB", EngineConfig = new() { ["model_version"] = "v2" } }
     ];
 
     #endregion

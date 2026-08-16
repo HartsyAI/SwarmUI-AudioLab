@@ -26,8 +26,8 @@ public sealed class ResembleEnhanceProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "denoise", Name = "Resemble Denoise", Description = "Speech denoising — removes background noise from audio. Currently runs the same full enhance pipeline as 'Resemble Enhance' below (no denoise-only fast path exists yet); pick this variant for the intent/labeling, not for a speed difference.", SourceUrl = "https://github.com/resemble-ai/resemble-enhance", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~2GB", EngineConfig = new() { ["mode"] = "denoise" } },
-        new() { Id = "enhance", Name = "Resemble Enhance", Description = "Full enhancement — denoise + super-resolution to 44.1kHz", SourceUrl = "https://github.com/resemble-ai/resemble-enhance", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~2GB", EngineConfig = new() { ["mode"] = "enhance" } }
+        new() { Id = "denoise", Name = "Resemble Denoise", Description = "Speech denoising, removes background noise from audio. Currently runs the same full enhance pipeline as 'Resemble Enhance' below (no denoise-only fast path exists yet); pick this variant for the intent/labeling, not for a speed difference.", SourceUrl = "https://github.com/resemble-ai/resemble-enhance", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~2GB", EngineConfig = new() { ["mode"] = "denoise" } },
+        new() { Id = "enhance", Name = "Resemble Enhance", Description = "Full enhancement: denoise plus super-resolution to 44.1kHz", SourceUrl = "https://github.com/resemble-ai/resemble-enhance", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~2GB", EngineConfig = new() { ["mode"] = "enhance" } }
     ];
 
     #endregion

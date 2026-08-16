@@ -29,13 +29,9 @@ public class AudioLab : Extension
             AudioConfiguration.ExtensionDirectory = Path.GetFullPath(Path.Combine(projectRoot, "Extensions", "SwarmUI-AudioLab"));
             Logs.Info($"[AudioLab] Extension directory: {AudioConfiguration.ExtensionDirectory}");
 
-            // Ensure centralized model storage directories exist
-            string audioModelRoot = Path.GetFullPath(AudioConfiguration.ModelRoot);
-            foreach (string sub in new[] { "tts", "stt", "music", "clone", "fx", ".cache" })
-            {
-                Directory.CreateDirectory(Path.Combine(audioModelRoot, sub));
-            }
-            Logs.Info($"[AudioLab] Audio model root: {audioModelRoot}");
+            // Settings load well before extension pre-init, so the server's model root is known here.
+            AudioConfiguration.SyncModelRootFromServer();
+            Logs.Info($"[AudioLab] Audio model root: {Path.GetFullPath(AudioConfiguration.ModelRoot)}");
 
             // Register all built-in audio providers
             AudioProviderDefinitions.RegisterAll();

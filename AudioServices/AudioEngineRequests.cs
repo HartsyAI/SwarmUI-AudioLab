@@ -79,7 +79,7 @@ public static class AudioEngineRequests
         if (task.Equals("extract", StringComparison.OrdinalIgnoreCase) || task.Equals("lego", StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException($"ACE-Step '{task}' has no Engine counterpart yet (only text2music, "
-                + "cover, repaint, and complete are wired) — falling through to plain text2music would silently "
+                + "cover, repaint, and complete are wired). Falling through to plain text2music would silently "
                 + "generate the wrong thing. Switch Task Type back to one of those, or to text2music.");
         }
         AudioClip source = Clip(args, "src_audio");
@@ -198,7 +198,7 @@ public static class AudioEngineRequests
     /// <summary>The source clip an editing task requires, or a precise error naming what is missing.</summary>
     private static AudioClip RequireSource(AudioClip source, string task)
         => source ?? throw new ArgumentException(
-            $"The ACE-Step '{task}' task needs a source clip — set 'ACE Source Audio' (or switch Task Type back to text2music).");
+            $"The ACE-Step '{task}' task needs a source clip. Set 'ACE Source Audio' (or switch Task Type back to text2music).");
 
     /// <summary>Decodes a base64 arg into an Engine clip; null when the arg is absent or empty. The Engine
     /// decodes the container itself, so no ffmpeg pass happens here any more.</summary>

@@ -140,8 +140,10 @@ public static class AudioEngineBridge
                 if (_engine is null)
                 {
                     AlignModelsRoot();
-                    _engine = new InferenceEngine(DeviceSelector());
-                    Logs.Init($"[AudioLab] HartsyInference engine created (backend: {_engine.BackendDescription}).");
+                    string device = DeviceSelector();
+                    _engine = new InferenceEngine(device);
+                    _builtDevice = device;
+                    Logs.Init($"[AudioLab] HartsyInference engine created for device '{device}' (backend: {_engine.BackendDescription}).");
                 }
                 return _engine;
             }
@@ -434,7 +436,7 @@ public static class AudioEngineBridge
             string repo = _engineWeightRepos.TryGetValue(providerId, out string mapped) ? mapped : HuggingFaceRepo(model?.SourceUrl);
             if (repo is null)
             {
-                Logs.Debug($"[AudioLab] No weights location known for engine-managed '{providerId}' — presence cannot be determined. Add it to _engineWeightRepos/_engineWeightFolders.");
+                Logs.Debug($"[AudioLab] No weights location known for engine-managed '{providerId}': presence cannot be determined. Add it to _engineWeightRepos/_engineWeightFolders.");
                 return [];
             }
             return [AudioModelCache.GetRepoDirectory(repo, AudioWeights.CategorySubfolder(provider.Category))];
@@ -552,11 +554,39 @@ public static class AudioEngineBridge
         }
     }
 
-    /// <summary>The configured compute device for audio work, or <c>auto</c>. Read from the audio backend's own
-    /// settings so audio can be pinned off a card another backend is occupying.</summary>
+    /// <summary>Device the audio backend asked for, set by <see cref="RequestDevice"/>.</summary>
+    private static string _requestedDevice;
+
+    /// <summary>Device <see cref="_engine"/> was actually constructed with, or null while it doesn't exist yet.</summary>
+    private static string _builtDevice;
+
+    /// <summary>Asks for audio work to run on <paramref name="device"/> (an engine selector such as
+    /// <c>auto</c>, <c>cuda:1</c> or <c>cpu</c>). Returns null when the request is honoured, or the device the
+    /// engine was already built with when it is too late to change. The engine is a process-wide singleton
+    /// built on first use, so requests before that overwrite each other (a backend restart picking up a new
+    /// setting is the case that matters) and the last one standing is what the engine is built with.</summary>
+    public static string RequestDevice(string device)
+    {
+        lock (_engineLock)
+        {
+            if (_builtDevice is not null && !string.Equals(_builtDevice, device, StringComparison.OrdinalIgnoreCase))
+            {
+                return _builtDevice;
+            }
+            _requestedDevice = device;
+            return null;
+        }
+    }
+
+    /// <summary>The configured compute device for audio work, or <c>auto</c>. Comes from the audio backend's
+    /// Device setting; the AUDIOLAB_DEVICE environment variable overrides it for headless/debug runs.</summary>
     private static string DeviceSelector()
     {
-        string configured = Environment.GetEnvironmentVariable("AUDIOLAB_DEVICE");
-        return string.IsNullOrWhiteSpace(configured) ? "auto" : configured.Trim();
+        string env = Environment.GetEnvironmentVariable("AUDIOLAB_DEVICE");
+        if (!string.IsNullOrWhiteSpace(env))
+        {
+            return env.Trim();
+        }
+        return string.IsNullOrWhiteSpace(_requestedDevice) ? "auto" : _requestedDevice;
     }
 }

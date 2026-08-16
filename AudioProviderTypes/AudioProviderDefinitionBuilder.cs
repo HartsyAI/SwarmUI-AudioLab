@@ -16,7 +16,7 @@ public sealed class AudioProviderDefinitionBuilder
     private readonly List<string> _featureFlags = [];
     private readonly List<AudioModelDefinition> _models = [];
     private string _engineGroup = "default";
-    private bool _requiresDocker = false;
+    private bool _notImplemented = false;
     private bool _isApiProvider = false;
     private string _apiKeySettingsId = "";
 
@@ -56,8 +56,8 @@ public sealed class AudioProviderDefinitionBuilder
     /// <summary>Sets the engine group used for in-process model grouping.</summary>
     public AudioProviderDefinitionBuilder WithEngineGroup(string group) { _engineGroup = group; return this; }
 
-    /// <summary>Marks this provider as requiring Docker to run.</summary>
-    public AudioProviderDefinitionBuilder WithRequiresDocker() { _requiresDocker = true; return this; }
+    /// <summary>Marks this provider as having no C# engine implementation yet.</summary>
+    public AudioProviderDefinitionBuilder WithNotImplemented() { _notImplemented = true; return this; }
 
     /// <summary>Marks this provider as API-based (no local models, requires an API key).</summary>
     /// <param name="apiKeySettingsId">The key name for user settings lookup (e.g. "elevenlabs_api").</param>
@@ -90,7 +90,7 @@ public sealed class AudioProviderDefinitionBuilder
             FeatureFlags = _featureFlags.AsReadOnly(),
             Models = _models.AsReadOnly(),
             EngineGroup = _engineGroup,
-            RequiresDocker = _requiresDocker,
+            NotImplemented = _notImplemented,
             IsApiProvider = _isApiProvider,
             ApiKeySettingsId = _apiKeySettingsId
         };

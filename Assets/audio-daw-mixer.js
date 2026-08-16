@@ -209,7 +209,7 @@ const AudioDawMixer = (() => {
         const soloBtn = document.createElement('button');
         soloBtn.className = 'daw-mixer-btn' + (track.soloed ? ' active-solo' : '');
         soloBtn.textContent = 'S';
-        soloBtn.title = 'Solo — only play this track';
+        soloBtn.title = 'Solo: only play this track';
         soloBtn.addEventListener('click', () => {
             track.soloed = !track.soloed;
             soloBtn.classList.toggle('active-solo', track.soloed);
@@ -249,7 +249,7 @@ const AudioDawMixer = (() => {
         lufs.textContent = '-∞ LU';
         loudRow.appendChild(lufs);
         const clipDot = createSpan(null, 'daw-master-clip');
-        clipDot.title = 'Master clip indicator — click to reset';
+        clipDot.title = 'Master clip indicator, click to reset';
         clipDot.addEventListener('click', () => clipDot.classList.remove('lit'));
         loudRow.appendChild(clipDot);
         strip.appendChild(loudRow);

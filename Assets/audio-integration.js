@@ -349,24 +349,38 @@ const ENGINE_CATEGORIES = [
 
 let audioLabEngineData = null;
 let audioLabRetryTimer = null;
+let audioLabRetriesLeft = 10;
 
-/** Loads engine list from the API and caches it. Retries if backend isn't ready. */
+/** Backend states that can still become RUNNING on their own. Anything else (ERRORED, DISABLED, ...) will
+ * not fix itself, so polling it forever just spams the API. */
+const AUDIOLAB_TRANSIENT_STATES = ['LOADING', 'WAITING'];
+
+/** Loads engine list from the API and caches it. Retries a bounded number of times while the backend is
+ * still coming up. */
 function audioLabLoadEngines(callback) {
     genericRequest('AudioLabListEngines', {}, data => {
-        if (data.success) {
-            audioLabEngineData = data.engines;
-            if (callback) callback(data.engines);
-            if (data.backend_status && data.backend_status !== 'RUNNING') {
-                if (!audioLabRetryTimer) {
-                    console.log(`[audiolab] Backend status: ${data.backend_status}, will retry in 3s`);
-                    audioLabRetryTimer = setTimeout(() => {
-                        audioLabRetryTimer = null;
-                        audioLabRefreshEngineManager();
-                    }, 3000);
-                }
-            }
-        } else {
+        if (!data.success) {
             console.error('[audiolab] Failed to load engines:', data);
+            return;
+        }
+        audioLabEngineData = data.engines;
+        if (callback) callback(data.engines);
+        const status = data.backend_status;
+        if (!status || status === 'RUNNING') {
+            audioLabRetriesLeft = 10;
+            return;
+        }
+        if (!AUDIOLAB_TRANSIENT_STATES.includes(status) || audioLabRetriesLeft <= 0) {
+            console.log(`[audiolab] Backend status: ${status}, no longer retrying.`);
+            return;
+        }
+        if (!audioLabRetryTimer) {
+            audioLabRetriesLeft--;
+            console.log(`[audiolab] Backend status: ${status}, will retry in 3s`);
+            audioLabRetryTimer = setTimeout(() => {
+                audioLabRetryTimer = null;
+                audioLabRefreshEngineManager();
+            }, 3000);
         }
     });
 }
@@ -382,8 +396,10 @@ function audioLabRenderEngineManager(container, engines) {
         const catEngines = engines.filter(e => e.category === cat.key);
         if (catEngines.length === 0) continue;
 
-        const installedCount = catEngines.filter(e => e.installed).length;
-        const countLabel = installedCount > 0 ? ` (${installedCount}/${catEngines.length} installed)` : ` (${catEngines.length})`;
+        // Count only engines you can actually install, so the tally doesn't include disabled cards.
+        const usable = catEngines.filter(e => e.available);
+        const installedCount = usable.filter(e => e.installed).length;
+        const countLabel = usable.length > 0 ? ` (${installedCount}/${usable.length} installed)` : ` (${catEngines.length})`;
         const catGroup = createDiv(null, 'audiolab-cat-group');
         const catHeader = createDiv(null, 'audiolab-cat-header');
         const arrow = document.createElement('span');
@@ -417,16 +433,19 @@ function audioLabRenderEngineManager(container, engines) {
 /** Builds a single engine card element. */
 function audioLabBuildEngineCard(engine) {
     const card = createDiv(null, 'audiolab-engine-card');
-    if (!engine.platform_compatible) card.classList.add('incompatible');
+    if (!engine.available) card.classList.add('incompatible');
 
     const cardHeader = createDiv(null, 'audiolab-engine-card-header');
     const status = createDiv(null, 'audiolab-engine-status-dot');
-    if (engine.installed) {
+    if (!engine.available) {
+        status.style.backgroundColor = 'var(--backend-disabled)';
+        status.title = engine.unavailable_note || 'Not available';
+    } else if (engine.installed) {
         status.style.backgroundColor = 'var(--backend-running)';
         status.title = 'Installed';
-    } else if (!engine.platform_compatible) {
-        status.style.backgroundColor = 'var(--backend-disabled)';
-        status.title = engine.platform_note || 'Not compatible';
+    } else {
+        status.style.backgroundColor = 'var(--backend-idle)';
+        status.title = 'Not installed';
     }
     cardHeader.appendChild(status);
     const nameSpan = document.createElement('span');
@@ -437,7 +456,7 @@ function audioLabBuildEngineCard(engine) {
         const apiBadge = document.createElement('span');
         apiBadge.className = 'audiolab-api-badge';
         apiBadge.innerText = 'API';
-        apiBadge.title = 'Cloud API — requires an API key, no local GPU needed';
+        apiBadge.title = 'Cloud API engine. Untested, so it is disabled for now.';
         cardHeader.appendChild(apiBadge);
     }
     card.appendChild(cardHeader);
@@ -460,15 +479,15 @@ function audioLabBuildEngineCard(engine) {
     }
 
     const footer = createDiv(null, 'audiolab-engine-card-footer');
-    if (!engine.platform_compatible) {
+    if (!engine.available) {
         const note = document.createElement('span');
-        note.style.cssText = 'color:var(--text-soft);font-size:0.8em';
-        note.innerText = 'Requires Docker';
+        note.style.cssText = 'color:var(--text-soft);font-size:0.8em;margin-right:auto';
+        note.innerText = engine.unavailable_note || 'Not available yet';
         footer.appendChild(note);
     } else if (engine.installed) {
 
-        // Checkpoint engines can hold several variants — let the user add/remove individual models.
-        const perModel = !engine.self_managed && !engine.is_api_provider && (engine.models || []).length > 1;
+        // Checkpoint engines can hold several variants, so let the user add or remove individual models.
+        const perModel = !engine.self_managed && (engine.models || []).length > 1;
         if (perModel) {
             const manageBtn = document.createElement('button');
             manageBtn.className = 'basic-button btn-primary';
@@ -495,20 +514,26 @@ function audioLabBuildEngineCard(engine) {
     return card;
 }
 
-/** Shows the install/manage modal for an engine. Checkpoint engines (non-API, non-self-managed) get a
- * per-model table with an Install/Remove button per variant plus Download All; API/self-managed engines
- * keep the simpler whole-engine confirm flow (their weights fetch on first use). */
+/** Shows the install/manage modal for an engine. Checkpoint engines (non-self-managed) get a per-model
+ * table with an Install/Remove button per variant plus Download All; self-managed engines keep the simpler
+ * whole-engine confirm flow (their weights fetch on first use). */
 function audioLabShowInstallModal(engine) {
+    // Disabled engines have no install path; the card shouldn't offer one, but guard anyway so a stale
+    // render can't open a modal whose buttons the server would refuse.
+    if (!engine.available) {
+        doNoticePopover(`${engine.name} is not available yet: ${engine.unavailable_note || ''}`.trim(), 'notice-pop-yellow');
+        return;
+    }
     const existingModal = document.getElementById('audiolab_install_modal');
     if (existingModal) existingModal.remove();
 
     const models = engine.models || [];
     const firstModel = models.length > 0 ? models[0] : {};
     // Per-model install only applies where the extension actually downloads discrete checkpoints.
-    const perModel = !engine.self_managed && !engine.is_api_provider && models.length > 0;
+    const perModel = !engine.self_managed && models.length > 0;
     const runtimeNoteHtml = engine.self_managed
-        ? `<p style="color:var(--text-soft);margin-top:0.5em">⚙ Runs on the HartsyInference C# engine — these models download automatically on first use, no install needed.</p>`
-        : (engine.in_process === false ? '' : `<p style="color:var(--text-soft);margin-top:0.5em">⚙ Runs on the HartsyInference C# engine — each model you install downloads its weights to disk.</p>`);
+        ? `<p style="color:var(--text-soft);margin-top:0.5em">⚙ Runs on the HartsyInference C# engine. These models download automatically on first use, no install needed.</p>`
+        : `<p style="color:var(--text-soft);margin-top:0.5em">⚙ Runs on the HartsyInference C# engine. Each model you install downloads its weights to disk.</p>`;
 
     let modelsListHtml = '';
     if (models.length > 0) {
@@ -534,7 +559,7 @@ function audioLabShowInstallModal(engine) {
     }
 
     const heading = perModel
-        ? `<b>Models (${models.length})</b> — install only what you need:`
+        ? `<b>Models (${models.length})</b>, install only what you need:`
         : `<b>Models to download (${models.length}):</b>`;
     const bodyHtml = `
         <div class="modal-body">
@@ -880,13 +905,11 @@ function audioLabConfirmUninstall(engine) {
     });
 }
 
-/** Repairs an engine whose weights are missing: clears the stale registration + any partial files, then
- * reopens the install flow (which re-downloads). */
-/** Refreshes the engine manager UI by reloading data from the API. */
+/** Refreshes every engine manager on the page by reloading data from the API. There is one per audio
+ * backend card, so this cannot assume a single element. */
 function audioLabRefreshEngineManager() {
     audioLabLoadEngines(engines => {
-        const container = document.getElementById('audiolab_engine_manager');
-        if (container) {
+        for (const container of document.querySelectorAll('.audiolab-engine-manager')) {
             audioLabRenderEngineManager(container, engines);
         }
     });
@@ -905,14 +928,16 @@ backendsRevisedCallbacks.push(() => {
         const cardBody = card.querySelector('.card-body');
         if (!cardBody) continue;
 
-        if (document.getElementById('audiolab_engine_manager')) continue;
+        // Per-card check: a second audio backend used to get no engine manager at all, because the guard
+        // looked for one shared id anywhere on the page.
+        if (cardBody.querySelector('.audiolab-engine-manager')) continue;
 
         const separator = document.createElement('hr');
         separator.style.borderColor = 'var(--border-color)';
         separator.style.margin = '1em 0';
         cardBody.appendChild(separator);
 
-        const container = createDiv('audiolab_engine_manager', 'audiolab-engine-manager');
+        const container = createDiv(`audiolab_engine_manager_${id}`, 'audiolab-engine-manager');
         container.innerHTML = '<em style="color:var(--text-soft)">Loading engines...</em>';
         cardBody.appendChild(container);
 

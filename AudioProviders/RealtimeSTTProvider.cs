@@ -18,8 +18,8 @@ public sealed class RealtimeSTTProvider : IAudioProviderSource
         .WithModelClass("realtimestt_stt", "RealtimeSTT")
         .AddFeatureFlag("audiolab_stt")
         .AddModels(Models)
-        .WithEngineGroup("linux_docker")
-        .WithRequiresDocker()
+        .WithEngineGroup("main")
+        .WithNotImplemented()
         .Build();
 
     #region Models

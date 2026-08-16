@@ -1,3 +1,4 @@
+using SwarmUI.Core;
 using SwarmUI.Utils;
 using System.IO;
 
@@ -78,11 +79,29 @@ public static class AudioConfiguration
     /// <summary>Root directory of the AudioLab extension.</summary>
     public static string ExtensionDirectory { get; set; } = "";
 
-    /// <summary>Root directory for audio model storage, centralized under Models/audio/.</summary>
+    /// <summary>Root directory for audio model storage. Set in AudioLab.OnPreInit to
+    /// "{Swarm ModelRoot}/audio"; the literal below is only a pre-init fallback.</summary>
     public static string ModelRoot { get; set; } = "Models/audio";
 
     /// <summary>Path for a specific model category (e.g. tts, stt, music).</summary>
     public static string GetModelPath(string category) => Path.Combine(Path.GetFullPath(ModelRoot), category);
+
+    /// <summary>Category folders created under <see cref="ModelRoot"/>.</summary>
+    private static readonly string[] Categories = ["tts", "stt", "music", "clone", "fx", ".cache"];
+
+    /// <summary>Points <see cref="ModelRoot"/> at "{Swarm ModelRoot}/audio" and makes sure the category
+    /// folders exist. There is deliberately no AudioLab-specific path setting: audio weights follow Swarm's
+    /// own Server Configuration -> Paths -> ModelRoot, so the two can't drift apart. Re-run on backend init so
+    /// a restart picks up a changed server setting.</summary>
+    public static void SyncModelRootFromServer()
+    {
+        ModelRoot = Path.Combine(Program.ServerSettings.Paths.ActualModelRoot, "audio");
+        string full = Path.GetFullPath(ModelRoot);
+        foreach (string sub in Categories)
+        {
+            Directory.CreateDirectory(Path.Combine(full, sub));
+        }
+    }
 
     #endregion
 }

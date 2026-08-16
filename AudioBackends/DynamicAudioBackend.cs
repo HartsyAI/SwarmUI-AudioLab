@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using FreneticUtilities.FreneticDataSyntax;
@@ -9,6 +10,9 @@ using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using Hartsy.Extensions.AudioLab.AudioServices;
 using Hartsy.Extensions.AudioLab.WebAPI.Models;
 using HartsyInference.Audio.Streaming;
+using HartsyInference.Cuda;
+using HartsyInference.Engine;
+using HartsyInference.Vulkan;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Backends;
 using SwarmUI.Core;
@@ -65,12 +69,155 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// <summary>Settings for the dynamic audio backend.</summary>
     public class DynamicAudioSettings : AutoConfiguration
     {
-        [ConfigComment("Audio model storage path. Models are cached here instead of ~/.cache/huggingface/.")]
-        public string AudioModelRoot = "Models/audio";
+        [ConfigComment("Which compute device audio models run on.\nThe list comes from the engine itself, so every compute backend it supports (CPU, CUDA, Vulkan, and whatever it gains later) shows up here, with one entry per GPU where the devices can be enumerated.\n'Auto' picks the best available, and is the right answer unless you are deliberately steering audio off a card another backend is using.\nGPU numbering is the engine's own enumeration (CUDA is fastest-first), which need not match nvidia-smi's order.\nCUDA entries only appear when a driver is present; Vulkan cannot be probed ahead of time, so a missing Vulkan driver only shows up when this backend starts.\nAudio shares one engine instance process-wide, so this is not really a per-backend choice: whichever audio backend initializes last before the first audio generation picks the device. Once audio has run, changing this needs a SwarmUI restart.\nRun one audio backend unless you know why you want two.")]
+        [SettingsOptions(Impl = typeof(AudioDeviceOptions))]
+        public string Device = "auto";
 
         [ConfigComment("Enable debug logging for audio processing.")]
         public bool DebugMode = false;
 
+    }
+
+    /// <summary>Builds the Device dropdown from whatever compute backends the engine reports
+    /// (<see cref="BackendFactory.ValidSelectors"/>) rather than a hardcoded list, so a backend the engine gains
+    /// later shows up here with no change to this file. Kinds that take a device ordinal are expanded per
+    /// device where they can be enumerated. Evaluated once, when the backend type is registered at startup.</summary>
+    public class AudioDeviceOptions : SettingsOptionsAttribute.AbstractImpl
+    {
+        // Cached: GetOptions and Names are queried separately, and two probes could disagree and misalign
+        // the value/label arrays. Also keeps startup to one driver query.
+        private static readonly Lazy<(string[] Vals, string[] Names)> _options = new(Build);
+
+        /// <summary>Friendly labels for the kinds we know about today. Anything the engine adds later falls
+        /// back to its own token, so an unknown kind is still selectable, just plainly named.</summary>
+        private static readonly Dictionary<string, string> KindLabels = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["auto"] = "Auto (best available)",
+            ["cpu"] = "CPU only (very slow)",
+            ["cuda"] = "CUDA (NVIDIA GPU)",
+            ["vulkan"] = "Vulkan (any GPU)",
+        };
+
+        private static (string[] Vals, string[] Names) Build()
+        {
+            List<string> vals = [];
+            List<string> names = [];
+            foreach (string kind in Guard(() => BackendFactory.ValidSelectors.ToList(), "backend list") ?? [])
+            {
+                // 'auto' accepts an ordinal too, but offering a device for a backend that hasn't been chosen
+                // yet is not a useful thing to put in front of a user.
+                bool perDevice = !kind.Equals("auto", StringComparison.OrdinalIgnoreCase) && TakesDeviceOrdinal(kind);
+                List<(int Ordinal, string Label)> devices = perDevice ? DevicesFor(kind) : [];
+                if (devices.Count == 0)
+                {
+                    AddIfUsable(vals, names, kind, KindLabels.TryGetValue(kind, out string label) ? label : kind);
+                    continue;
+                }
+                foreach ((int ordinal, string deviceLabel) in devices)
+                {
+                    AddIfUsable(vals, names, $"{kind}:{ordinal}", deviceLabel);
+                }
+            }
+            if (vals.Count == 0)
+            {
+                // Nothing validated (no engine, no driver). 'auto' always resolves, so never ship an empty list.
+                vals.Add("auto");
+                names.Add(KindLabels["auto"]);
+            }
+            return ([.. vals], [.. names]);
+        }
+
+        /// <summary>Adds a selector only if the engine agrees it could be built here, which is how a CUDA entry
+        /// disappears on a machine with no NVIDIA driver. Vulkan has no cheap availability probe engine-side, so
+        /// it always passes and a missing driver surfaces when the backend starts.</summary>
+        private static void AddIfUsable(List<string> vals, List<string> names, string selector, string label)
+        {
+            if (Guard(() => { BackendFactory.Validate(selector); return true; }, $"validate '{selector}'"))
+            {
+                vals.Add(selector);
+                names.Add(label);
+            }
+        }
+
+        /// <summary>Whether this backend kind selects a device, asked of the engine rather than assumed, so a
+        /// future device backend is expanded per device automatically. Its own quiet try/catch: a throw here is
+        /// the answer "no" (as CPU gives every startup), not a fault worth logging.</summary>
+        private static bool TakesDeviceOrdinal(string kind)
+        {
+            try
+            {
+                BackendFactory.WithOrdinal(kind, 1);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>Enumerates the devices of one backend kind, as (ordinal, display label). Empty when the kind
+        /// has no enumeration path, in which case the caller offers the bare kind and lets the engine pick.</summary>
+        private static List<(int, string)> DevicesFor(string kind) => kind.ToLowerInvariant() switch
+        {
+            "cuda" => Guard(ProbeCuda, "CUDA device probe") ?? [],
+            "vulkan" => Guard(ProbeVulkan, "Vulkan device probe") ?? [],
+            _ => [],
+        };
+
+        /// <summary>CUDA ordinals come from the engine's own enumeration, so they match what the selector means
+        /// (fastest-first), not nvidia-smi's PCI order.</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static List<(int, string)> ProbeCuda()
+            => [.. CudaTopology.Probe().Select(g => (g.Ordinal,
+                g.TotalMemoryBytes > 0
+                    ? $"GPU {g.Ordinal}: {g.Name} ({g.TotalMemoryBytes / 1073741824.0:0.#} GB)"
+                    : $"GPU {g.Ordinal}: {g.Name}"))];
+
+        /// <summary>Vulkan has no cheap topology query, so each physical device is opened briefly to read its
+        /// name. Guarded per device: one that refuses to open costs its label, not the whole list.</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static List<(int, string)> ProbeVulkan()
+        {
+            using VulkanInstance instance = new();
+            int count = instance.EnumeratePhysicalDevices().Length;
+            List<(int, string)> devices = [];
+            for (int ordinal = 0; ordinal < count; ordinal++)
+            {
+                int index = ordinal;
+                devices.Add((index, Guard(() => DescribeVulkanDevice(instance, index), $"Vulkan device {index}")
+                    ?? $"Vulkan device {index}"));
+            }
+            return devices;
+        }
+
+        /// <summary>Label for one Vulkan physical device. Software rasterizers (llvmpipe and friends) enumerate
+        /// as ordinary Vulkan devices, so they are named as such: picking one silently makes audio glacial.</summary>
+        private static string DescribeVulkanDevice(VulkanInstance instance, int ordinal)
+        {
+            using VulkanDevice device = VulkanDevice.Create(instance, ordinal);
+            VulkanCapabilities caps = device.Capabilities;
+            string software = caps.DeviceType == VkPhysicalDeviceType.Cpu ? ", software" : "";
+            return $"Vulkan {ordinal}: {caps.DeviceName} ({caps.TotalVramBytes / 1073741824.0:0.#} GB{software})";
+        }
+
+        /// <summary>Runs an engine query that must never take the whole backend registration down with it, and
+        /// which may touch an assembly or driver that isn't present. Returns default on failure.</summary>
+        private static T Guard<T>(Func<T> probe, string what)
+        {
+            try
+            {
+                return probe();
+            }
+            catch (Exception ex)
+            {
+                Logs.Debug($"[AudioLab] Device dropdown: {what} failed ({ex.Message}).");
+                return default;
+            }
+        }
+
+        public override string[] GetOptions => _options.Value.Vals;
+
+        public override string[] Names => _options.Value.Names;
     }
 
     /// <summary>Maps AudioCategory enum to category-level feature flag names.</summary>
@@ -137,8 +284,35 @@ public class DynamicAudioBackend : AbstractT2IBackend
         Status = BackendStatus.LOADING;
     }
 
-    /// <summary>Initializes the backend — loads installed engines config,
-    /// registers models for installed engines, and starts Python servers.</summary>
+    /// <summary>Pushes the configured compute device to the shared engine, failing the backend loudly on a bad
+    /// selector instead of letting it die mid-generation. Returns false when the backend was set to ERRORED.</summary>
+    private bool ApplyDeviceSetting()
+    {
+        string device = string.IsNullOrWhiteSpace(Settings?.Device) ? "auto" : Settings.Device.Trim();
+        try
+        {
+            BackendFactory.Validate(device);
+        }
+        catch (Exception ex)
+        {
+            Status = BackendStatus.ERRORED;
+            AddLoadStatus($"Device '{device}' cannot be used: {ex.Message}");
+            Logs.Error($"[AudioLab] Audio backend device '{device}' is unusable: {ex.Message}");
+            return false;
+        }
+        string inUse = AudioEngineBridge.RequestDevice(device);
+        if (inUse is not null)
+        {
+            // The engine is a process-wide singleton, already built by an earlier generation, so it cannot be
+            // retargeted now. Say so rather than silently running on the wrong card.
+            AddLoadStatus($"Audio is already running on '{inUse}', so '{device}' will not take effect until SwarmUI restarts.");
+            Logs.Warning($"[AudioLab] Audio engine already built for '{inUse}', ignoring requested device '{device}'. Restart SwarmUI to change it.");
+        }
+        return true;
+    }
+
+    /// <summary>Initializes the backend: syncs the model root, applies the device setting, loads the installed
+    /// engines config and registers their models. Nothing is launched, since generation runs in-process.</summary>
     public override async Task Init()
     {
         Status = BackendStatus.LOADING;
@@ -152,9 +326,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
         Program.ModelRefreshEvent -= ReRegisterModelsAfterRefresh;
 
-        if (!string.IsNullOrEmpty(Settings.AudioModelRoot))
+        // Re-read on every init so restarting this backend picks up a changed server ModelRoot.
+        AudioConfiguration.SyncModelRootFromServer();
+
+        if (!ApplyDeviceSetting())
         {
-            AudioConfiguration.ModelRoot = Settings.AudioModelRoot;
+            return;
         }
 
         LoadInstalledEnginesConfig();
@@ -170,11 +347,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     continue;
                 }
 
-                // Legacy Docker/Python engines aren't ported to the in-process C# engine, so they can't run
-                // in this build — skip them rather than register a provider that would fail on use.
-                if (definition.RequiresDocker)
+                // Engines with no C# implementation, and every cloud API engine (all untested, so all held
+                // back), can't run in this build. Skip a stale saved install rather than register a provider
+                // that would fail on use.
+                if (definition.NotImplemented || definition.IsApiProvider)
                 {
-                    Logs.Warning($"[AudioLab] {definition.Name} is a legacy Docker-based engine, not available in the in-process build — skipping.");
+                    string why = definition.NotImplemented ? "not built in the C# engine yet" : "a cloud API engine, currently disabled";
+                    Logs.Warning($"[AudioLab] Skipping installed provider {definition.Name}: {why}.");
                     continue;
                 }
 
@@ -225,7 +404,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             }
             else
             {
-                Logs.Info("[AudioLab] Audio backend initialized. No engines installed yet — use the backend settings to install engines.");
+                Logs.Info("[AudioLab] Audio backend initialized. No engines installed yet. Use the backend settings to install engines.");
             }
         }
         catch (Exception ex)
@@ -372,11 +551,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
         if (!provider.IsApiProvider && !AudioEngineBridge.ProviderManagesOwnWeights(provider.Id)
             && !AudioEngineBridge.WeightsPresent(provider.Id, modelDef?.Id))
         {
-            Logs.Debug($"[AudioLab] '{provider.Name}' has no weights on disk — resetting it to not-installed.");
+            Logs.Debug($"[AudioLab] '{provider.Name}' has no weights on disk, resetting it to not-installed.");
             UnregisterEngine(provider.Id, deleteWeights: false);
             takeOutput(new JObject
             {
-                ["error"] = $"{provider.Name} is not installed — its weights are not on disk. Install it from the Audio backend settings and try again."
+                ["error"] = $"{provider.Name} is not installed: its weights are not on disk. Install it from the Audio backend settings and try again."
             });
             return;
         }
@@ -793,7 +972,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             return;
         }
         Logs.Info($"[AudioLab] Switching to '{modelName}' needs ~{required / 1073741824.0:0.0}GB but only "
-            + $"{freeBytes / 1073741824.0:0.0}GB VRAM is free — releasing resident audio models first.");
+            + $"{freeBytes / 1073741824.0:0.0}GB VRAM is free, releasing resident audio models first.");
         AudioEngineBridge.Unload(providerId, modelDef?.Id);
     }
 
@@ -840,7 +1019,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             if (!estimate.Contains("CPU", StringComparison.OrdinalIgnoreCase)
                 && !estimate.Contains("None", StringComparison.OrdinalIgnoreCase))
             {
-                Logs.Warning($"[AudioLab] Unparseable EstimatedVram '{estimate}' — VRAM headroom checking is disabled for that model. Use a form like \"~4GB\".");
+                Logs.Warning($"[AudioLab] Unparseable EstimatedVram '{estimate}': VRAM headroom checking is disabled for that model. Use a form like \"~4GB\".");
             }
             return 0;
         }
@@ -918,7 +1097,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             // Engine-backed providers run in-process via the HartsyInference C# engine — no venv, no pip,
             // no Python server. This is the migration path; it takes precedence over the Python provisioning
             // below whenever the engine boundary advertises support for the provider.
-            bool engineBacked = !definition.IsApiProvider && !definition.RequiresDocker
+            bool engineBacked = !definition.IsApiProvider && !definition.NotImplemented
                 && AudioEngineBridge.IsProviderSupported(definition.Id);
 
             if (engineBacked)
@@ -972,7 +1151,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     bool registered = await AudioWeights.EnsureProviderWeightsAsync(definition, onProgress, cancel, installModel);
                     if (!registered)
                     {
-                        await AudioWeights.Report(onProgress, $"No auto-download is registered for {definition.Name} yet — place its .safetensors in {AudioWeights.WeightsDirectory(definition)} to enable it.");
+                        await AudioWeights.Report(onProgress, $"No auto-download is registered for {definition.Name} yet. Place its .safetensors in {AudioWeights.WeightsDirectory(definition)} to enable it.");
                     }
                 }
             }
@@ -980,7 +1159,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             {
                 // API providers use external cloud APIs — no venv, no deps, no model downloads needed.
                 // The lightweight "api" group server starts lazily on first request via EnsureGroupRunningAsync.
-                await AudioWeights.Report(onProgress, $"Registering {definition.Name} (cloud API — no local setup needed)...");
+                await AudioWeights.Report(onProgress, $"Registering {definition.Name} (cloud API, no local setup needed)...");
             }
             else
             {
@@ -1124,7 +1303,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
         HashSet<string> mine = WeightLocationsForProvider(providerId, definition);
         if (mine.Count == 0)
         {
-            Logs.Info($"[AudioLab] No deletable weight locations known for '{providerId}' — nothing removed.");
+            Logs.Info($"[AudioLab] No deletable weight locations known for '{providerId}', nothing removed.");
             return;
         }
         // Release any resident pipeline holding these files before deleting.
@@ -1192,7 +1371,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
         if (mine.Count == 0)
         {
-            Logs.Info($"[AudioLab] No deletable weight locations known for '{providerId}/{modelId}' — nothing removed.");
+            Logs.Info($"[AudioLab] No deletable weight locations known for '{providerId}/{modelId}', nothing removed.");
             return;
         }
         // Release any resident pipeline holding this model's files before deleting.
@@ -1312,7 +1491,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             }
             if (!anyPresent)
             {
-                Logs.Debug($"[AudioLab] '{def.Name}' has no weights on disk — resetting it to not-installed.");
+                Logs.Debug($"[AudioLab] '{def.Name}' has no weights on disk, resetting it to not-installed.");
                 UnregisterEngine(providerId, deleteWeights: false);
             }
         }

@@ -696,7 +696,7 @@ public static class AudioLabParams
 
         #region Voice Reference Shared
         ReferenceAudio = T2IParamTypes.Register<AudioFile>(new("Reference Audio",
-            "Reference audio clip for voice cloning.\nOptional — uses default voice when not provided.",
+            "Reference audio clip for voice cloning.\nOptional; uses the default voice when not provided.",
             null,
             OrderPriority: -10, Group: VoiceRefGroup, FeatureFlag: "tts_voice_ref"));
 
@@ -758,60 +758,60 @@ public static class AudioLabParams
             "Voice to synthesize with. The first letter is the language (a=American, b=British, j=Japanese, z=Mandarin, e=Spanish, f=French, h=Hindi, i=Italian, p=Portuguese); the second is f=female / m=male.\nAll 54 official voices from the model card are listed.",
             "af_heart",
             GetValues: _ => [
-                "af_heart///American English — Heart (F)",
-                "af_alloy///American English — Alloy (F)",
-                "af_aoede///American English — Aoede (F)",
-                "af_bella///American English — Bella (F)",
-                "af_jessica///American English — Jessica (F)",
-                "af_kore///American English — Kore (F)",
-                "af_nicole///American English — Nicole (F)",
-                "af_nova///American English — Nova (F)",
-                "af_river///American English — River (F)",
-                "af_sarah///American English — Sarah (F)",
-                "af_sky///American English — Sky (F)",
-                "am_adam///American English — Adam (M)",
-                "am_echo///American English — Echo (M)",
-                "am_eric///American English — Eric (M)",
-                "am_fenrir///American English — Fenrir (M)",
-                "am_liam///American English — Liam (M)",
-                "am_michael///American English — Michael (M)",
-                "am_onyx///American English — Onyx (M)",
-                "am_puck///American English — Puck (M)",
-                "am_santa///American English — Santa (M)",
-                "bf_alice///British English — Alice (F)",
-                "bf_emma///British English — Emma (F)",
-                "bf_isabella///British English — Isabella (F)",
-                "bf_lily///British English — Lily (F)",
-                "bm_daniel///British English — Daniel (M)",
-                "bm_fable///British English — Fable (M)",
-                "bm_george///British English — George (M)",
-                "bm_lewis///British English — Lewis (M)",
-                "jf_alpha///Japanese — Alpha (F)",
-                "jf_gongitsune///Japanese — Gongitsune (F)",
-                "jf_nezumi///Japanese — Nezumi (F)",
-                "jf_tebukuro///Japanese — Tebukuro (F)",
-                "jm_kumo///Japanese — Kumo (M)",
-                "zf_xiaobei///Mandarin — Xiaobei (F)",
-                "zf_xiaoni///Mandarin — Xiaoni (F)",
-                "zf_xiaoxiao///Mandarin — Xiaoxiao (F)",
-                "zf_xiaoyi///Mandarin — Xiaoyi (F)",
-                "zm_yunjian///Mandarin — Yunjian (M)",
-                "zm_yunxi///Mandarin — Yunxi (M)",
-                "zm_yunxia///Mandarin — Yunxia (M)",
-                "zm_yunyang///Mandarin — Yunyang (M)",
-                "ef_dora///Spanish — Dora (F)",
-                "em_alex///Spanish — Alex (M)",
-                "em_santa///Spanish — Santa (M)",
-                "ff_siwis///French — Siwis (F)",
-                "hf_alpha///Hindi — Alpha (F)",
-                "hf_beta///Hindi — Beta (F)",
-                "hm_omega///Hindi — Omega (M)",
-                "hm_psi///Hindi — Psi (M)",
-                "if_sara///Italian — Sara (F)",
-                "im_nicola///Italian — Nicola (M)",
-                "pf_dora///Brazilian Portuguese — Dora (F)",
-                "pm_alex///Brazilian Portuguese — Alex (M)",
-                "pm_santa///Brazilian Portuguese — Santa (M)"
+                "af_heart///American English: Heart (F)",
+                "af_alloy///American English: Alloy (F)",
+                "af_aoede///American English: Aoede (F)",
+                "af_bella///American English: Bella (F)",
+                "af_jessica///American English: Jessica (F)",
+                "af_kore///American English: Kore (F)",
+                "af_nicole///American English: Nicole (F)",
+                "af_nova///American English: Nova (F)",
+                "af_river///American English: River (F)",
+                "af_sarah///American English: Sarah (F)",
+                "af_sky///American English: Sky (F)",
+                "am_adam///American English: Adam (M)",
+                "am_echo///American English: Echo (M)",
+                "am_eric///American English: Eric (M)",
+                "am_fenrir///American English: Fenrir (M)",
+                "am_liam///American English: Liam (M)",
+                "am_michael///American English: Michael (M)",
+                "am_onyx///American English: Onyx (M)",
+                "am_puck///American English: Puck (M)",
+                "am_santa///American English: Santa (M)",
+                "bf_alice///British English: Alice (F)",
+                "bf_emma///British English: Emma (F)",
+                "bf_isabella///British English: Isabella (F)",
+                "bf_lily///British English: Lily (F)",
+                "bm_daniel///British English: Daniel (M)",
+                "bm_fable///British English: Fable (M)",
+                "bm_george///British English: George (M)",
+                "bm_lewis///British English: Lewis (M)",
+                "jf_alpha///Japanese: Alpha (F)",
+                "jf_gongitsune///Japanese: Gongitsune (F)",
+                "jf_nezumi///Japanese: Nezumi (F)",
+                "jf_tebukuro///Japanese: Tebukuro (F)",
+                "jm_kumo///Japanese: Kumo (M)",
+                "zf_xiaobei///Mandarin: Xiaobei (F)",
+                "zf_xiaoni///Mandarin: Xiaoni (F)",
+                "zf_xiaoxiao///Mandarin: Xiaoxiao (F)",
+                "zf_xiaoyi///Mandarin: Xiaoyi (F)",
+                "zm_yunjian///Mandarin: Yunjian (M)",
+                "zm_yunxi///Mandarin: Yunxi (M)",
+                "zm_yunxia///Mandarin: Yunxia (M)",
+                "zm_yunyang///Mandarin: Yunyang (M)",
+                "ef_dora///Spanish: Dora (F)",
+                "em_alex///Spanish: Alex (M)",
+                "em_santa///Spanish: Santa (M)",
+                "ff_siwis///French: Siwis (F)",
+                "hf_alpha///Hindi: Alpha (F)",
+                "hf_beta///Hindi: Beta (F)",
+                "hm_omega///Hindi: Omega (M)",
+                "hm_psi///Hindi: Psi (M)",
+                "if_sara///Italian: Sara (F)",
+                "im_nicola///Italian: Nicola (M)",
+                "pf_dora///Brazilian Portuguese: Dora (F)",
+                "pm_alex///Brazilian Portuguese: Alex (M)",
+                "pm_santa///Brazilian Portuguese: Santa (M)"
             ],
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "kokoro_tts_params"));
 
@@ -1141,7 +1141,7 @@ public static class AudioLabParams
 
         #region TTS — CosyVoice
         CosyVoiceVoice = T2IParamTypes.Register<string>(new("CosyVoice Voice",
-            "Preset speaker. NOTE: these presets belong to the CosyVoice-300M-SFT checkpoint.\nThe shipped CosyVoice2-0.5B has no built-in presets and works zero-shot — supply a Reference Audio clip and its transcript instead; this selection is ignored.",
+            "Preset speaker. NOTE: these presets belong to the CosyVoice-300M-SFT checkpoint.\nThe shipped CosyVoice2-0.5B has no built-in presets and works zero-shot. Supply a Reference Audio clip and its transcript instead; this selection is ignored.",
             "中文女",
             GetValues: _ => [
                 "中文女///Chinese Female", "中文男///Chinese Male",
@@ -1231,7 +1231,7 @@ public static class AudioLabParams
             OrderPriority: -7, Group: STTGroup, FeatureFlag: "whisper_stt_params", IsAdvanced: true));
 
         WhisperInitialPrompt = T2IParamTypes.Register<string>(new("Whisper Initial Prompt",
-            "Optional text to bias vocabulary and spelling — useful for names, jargon and acronyms.",
+            "Optional text to bias vocabulary and spelling, useful for names, jargon and acronyms.",
             "",
             OrderPriority: -6, Group: STTGroup, FeatureFlag: "whisper_stt_params", IsAdvanced: true));
 
@@ -1321,7 +1321,7 @@ public static class AudioLabParams
             OrderPriority: -10, Group: STTGroup, FeatureFlag: "google_stt_params"));
 
         OpenAISTTPrompt = T2IParamTypes.Register<string>(new("Transcription Prompt",
-            "Optional text biasing the transcript's vocabulary and spelling — names, jargon, acronyms.",
+            "Optional text biasing the transcript's vocabulary and spelling: names, jargon, acronyms.",
             "",
             OrderPriority: -10, Group: STTGroup, FeatureFlag: "openai_stt_params"));
 
@@ -1329,7 +1329,7 @@ public static class AudioLabParams
 
         #region TTS — Cloud voice/style extras
         OpenAIVoice = T2IParamTypes.Register<string>(new("OpenAI Voice",
-            "Voice for OpenAI text-to-speech. All 13 documented voices are listed.\ntts-1 and tts-1-hd support only 9 of them — ballad, marin and cedar are gpt-4o-mini-tts only.",
+            "Voice for OpenAI text-to-speech. All 13 documented voices are listed.\ntts-1 and tts-1-hd support only 9 of them; ballad, marin and cedar are gpt-4o-mini-tts only.",
             "alloy",
             GetValues: _ => [
                 "alloy///Alloy",
@@ -1459,7 +1459,7 @@ public static class AudioLabParams
             OrderPriority: -7, Group: TTSGroup, FeatureFlag: "playht_tts_params"));
 
         DolbyPreset = T2IParamTypes.Register<string>(new("Dolby Enhance Preset",
-            "Dolby.io Media Enhance content.type preset.\nNOTE: the public Media Enhance reference is currently unreachable, so this list could not be verified — an unsupported value will be rejected by the API.",
+            "Dolby.io Media Enhance content.type preset.\nNOTE: the public Media Enhance reference is currently unreachable, so this list could not be verified. An unsupported value will be rejected by the API.",
             "voice_over",
             GetValues: _ => [
                 "voice_over///Voice Over", "conference///Conference", "interview///Interview",
@@ -1496,7 +1496,7 @@ public static class AudioLabParams
             OrderPriority: -10, Group: TTSGroup, FeatureFlag: "polly_tts_params"));
 
         PollyVoice = T2IParamTypes.Register<string>(new("Polly Voice",
-            "Polly voice id. Each voice supports only some engines — the label lists which, so pair them correctly.",
+            "Polly voice id. Each voice supports only some engines. The label lists which, so pair them correctly.",
             "Joanna",
             GetValues: _ => [
                 "Joanna///Joanna (en-US F, neural/standard/generative)",
@@ -1572,7 +1572,7 @@ public static class AudioLabParams
             "Song lyrics for ACE-Step. Put one section tag on its own line, then that section's lines under it:\n"
             + "  [verse] [chorus] [bridge] [intro] [outro]\n"
             + "Use [Instrumental] (or leave empty) for an instrumental-only track.\n\n"
-            + "GENRE / STYLE goes in the main Prompt box (NOT here), as COMMA-separated tags —\n"
+            + "GENRE / STYLE goes in the main Prompt box (NOT here), as COMMA-separated tags:\n"
             + "genre, mood, instruments, vocals, tempo. Example:\n"
             + "  pop, electronic, upbeat, female vocals, catchy melody, 120 bpm\n\n"
             + "EXAMPLE lyrics:\n  [Verse]\n  first verse lines\n  [Chorus]\n  the hook",
@@ -1588,7 +1588,7 @@ public static class AudioLabParams
             OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "acestep_music_params", IsAdvanced: true));
 
         ACEGuidanceScale = T2IParamTypes.Register<double>(new("ACE Guidance",
-            "Classifier-free guidance scale (documented range 1.0-15.0, default 7.0).\nNot shown for Turbo checkpoints — they bake guidance into distillation and run without CFG.",
+            "Classifier-free guidance scale (documented range 1.0-15.0, default 7.0).\nNot shown for Turbo checkpoints, which bake guidance into distillation and run without CFG.",
             "7.0",
             Min: 1.0, Max: 15.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
             OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "acestep_cfg_params", IsAdvanced: true));
@@ -1683,13 +1683,13 @@ public static class AudioLabParams
             OrderPriority: 2, Group: AudioGenGroup, FeatureFlag: "acestep_music_params", IsAdvanced: true));
 
         CFGIntervalStart = T2IParamTypes.Register<double>(new("CFG Interval Start",
-            "Start of the CFG application interval.\n0.0 = apply from beginning of denoising.\nNot shown for Turbo checkpoints — they run without CFG.",
+            "Start of the CFG application interval.\n0.0 = apply from beginning of denoising.\nNot shown for Turbo checkpoints, which run without CFG.",
             "0.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
             OrderPriority: 3, Group: AudioGenGroup, FeatureFlag: "acestep_cfg_params", IsAdvanced: true));
 
         CFGIntervalEnd = T2IParamTypes.Register<double>(new("CFG Interval End",
-            "End of the CFG application interval.\n1.0 = apply through end of denoising.\nNot shown for Turbo checkpoints — they run without CFG.",
+            "End of the CFG application interval.\n1.0 = apply through end of denoising.\nNot shown for Turbo checkpoints, which run without CFG.",
             "1.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
             OrderPriority: 4, Group: AudioGenGroup, FeatureFlag: "acestep_cfg_params", IsAdvanced: true));
@@ -1767,7 +1767,7 @@ public static class AudioLabParams
         #region Music — ACE-Step Tasks
         ACETaskType = T2IParamTypes.Register<string>(new("Task Type",
             "ACE-Step generation task type.\ntext2music = generate from prompt. cover = style transfer.\nrepaint = regenerate a section. complete = extend/continue."
-            + "\n'Extract Elements' and 'Lego (Combine)' are not listed — the Engine has no implementation for either yet (would silently fall back to plain text2music instead of erroring, which is worse than not offering them).",
+            + "\n'Extract Elements' and 'Lego (Combine)' are not listed, because the Engine has no implementation for either yet (would silently fall back to plain text2music instead of erroring, which is worse than not offering them).",
             "text2music",
             GetValues: _ => [
                 "text2music///Text to Music", "cover///Cover (Style Transfer)",
@@ -1822,9 +1822,9 @@ public static class AudioLabParams
 
         #region Music — YuE
         YuELyrics = T2IParamTypes.Register<string>(new("YuE Lyrics",
-            "Song lyrics for YuE. Structure them with SECTION MARKERS — each becomes its own generated segment:\n"
+            "Song lyrics for YuE. Structure them with SECTION MARKERS. Each becomes its own generated segment:\n"
             + "  [verse] [chorus] [bridge] [intro] [outro]\n"
-            + "Put one section tag on its own line, then that section's lines under it. Required — un-tagged\n"
+            + "Put one section tag on its own line, then that section's lines under it. Required, since un-tagged\n"
             + "lyrics are treated as a single verse and tend to drift.\n\n"
             + "GENRE / STYLE goes in the main Prompt box (NOT here), as SPACE-separated tags (NO commas),\n"
             + "recommended order: genre, instrument, mood, gender, timbre. Example:\n"
@@ -1885,7 +1885,7 @@ public static class AudioLabParams
             + "SECTION MARKERS (only these 6 are recognized):\n"
             + "  [Intro] [Verse] [Prechorus] [Chorus] [Bridge] [Outro]\n"
             + "Repeat markers for multiple sections (e.g. two [Verse] blocks), do NOT number them ([Verse 1] won't work).\n"
-            + "[Prechorus] is heavily used in training data — include it if your song has a pre-chorus.\n\n"
+            + "[Prechorus] is heavily used in training data, so include it if your song has a pre-chorus.\n\n"
             + "INSTRUMENTAL SECTIONS:\n"
             + "  Use <||> under a section marker for sections without vocals.\n"
             + "  (Instrumental) is NOT recognized.\n\n"
@@ -1893,7 +1893,7 @@ public static class AudioLabParams
             + "  - All text is lowercased internally, capitalization doesn't matter.\n"
             + "  - No inline controls for emphasis, yelling, pauses, or dynamics.\n"
             + "  - Vocal style is controlled globally via tags (Prompt), not lyrics.\n\n"
-            + "GENRE / STYLE goes in the main Prompt box (NOT here) — genre, mood, instruments, and vocal\n"
+            + "GENRE / STYLE goes in the main Prompt box (NOT here): genre, mood, instruments, and vocal\n"
             + "  style tags, e.g. 'pop, energetic, female vocal, bright synths, driving drums'.\n\n"
             + "EXAMPLE:\n"
             + "  [Intro]\n  <||>\n  [Verse]\n  your lyrics here\n  [Prechorus]\n  building up\n"
@@ -1932,12 +1932,12 @@ public static class AudioLabParams
             + "  model's input contract, so '[Verse] first line' loses 'first line' entirely.\n"
             + "  Repeat tags for multiple sections; do not number them.\n\n"
             + "THE MUSIC DESCRIPTION goes in the main Prompt box, not here. For the best results use the\n"
-            + "  Structured Caption the model card recommends — three sections, in this order:\n"
+            + "  Structured Caption the model card recommends, in three sections, in this order:\n"
             + "    Global Metadata: genre, bpm, key, scale, emotional progression, production profile\n"
             + "    Vocal Details: gender, timbre, performance style, harmonies, vocal FX\n"
             + "    Arrangement: primary/secondary instruments, groove, textures, spatial FX\n"
             + "  A plain one-line description works too, with less control.\n\n"
-            + "AUTOMATIC: a leading [start] is added for you and every tag is lowercased — do not type either.",
+            + "AUTOMATIC: a leading [start] is added for you and every tag is lowercased, so do not type either.",
             "",
             Examples: [
                 "[verse]\nMorning light filtering through the pine\n[chorus]\nSoftly the world begins to breathe",
@@ -2072,7 +2072,7 @@ public static class AudioLabParams
             OrderPriority: -4, Group: AudioProcGroup, FeatureFlag: "resemble_enhance_fx_params", IsAdvanced: true));
 
         EnhanceLambda = T2IParamTypes.Register<double>(new("Lambda (Denoise Blend)",
-            "How much the denoiser output is blended in before enhancement.\nThis is NOT the temperature — that is Tau.",
+            "How much the denoiser output is blended in before enhancement.\nThis is NOT the temperature; that is Tau.",
             "0.1",
             Min: 0.0, Max: 1.0, Step: 0.01, ViewType: ParamViewType.SLIDER,
             OrderPriority: -3, Group: AudioProcGroup, FeatureFlag: "resemble_enhance_fx_params", IsAdvanced: true));

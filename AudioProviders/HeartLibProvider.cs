@@ -30,18 +30,18 @@ public sealed class HeartLibProvider : IAudioProviderSource
     // GGUF cache on first generation; the `quant` EngineConfig key + the `-q8`/`-q4` id suffix carry the choice.
     private static AudioModelDefinition[] Models =>
     [
-        .. Variants("3b-hny",  "Happy New Year", "HeartMuLa/HeartMuLa-oss-3B-happy-new-year", "latest and best HeartMuLa model — best lyrics controllability and music quality"),
-        .. Variants("3b-base", "Base",           "HeartMuLa/HeartMuLa-oss-3B",                 "original HeartMuLa release — solid music generation quality"),
-        .. Variants("3b-rl",   "RL-Tuned",       "HeartMuLa/HeartMuLa-RL-oss-3B-20260123",     "RL-optimized variant — improved output quality via DPO training"),
+        .. Variants("3b-hny",  "Happy New Year", "HeartMuLa/HeartMuLa-oss-3B-happy-new-year", "latest and best HeartMuLa model, with the best lyrics controllability and music quality"),
+        .. Variants("3b-base", "Base",           "HeartMuLa/HeartMuLa-oss-3B",                 "original HeartMuLa release, solid music generation quality"),
+        .. Variants("3b-rl",   "RL-Tuned",       "HeartMuLa/HeartMuLa-RL-oss-3B-20260123",     "RL-optimized variant, improved output quality via DPO training"),
     ];
 
     private static IEnumerable<AudioModelDefinition> Variants(string baseId, string label, string repo, string blurb)
     {
         yield return Make(baseId, $"HeartMuLa 3B ({label})", repo, null,
             $"4B params, {blurb}. Full bf16 precision. ~12GB VRAM (lazy load) or ~16GB (full load).", "~12GB", "~12GB (lazy load)");
-        yield return Make($"{baseId}-q8", $"HeartMuLa 3B ({label}) — Q8 (faster, ½ VRAM)", repo, "q8_0",
+        yield return Make($"{baseId}-q8", $"HeartMuLa 3B ({label}) Q8 (faster, ½ VRAM)", repo, "q8_0",
             $"4B params, {blurb}. Q8 quantized: ~1.4× faster + ~half the VRAM, near-lossless. Converted once to a local cache on first use.", "~12GB download / ~4.5GB cache", "~7GB");
-        yield return Make($"{baseId}-q4", $"HeartMuLa 3B ({label}) — Q4 (smallest)", repo, "q4_k",
+        yield return Make($"{baseId}-q4", $"HeartMuLa 3B ({label}) Q4 (smallest)", repo, "q4_k",
             $"4B params, {blurb}. Q4 quantized: smallest + fastest, some quality loss. Converted once to a local cache on first use.", "~12GB download / ~2.5GB cache", "~4GB");
     }
 
