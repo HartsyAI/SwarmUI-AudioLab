@@ -66,7 +66,7 @@
          DynamicAudioBackend.GenerateLiveNativeStreaming for the first `tts_streaming`-flagged model
          (Kyutai TTS). Packed to the local feed (`hartsy-local-nuget`) 2026-08-09; not yet pushed to
          nuget.org (that requires a git push in the read-only-git engine repo, left to the user). -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.22" />
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.23" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
