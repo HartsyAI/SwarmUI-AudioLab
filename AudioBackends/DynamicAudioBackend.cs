@@ -72,10 +72,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
         [ConfigComment("Which compute device audio models run on.\nThe list comes from the engine itself, so every compute backend it supports (CPU, CUDA, Vulkan, and whatever it gains later) shows up here, with one entry per GPU where the devices can be enumerated.\n'Auto' picks the best available, and is the right answer unless you are deliberately steering audio off a card another backend is using.\nGPU numbering is the engine's own enumeration (CUDA is fastest-first), which need not match nvidia-smi's order.\nCUDA entries only appear when a driver is present; Vulkan cannot be probed ahead of time, so a missing Vulkan driver only shows up when this backend starts.\nAudio shares one engine instance process-wide, so this is not really a per-backend choice: whichever audio backend initializes last before the first audio generation picks the device. Once audio has run, changing this needs a SwarmUI restart.\nRun one audio backend unless you know why you want two.")]
         [SettingsOptions(Impl = typeof(AudioDeviceOptions))]
         public string Device = "auto";
-
-        [ConfigComment("Enable debug logging for audio processing.")]
-        public bool DebugMode = false;
-
     }
 
     /// <summary>Builds the Device dropdown from whatever compute backends the engine reports
@@ -379,10 +375,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     _supportedFeatureSet.TryAdd(flag, 0);
                 }
 
-                if (Settings.DebugMode)
-                {
-                    Logs.Debug($"[AudioLab] Loaded installed provider: {definition.Name} ({providerId})");
-                }
+                Logs.Debug($"[AudioLab] Loaded installed provider: {definition.Name} ({providerId})");
             }
 
             if (_providers.Count > 0)
