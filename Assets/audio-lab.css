@@ -2220,3 +2220,25 @@ input[type="range"].daw-transport-zoom::-moz-range-track {
 .daw-mixer-strip .daw-knob { width: 34px; height: 34px; }
 .daw-mixer-strip .daw-knob-dial::before { top: 2px; width: 2.5px; height: 10px; margin-left: -1.25px; }
 .daw-strip-btns { gap: 0.35rem; }
+
+/* Wake Word tab */
+.wakeword-feed {
+    max-height: 22rem;
+    overflow-y: auto;
+    font-family: var(--bs-font-monospace, monospace);
+    font-size: 0.85rem;
+}
+.wakeword-feed-row {
+    padding: 0.25rem 0;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+}
+.wakeword-transcript {
+    padding-left: 1rem;
+    opacity: 0.85;
+    font-style: italic;
+}
+.wakeword-progress {
+    max-height: 16rem;
+    overflow-y: auto;
+    margin-top: 0.5rem;
+}

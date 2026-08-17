@@ -59,6 +59,7 @@ public class AudioLab : Extension
             ScriptFiles.Add("Assets/audio-daw.js");
             ScriptFiles.Add("Assets/audio-editor.js");
             ScriptFiles.Add("Assets/audio-integration.js");
+            ScriptFiles.Add("Assets/audio-wakeword.js");
             StyleSheetFiles.Add("Assets/audio-lab.css");
         }
         catch (Exception ex)
@@ -90,10 +91,55 @@ public class AudioLab : Extension
             // Register API endpoints
             AudioLabAPI.Register();
             VideoAudioEndpoints.Register();
+            WakeWordEndpoints.Register();
+            Logs.Info("[AudioLab] Registered wake-word endpoints");
         }
         catch (Exception ex)
         {
             Logs.Error($"[AudioLab] Critical error during initialization: {ex.Message}");
+        }
+    }
+
+    /// <summary>Starts the wake-word listener if it is enabled in settings.
+    ///
+    /// <para>Deliberately in OnPreLaunch rather than OnInit: the listener accepts network connections and pushes
+    /// events to the web UI, so it should not be live before the webserver is. It is off unless enabled, so an
+    /// install with no voice satellite never binds a port or holds a detection thread.</para></summary>
+    public override void OnPreLaunch()
+    {
+        try
+        {
+            if (!WakeWordService.GetSettings().Enabled)
+            {
+                Logs.Debug("[AudioLab][Wake] Listener is disabled in settings; not starting.");
+                return;
+            }
+            string error = WakeWordService.Start();
+            if (error is not null)
+            {
+                Logs.Error($"[AudioLab][Wake] Listener failed to start: {error}");
+            }
+        }
+        catch (Exception ex)
+        {
+            // A failed listener must not take the rest of the extension down with it.
+            Logs.Error($"[AudioLab][Wake] Unexpected error starting the listener: {ex.ReadableString()}");
+        }
+    }
+
+    /// <summary>Releases the wake listener's port and joins its worker.
+    ///
+    /// <para>Core has already cancelled GlobalProgramCancel several steps before extensions are shut down, so
+    /// this joins work that is already unwinding rather than initiating the stop.</para></summary>
+    public override void OnShutdown()
+    {
+        try
+        {
+            WakeWordService.Stop();
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab][Wake] Error during shutdown: {ex.ReadableString()}");
         }
     }
 
