@@ -270,17 +270,24 @@ public static class WakeWordEndpoints
             }
 
             WakeTrainingJob job = new(AudioEngineBridge.Engine, WakeWordService.ModelRoot());
-            Progress<string> progress = new(message =>
+            // A WebSocket throws on concurrent SendAsync, and progress reports arrive from thread-pool threads,
+            // so two overlapping reports would kill the stream mid-training. Serialize every send through one
+            // semaphore rather than blocking the training loop on the browser.
+            using SemaphoreSlim sendLock = new(1, 1);
+            async Task SendAsync(JObject payload)
             {
-                // Fire-and-forget: the training loop must not block on a slow browser.
-                _ = ws.SendJson(new JObject { ["status"] = message }, API.WebsocketTimeout);
-            });
+                await sendLock.WaitAsync().ConfigureAwait(false);
+                try { await ws.SendJson(payload, API.WebsocketTimeout).ConfigureAwait(false); }
+                catch (Exception ex) { Logs.Debug($"[AudioLab][Wake] Training progress send failed: {ex.Message}"); }
+                finally { sendLock.Release(); }
+            }
+            Progress<string> progress = new(message => _ = SendAsync(new JObject { ["status"] = message }));
             WakeTrainingResult result = await job.RunAsync(options, progress, Program.GlobalProgramCancel);
 
             // Persist the measured threshold so the word deploys with its own number rather than a global default.
             WakeWordService.ConfigureWord(result.Name, new WakeWordConfig { Threshold = result.SuggestedThreshold });
 
-            await ws.SendJson(new JObject
+            await SendAsync(new JObject
             {
                 ["success"] = true,
                 ["name"] = result.Name,
@@ -291,7 +298,7 @@ public static class WakeWordEndpoints
                 ["suggested_threshold"] = result.SuggestedThreshold,
                 ["positive_windows"] = result.PositiveWindows,
                 ["negative_windows"] = result.NegativeWindows,
-            }, API.WebsocketTimeout);
+            }).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
