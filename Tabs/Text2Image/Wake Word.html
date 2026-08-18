@@ -1,0 +1,112 @@
+<div class="card border-secondary mb-2">
+    <div class="card-header">
+        Wake Word Listener
+        <span id="wakeword_state_badge" class="badge bg-secondary">unknown</span>
+    </div>
+    <div class="card-body">
+        <p class="translate">
+            Voice satellites hold a TCP connection open and stream microphone audio here continuously. This engine
+            detects the wake word, transcribes the command that follows, and identifies the speaker. Detections are
+            published on the <code>AudioLabWakeEvents</code> API, so other extensions can react to them.
+        </p>
+        <div class="mb-2">
+            <button id="wakeword_start_btn" class="btn btn-primary basic-button">Start Listener</button>
+            <button id="wakeword_stop_btn" class="btn btn-outline-danger basic-button">Stop Listener</button>
+            <button id="wakeword_refresh_btn" class="btn btn-secondary basic-button">Refresh</button>
+        </div>
+        <div id="wakeword_status_body"><em class="translate">Loading…</em></div>
+    </div>
+</div>
+
+<div class="card border-secondary mb-2">
+    <div class="card-header translate">Settings</div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-4 mb-2">
+                <label class="form-label translate" for="wakeword_setting_enabled">Start with SwarmUI</label>
+                <input type="checkbox" id="wakeword_setting_enabled" class="form-check-input">
+            </div>
+            <div class="col-md-4 mb-2">
+                <label class="form-label translate" for="wakeword_setting_port">Port</label>
+                <input type="number" id="wakeword_setting_port" class="form-control" value="10800" min="1" max="65535">
+            </div>
+            <div class="col-md-4 mb-2">
+                <label class="form-label translate" for="wakeword_setting_bind">Bind address</label>
+                <input type="text" id="wakeword_setting_bind" class="form-control" value="0.0.0.0">
+            </div>
+            <div class="col-md-4 mb-2">
+                <label class="form-label translate" for="wakeword_setting_transcribe">Transcribe the command</label>
+                <input type="checkbox" id="wakeword_setting_transcribe" class="form-check-input" checked>
+            </div>
+            <div class="col-md-4 mb-2">
+                <label class="form-label translate" for="wakeword_setting_speakers">Identify speakers</label>
+                <input type="checkbox" id="wakeword_setting_speakers" class="form-check-input" checked>
+            </div>
+            <div class="col-md-4 mb-2">
+                <label class="form-label translate" for="wakeword_setting_model">Transcription model</label>
+                <input type="text" id="wakeword_setting_model" class="form-control" value="whisper">
+            </div>
+            <div class="col-md-4 mb-2">
+                <label class="form-label translate" for="wakeword_setting_tcp">Bind the LAN port</label>
+                <input type="checkbox" id="wakeword_setting_tcp" class="form-check-input" checked>
+                <div class="small text-muted translate">Turn off for a tunnel-only setup: nothing listens on the LAN and satellites connect over the WebSocket route instead.</div>
+            </div>
+            <div class="col-md-8 mb-2">
+                <label class="form-label translate" for="wakeword_setting_token">Shared secret</label>
+                <input type="text" id="wakeword_setting_token" class="form-control" placeholder="(empty = no authentication)">
+                <div class="small text-muted translate">Satellites must send this in their hello frame. Empty is fine on a trusted LAN — but set it before this is reachable from the internet, or anyone who finds the endpoint can stream audio in and read every transcript.</div>
+            </div>
+        </div>
+        <button id="wakeword_save_settings_btn" class="btn btn-primary basic-button">Save Settings</button>
+        <span class="translate small text-muted">Saving restarts the listener when it is running.</span>
+    </div>
+</div>
+
+<div class="card border-secondary mb-2">
+    <div class="card-header translate">Live Detections</div>
+    <div class="card-body">
+        <div id="wakeword_feed_state" class="small text-muted translate">Not connected.</div>
+        <div id="wakeword_feed" class="wakeword-feed"></div>
+    </div>
+</div>
+
+<div class="card border-secondary mb-2">
+    <div class="card-header translate">Wake Words</div>
+    <div class="card-body">
+        <div id="wakeword_words"><em class="translate">Loading…</em></div>
+        <hr>
+        <h6 class="translate">Train a new wake word</h6>
+        <p class="small text-muted translate">
+            The phrase is synthesized across the engine's TTS voices and a small classifier is fitted to it. Point
+            negative audio at a folder of real room recordings — with too few negatives the false-accept rate is
+            unusable no matter how good the recall looks.
+        </p>
+        <div class="row">
+            <div class="col-md-4 mb-2">
+                <label class="form-label translate" for="wakeword_train_phrase">Phrase</label>
+                <input type="text" id="wakeword_train_phrase" class="form-control" placeholder="hey hartsy">
+            </div>
+            <div class="col-md-4 mb-2">
+                <label class="form-label translate" for="wakeword_train_negatives">Negative audio folder</label>
+                <input type="text" id="wakeword_train_negatives" class="form-control" placeholder="/path/to/recordings">
+            </div>
+            <div class="col-md-4 mb-2">
+                <label class="form-label translate" for="wakeword_train_negphrases">Negative phrases</label>
+                <input type="text" id="wakeword_train_negphrases" class="form-control" placeholder="hey alexa, okay google">
+            </div>
+        </div>
+        <button id="wakeword_train_btn" class="btn btn-primary basic-button">Train Wake Word</button>
+        <div id="wakeword_train_progress" class="wakeword-progress"></div>
+    </div>
+</div>
+
+<div class="card border-secondary mb-2">
+    <div class="card-header translate">Speakers</div>
+    <div class="card-body">
+        <p class="small text-muted translate">
+            Enroll on repetitions of the wake phrase itself. A wake word is about a second long, and speaker
+            verification degrades badly at that length unless enrollment and use share the same words.
+        </p>
+        <div id="wakeword_speakers"><em class="translate">Loading…</em></div>
+    </div>
+</div>
