@@ -46,6 +46,16 @@
                 <label class="form-label translate" for="wakeword_setting_model">Transcription model</label>
                 <input type="text" id="wakeword_setting_model" class="form-control" value="whisper">
             </div>
+            <div class="col-md-4 mb-2">
+                <label class="form-label translate" for="wakeword_setting_tcp">Bind the LAN port</label>
+                <input type="checkbox" id="wakeword_setting_tcp" class="form-check-input" checked>
+                <div class="small text-muted translate">Turn off for a tunnel-only setup: nothing listens on the LAN and satellites connect over the WebSocket route instead.</div>
+            </div>
+            <div class="col-md-8 mb-2">
+                <label class="form-label translate" for="wakeword_setting_token">Shared secret</label>
+                <input type="text" id="wakeword_setting_token" class="form-control" placeholder="(empty = no authentication)">
+                <div class="small text-muted translate">Satellites must send this in their hello frame. Empty is fine on a trusted LAN — but set it before this is reachable from the internet, or anyone who finds the endpoint can stream audio in and read every transcript.</div>
+            </div>
         </div>
         <button id="wakeword_save_settings_btn" class="btn btn-primary basic-button">Save Settings</button>
         <span class="translate small text-muted">Saving restarts the listener when it is running.</span>

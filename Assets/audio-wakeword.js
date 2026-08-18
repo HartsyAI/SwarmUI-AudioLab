@@ -123,6 +123,8 @@ const WakeWordUI = {
             getRequiredElementById('wakeword_setting_transcribe').checked = s.TranscribeOnDetection !== false;
             getRequiredElementById('wakeword_setting_speakers').checked = s.IdentifySpeakers !== false;
             getRequiredElementById('wakeword_setting_model').value = s.TranscribeModel ?? 'whisper';
+            getRequiredElementById('wakeword_setting_tcp').checked = s.EnableTcpListener !== false;
+            getRequiredElementById('wakeword_setting_token').value = s.AuthToken ?? '';
         });
     },
 
@@ -135,6 +137,8 @@ const WakeWordUI = {
                 TranscribeOnDetection: getRequiredElementById('wakeword_setting_transcribe').checked,
                 IdentifySpeakers: getRequiredElementById('wakeword_setting_speakers').checked,
                 TranscribeModel: getRequiredElementById('wakeword_setting_model').value,
+                EnableTcpListener: getRequiredElementById('wakeword_setting_tcp').checked,
+                AuthToken: getRequiredElementById('wakeword_setting_token').value,
             }
         }, data => {
             if (!data.success) { alert(`Could not save settings: ${data.error}`); }

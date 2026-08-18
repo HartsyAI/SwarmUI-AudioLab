@@ -83,6 +83,8 @@ public static class WakeWordService
                     TranscribeModel = settings.TranscribeModel,
                     IdentifySpeakers = settings.IdentifySpeakers,
                     Webhooks = settings.Webhooks ?? [],
+                    EnableTcpListener = settings.EnableTcpListener,
+                    AuthToken = string.IsNullOrWhiteSpace(settings.AuthToken) ? null : settings.AuthToken,
                 });
                 service.Detected += OnDetected;
                 service.Start();
@@ -201,6 +203,14 @@ public static class WakeWordService
         }
     }
 
+    /// <summary>Hands a caller-supplied connection to the wake service — used by the WebSocket ingest route so a
+    /// satellite can reach the listener through an HTTPS tunnel that cannot carry raw TCP.</summary>
+    public static Task ServeConnectionAsync(Stream stream, string remoteLabel, CancellationToken cancel)
+    {
+        WakeService service = _service ?? throw new InvalidOperationException("The wake listener is not running.");
+        return service.ServeConnectionAsync(stream, remoteLabel, cancel);
+    }
+
     /// <summary>Persists a word's threshold, route and speaker restriction, and rolls it out to live sessions.</summary>
     public static void ConfigureWord(string name, WakeWordConfig config) => _service?.ConfigureWord(name, config);
 
@@ -269,4 +279,13 @@ public class WakeWordSettings
 
     /// <summary>URLs that receive a JSON POST per detection, for consumers outside this process.</summary>
     public List<string> Webhooks { get; set; } = [];
+
+    /// <summary>Whether to bind the raw TCP port. Turn it off for a tunnel-only deployment and nothing listens
+    /// on the LAN; satellites then connect over the WebSocket ingest route instead.</summary>
+    public bool EnableTcpListener { get; set; } = true;
+
+    /// <summary>Shared secret a satellite must send in its hello frame. Empty disables the check, which is fine
+    /// on a trusted LAN. **Set it before exposing this to the internet** — without it, anyone who reaches the
+    /// endpoint can stream audio in and receive every detection, including transcripts of what was said.</summary>
+    public string AuthToken { get; set; } = "";
 }

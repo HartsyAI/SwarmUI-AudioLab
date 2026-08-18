@@ -62,6 +62,36 @@ public static class WakeWordEndpoints
         API.RegisterAPICall(AudioLabWakeTrainWord, true, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeEnrollSpeaker, true, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeRemoveSpeaker, true, WakeWordPermissions.PermManage);
+        API.RegisterAPICall(AudioLabWakeIngest, false, WakeWordPermissions.PermListen);
+    }
+
+    /// <summary>Accepts a satellite over a WebSocket instead of the raw TCP port.
+    ///
+    /// <para>This exists because an HTTPS reverse proxy or tunnel — Cloudflare's, for instance — cannot carry
+    /// raw TCP, but does carry WebSockets. A satellite that can speak WSS therefore reaches the listener over
+    /// the same hostname as the web UI, with TLS supplied by the proxy and no extra port exposed.</para>
+    ///
+    /// <para>The wire format inside the socket is byte-for-byte the protocol the TCP port speaks, so firmware
+    /// only changes its transport, not its framing. Authentication is still the <c>hello</c> frame's token —
+    /// SwarmUI's own session check gates the route, but the token is what identifies the device.</para></summary>
+    public static async Task<JObject> AudioLabWakeIngest(Session session, WebSocket ws)
+    {
+        if (!WakeWordService.Running)
+        {
+            await ws.SendJson(new JObject { ["error"] = "The wake listener is not running." }, API.WebsocketTimeout);
+            return null;
+        }
+        string remote = $"ws:{session.User?.UserID ?? "?"}";
+        try
+        {
+            using WebSocketStream stream = new(ws);
+            await WakeWordService.ServeConnectionAsync(stream, remote, Program.GlobalProgramCancel).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Logs.Warning($"[AudioLab][Wake] Ingest connection from {remote} ended: {ex.Message}");
+        }
+        return null;
     }
 
     /// <summary>Listener state: whether it is bound, on what port, which satellites are connected, and which
