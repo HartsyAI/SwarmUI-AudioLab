@@ -2867,7 +2867,9 @@ const AudioDaw = (() => {
                 action: async () => {
                     const overlay = showDawLoadingOverlay('Loading output...');
                     try {
-                        const url = f.startsWith('View/') || f.startsWith('Output/') ? '/' + f : `/View/${f}`;
+                        // ListImages paths are relative to the user's output root.
+                        const prefix = typeof getImageOutPrefix === 'function' ? getImageOutPrefix() : 'Output';
+                        const url = f.startsWith('View/') || f.startsWith('Output/') ? '/' + f : `/${prefix}/${f}`;
                         const blob = await fetchAsBlob(url);
                         pushUndo();
                         const track = addTrack({ name: f.split('/').pop().replace(/\.[^.]+$/, '').slice(0, 20) });

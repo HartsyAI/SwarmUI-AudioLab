@@ -1,416 +1,527 @@
-# SwarmUI AudioLab Extension
+# SwarmUI AudioLab
 
-A modular audio processing extension for [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI) that adds text-to-speech, speech-to-text, audio generation, voice conversion, and audio processing — all through a provider-based architecture integrated directly into the Generate tab.
+AudioLab turns [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI) into a full audio workstation: text to speech,
+speech to text, music and sound effect generation, voice conversion, stem separation, an always on wake word
+listener, and a multi track DAW for arranging what you generate.
 
-## Features
+Everything runs **in process as pure C#** on the [HartsyInference](https://www.nuget.org/packages/HartsyInference)
+engine. There is no Python, no virtual environment, and no Docker.
 
-- **Text-to-Speech (TTS)** — 17 providers: Chatterbox, Kokoro, Bark, Orpheus, Piper, Dia, F5-TTS, StyleTTS2, Fish Speech, Pocket TTS, Kyutai TTS, Qwen3, Zonos, CSM, VibeVoice, CosyVoice, and NeuTTS
-- **Speech-to-Text (STT)** — 5 providers: Whisper, Kyutai STT, Distil-Whisper, Moonshine, and RealtimeSTT
-- **Audio Generation** — ACE-Step 1.5 (6 DiT models, 6 task types, lyrics alignment, 50 languages), MusicGen (text-to-music with melody conditioning), and AudioGen (text-to-sound-effects)
-- **Voice Conversion** — RVC (re-voice existing audio), OpenVoice (tone/style transfer), GPT-SoVITS (TTS with cloned voice)
-- **Audio Processing** — Demucs (stem separation) and Resemble Enhance (audio enhancement/denoising)
-- **Multi-Track DAW Editor** — Full digital audio workstation with timeline, transport controls, per-track mute/solo/volume, clip arrangement via drag-and-drop, mixer panel, loop regions, undo/redo, and multi-track mixdown export (WAV/MP3/OGG/FLAC/AAC)
-- **Video + Audio** — Combine audio with video or extract audio from video via ffmpeg
-- **Streaming TTS** — Chunked text-to-speech with auto-play for immediate playback while generating
-- **Generation Cancellation** — Stop Generation and Stop All Generations buttons work for all audio providers
-- **Pure C# Inference (no Python)** — Audio models run in-process via the [HartsyInference](https://www.nuget.org/packages/HartsyInference) engine, hosted by the companion **HartsyInference (Pure C# Inference)** backend extension. No Python, no venvs, no Docker.
-- **On-Demand Weights** — Install only the models you need. Multi-variant engines (e.g. ACE-Step's 9 checkpoints) expose a per-model Install/Remove button plus a **Download All** option, so you can grab just `turbo` instead of every variant. STT and other self-managed models download themselves on first use.
+![The Audio Lab multi track editor](Assets/readme/daw-overview.png)
+
+## Contents
+
+- [Highlights](#highlights)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [The Audio Backend](#the-audio-backend)
+- [Engines and models](#engines-and-models)
+- [The Audio Lab DAW](#the-audio-lab-daw)
+- [Wake word listener](#wake-word-listener)
+- [API reference](#api-reference)
+- [Permissions](#permissions)
+- [Network connections](#network-connections)
+- [Roadmap](#roadmap)
+- [Troubleshooting](#troubleshooting)
+- [License and credits](#license-and-credits)
+
+## Highlights
+
+| | |
+| --- | --- |
+| **38 local engines, 79 models** | 20 text to speech, 6 speech to text, 7 music and sound effect, 3 voice conversion, 2 audio processing |
+| **No Python** | Models load and run inside the SwarmUI process on the HartsyInference C# engine |
+| **Install only what you want** | Per model Install and Remove, with Download All for multi variant engines |
+| **Multi track DAW** | Timeline, mixer, effect chains, stem separation, drum machine, in place generation, saved sessions |
+| **Wake word listener** | Voice satellites stream microphone audio in; detections are published on a WebSocket other extensions can subscribe to |
+| **Works like any Swarm model** | Pick an audio model in the Generate tab, type a prompt, and the result lands in your output history |
+| **Streaming speech** | Chunked text to speech plays back while it is still generating |
 
 ## Requirements
 
-- SwarmUI installed and working
-- The **HartsyInference (Pure C# Inference)** backend extension installed and added in Server > Backends (this is the in-process engine AudioLab runs models on)
-- ffmpeg on PATH (for audio decode/encode and video+audio features)
-- A CUDA or Vulkan GPU is recommended for the larger models; several (e.g. Kokoro, Moonshine) are CPU-capable
+- SwarmUI, installed and working.
+- The **HartsyInference (Pure C# Inference)** backend extension, added under `Server` > `Backends`. That extension
+  hosts the engine AudioLab runs models on.
+- `ffmpeg` on your PATH, for audio decode and encode and for the video plus audio endpoints.
+- A CUDA or Vulkan GPU is recommended. Several models (Kokoro, Piper, Pocket TTS, Moonshine) run acceptably on CPU.
 
-> **No Python or Docker required.** Earlier versions ran each engine in a Python virtual environment; the audio engines now run as pure C# in-process. The per-engine capability tables below are the coverage roadmap — models light up as the C# engine adds support.
+Audio weights are stored under your Swarm model root, in `<ModelRoot>/audio`. There is no separate path setting to
+keep in sync: AudioLab follows `Server` > `Server Configuration` > `Paths` > `ModelRoot`.
 
 ## Installation
 
-1. Clone into the SwarmUI extensions directory:
-   ```bash
-   cd /path/to/SwarmUI/src/Extensions/
-   git clone https://github.com/Hartsy/SwarmUI-AudioLab.git
-   ```
-
-2. Restart SwarmUI. The extension loads automatically.
-
-3. In SwarmUI, go to **Server** > **Backends** and add the **Audio Backend**.
-
-4. In **Server** > **Backends**, expand the Audio Backend card and click an engine to open its install panel. Install individual models with their per-model **Install** button (or **Download All** for the whole set); multi-variant engines let you install/remove one checkpoint at a time. Weights download automatically; self-managed models (e.g. Whisper) fetch themselves on first use. Generation runs in-process on the C# engine.
-
-## Measured Performance (in-engine, this extension)
-
-Real-time factor (RTF = generated-audio-seconds ÷ warm generation time; higher = faster than real time), measured
-end-to-end through this extension on the pure-C# engine. These are **our measured numbers** — distinct from the
-per-engine "Notes" column further down, which quotes each upstream project's own claims.
-
-Measured through the canonical **`GenerateText2Image`** path (select the model → text in the prompt → WAV in `/Output`, like any gen); STT via `ProcessSTT`.
-
-| Model | Type | RTX 3060 | RTX 4090 | Status |
-| --- | --- | --- | --- | --- |
-| Piper | TTS | 8.6× | 8.3× | ✅ runnable |
-| Moonshine | STT | 6.5× | 6.5× | ✅ runnable |
-| Whisper (base) | STT | 5.1× | 5.4× | ✅ runnable |
-| Kokoro | TTS | 4.5× | 5.2× | ✅ runnable + word-correct (misaki g2p + canonical-fallback fixes) |
-| MeloTTS | TTS | 1.4× | 1.4× | ✅ runnable + word-correct (stride + number-norm fixes); slow — optimization target |
-| F5-TTS (voice clone) | TTS | ~0.4× | — | ✅ runnable + word-correct; **174.6 s → 6.4 s (34×)** host-conv→GPU, bit-parity |
-
-The small TTS/STT models are **host/launch-bound, not compute-bound** — a faster GPU (4090) barely helps; the real
-lever is CUDA-graph capture to remove kernel-launch overhead. Both STT engines (Moonshine, Whisper) transcribe
-real human speech (JFK clip) + synthetic clips **word-perfect** (verified 2026-07-13); the Whisper `en-US`
-default-language crash is **fixed** (locale-code normalization). Full table, method, and the remaining outlier list
-(e.g. Spark-TTS not-yet-runtime-wired) are in the engine repo at `benchmarks/results/audio_tts_stt_2026-07-12.md`. Note: several models marked "verified" upstream
-are numerical-parity-verified in the test harness but **not yet runnable through the install/generate path** — the
-install button surfaces a clear message when a model isn't wired yet.
-
-## Supported Engines
-
-### Text-to-Speech (20 Local Providers, 35+ Models)
-
-| Engine | Voice Reference | Streaming | VRAM | Notes |
-| --- | --- | --- | --- | --- |
-| Chatterbox | Optional | Yes | ~4 GB | Expressive with exaggeration/CFG controls |
-| Kokoro | No | Yes | ~1 GB | 96x real-time on GPU, CPU-capable, multiple built-in voices |
-| Pocket TTS | Optional | No | CPU (~200MB) | 100M params, 8 built-in voices, voice cloning, MIT license, ~6x real-time on CPU |
-| Kyutai TTS | Optional | No | ~8 GB | 1.6B params, English+French, voice conditioning, 75x real-time, ~200ms latency |
-| Piper | No | Yes | CPU only | CPU-only ONNX runtime, lightweight, auto-downloads voices |
-| Bark | No | Yes | ~5 GB | Multi-language, emotion/music/SFX support |
-| Orpheus | No | Yes | ~16 GB | 3B params, emotion tags (`<laugh>`, `<sigh>`, etc.) |
-| Dia | No | Yes | ~10 GB | 1.6B params, 2-speaker dialogue with nonverbal sounds |
-| F5-TTS | Required | Yes | ~4 GB | Flow-matching, zero-shot cloning from ~10s reference |
-| Fish Speech | Optional | Yes | 4–24 GB | 80+ languages, inline prosody tags (`[whisper]`, `[emphasis]`, etc.) |
-| Qwen3 TTS | Optional | Yes | 4–8 GB | 5 model variants: cloning, custom voices, voice design from descriptions |
-| CSM | No | Yes | ~4.5 GB | 1B params, multi-turn conversational speech |
-| VibeVoice | Optional | Yes | 3–16 GB | 3 sizes (0.5B–7B), multi-speaker, up to 90 min long-form |
-| Zonos | Optional | Yes | ~4 GB | Emotion control, transformer and hybrid variants (EN/JP/CN/FR/DE) |
-| CosyVoice | Optional | Yes | ~8 GB | Ultra-low latency streaming, multilingual |
-| NeuTTS | Required | Yes | ~2 GB | 0.5B params, instant voice cloning, CPU-capable |
-| StyleTTS 2 | Optional | No | ~2 GB | Style-diffusion TTS; single-speaker and multi-speaker/cloning checkpoints |
-| Spark-TTS | Optional | No | ~3 GB | Two modes: voice creation (gender/pitch/speed) and voice cloning from a reference clip |
-| MeloTTS | No | No | ~1 GB | Multi-accent/multi-speaker single-language checkpoints, CPU-capable |
-| ZipVoice | Required | No | ~2 GB | Flow-matching zero-shot cloning, few-step inference |
-
-### Speech-to-Text (7 Local Providers, 17 Models)
-
-| Engine | Models | VRAM | Notes |
-| --- | --- | --- | --- |
-| Whisper | 7 sizes (tiny–turbo) | 1–10 GB | OpenAI Whisper, transcribe + translate, multi-language |
-| Kyutai STT | 1B (en+fr), 2.6B (en) | 3–6 GB | Auto capitalization/punctuation, 1B has voice activity detection |
-| Distil-Whisper | large-v3, large-v3.5 | ~2 GB | 6x faster than Whisper large-v3 |
-| Moonshine | base, tiny | ~1 GB / CPU | Lightweight, CPU-capable |
-| Moonshine Streaming | tiny, small, medium | 1–2 GB | Streaming variants of Moonshine; medium outperforms Whisper large-v3 per its model card |
-| Whisper Streaming | base | ~1 GB | Chunked streaming transcription |
-| RealtimeSTT | default | ~2 GB | Real-time streaming with wake word detection (not yet runnable on the C# engine — use Whisper) |
-
-### Audio Generation (6 Local Providers, 25+ Models)
-
-| Engine | Models | VRAM | Notes |
-| --- | --- | --- | --- |
-| ACE-Step 1.5 | 6 DiT variants (turbo/sft/base) | 8–10 GB | 6 task types (text2music, cover, repaint, extract, lego, complete), lyrics alignment, 50 languages, optional LM planner |
-| MusicGen | 10 variants (mono/stereo/melody) | 4–10 GB | Text-to-music with optional melody conditioning, sampling controls |
-| AudioGen | medium (1.5B) | ~4 GB | Text-to-sound-effect generation (10s default duration, unlike MusicGen's 30s) |
-| YuE | 4 variants (en/zh × cot/icl) | 12+ GB | Long-form song generation with lyrics; Stage-1 7B + X-Codec decoder |
-| HeartLib | 3B base (+ Q8/Q4 GGUF) | 4–8 GB | Lyric-conditioned music generation |
-| Stable Audio | open-small | ~4 GB | Rectified-flow text-to-audio (T5 prompt encode → DiT → Oobleck VAE) |
-
-### Voice Conversion (3 Providers)
-
-These engines transform voice characteristics. **RVC and OpenVoice** are post-processing tools that take existing audio and change the voice (audio in → audio out). **GPT-SoVITS** is different — it generates new speech from text in a cloned voice (text in → audio out).
-
-> **Voice Conversion vs. TTS Voice Reference:** Many TTS engines above (F5, Fish Speech, Zonos, etc.) also support voice cloning via a reference audio clip, but they are TTS engines that generate speech from text. The engines below are specifically designed for voice transformation or voice-cloned speech synthesis.
-
-| Engine | Type | VRAM | Notes |
-| --- | --- | --- | --- |
-| RVC V2 | Audio → Audio | ~4 GB | Re-voices existing audio using a trained voice model (.safetensors). Pitch shift; F0 via YIN today (RMVPE/Harvest/PM coming). ContentVec encoder auto-downloads. |
-| OpenVoice V2 | Audio → Audio | ~2 GB | Transfers the tone/style of a reference voice onto existing audio. Zero-shot (no model training, just a wav clip). |
-| GPT-SoVITS | Text → Audio | ~4 GB | Generates new speech from text in a cloned voice using a reference clip + its transcript. English today (CJK pending). |
-
-### Audio Processing (2 Local Providers, 4 Models)
-
-| Engine | Models | VRAM | Notes |
-| --- | --- | --- | --- |
-| Demucs | htdemucs, htdemucs_6s | ~2 GB | Source separation (vocals, drums, bass, other; 6-stem variant adds guitar + piano) |
-| Resemble Enhance | denoise, enhance | ~2 GB | Speech denoising and super-resolution to 44.1 kHz (engine support pending — DeepSpeed checkpoint loader) |
-
-### Cloud API Providers (19 Providers)
-
-These need no local weights and no VRAM — they call a vendor API. Each requires its key under
-**Server > User Settings > API Keys**; the field appears automatically once the extension loads.
-Providers sharing a key type (both ElevenLabs entries, Polly, both Azure entries, …) only need it entered once.
-
-| Engine | Category | API Key | Notes |
-| --- | --- | --- | --- |
-| ElevenLabs TTS | TTS | `elevenlabs_api` | Stability / similarity / style / speaker-boost controls, multiple model tiers |
-| OpenAI TTS | TTS | `openai_api` | `tts-1`, `tts-1-hd`, `gpt-4o-mini-tts` (the last also takes free-form `instructions`) |
-| Azure Neural TTS | TTS | `azure_speech_api` | Key format `subscription_key\|region`. SSML with `mstts:express-as` styles |
-| Amazon Polly | TTS | `aws_api` | Key format `access_key\|secret\|region`. Neural and standard engines |
-| Google Cloud TTS | TTS | `google_cloud_api` | Neural2 / WaveNet voices, BCP-47 language codes |
-| Deepgram TTS | TTS | `deepgram_api` | Aura voices, low latency |
-| Cartesia | TTS | `cartesia_api` | Sonic family, speed / volume / emotion controls |
-| PlayHT | TTS | `playht_api` | Voice library + cloning |
-| OpenAI STT | STT | `openai_api` | `whisper-1`, `gpt-4o-transcribe`, `gpt-4o-mini-transcribe` |
-| Google Cloud STT | STT | `google_cloud_api` | Chirp 3, 125+ languages. Needs a region-qualified language code |
-| Azure STT | STT | `azure_speech_api` | Cognitive Services speech-to-text |
-| Deepgram STT | STT | `deepgram_api` | Nova-3, diarization and smart formatting |
-| AssemblyAI | STT | `assemblyai_api` | Speaker labels and sentiment analysis |
-| AWS Transcribe | STT | — | **Unsupported.** The batch API needs S3 + polling and the streaming API needs an HTTP/2 event stream; neither is implemented. Use Whisper, Deepgram or AssemblyAI |
-| ElevenLabs SFX | Audio Gen | `elevenlabs_api` | Text-to-sound-effects |
-| Suno | Audio Gen | `suno_api` | Song generation with vocals; style tags and an instrumental toggle |
-| Udio | Audio Gen | `udio_api` | Song generation; style tags |
-| ElevenLabs Voice Changer | Voice Conversion | `elevenlabs_api` | Speech-to-speech re-voicing |
-| ElevenLabs Voice Isolator | Audio Processing | `elevenlabs_api` | Strips background noise from speech |
-| Dolby.io | Audio Processing | `dolby_api` | Media Enhance loudness/noise processing |
-
-
-## Performance (Pure-C# engine vs. Python reference)
-
-Measured on an **NVIDIA RTX 3060 (12 GB)**, 2026-07-09. **Ours** = warm SwarmUI `ProcessTTS`/`ProcessSTT` engine time (2nd call, model resident — excludes load). **Python** = the official library on the same GPU, warm. **RTF** = gen-time ÷ audio-duration (lower is faster; < 1 = faster than real-time). **Diff** = ours ÷ Python. TTS prompt: *"The speech synthesizer is now working correctly."* STT clip: the 11 s JFK sample.
-
-All tested TTS engines and both STT engines produce correct, intelligible output — re-verified 2026-07-13 through the canonical `GenerateText2Image` path with **whisper `medium.en`** as a proven oracle (not by ear alone), across short/long/numbers/punctuation prompts. The perf gap on the heavy diffusion/DiT/AR models was an engine-wide bottleneck: several conv layers (depthwise / grouped `Conv1d`, positional-embed) ran as host-side loops that force a GPU→host sync per call. **2026-07-13: fixed for F5-TTS** — its per-forward `F5ConvPosEmbed` grouped Conv1D (the ~99% wall-time cost) now routes to the GPU `backend.Conv1d`, cutting F5 from 142.7 s to ~6.4 s (**~22–34×**) at bit-parity. The same host→GPU-conv treatment is the remaining lever for the other Vocos/VITS-class models.
-
-### Text-to-Speech
-
-| Model | Ours (GPU) | Ours RTF | Python (GPU) | Python RTF | Diff | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| **Kokoro-82M** | 0.83 s | 0.26 | 0.10 s | 0.03 | ~8× | fast; small VITS-class |
-| **FishSpeech 1.5** | 3.50 s | 1.06 | — | — | — | no pip lib to compare |
-| **Chatterbox** | 5.59 s | 2.12 | — | — | — | no pip lib to compare |
-| **NeuTTS-air** | 46 s | ~6 | — | — | — | voice-clone (needs a reference) |
-| **VibeVoice 1.5B** | ~64–113 s | — | — | — | — | ⚠ **re-measure pending** (OOM-prone under load) |
-| **Bark** | 185.7 s | 14.2 | — | — | — | output length varies (stochastic); no safe pip compare |
-| **Dia 1.6B** | ~320 s | ~0.036 | — | — | 10/10 | **fixed 2026-07-15** (word-correct via `Dia-1.6B-0626` checkpoint; EOS-stops at 11.4 s); slowest TTS (dual-CFG F32) |
-| **F5-TTS v1** | **6.4 s** (was 142.7 s) | ~2.4 | 3.47 s | 0.73 | ~1.8× | **host-conv bottleneck FIXED 07-13** (grouped Conv1D → GPU `backend.Conv1d`, bit-parity) |
-
-### Speech-to-Text
-
-| Model | Ours (GPU) | Ours RTF | Python (GPU) | Python RTF | Diff | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| **Whisper-base** | 1.04 s | 0.095 | 0.25 s | 0.022 | ~4× | correct transcription |
-| **Moonshine-base** | 0.64 s | 0.059 | — | — | — | fastest STT; correct |
-| **Distil-Whisper** | — | — | — | — | — | provider repo-id config bug (fix pending) |
-
-> Python baselines are shown only where the official library installs and runs in this environment without OOM risk. Kokoro/F5 Python numbers predate a `neucodec` install that upgraded `transformers` to 5.x (which broke `kokoro`/`torchvision` imports); the remaining models have no pip package (Chatterbox, VibeVoice, FishSpeech, NeuTTS) or are too large to run alongside the resident stack on a 12 GB-VRAM / 31 GB-RAM box.
-
-## Usage
-
-1. **Add the Audio Backend** — Go to Server > Backends and add "Audio Backend".
-2. **Install Models** — In Server > Backends, open the Audio Backend's engine panel and click an engine. Install the specific models you want with their per-model **Install** button, or click **Download All** to fetch the whole set; installed models show a **Remove** button that deletes just that variant's weights. The extension downloads weights and runs in-process on the C# engine — no virtual environment, no pip, no Python. Progress streams in real time via WebSocket. (Self-managed models fetch their weights on first use.)
-3. **Select a Model** — Choose an installed audio model from the model selector.
-4. **Set Parameters** — The sidebar shows relevant parameter groups (TTS, STT, Audio Generation, Voice Conversion, Audio Processing) based on the selected model.
-5. **Generate** — Enter your prompt and click Generate. Audio output appears in the output area with a waveform player.
-6. **Cancel** — Click "Stop Generation" to cancel the current generation or "Stop All Generations" to cancel all active sessions. Works for all providers.
-
-### Streaming TTS
-
-Set the **Stream Chunk Size** parameter to control how text is split for streaming:
-
-| Mode | Behavior |
-| --- | --- |
-| `word` | Each word generates separately |
-| `phrase` | ~5 words per chunk, snaps to nearby punctuation |
-| `sentence` | Splits on `.` `!` `?` boundaries (respects abbreviations) |
-| `paragraph` | Splits on double newlines, falls back to sentences |
-
-Each chunk generates and plays back immediately while the next chunk processes. The final output is a concatenated WAV file saved to the output directory.
-
-### TTS Voice Reference (Voice Cloning in TTS)
-
-Many TTS engines accept a **reference audio** file (WAV) and optional **reference text** (transcript of the reference audio). Upload a short clip (~5–15 seconds) of the target voice. The model generates new speech from your text prompt that sounds like the reference voice.
-
-Supported by: F5-TTS, Fish Speech, Pocket TTS, Kyutai TTS, Qwen3, Zonos, VibeVoice, Chatterbox, CosyVoice, NeuTTS.
-
-This is different from the **Voice Conversion** engines (RVC, OpenVoice) which take existing audio and change the voice without generating new speech.
-
-### Video + Audio
-
-Use the API endpoints or UI to combine generated audio with video files or extract audio tracks from video. Requires ffmpeg on PATH.
-
-- **Replace** mode swaps the video's audio track with your generated audio.
-- **Mix** mode blends the original and new audio tracks together.
-
-### Multi-Track DAW Editor
-
-Click **Audio Lab** on any audio output to open the DAW editor. The editor opens near-fullscreen with the audio loaded as the first clip on Track 1.
-
-**Layout:**
-- **Transport Bar** — Record, rewind, play/stop, forward, loop toggle, time display, BPM, and zoom slider
-- **Timeline Ruler** — Canvas-rendered time ruler with beat grid, playhead indicator, and draggable loop region handles
-- **Track Headers** — Per-track controls: editable name, mute (M), solo (S), volume slider, arm (R), and remove (X) button
-- **Clip Lanes** — Drag clips horizontally to reposition, or drag across tracks to move between lanes. Right-click clips for context menu (split at playhead, delete, duplicate, rename, mute/unmute)
-- **Bottom Panel** — Tabbed panel with Clip Editor (details + actions for selected clip), Mixer (vertical faders, pan, mute/solo per track + master), and Apply to Model (set clip as voice reference for TTS)
-- **Footer** — Add Track, Import Audio, Export Mixdown (WAV/MP3/OGG/FLAC/AAC), and Close
-
-**Playback:** Uses the Web Audio API (`AudioBufferSourceNode`) for sample-accurate multi-track synchronized playback. WaveSurfer.js provides visual-only waveform rendering per clip. Loop regions wrap playback between start and end markers.
-
-**Export:** Multi-track mixdown renders via `OfflineAudioContext` with per-track gain and pan. WAV exports directly from the browser. MP3, OGG, FLAC, and AAC formats route through the backend ffmpeg conversion endpoint.
-
-**Keyboard Shortcuts:**
-| Key | Action |
-| --- | --- |
-| Space | Play / Stop |
-| Ctrl+Z | Undo |
-| Ctrl+Shift+Z | Redo |
-| Delete | Delete selected clip |
-
-### Future Features (Roadmap)
-
-Planned DAW upgrades, prioritized from producer feedback research (r/musicproduction, r/ableton, r/Reaper, r/Bitwig, r/FL_Studio):
-
-- **Piano roll + playable instruments** — Scale-aware MIDI note editing (FL Studio-style: lock-to-key highlighting, ghost notes, grid-snapped editing) backed by a built-in sampler/synth. The single most-requested DAW feature across every community surveyed; requires an instrument engine, so it lands after the sample-based workflow matures.
-- **Session-view loop jamming** — A non-linear clip-launch grid (Ableton-style) for auditioning loop combinations before committing them to the arrangement timeline.
-- **Retrospective record** — An always-listening capture buffer (FL "Dump Score Log" style) so an improvised take on the beat pads or mic can be recovered *after* the fact, without having armed record.
-- **Comping & takes** — Loop-record multiple takes into stacked lanes and assemble the best parts; take lanes double as recoverable edit history (Pro Tools playlist-style).
-- **True auto-warp** — Full transient-based warping of imported audio to the project grid (the current Conform-to-BPM auto-detects tempo and stretches uniformly; warping adds per-transient alignment and stretch-quality modes).
-- **Parameter modulation** — Assignable LFO/envelope modulators on any FX knob (Bitwig-style "modulate anything"), building on the existing automation engine.
-- **Sound Palette upgrades** — Starred favorites that persist across projects, audition-at-project-tempo, and prompt presets for common one-shots and loop styles.
-- **Demucs weight auto-download** — One-click stems installs fetch the htdemucs checkpoint automatically instead of requiring manual placement in the model folder.
-- **Full FX-parameter automation** — Extend the volume/pan envelope lanes to any effect parameter.
-
-## API Endpoints
-
-All endpoints require authentication and use SwarmUI's permission system.
-
-### Audio Processing
-
-| Endpoint | Method | Description |
-| --- | --- | --- |
-| `ProcessAudio` | POST | Generic entry point — routes to any provider by `provider_id` |
-| `ProcessTTS` | POST | Text-to-speech with `text`, `voice`, `language`, `volume` params |
-| `ProcessSTT` | POST | Speech-to-text with `audio_data` (base64), `language` params |
-| `ProcessWorkflow` | POST | Chain multiple operations (e.g., STT then TTS) with ordered steps |
-
-### Engine Management
-
-| Endpoint | Method | Description |
-| --- | --- | --- |
-| `AudioLabListEngines` | GET | List all engines with install status, models, and metadata |
-| `AudioLabInstallEngine` | POST (WS) | Install an engine (download weights) with real-time WebSocket progress streaming |
-| `AudioLabUninstallEngine` | POST | Remove engine from registry (optionally delete its weights) |
-| `GetAllProvidersStatus` | GET | List all registered providers with metadata |
-| `GetInstallationStatus` | GET | Per-provider install status |
-
-### Audio Format Conversion
-
-| Endpoint | Method | Description |
-| --- | --- | --- |
-| `ConvertAudioFormat` | POST | Convert WAV audio to MP3, OGG, FLAC, AAC, or M4A via ffmpeg. Used by DAW export. |
-
-### Video + Audio
-
-| Endpoint | Method | Description |
-| --- | --- | --- |
-| `CombineVideoAudio` | POST | Merge audio track into video (replace or mix mode), 200 MB video / 50 MB audio limit |
-| `ExtractAudioFromVideo` | POST | Extract audio track as 16-bit PCM WAV at 44.1 kHz, 200 MB video limit |
-
-### Permissions
-
-| Permission | Level | Covers |
-| --- | --- | --- |
-| `audio_process` | Power Users | ProcessAudio, ProcessTTS, ProcessSTT, ProcessWorkflow, CombineVideoAudio, ExtractAudioFromVideo, ConvertAudioFormat |
-| `audio_manage_backends` | Power Users | AudioLabInstallEngine, AudioLabUninstallEngine |
-| `audio_check_status` | Power Users | GetAllProvidersStatus, GetInstallationStatus, AudioLabListEngines |
-
-## Architecture
-
-```
-SwarmUI-AudioLab/
-├── AudioLab.cs                          # Extension entry point
-├── AudioLabParams.cs                    # T2I parameter registration + BuildEngineArgs param→engine mapping
-├── AudioAPI/
-│   ├── AudioLabAPI.cs                   # API endpoints (process, install, status)
-│   ├── AudioParameters.cs               # Shared parameter helpers
-│   ├── AudioProgressTracking.cs         # Install/generation progress
-│   └── VideoAudioEndpoints.cs           # Video+audio combining/extraction via ffmpeg
-├── AudioBackends/
-│   └── DynamicAudioBackend.cs           # Unified routing backend (model routing, streaming, cancellation, install)
-├── AudioProviders/
-│   ├── AudioProviderDefinitions.cs      # Provider registry (auto-discovers all IAudioProviderSource)
-│   ├── KokoroProvider.cs                # One file per provider — engine-backed (Kokoro, Chatterbox, ACE-Step, …)
-│   ├── ElevenLabsTTSProvider.cs         #   and cloud-API providers (ElevenLabs, Azure, OpenAI, …)
-│   └── ...                              # ~56 provider files total
-├── AudioProviderTypes/
-│   ├── AudioCategory.cs                 # TTS, STT, AudioGeneration, VoiceConversion, AudioProcessing
-│   ├── AudioProviderDefinition.cs       # Provider definition schema
-│   ├── AudioModelDefinition.cs          # Per-model metadata (id, license, source URL, size, VRAM)
-│   ├── AudioProviderDefinitionBuilder.cs # Fluent builder for provider definitions
-│   └── IAudioProviderSource.cs          # Provider interface
-├── AudioServices/                       # The in-process C# inference layer (HartsyInference engine)
-│   ├── AudioEngine.cs                   # Dispatch table: provider id → handler; owns the compute device
-│   ├── AudioWeights.cs / AudioWeightsRegistry.cs # Download URLs + on-disk weight resolution
-│   ├── AudioServerManager.cs            # Routes a request to the engine (or a cloud API handler)
-│   ├── AudioUnsupportedReasons.cs       # Precise "not runnable yet" messages
-│   ├── Tts/  Stt/  Music/  Vc/  Fx/     # Per-category handlers + model descriptors
-│   │   └── Models/                      #   one descriptor per model (repo + how to load + how to synth)
-│   └── ApiHandlers/                     # Cloud-API providers (Azure, Google, Suno, Udio, …)
-├── Assets/
-│   ├── audio-core.js                    # Frontend UI (engine browser, param groups)
-│   ├── audio-api.js                     # API client (backend communication)
-│   ├── audio-player.js                  # Waveform player (WaveSurfer.js)
-│   ├── audio-daw*.js                    # DAW editor (orchestrator, tracks, timeline, mixer)
-│   ├── audio-integration.js             # SwarmUI integration hooks
-│   ├── audio-lab.css                    # Styling (theme-aware)
-│   └── lib/                             # WaveSurfer, Crunker, Timeline, Minimap plugins
-└── README.md
+AudioLab is not on SwarmUI's built in extension list yet, so install it by hand:
+
+```bash
+cd /path/to/SwarmUI/src/Extensions/
+git clone https://github.com/HartsyAI/SwarmUI-AudioLab.git
 ```
 
-The extension follows a two-layer architecture (no Python, no separate server process):
+Then rebuild. Restarting alone is not enough, because extensions are compiled: run the `update` script in the Swarm
+root, or launch with a `launch-dev` script, which rebuilds every time.
 
-- **C# layer** registers providers with a fluent builder API, manages the routing backend lifecycle, routes generation requests by model prefix, maps UI parameters to engine arguments (`BuildEngineArgs`), and runs inference **in-process** via the [HartsyInference](https://www.nuget.org/packages/HartsyInference) engine. `AudioEngine` holds a dispatch table from provider id to a per-category handler (TTS/STT/Music/VC/FX); each handler drives a per-model descriptor that knows the model's HuggingFace repo and how to load + run it. Cloud-API providers route through `ApiHandlers/` instead. Weights download and cache to the Audio Model Root; pipelines stay resident in GPU/CPU memory between requests.
-- **Frontend** adds audio parameter groups to the Generate tab sidebar, provides a waveform-based audio player via WaveSurfer.js, and integrates with SwarmUI's generation lifecycle (model selection, parameter visibility, streaming playback, cancellation).
+After the restart, open `Server` > `Backends`, press **Audio Backend**, and save. The backend registers itself with
+no engines installed; you add those next.
 
-### Cancellation
+## Quick start
 
-When the user clicks Stop Generation, SwarmUI fires the session's `InterruptToken`. The C# layer observes it and cancels in two ways:
+1. Go to `Server` > `Backends` and expand the **Audio Backend** card.
+2. Open a category, for example **Text-to-Speech**, and press **Install** on an engine. Kokoro TTS is a good first
+   pick: about 200MB, roughly 1GB of VRAM, and fast enough to be pleasant.
+3. Switch to the **Generate** tab and select the model, for example `Audio Models/Kokoro/default`.
+4. Type what you want spoken into the prompt box and press **Generate**.
 
-1. **Infrastructure** — the in-process generation call is passed the cancellation token; the engine aborts at the next checkpoint and the result is discarded.
-2. **Cooperative** — pipelines with iterative loops check the token periodically for fast mid-inference cancellation.
+The result is a WAV in your normal output history, with the same metadata, sharing, and history behaviour as an
+image. Audio specific parameters appear automatically for whichever model you selected.
 
-Both "Stop Generation" (current session) and "Stop All Generations" (all sessions) work through the same token mechanism. For single-shot calls (e.g. Bark), the computation may finish before the cancel arrives — the result is still discarded.
+![Audio parameters in the Generate tab](Assets/readme/generate-params.png)
 
-## Backend Settings
+## The Audio Backend
 
-| Setting | Default | Description |
+AudioLab adds one backend type, **Audio Backend**. Add a single instance; it routes every audio category.
+
+![The Audio Backend card](Assets/readme/backend-card.png)
+
+The card has one setting, **Device**, listing every compute backend the engine supports on your machine with one
+entry per GPU. The list is built from the engine itself, so a backend it gains later appears here automatically:
+
+```
+Auto (best available)
+CPU only (very slow)
+GPU 0: NVIDIA GeForce RTX 3060 (11.6 GB)
+Vulkan 0: NVIDIA GeForce RTX 3060 (12.2 GB)
+Vulkan 1: llvmpipe (LLVM 15.0.7, 256 bits) (31.3 GB, software)
+```
+
+GPU numbering is the engine's own enumeration, which is fastest first for CUDA and need not match the order
+`nvidia-smi` prints. Software rasterizers are labelled as such so you do not pick one by accident. `Auto` is
+correct unless you are deliberately steering audio off a card another backend is using.
+
+One thing to know: audio shares a single engine instance for the whole process, so `Device` is not really a per
+backend choice. Run one audio backend, and restart SwarmUI to change devices once audio has run.
+
+### Installing engines
+
+Expanding a category lists its engines with VRAM, license, download size, and a status dot: green for installed,
+grey for available.
+
+![The engine manager](Assets/readme/engine-manager.png)
+
+Engines that ship several checkpoints open a per model table, so you can take just the variant you want instead of
+every one. ACE-Step, for example, has nine:
+
+![Per model install](Assets/readme/install-modal.png)
+
+Most engines fetch their weights on first use. The ones that download discrete checkpoints get explicit **Install**
+and **Remove** buttons per model, plus **Download All** and **Remove All**.
+
+### Cloud API engines are currently disabled
+
+AudioLab also carries definitions for 20 cloud providers (ElevenLabs, OpenAI, Google, Azure, Polly, Deepgram,
+Cartesia, Play.ht, Suno, Udio, AssemblyAI, Dolby.io and others). **None of them are currently tested, so all of
+them are disabled.** They appear greyed out, cannot be installed, and the server refuses install requests for them.
+
+![Cloud API engines are disabled](Assets/readme/engine-api-disabled.png)
+
+RealtimeSTT is disabled for a different reason: it has no C# engine implementation yet.
+
+## Engines and models
+
+Generated from the running server, so this is what the extension actually offers, not a wish list. "Weights" says
+whether the engine downloads on first use or exposes per model installs.
+
+
+#### Text to Speech (20 engines, 25 models)
+
+| Engine | Models | VRAM | License | Weights |
+| --- | --- | --- | --- | --- |
+| [Bark TTS](https://huggingface.co/suno/bark) | 1 | ~5GB | MIT | on first use |
+| [Chatterbox TTS](https://github.com/resemble-ai/chatterbox) | 1 | ~4GB | MIT | on first use |
+| [CosyVoice TTS](https://huggingface.co/FunAudioLLM/CosyVoice2-0.5B) | 1 | ~8GB | Apache 2.0 | on first use |
+| [CSM Conversational](https://huggingface.co/sesame/csm-1b) | 1 | ~4.5GB | Apache 2.0 | on first use |
+| [Dia TTS](https://huggingface.co/nari-labs/Dia-1.6B-0626) | 1 | ~10GB | Apache 2.0 | on first use |
+| [F5-TTS](https://huggingface.co/SWivid/F5-TTS) | 1 | ~4GB | CC-BY-NC-4.0 | on first use |
+| [Fish Speech TTS](https://huggingface.co/fishaudio/fish-speech-1.5) | 1 | ~4GB | CC-BY-NC-SA-4.0 | on first use |
+| [Kokoro TTS](https://huggingface.co/hexgrad/Kokoro-82M) | 1 | ~1GB (or CPU) | Apache 2.0 | on first use |
+| [Kyutai TTS](https://huggingface.co/kyutai/tts-1.6b-en_fr) | 1 | ~8 GB | CC-BY 4.0 | on first use |
+| [MeloTTS](https://huggingface.co/myshell-ai/MeloTTS-English-v3) | 1 | ~1GB (or CPU) | MIT | on first use |
+| [NeuTTS Air](https://huggingface.co/neuphonic/neutts-air) | 1 | ~2GB (or CPU) | Apache 2.0 | on first use |
+| [Orpheus TTS](https://huggingface.co/canopylabs/orpheus-3b-0.1-ft) | 1 | ~16GB | Apache 2.0 | on first use |
+| [Piper TTS](https://github.com/rhasspy/piper) | 1 | CPU only | MIT | on first use |
+| [Pocket TTS](https://github.com/kyutai-labs/pocket-tts) | 1 | CPU (no GPU needed) | CC-BY-4.0 | on first use |
+| [Qwen3 TTS](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base) | 5 | ~4GB, ~8GB | Apache 2.0 | on first use |
+| [Spark-TTS](https://huggingface.co/SparkAudio/Spark-TTS-0.5B) | 1 | ~4GB | CC-BY-NC-SA-4.0 | on first use |
+| [StyleTTS 2](https://huggingface.co/yl4579/StyleTTS2-LibriTTS) | 1 | ~2GB | MIT | on first use |
+| [VibeVoice TTS](https://huggingface.co/vibevoice/VibeVoice-1.5B) | 1 | ~7GB | MIT | on first use |
+| [ZipVoice](https://huggingface.co/k2-fsa/ZipVoice) | 1 | ~2GB | Apache 2.0 | on first use |
+| [Zonos TTS](https://huggingface.co/Zyphra/Zonos-v0.1-transformer) | 2 | ~4GB | Apache 2.0 | on first use |
+
+#### Speech to Text (6 engines, 17 models)
+
+| Engine | Models | VRAM | License | Weights |
+| --- | --- | --- | --- | --- |
+| [Distil-Whisper STT](https://huggingface.co/distil-whisper/distil-large-v3) | 2 | ~2GB | MIT | on first use |
+| [Kyutai STT](https://huggingface.co/kyutai/stt-1b-en_fr-trfs) | 2 | ~3 GB, ~6 GB | CC-BY 4.0 | on first use |
+| [Moonshine Streaming STT](https://huggingface.co/UsefulSensors/moonshine-streaming-tiny) | 3 | ~1.5GB to ~2GB | MIT | on first use |
+| [Moonshine STT](https://huggingface.co/UsefulSensors/moonshine-base) | 2 | CPU only, ~1GB (or CPU) | MIT | on first use |
+| [Whisper Streaming](https://huggingface.co/openai/whisper-base) | 1 | ~1GB (or CPU) | MIT | on first use |
+| [Whisper STT](https://huggingface.co/openai/whisper-tiny) | 7 | ~10GB to ~6GB | Apache 2.0 / MIT | on first use |
+
+#### Audio Generation (7 engines, 30 models)
+
+| Engine | Models | VRAM | License | Weights |
+| --- | --- | --- | --- | --- |
+| [ACE-Step Music](https://github.com/ace-step/ACE-Step-1.5) | 9 | ~12GB, ~6GB | Apache 2.0 | installed per model |
+| [AudioGen SFX](https://huggingface.co/facebook/audiogen-medium) | 1 | ~4GB | CC-BY-NC-4.0 | on first use |
+| [HeartLib Music](https://huggingface.co/HeartMuLa/HeartMuLa-oss-3B-happy-new-year) | 9 | ~12GB (lazy load) to ~7GB | Apache-2.0 | on first use |
+| [MiniMax Music 3](https://huggingface.co/MiniMaxAI/MiniMax-Music3) | 3 | ~10GB to ~22GB | CC-BY-NC-4.0 | on first use |
+| [MusicGen](https://huggingface.co/facebook/musicgen-small) | 3 | ~10GB to ~6GB | CC-BY-NC-4.0 | on first use |
+| [Stable Audio Open Small](https://huggingface.co/stabilityai/stable-audio-open-small) | 1 | ~3GB | Stability AI Community License | on first use |
+| [YuE Music](https://huggingface.co/m-a-p/YuE-s1-7B-anneal-en-cot) | 4 | ~16GB (fp16) | Apache-2.0 | installed per model |
+
+#### Voice Conversion (3 engines, 3 models)
+
+| Engine | Models | VRAM | License | Weights |
+| --- | --- | --- | --- | --- |
+| [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) | 1 | ~4GB | MIT | on first use |
+| [OpenVoice V2](https://github.com/myshell-ai/OpenVoice) | 1 | ~2GB | MIT | on first use |
+| [RVC Voice Conversion](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI) | 1 | ~4GB | MIT | installed per model |
+
+#### Audio Processing (2 engines, 4 models)
+
+| Engine | Models | VRAM | License | Weights |
+| --- | --- | --- | --- | --- |
+| [Demucs Separation](https://github.com/facebookresearch/demucs) | 2 | ~2GB | MIT | on first use |
+| [Resemble Enhance](https://github.com/resemble-ai/resemble-enhance) | 2 | ~2GB | MIT | on first use |
+
+### Verification status
+
+Models are tested end to end through the SwarmUI API rather than in isolation: generate, decode the returned WAV,
+and for speech run a Whisper round trip to compare the transcript against the input text.
+
+[BENCHMARKS.md](BENCHMARKS.md) holds the detailed per model log: measured real time factors, VRAM peaks, word error
+rates, and the specific reason for anything that does not work yet. It is a running record with dates on each pass,
+so check it rather than assuming a model's state from this table.
+
+The short version as of the most recent passes:
+
+- **Speech to text is uniformly solid.** Every Whisper, Distil-Whisper, Moonshine and streaming variant transcribes
+  on GPU at speeds in the faster-whisper reference range, with Moonshine tiny the fastest measured.
+- **Most text to speech engines work and are word correct.** Kokoro, Chatterbox, Fish Speech, Kyutai TTS, Pocket
+  TTS, Spark-TTS, StyleTTS 2 and Dia all produce intelligible, matching speech.
+- **A few have caveats worth knowing** before you rely on them: Bark sounds staticy, F5-TTS is correct but slow,
+  VibeVoice is a long form model that destabilizes on short prompts, and NeuTTS can append a garbled tail.
+- **Some are gated on engine work** and refuse cleanly with a specific reason rather than failing at generation
+  time: Piper, Zonos, MeloTTS and CosyVoice each need front end pieces the engine does not have yet.
+- **Music generation works** across ACE-Step, MusicGen, AudioGen, HeartLib and YuE, though the large autoregressive
+  models are slow on consumer cards.
+
+### Measured speed
+
+A sample of recorded figures on an RTX 3060 12GB, warm (model already loaded). RTF is generated audio seconds per
+wall second, so above 1.0 is faster than real time. Full tables, rigs and methodology are in
+[BENCHMARKS.md](BENCHMARKS.md); these are not re-measured for this README.
+
+| Model | Type | RTF (warm) |
 | --- | --- | --- |
-| Audio Model Root | `Models/audio` | Storage path for downloaded audio model weights |
-| Auto Redownload Missing Weights | `true` | If a model's weights are missing at generation time (e.g. deleted to free space), re-download them automatically; when off, generation refuses with a clear message |
-| Debug Mode | `false` | Enable verbose audio engine logging |
-| Use Docker | `false` | Legacy flag from the old Python backend; the C# engine runs in-process and does not use it |
+| Moonshine tiny | STT | 12.7x |
+| Whisper turbo | STT | 5.1x |
+| Kokoro | TTS | 4.3x |
+| Whisper large-v3 | STT | 3.8x |
+| ACE-Step 1.5 turbo | Music | 1.33x |
+| Qwen3 TTS 0.6B | TTS | 1.06x |
+| Fish Speech 1.5 | TTS | 0.81x |
+| Chatterbox | TTS | 0.50x |
+
+The small speech models are launch bound rather than compute bound, so a faster GPU moves them very little.
+
+Voice cloning models require a reference clip and will tell you so rather than guessing. Supply one through the
+**Voice Reference** parameter group.
+
+## The Audio Lab DAW
+
+The **Audio Lab** tab is a multi track editor built around what you generate. Open it from the top tab bar, or from
+the **Audio Lab** button on any audio result.
+
+The transport strip carries record, play, stop, loop, a time or bars ruler, zoom, BPM and time signature, snap, and
+the Project, Import and Export menus. Tracks have mute, solo, volume, pan, arm and a level meter; clips drag along
+the timeline, snap to the grid, and can be split, duplicated, muted or deleted.
+
+### Sessions
+
+DAW work is saved three ways, and they are independent:
+
+- **Autosave.** The current arrangement is continuously written to browser IndexedDB, including the audio itself, so
+  a crashed tab or an accidental refresh does not lose work.
+- **Local quick saves.** Named slots, also in IndexedDB, for fast checkpoints on the machine you are working on.
+- **Server side projects.** `Project` > `Save`, `Save As`, and `Open` store named projects against your SwarmUI user
+  account through the `AudioLabSaveProject` API, so they follow you between browsers and machines.
+
+![The Project menu](Assets/readme/daw-project-menu.png)
+
+`New Project` clears the timeline and starts over.
+
+### Clip Editor
+
+Per clip gain, fade in and fade out, a waveform preview with its own transport, and Split at Playhead, Duplicate,
+Delete and Mute. Track level volume stays in the Mixer, so clip gain and track gain do not fight each other.
+
+### Mixer
+
+One strip per track plus a master strip, each with pan, fader, level meter, mute and solo.
+
+![The mixer](Assets/readme/daw-mixer.png)
+
+### FX
+
+Per track effect chains built on the Web Audio API, so they are live and non destructive: EQ, Compressor, Reverb,
+Delay and Saturation. Effects can be bypassed individually, reordered, or removed, and a chain can be saved and
+loaded by name. There is a master limiter on the output.
+
+![Effect chains](Assets/readme/daw-fx.png)
+
+### Stems
+
+Demucs source separation with presets for the common jobs: Full Split, Karaoke (vocals plus a combined
+instrumental), Acapella, Instrumental, or Custom to pick exactly which stems you keep. Each stem chosen becomes a
+new track in the arrangement.
+
+![Stem separation](Assets/readme/daw-stems.png)
+
+### Instruments
+
+A 16 or 32 step drum machine with per lane gain, swing, audition, and Render to Track. Pads come from a generated
+one shot, an imported sample, or the currently selected clip.
+
+![The drum machine](Assets/readme/daw-instruments.png)
+
+Piano roll, bass and synth appear as slots in the instrument browser and are not built yet; see
+[Roadmap](#roadmap).
+
+### Generate
+
+Generate straight into the arrangement without leaving the tab. Pick a category, pick one of your installed
+engines, and the result is added as a new track at the playhead and saved to your outputs like any other
+generation.
+
+![Generating into the timeline](Assets/readme/daw-generate.png)
+
+Categories are Text to Speech, Music, Sound FX and Speech to Text. The Speech to Text category transcribes the
+selected clip, which is also how the transcript field fills itself.
+
+### Export
+
+`Export` renders the mixdown to WAV, MP3, OGG, FLAC or AAC, or straight back into your SwarmUI outputs.
+
+## Wake word listener
+
+AudioLab can hold an always on wake word listener. Voice satellites keep a connection open and stream microphone
+audio; the engine scores it for the wake word, transcribes the command that follows, and identifies who spoke.
+
+![The wake word section on the Audio Backend card](Assets/readme/wake-word.png)
+
+**It is off by default.** A SwarmUI install with no voice satellite never binds a port or holds a detection thread.
+It lives in the **Wake Word** section of the Audio Backend card, under the engine list, because it is set up
+once and then runs headless. Start it there, or set "Start with SwarmUI" to have it start with the server.
+
+Its UI sits on the backend card, but the listener itself is not a backend and does not share that backend's
+lifecycle: restarting or disabling the Audio Backend leaves the listener running. It holds its own small CPU
+models, so it neither takes the shared generation lock nor competes for VRAM with audio generation.
+
+### Satellites
+
+Satellites connect two ways, with the same wire protocol either way, so firmware only changes transport:
+
+- **Raw TCP** on the configured port, 10800 by default. Turn off "Bind the LAN port" and nothing listens on the LAN.
+- **WebSocket**, through the `AudioLabWakeIngest` route. This exists because an HTTPS reverse proxy or tunnel cannot
+  carry raw TCP but does carry WebSockets, so a satellite reaches the listener on the same hostname as the web UI.
+
+> **Set the shared secret before exposing this beyond a trusted LAN.** Satellites send it in their hello frame. If
+> it is empty the check is disabled, which is fine on a home network, but anyone who can reach the endpoint could
+> otherwise stream audio in and read every detection, including transcripts of what was said.
+
+### Words and speakers
+
+Train a new wake word from its text in the **Wake Words** group. Training reports recall, false accept rate, false accepts per
+hour and a suggested threshold, so you can judge a word before trusting it. Supply real room recordings as negative
+audio; with too few negatives the false accept rate is unreliable.
+
+Each word carries its own threshold, smoothing window, refractory period, a route tag, and optionally a required
+speaker. Enrolled speakers are listed in the **Speakers** group, and a word can be restricted to one of them.
+Enrollment itself is API-only for now: it needs recorded utterances, which `AudioLabWakeEnrollSpeaker` accepts as
+base64 clips.
+
+### Consuming detections
+
+Detections are published for other extensions, which is the point of the feature. Each carries `device_id`, `word`,
+`score`, `route`, `transcript`, `speaker` and `detected_at`.
+
+- `AudioLabWakeEvents` is a WebSocket that streams them live.
+- `AudioLabWakeRecentDetections` returns the recent buffer for consumers that cannot hold a socket open.
+- `WakeWordService.Detected` is a plain C# event, for in process consumers that would rather not open a socket back
+  into their own process.
+- Configured webhook URLs receive a JSON POST per detection.
+
+## API reference
+
+AudioLab follows SwarmUI's API conventions exactly, so everything in the
+[SwarmUI API docs](https://github.com/mcmonkeyprojects/SwarmUI/blob/master/docs/API.md) applies: routes are `POST`
+to `(your server)/API/(route)` with JSON in and JSON out, every route except `GetNewSession` needs a `session_id`,
+and routes marked WebSocket take a socket and stream progress.
+
+Most responses carry `success`, plus `error` and `error_code` on failure.
+
+### Generating audio
+
+You usually do **not** need these endpoints. The canonical path is Swarm's own `GenerateText2Image`, with the audio
+model as `model` and your text as `prompt`. The result lands in output history like any generation:
+
+```bash
+# 1. Get a session
+curl -s -H "Content-Type: application/json" -d '{}' \
+  -X POST http://localhost:7801/API/GetNewSession
+# {"session_id":"<ID>", ...}
+
+# 2. Generate speech, exactly like generating an image
+curl -s -H "Content-Type: application/json" -X POST http://localhost:7801/API/GenerateText2Image \
+  -d '{"session_id":"<ID>","images":1,
+       "model":"Audio Models/Kokoro/default",
+       "prompt":"As she sells seashells by the seashore."}'
+# {"images":["View/local/raw/2026-08-18/....wav"]}
+```
+
+The direct endpoints below exist for callers that want base64 audio back instead of a file in history.
+
+```bash
+# Text to speech, returning base64 WAV
+curl -s -H "Content-Type: application/json" -X POST http://localhost:7801/API/ProcessTTS \
+  -d '{"session_id":"<ID>","provider_id":"kokoro_tts",
+       "text":"Hello from AudioLab.","voice":"af_heart","volume":0.8,
+       "options":{"speed":1.0,"format":"wav"}}'
+# {"success":true,"audio_data":"<base64 wav>", ...}
+
+# Speech to text
+curl -s -H "Content-Type: application/json" -X POST http://localhost:7801/API/ProcessSTT \
+  -d '{"session_id":"<ID>","provider_id":"whisper_stt",
+       "audio_data":"<base64 wav>","language":"en-US"}'
+# {"success":true,"transcription":"hello from audiolab", ...}
+```
+
+Voice cloning engines take `reference_audio` (base64 WAV) and, where the model needs it, `ref_text` alongside the
+usual `ProcessTTS` fields.
+
+### Routes
+
+| Route | Kind | Permission | Parameters |
+| --- | --- | --- | --- |
+| `ProcessTTS` | POST | `audio_process` | `provider_id`, `text`, `voice`, `language`, `volume`, `options`, `reference_audio`, `ref_text` |
+| `ProcessSTT` | POST | `audio_process` | `provider_id`, `audio_data`, `language`, `options` |
+| `ProcessAudio` | POST | `audio_process` | `provider_id`, `args` |
+| `ProcessWorkflow` | POST | `audio_process` | workflow steps |
+| `ConvertAudioFormat` | POST | `audio_process` | `audio_data`, `format` |
+| `AudioLabTimeStretch` | POST | `audio_process` | `audio_data`, `rate`, `semitones` |
+| `CombineVideoAudio` | POST | `audio_process` | `video_data`, `audio_data`, `mode` |
+| `ExtractAudioFromVideo` | POST | `audio_process` | `video_data` |
+| `AudioLabListEngines` | POST | `audio_check_status` | none |
+| `GetAllProvidersStatus` | POST | `audio_check_status` | none |
+| `GetInstallationStatus` | POST | `audio_check_status` | none |
+| `AudioLabInstallEngine` | WebSocket | `audio_manage_backends` | `provider_id`, `model_id` (optional) |
+| `AudioLabInstallAllModels` | WebSocket | `audio_manage_backends` | `provider_id` |
+| `AudioLabUninstallEngine` | POST | `audio_manage_backends` | `provider_id`, `delete_weights`, `model_id` |
+| `AudioLabRemoveAllModels` | POST | `audio_manage_backends` | `provider_id` |
+| `AudioLabSaveProject` | POST | `audio_daw_projects` | `name`, `project_json` |
+| `AudioLabLoadProject` | POST | `audio_daw_projects` | `name` |
+| `AudioLabListProjects` | POST | `audio_daw_projects` | none |
+| `AudioLabDeleteProject` | POST | `audio_daw_projects` | `name` |
+| `AudioLabWakeStatus` | POST | `audio_wake_listen` | none |
+| `AudioLabWakeEvents` | WebSocket | `audio_wake_listen` | none |
+| `AudioLabWakeRecentDetections` | POST | `audio_wake_listen` | none |
+| `AudioLabWakeListWords` | POST | `audio_wake_listen` | none |
+| `AudioLabWakeListSpeakers` | POST | `audio_wake_listen` | none |
+| `AudioLabWakeIngest` | WebSocket | `audio_wake_listen` | satellite protocol frames |
+| `AudioLabWakeGetSettings` | POST | `audio_wake_manage` | none |
+| `AudioLabWakeSaveSettings` | POST | `audio_wake_manage` | `settings` |
+| `AudioLabWakeStart` | POST | `audio_wake_manage` | none |
+| `AudioLabWakeStop` | POST | `audio_wake_manage` | none |
+| `AudioLabWakeConfigureWord` | POST | `audio_wake_manage` | `word`, `threshold`, `smoothing_window`, `refractory_seconds`, `route`, `required_speaker` |
+| `AudioLabWakeTrainWord` | WebSocket | `audio_wake_manage` | `phrase`, `voices`, `negative_phrases`, `negative_audio`, `epochs` |
+| `AudioLabWakeEnrollSpeaker` | POST | `audio_wake_manage` | `name`, `clips` (array of base64 WAV), `phrase` |
+| `AudioLabWakeRemoveSpeaker` | POST | `audio_wake_manage` | `name` |
+
+Reacting to wake detections from your own code is a WebSocket to `AudioLabWakeEvents`. It sends
+`{"subscribed":true, ...}` on connect, then one `{"detection":{...}}` per hit, with a `{"keepalive":true}` every 30
+seconds so an idle feed is not mistaken for a dead one.
+
+## Permissions
+
+AudioLab registers its permissions in an **AudioLab** group, so you can grant them per role under
+`Server` > `Users`.
+
+| Permission | Default | Covers |
+| --- | --- | --- |
+| `audio_process` | Power users | Running audio through any provider |
+| `audio_manage_backends` | Power users | Installing and removing engines and model weights |
+| `audio_check_status` | Power users | Listing engines and reading provider status |
+| `audio_daw_projects` | Users | Saving and loading personal DAW projects |
+| `audio_wake_listen` | Users | Reading wake status and subscribing to detections |
+| `audio_wake_manage` | Power users | Starting and stopping the listener, training words, enrolling speakers |
+
+`audio_wake_listen` is deliberately the lower bar: it is the permission another extension needs in order to react
+to wake events.
+
+## Network connections
+
+Per SwarmUI's extension standards, here is every outbound connection AudioLab makes and why:
+
+| Connection | When | Avoidable |
+| --- | --- | --- |
+| **huggingface.co** | Downloading model weights, on install or on first use | Yes, do not install engines. Nothing is fetched in the background otherwise |
+| **Meta's public CDN** | Demucs stem separation weights, on first use | Yes, do not use stem separation |
+| **Webhook URLs you configure** | One JSON POST per wake detection | Yes, leave the webhook list empty, which is the default |
+| **Cloud provider APIs** | Not currently used at all, since every API engine is disabled | Not applicable |
+
+No telemetry, no analytics, no update pings, no ads.
+
+## Roadmap
+
+Known and planned, so you can tell missing from broken:
+
+- **More DAW instruments.** The drum machine ships today. Piano roll, bass and synth are visible slots in the
+  instrument browser and are not implemented; selecting one says so rather than failing silently.
+- **Cloud API engines.** All 20 provider definitions exist but none are tested, so all are disabled. They get
+  re-enabled per provider as each is verified.
+- **RealtimeSTT** needs a C# engine implementation.
+- **Engine side gates.** Piper, Zonos, MeloTTS and CosyVoice are wired up and waiting on front end pieces from the
+  engine. They light up on their own once those land.
+- **Voice cloning for a few engines** (Chatterbox, NeuTTS, Spark-TTS) is waiting on encoder support; the default
+  voice works meanwhile.
+- **Performance.** The large autoregressive music models are slow on consumer GPUs and are an active optimization
+  target. See BENCHMARKS.md for measured numbers.
+- **LLM assisted music metadata.** ACE-Step's planner parameters exist but wait on SwarmUI's `AbstractLLMBackend`.
 
 ## Troubleshooting
 
-**Engine install / weight download fails:**
-- Check that you have a stable internet connection for downloading model weights
-- Check the SwarmUI server logs for detailed error output
-- Some models aren't runnable on the C# engine yet — the install/generate error names the exact missing piece
+**An engine says it is not installed but you installed it.** Its weights are not on disk any more, most likely
+freed manually. AudioLab resets it to not installed and tells you; reinstall from the backend card.
 
-**Gated model access denied:**
-- Some models (e.g., certain Fish Speech or Qwen3 variants) require accepting a license agreement on HuggingFace
-- Go to the model's HuggingFace page, accept the agreement, then set your HuggingFace token in SwarmUI: Server > User Settings > API Keys
-- Get a token at https://huggingface.co/settings/tokens (needs "Read" permission)
+**Changing the Device setting did nothing.** The audio engine is built once per process. Restart SwarmUI.
 
-**A model says "not runnable in the C# engine yet":**
-- That model's pipeline exists but is missing a specific prerequisite (a tokenizer asset, phonemizer, or confirmed weight layout). The message names it. Pick another model in the same category in the meantime.
+**A model refuses with a specific message about a missing front end.** That is an engine side gate, not a bug in
+your setup. See [Roadmap](#roadmap); it will start working when the engine gains the piece it names.
 
-**No audio output:**
-- Verify the engine is installed (check the model browser for audio models)
-- Check that the Audio Backend is running (Server > Backends)
-- Look at the SwarmUI server logs for `[AudioLab]` errors
+**Changes to the extension are not showing up.** Extensions are compiled. Restarting SwarmUI is not enough on its
+own unless you launch with a `launch-dev` script; otherwise run the `update` script.
 
-**Video+audio features not working:**
-- Install ffmpeg and ensure it is on your system PATH
+**Out of memory when switching between large models.** AudioLab evicts other providers under memory pressure, but
+host RAM, not VRAM, is usually the limit with multi gigabyte models. Close other heavy processes.
 
-**Stop Generation not working:**
-- Ensure the Audio Backend is running and healthy (check Server > Backends)
-- For single-call engines (e.g., Bark), the GPU computation may finish before the cancel signal arrives — the result is still discarded
+## License and credits
 
-## License
+MIT. See [LICENSE](LICENSE).
 
-MIT License - see [LICENSE](LICENSE) for details.
+Built by [Hartsy AI](https://github.com/HartsyAI) on top of [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI)
+by mcmonkey, and the [HartsyInference](https://www.nuget.org/packages/HartsyInference) engine.
 
-## Acknowledgments
-
-- [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI) — Base platform
-- [WaveSurfer.js](https://wavesurfer.xyz/) — Audio waveform visualization (player + DAW clip rendering)
-- [Crunker](https://github.com/jaggad/crunker) — Audio concatenation
-- [FFMpegCore](https://github.com/rosenbjerg/FFMpegCore) — FFmpeg wrapper for audio format conversion
+Each model carries its own upstream license, shown on its card in the engine manager and in the tables above.
+Several are non commercial (F5-TTS, Fish Speech); check before shipping anything built with them.
