@@ -944,5 +944,16 @@ backendsRevisedCallbacks.push(() => {
         audioLabLoadEngines(engines => {
             audioLabRenderEngineManager(container, engines);
         });
+
+        // The wake listener is server-wide, not part of this backend, but this is where audio gets set up.
+        if (typeof WakeWordUI !== 'undefined') {
+            const wakeSep = document.createElement('hr');
+            wakeSep.style.borderColor = 'var(--border-color)';
+            wakeSep.style.margin = '1em 0';
+            cardBody.appendChild(wakeSep);
+            const wake = createDiv(`audiolab_wakeword_${id}`, 'audiolab-wakeword-section');
+            cardBody.appendChild(wake);
+            WakeWordUI.mount(wake);
+        }
     }
 });

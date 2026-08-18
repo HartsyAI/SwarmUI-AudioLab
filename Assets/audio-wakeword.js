@@ -1,8 +1,11 @@
 /**
- * AudioLab — Wake Word tab.
+ * AudioLab wake-word section, rendered into the Audio Backend card.
  *
- * Drives the wake-word listener: status, settings, the live detection feed, word training and speaker
- * management. The detection feed rides a WebSocket that the server holds open, so this file never polls.
+ * Drives the listener: status, settings, the live detection feed, word training and speaker management.
+ * The detection feed rides a WebSocket the server holds open, so this file never polls.
+ *
+ * It lives on the backend card rather than its own tab because it is set-up-once admin config that belongs
+ * with the rest of the audio setup. The listener itself is NOT part of that backend's lifecycle.
  */
 
 'use strict';
@@ -53,7 +56,7 @@ const WakeWordUI = {
         const socket = makeWSRequest('AudioLabWakeEvents', {}, data => {
             if (data.subscribed) {
                 this.backoff = 1000;
-                this.setFeedState(data.running ? `Connected \u2014 listening on port ${data.port}.` : 'Connected \u2014 listener is stopped.', 'text-success');
+                this.setFeedState(data.running ? `Connected, listening on port ${data.port}.` : 'Connected, but the listener is stopped.', 'text-success');
             }
             else if (data.detection) { this.addDetection(data.detection); }
         }, 0, err => this.setFeedState(`Event socket error: ${err}`, 'text-danger'));
@@ -61,7 +64,7 @@ const WakeWordUI = {
         this.socket = socket;
         socket.addEventListener('close', () => {
             this.socket = null;
-            this.setFeedState(`Disconnected \u2014 retrying in ${Math.round(this.backoff / 1000)}s.`, 'text-warning');
+            this.setFeedState(`Disconnected, retrying in ${Math.round(this.backoff / 1000)}s.`, 'text-warning');
             setTimeout(() => this.connectFeed(), this.backoff);
             this.backoff = Math.min(this.backoff * 2, 30000);
         });
@@ -71,10 +74,10 @@ const WakeWordUI = {
         genericRequest('AudioLabWakeStatus', {}, data => {
             const badge = getRequiredElementById('wakeword_state_badge');
             badge.innerText = data.running ? 'running' : 'stopped';
-            badge.className = `badge ${data.running ? 'bg-success' : 'bg-secondary'}`;
+            badge.className = `audiolab-wake-badge${data.running ? ' running' : ''}`;
             const devices = (data.devices ?? []);
             getRequiredElementById('wakeword_status_body').innerHTML =
-                `<div><strong>Port:</strong> ${data.running ? data.port : '—'}</div>`
+                `<div><strong>Port:</strong> ${data.running ? data.port : 'n/a'}</div>`
                 + `<div><strong>Models:</strong> <code>${escapeHtml(data.model_root ?? '')}</code></div>`
                 + `<div><strong>Satellites:</strong> ${devices.length === 0 ? '<em>none connected</em>' : devices.map(escapeHtml).join(', ')}</div>`;
         }, 0, e => getRequiredElementById('wakeword_status_body').innerHTML = `<span class="text-danger">${escapeHtml(e)}</span>`);
@@ -84,7 +87,7 @@ const WakeWordUI = {
         genericRequest('AudioLabWakeListWords', {}, data => {
             const words = data.words ?? [];
             if (words.length === 0) {
-                getRequiredElementById('wakeword_words').innerHTML = '<em>No wake words loaded. Start the listener, or train one below.</em>';
+                getRequiredElementById('wakeword_words').innerHTML = '<em>No wake words loaded. Start the listener, or train one.</em>';
                 return;
             }
             let html = '<table class="table table-sm"><thead><tr><th>Word</th><th>Threshold</th><th>Route</th><th>Required speaker</th><th></th></tr></thead><tbody>';
@@ -110,7 +113,7 @@ const WakeWordUI = {
             required_speaker: getRequiredElementById(`wakeword_speaker_${name}`).value,
         }, data => {
             if (data.success) { this.refreshWords(); }
-            else { alert(`Could not save '${name}': ${data.error}`); }
+            else { showError(`Could not save '${name}': ${data.error}`); }
         });
     },
 
@@ -141,14 +144,14 @@ const WakeWordUI = {
                 AuthToken: getRequiredElementById('wakeword_setting_token').value,
             }
         }, data => {
-            if (!data.success) { alert(`Could not save settings: ${data.error}`); }
+            if (!data.success) { showError(`Could not save settings: ${data.error}`); }
             this.refreshStatus();
         });
     },
 
     trainWord() {
         const phrase = getRequiredElementById('wakeword_train_phrase').value.trim();
-        if (!phrase) { alert('Enter a phrase to train.'); return; }
+        if (!phrase) { doNoticePopover('Enter a phrase to train.', 'notice-pop-yellow'); return; }
         const progress = getRequiredElementById('wakeword_train_progress');
         progress.innerHTML = '<em>Starting…</em>';
         makeWSRequest('AudioLabWakeTrainWord', {
@@ -207,29 +210,145 @@ const WakeWordUI = {
         this.refreshSpeakers();
     },
 
-    /** Wires the tab up the first time it is shown, so nothing connects for users who never open it. */
-    start() {
-        if (this.started) { this.refreshAll(); return; }
-        this.started = true;
-        getRequiredElementById('wakeword_start_btn').addEventListener('click', () =>
+
+    /** The section's markup. Uses the engine manager's collapsible groups so it reads as one card. */
+    /** The section's markup: one collapsible Wake Word group holding everything, so the card stays short. */
+    sectionHtml() {
+        return `
+<div class="audiolab-cat-group collapsed" id="wakeword_root_group">
+    <div class="audiolab-cat-header" id="wakeword_root_header">
+        <span class="audiolab-cat-arrow">&#x2B9F;</span>
+        <span>Wake Word</span>
+        <span id="wakeword_state_badge" class="audiolab-wake-badge">stopped</span>
+    </div>
+    <div class="audiolab-cat-body audiolab-wake-body">
+        <div class="audiolab-wake-intro">
+            Voice satellites stream microphone audio here continuously. The engine detects the wake word, transcribes
+            the command that follows, and identifies the speaker. Detections are published on the
+            <code>AudioLabWakeEvents</code> API for other extensions to react to.
+            <em>The listener runs independently of this backend: restarting the backend does not stop it.</em>
+        </div>
+        <div class="audiolab-wake-actions">
+            <button id="wakeword_start_btn" class="basic-button btn-primary">Start Listener</button>
+            <button id="wakeword_stop_btn" class="basic-button">Stop Listener</button>
+            <button id="wakeword_refresh_btn" class="basic-button">Refresh</button>
+        </div>
+        <div id="wakeword_status_body" class="audiolab-wake-status"><em>Loading…</em></div>
+
+        <div class="audiolab-cat-group collapsed" data-wake-group>
+            <div class="audiolab-cat-header"><span class="audiolab-cat-arrow">&#x2B9F;</span><span>Settings</span></div>
+            <div class="audiolab-cat-body audiolab-wake-body">
+                <div class="audiolab-wake-grid">
+                    <label>Start with SwarmUI<input type="checkbox" id="wakeword_setting_enabled" class="form-check-input"></label>
+                    <label>Port<input type="number" id="wakeword_setting_port" class="form-control" value="10800" min="1" max="65535"></label>
+                    <label>Bind address<input type="text" id="wakeword_setting_bind" class="form-control" value="0.0.0.0"></label>
+                    <label>Transcribe the command<input type="checkbox" id="wakeword_setting_transcribe" class="form-check-input" checked></label>
+                    <label>Identify speakers<input type="checkbox" id="wakeword_setting_speakers" class="form-check-input" checked></label>
+                    <label>Transcription model<input type="text" id="wakeword_setting_model" class="form-control" value="whisper"></label>
+                    <label>Bind the LAN port<input type="checkbox" id="wakeword_setting_tcp" class="form-check-input" checked>
+                        <span class="audiolab-wake-hint">Off for a tunnel-only setup: nothing listens on the LAN and satellites use the WebSocket route.</span></label>
+                    <label>Shared secret<input type="text" id="wakeword_setting_token" class="form-control" placeholder="(empty = no authentication)">
+                        <span class="audiolab-wake-hint">Satellites send this in their hello frame. Empty is fine on a trusted LAN, but set it before this is reachable from the internet, or anyone who finds the endpoint can stream audio in and read every transcript.</span></label>
+                </div>
+                <div class="audiolab-wake-actions">
+                    <button id="wakeword_save_settings_btn" class="basic-button btn-primary">Save Settings</button>
+                    <span class="audiolab-wake-hint">Saving restarts the listener when it is running.</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="audiolab-cat-group collapsed" data-wake-group>
+            <div class="audiolab-cat-header"><span class="audiolab-cat-arrow">&#x2B9F;</span><span>Wake Words</span></div>
+            <div class="audiolab-cat-body audiolab-wake-body">
+                <div id="wakeword_words"><em>Loading…</em></div>
+                <div class="audiolab-wake-actions">
+                    <button id="wakeword_train_btn" class="basic-button btn-primary">Train a Wake Word</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="audiolab-cat-group collapsed" data-wake-group>
+            <div class="audiolab-cat-header"><span class="audiolab-cat-arrow">&#x2B9F;</span><span>Speakers</span></div>
+            <div class="audiolab-cat-body audiolab-wake-body">
+                <div class="audiolab-wake-hint">Enroll on repetitions of the wake phrase itself. A wake word is about
+                    a second long, and speaker verification degrades badly at that length unless enrollment and use
+                    share the same words. Enrollment is API-only for now (<code>AudioLabWakeEnrollSpeaker</code>).</div>
+                <div id="wakeword_speakers"><em>Loading…</em></div>
+            </div>
+        </div>
+
+        <div class="audiolab-cat-group collapsed" data-wake-group>
+            <div class="audiolab-cat-header"><span class="audiolab-cat-arrow">&#x2B9F;</span><span>Live Detections</span></div>
+            <div class="audiolab-cat-body audiolab-wake-body">
+                <div id="wakeword_feed_state" class="audiolab-wake-hint">Not connected.</div>
+                <div id="wakeword_feed" class="wakeword-feed"></div>
+            </div>
+        </div>
+    </div>
+</div>`;
+    },
+
+    /** Renders the section into a backend card and wires it. Nothing talks to the server until expanded. */
+    mount(container) {
+        container.innerHTML = this.sectionHtml();
+        const root = container.querySelector('#wakeword_root_group');
+        container.querySelector('#wakeword_root_header').addEventListener('click', () => {
+            root.classList.toggle('collapsed');
+            if (!root.classList.contains('collapsed')) { this.start(); }
+        });
+        for (const header of container.querySelectorAll('[data-wake-group] > .audiolab-cat-header')) {
+            header.addEventListener('click', () => header.parentElement.classList.toggle('collapsed'));
+        }
+        container.querySelector('#wakeword_start_btn').addEventListener('click', () =>
             genericRequest('AudioLabWakeStart', {}, data => {
-                if (!data.success) { alert(`Could not start: ${data.error}`); }
-                this.refreshAll();
+                if (!data.success) { showError(`Could not start the wake listener: ${data.error}`); }
+                this.start();
             }));
-        getRequiredElementById('wakeword_stop_btn').addEventListener('click', () =>
+        container.querySelector('#wakeword_stop_btn').addEventListener('click', () =>
             genericRequest('AudioLabWakeStop', {}, () => this.refreshAll()));
-        getRequiredElementById('wakeword_refresh_btn').addEventListener('click', () => this.refreshAll());
-        getRequiredElementById('wakeword_save_settings_btn').addEventListener('click', () => this.saveSettings());
-        getRequiredElementById('wakeword_train_btn').addEventListener('click', () => this.trainWord());
+        container.querySelector('#wakeword_refresh_btn').addEventListener('click', () => this.refreshAll());
+        container.querySelector('#wakeword_save_settings_btn').addEventListener('click', () => this.saveSettings());
+        container.querySelector('#wakeword_train_btn').addEventListener('click', () => this.showTrainModal());
+        // Status is cheap and is the one thing worth showing before anything is expanded.
+        this.refreshStatus();
+    },
+
+    /** Opens the training flow in a modal: it streams progress and can run for minutes. */
+    showTrainModal() {
+        document.getElementById('wakeword_train_modal')?.remove();
+        const body = `
+        <div class="modal-body">
+            <p>The phrase is synthesized across the engine's TTS voices and a small classifier is fitted to it.
+               Point negative audio at a folder of real room recordings. With too few negatives the false-accept
+               rate is unusable no matter how good the recall looks.</p>
+            <div class="audiolab-wake-grid">
+                <label>Phrase<input type="text" id="wakeword_train_phrase" class="form-control" placeholder="hey hartsy"></label>
+                <label>Negative audio folder<input type="text" id="wakeword_train_negatives" class="form-control" placeholder="/path/to/recordings"></label>
+                <label>Negative phrases<input type="text" id="wakeword_train_negphrases" class="form-control" placeholder="hey alexa, okay google"></label>
+            </div>
+            <div id="wakeword_train_progress" class="wakeword-progress"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary basic-button" id="wakeword_train_go">Train</button>
+            <button class="btn btn-secondary basic-button" id="wakeword_train_close">Close</button>
+        </div>`;
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = modalHeader('wakeword_train_modal', 'Train a Wake Word') + body + modalFooter();
+        document.body.appendChild(wrapper.firstElementChild);
+        const modal = document.getElementById('wakeword_train_modal');
+        modal.querySelector('#wakeword_train_close').addEventListener('click', () => {
+            $(modal).modal('hide');
+            setTimeout(() => modal.remove(), 300);
+        });
+        modal.querySelector('#wakeword_train_go').addEventListener('click', () => this.trainWord());
+        $(modal).modal('show');
+    },
+
+    /** Wires the section the first time it is expanded, so nothing connects for admins who never open it. */
+    start() {
         this.refreshAll();
+        if (this.started) { return; }
+        this.started = true;
         this.connectFeed();
     },
 };
-
-document.addEventListener('DOMContentLoaded', () => {
-    const link = document.querySelector('#maintab_wakeword');
-    if (!link) { return; }
-    link.addEventListener('click', () => WakeWordUI.start());
-    // Cover a reload that lands directly on the tab.
-    if (link.classList.contains('active')) { WakeWordUI.start(); }
-});

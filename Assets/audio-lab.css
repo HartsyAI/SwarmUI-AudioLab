@@ -986,7 +986,8 @@ input[type="range"].daw-transport-zoom { width: 11rem; flex-shrink: 0; }
 /* Clip editor gain + fade controls */
 .daw-clip-editor-mix { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
 .daw-clip-mix-label { font-size: 0.85rem; color: var(--text-soft); white-space: nowrap; }
-.daw-clip-gain-slider { width: 14rem; max-width: 100%; }
+/* Element+class: core's `input[type="range"]` width beats a bare class. */
+input[type="range"].daw-clip-gain-slider { width: 14rem; max-width: 100%; }
 
 /* Themed horizontal sliders — default range tracks are near-invisible on dark themes */
 input[type="range"].daw-clip-gain-slider,
@@ -2057,8 +2058,8 @@ input[type="range"].daw-transport-zoom::-moz-range-track {
     text-overflow: ellipsis;
     flex-shrink: 0;
 }
-.daw-beats-lane-gain { width: 5rem; accent-color: var(--emphasis); }
-.daw-beats-swing { width: 6rem; accent-color: var(--emphasis); }
+input[type="range"].daw-beats-lane-gain { width: 5rem; accent-color: var(--emphasis); }
+input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis); }
 .daw-beats-steps { display: flex; gap: 2px; flex-wrap: nowrap; overflow-x: auto; }
 .daw-beats-step {
     width: 1.6rem;
@@ -2221,7 +2222,7 @@ input[type="range"].daw-transport-zoom::-moz-range-track {
 .daw-mixer-strip .daw-knob-dial::before { top: 2px; width: 2.5px; height: 10px; margin-left: -1.25px; }
 .daw-strip-btns { gap: 0.35rem; }
 
-/* Wake Word tab */
+/* Wake word section (Audio Backend card) */
 .wakeword-feed {
     max-height: 22rem;
     overflow-y: auto;
@@ -2242,3 +2243,69 @@ input[type="range"].daw-transport-zoom::-moz-range-track {
     overflow-y: auto;
     margin-top: 0.5rem;
 }
+
+.audiolab-wakeword-section { margin-top: 0.25rem; }
+/* Nested groups inside the Wake Word group need their own spacing; the outer body is not a card grid. */
+.audiolab-wake-body > .audiolab-cat-group { margin-bottom: 0.4rem; }
+.audiolab-wake-body > .audiolab-cat-group:last-child { margin-bottom: 0; }
+.audiolab-wake-badge {
+    margin-left: 0.5rem;
+    padding: 0.1em 0.5em;
+    border-radius: 0.75rem;
+    font-size: 0.72em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-soft);
+    background: color-mix(in srgb, var(--text) 12%, transparent);
+}
+.audiolab-wake-badge.running {
+    color: var(--background);
+    background: var(--backend-running);
+}
+.audiolab-wake-intro {
+    color: var(--text-soft);
+    font-size: 0.85em;
+    margin-bottom: 0.5rem;
+}
+.audiolab-wake-intro em { display: block; margin-top: 0.25rem; }
+.audiolab-wake-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
+}
+.audiolab-wake-status { font-size: 0.85em; margin-bottom: 0.5rem; }
+/* Opt out of .audiolab-cat-body's 2-column card grid; this body lays itself out. */
+.audiolab-cat-body.audiolab-wake-body { display: block; padding: 0.6rem 0.5rem; }
+.audiolab-wake-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    gap: 0.6rem 1rem;
+    margin-bottom: 0.6rem;
+}
+.audiolab-wake-grid label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.85em;
+    color: var(--text);
+}
+/* Bootstrap's .form-control is white-on-dark here, so match the DAW's inputs instead. */
+.audiolab-wake-grid input[type="text"],
+.audiolab-wake-grid input[type="number"] {
+    padding: 0.25rem 0.45rem;
+    border: 1px solid var(--shadow);
+    border-radius: 0.25rem;
+    background: var(--background);
+    color: var(--text);
+    font-size: 1em;
+    width: 100%;
+}
+.audiolab-wake-grid input[type="checkbox"] {
+    align-self: flex-start;
+    accent-color: var(--emphasis);
+}
+.audiolab-wake-hint { color: var(--text-soft); font-size: 0.8em; }
+.audiolab-wake-status code { color: var(--text-soft); }
