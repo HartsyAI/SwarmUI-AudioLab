@@ -94,11 +94,15 @@ public static class AudioEngineRequests
             // Sentinel 0 = "model default" for shift/steps (the per-variant defaults live in the Engine's loaders).
             Shift = shift > 0 ? shift : null,
             InferSteps = steps > 0 ? (int)steps : null,
-            // HeartMuLa sends "cfg_scale"; ACE-Step sends "guidance_scale" — one CFG knob per provider.
+            // HeartMuLa sends "cfg_scale"; ACE-Step sends "guidance_scale"; the AudioCraft (MusicGen/AudioGen)
+            // shared params send "cfg_coef" — one CFG knob per provider.
             CfgScale = args.ContainsKey("cfg_scale") ? Double(args, "cfg_scale", 1.5)
-                : args.ContainsKey("guidance_scale") ? Double(args, "guidance_scale", 7.0) : null,
+                : args.ContainsKey("guidance_scale") ? Double(args, "guidance_scale", 7.0)
+                : args.ContainsKey("cfg_coef") ? Double(args, "cfg_coef", 3.0) : null,
             Temperature = args.ContainsKey("temperature") ? Double(args, "temperature", 1.0) : null,
-            TopK = args.ContainsKey("topk") ? (int)Double(args, "topk", 50) : null,
+            // YuE sends "topk"; the AudioCraft shared params send "top_k".
+            TopK = args.ContainsKey("topk") ? (int)Double(args, "topk", 50)
+                : args.ContainsKey("top_k") ? (int)Double(args, "top_k", 250) : null,
             // YuE's sampling knobs; the engine falls back to the reference defaults (0.93 / 1.1) when absent.
             TopP = args.ContainsKey("top_p") ? Double(args, "top_p", 0.93) : null,
             RepetitionPenalty = args.ContainsKey("repetition_penalty") ? Double(args, "repetition_penalty", 1.1) : null,
