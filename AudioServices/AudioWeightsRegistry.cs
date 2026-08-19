@@ -61,6 +61,39 @@ public static class AudioWeightsRegistry
         AceSilenceLatent,
     ];
 
+    private const string OpenWakeWordRelease = "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/";
+
+    /// <summary>openWakeWord's shared feature-extraction backbone (melspectrogram + speech embedding),
+    /// pinned to the v0.5.1 GitHub release — the same two files HartsyInference.Audio's WakeMelFrontend
+    /// and SpeechEmbeddingModel were ported against. Verified (2026-08-19) against the actual downloaded
+    /// bytes: melspectrogram.onnx's initializers are named <c>0.stft.conv_real.weight</c> /
+    /// <c>0.stft.conv_imag.weight</c> / <c>1.melW</c>, and embedding_model.onnx has the expected 41
+    /// <c>model/conv2d_N/Conv2D..._fused_bn</c> tensors — an exact match for what those loaders expect, not
+    /// just "a file with the right name". Sha256s below are computed from that same verified download.
+    ///
+    /// <para>Not a provider/model pair like everything else in this file — wake isn't modeled as an
+    /// AudioProviderDefinition (no AudioCategory.Wake), so this is looked up directly by
+    /// WakeWordService.InstallBackboneAsync via SpecsFor("wake", "backbone") rather than through the
+    /// AudioProviderDefinition-based install flow.</para></summary>
+    private static readonly DownloadSpec[] WakeBackbone =
+    [
+        new(Url: OpenWakeWordRelease + "melspectrogram.onnx",
+            FileName: "melspectrogram.onnx",
+            Sha256: "ba2b0e0f8b7b875369a2c89cb13360ff53bac436f2895cced9f479fa65eb176f"),
+        new(Url: OpenWakeWordRelease + "embedding_model.onnx",
+            FileName: "embedding_model.onnx",
+            Sha256: "70d164290c1d095d1d4ee149bc5e00543250a7316b59f31d056cff7bd3075c1f"),
+    ];
+
+    /// <summary>openWakeWord's pretrained stock heads (v0.5.1 release) — for getting the listener running
+    /// end-to-end before a user has trained their own word via AudioLabWakeTrainWord. Saved as
+    /// <c>{word}.onnx</c>, not upstream's <c>{word}_v0.1.onnx</c>, because WakeModelSet.Load derives the
+    /// wake word's name from the filename (minus extension).</summary>
+    private static DownloadSpec StockHead(string word, string sha256) => new(
+        Url: $"{OpenWakeWordRelease}{word}_v0.1.onnx",
+        FileName: $"{word}.onnx",
+        Sha256: sha256);
+
     private const string HfYue = "https://huggingface.co/m-a-p/";
 
     /// <summary>The shared X-Codec acoustic decoder. DEFAULT = a small pre-converted <c>xcodec.safetensors</c>
@@ -108,6 +141,18 @@ public static class AudioWeightsRegistry
     /// this variant yet".</summary>
     private static readonly Dictionary<string, Dictionary<string, DownloadSpec[]>> _registry = new()
     {
+        ["wake"] = new()
+        {
+            ["backbone"] = WakeBackbone,
+        },
+        // Only "hey_jarvis" is pinned here — the only stock head actually downloaded and sha256-verified
+        // (2026-08-19). openWakeWord's v0.5.1 release also ships alexa_v0.1.onnx and hey_mycroft_v0.1.onnx
+        // (confirmed to exist, URL untested-download) — add them the same way once someone's actually
+        // pulled and hashed the bytes; don't pin a hash for a file nobody here has verified.
+        ["wake_stock_heads"] = new()
+        {
+            ["hey_jarvis"] = [StockHead("hey_jarvis", "94a13cfe60075b132f6a472e7e462e8123ee70861bc3fb58434a73712ee0d2cb")],
+        },
         ["yue_music"] = new()
         {
             ["en-cot"] = YueVariant("en-cot"),

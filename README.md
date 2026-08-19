@@ -5,7 +5,8 @@ speech to text, music and sound effect generation, voice conversion, stem separa
 listener, and a multi track DAW for arranging what you generate.
 
 Everything runs **in process as pure C#** on the [HartsyInference](https://www.nuget.org/packages/HartsyInference)
-engine. There is no Python, no virtual environment, and no Docker.
+engine, which ships with the extension as a NuGet dependency. There is no Python, no virtual environment, and no
+Docker, and nothing to install beyond the extension itself.
 
 ![The Audio Lab multi track editor](Assets/readme/daw-overview.png)
 
@@ -41,10 +42,12 @@ engine. There is no Python, no virtual environment, and no Docker.
 ## Requirements
 
 - SwarmUI, installed and working.
-- The **HartsyInference (Pure C# Inference)** backend extension, added under `Server` > `Backends`. That extension
-  hosts the engine AudioLab runs models on.
 - `ffmpeg` on your PATH, for audio decode and encode and for the video plus audio endpoints.
 - A CUDA or Vulkan GPU is recommended. Several models (Kokoro, Piper, Pocket TTS, Moonshine) run acceptably on CPU.
+
+That is the whole list. The inference engine is a NuGet package AudioLab depends on directly, so it is restored and
+copied into the extension's own output when the extension builds. There is nothing to install alongside it, and no
+other extension to add.
 
 Audio weights are stored under your Swarm model root, in `<ModelRoot>/audio`. There is no separate path setting to
 keep in sync: AudioLab follows `Server` > `Server Configuration` > `Paths` > `ModelRoot`.

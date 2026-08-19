@@ -56,6 +56,8 @@ public static class WakeWordEndpoints
         API.RegisterAPICall(AudioLabWakeListSpeakers, false, WakeWordPermissions.PermListen);
         API.RegisterAPICall(AudioLabWakeGetSettings, false, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeSaveSettings, true, WakeWordPermissions.PermManage);
+        API.RegisterAPICall(AudioLabWakeInstallBackbone, true, WakeWordPermissions.PermManage);
+        API.RegisterAPICall(AudioLabWakeInstallStockHead, true, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeStart, true, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeStop, true, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeConfigureWord, true, WakeWordPermissions.PermManage);
@@ -218,6 +220,53 @@ public static class WakeWordEndpoints
             Logs.Error($"[AudioLab][Wake] Saving settings failed: {ex.ReadableString()}");
             return new JObject { ["success"] = false, ["error"] = ex.Message };
         }
+    }
+
+    /// <summary>Downloads the openWakeWord backbone (melspectrogram.onnx + embedding_model.onnx, ~2.4MB
+    /// combined, sha256-pinned in AudioWeightsRegistry) into the wake model directory's backbone/ subfolder.
+    /// A fresh install has neither file — <see cref="AudioLabWakeStart"/> fails closed until this has run
+    /// once. Streams progress the same way <see cref="AudioLabWakeTrainWord"/> does.</summary>
+    public static async Task<JObject> AudioLabWakeInstallBackbone(Session session, WebSocket ws)
+    {
+        try
+        {
+            async Task SendAsync(JObject payload) => await ws.SendJson(payload, API.WebsocketTimeout).ConfigureAwait(false);
+            bool installed = await WakeWordService.InstallBackboneAsync(
+                msg => SendAsync(new JObject { ["status"] = msg }), Program.GlobalProgramCancel);
+            await SendAsync(new JObject { ["success"] = installed });
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab][Wake] Installing the backbone failed: {ex.ReadableString()}");
+            await ws.SendJson(new JObject { ["error"] = ex.Message }, API.WebsocketTimeout);
+        }
+        return null;
+    }
+
+    /// <summary>Downloads one of openWakeWord's pretrained stock heads (currently just "hey_jarvis" —
+    /// see AudioWeightsRegistry's "wake_stock_heads" set) into the wake model directory's heads/ subfolder.
+    /// Quickest path to a running listener for testing before a real word is trained via
+    /// <see cref="AudioLabWakeTrainWord"/>. Streams progress the same way that does.</summary>
+    public static async Task<JObject> AudioLabWakeInstallStockHead(Session session, WebSocket ws, string word = "hey_jarvis")
+    {
+        try
+        {
+            async Task SendAsync(JObject payload) => await ws.SendJson(payload, API.WebsocketTimeout).ConfigureAwait(false);
+            bool installed = await WakeWordService.InstallStockHeadAsync(word,
+                msg => SendAsync(new JObject { ["status"] = msg }), Program.GlobalProgramCancel);
+            if (!installed)
+            {
+                await SendAsync(new JObject { ["error"] = $"'{word}' is not a known/verified stock head." });
+                return null;
+            }
+            await SendAsync(new JObject { ["success"] = true });
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab][Wake] Installing stock head '{word}' failed: {ex.ReadableString()}");
+            await ws.SendJson(new JObject { ["error"] = ex.Message }, API.WebsocketTimeout);
+        }
+        return null;
     }
 
     /// <summary>Starts the listener.</summary>

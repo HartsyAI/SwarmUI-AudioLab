@@ -214,6 +214,52 @@ public static class WakeWordService
     /// <summary>Persists a word's threshold, route and speaker restriction, and rolls it out to live sessions.</summary>
     public static void ConfigureWord(string name, WakeWordConfig config) => _service?.ConfigureWord(name, config);
 
+    /// <summary>Downloads the openWakeWord backbone (melspectrogram.onnx + embedding_model.onnx) into
+    /// <c>{ModelRoot}/backbone/</c> if not already present and hash-valid — reuses AudioWeights'
+    /// atomic-download-plus-sha256-verify machinery (AudioLabInstallEngine's checkpoint path), just pointed
+    /// at the wake directory convention instead of a provider's. A fresh install has neither file, and
+    /// <see cref="Start"/> fails closed rather than fetching them itself (see <c>WakeModelSet.Load</c>) —
+    /// this is that missing install step, callable the same way everything else here is: over the API
+    /// (<c>AudioLabWakeInstallBackbone</c>), not by hand-placing files.</summary>
+    public static async Task<bool> InstallBackboneAsync(Func<string, Task> onProgress, CancellationToken cancel = default)
+    {
+        AudioWeightsRegistry.DownloadSpec[] specs = AudioWeightsRegistry.SpecsFor("wake", "backbone");
+        if (specs.Length == 0)
+        {
+            return false;
+        }
+        string dir = Path.Combine(ModelRoot(), "backbone");
+        Directory.CreateDirectory(dir);
+        foreach (AudioWeightsRegistry.DownloadSpec spec in specs)
+        {
+            cancel.ThrowIfCancellationRequested();
+            await AudioWeights.EnsureWeightAsync(spec, dir, onProgress, cancel);
+        }
+        return true;
+    }
+
+    /// <summary>Downloads one of openWakeWord's pretrained stock heads into <c>{ModelRoot}/heads/</c> — the
+    /// quickest way to get the listener past its fail-closed "no heads loaded" check for testing, before a
+    /// real word is trained via <c>AudioLabWakeTrainWord</c>. Returns false for a word not in
+    /// AudioWeightsRegistry's "wake_stock_heads" set (i.e. not actually offered/verified) rather than
+    /// guessing at a URL.</summary>
+    public static async Task<bool> InstallStockHeadAsync(string word, Func<string, Task> onProgress, CancellationToken cancel = default)
+    {
+        AudioWeightsRegistry.DownloadSpec[] specs = AudioWeightsRegistry.SpecsFor("wake_stock_heads", word);
+        if (specs.Length == 0)
+        {
+            return false;
+        }
+        string dir = Path.Combine(ModelRoot(), "heads");
+        Directory.CreateDirectory(dir);
+        foreach (AudioWeightsRegistry.DownloadSpec spec in specs)
+        {
+            cancel.ThrowIfCancellationRequested();
+            await AudioWeights.EnsureWeightAsync(spec, dir, onProgress, cancel);
+        }
+        return true;
+    }
+
     /// <summary>The wake model directory, whether or not the listener is running — the training and speaker routes
     /// need it while stopped.</summary>
     public static string ModelRoot()
