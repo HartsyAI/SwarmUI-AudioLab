@@ -72,6 +72,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
         [ConfigComment("Which compute device audio models run on.\nThe list comes from the engine itself, so every compute backend it supports (CPU, CUDA, Vulkan, and whatever it gains later) shows up here, with one entry per GPU where the devices can be enumerated.\n'Auto' picks the best available, and is the right answer unless you are deliberately steering audio off a card another backend is using.\nGPU numbering is the engine's own enumeration (CUDA is fastest-first), which need not match nvidia-smi's order.\nCUDA entries only appear when a driver is present; Vulkan cannot be probed ahead of time, so a missing Vulkan driver only shows up when this backend starts.\nAudio shares one engine instance process-wide, so this is not really a per-backend choice: whichever audio backend initializes last before the first audio generation picks the device. Once audio has run, changing this needs a SwarmUI restart.\nRun one audio backend unless you know why you want two.")]
         [SettingsOptions(Impl = typeof(AudioDeviceOptions))]
         public string Device = "auto";
+
+        [ConfigComment("How hard the engine should work to fit audio models in VRAM.\n\n'Auto' (default) reads the card's size for a starting posture, then measures free VRAM before each stage. Right for almost everyone.\n\n'Performance' never frees between stages — fastest back-to-back, but a large model (YuE's 7B, MiniMax Music) can run the card out of memory.\n\n'Balanced' releases each stage's weights at its boundary, which is what lets a multi-stage model (YuE Stage-1 → Stage-2 → vocoder) fit a smaller card.\n\n'Aggressive' also halves cross-step cache precision and shrinks decode chunks — the lever that matters for vocoders and codec decoders, where the peak is activations rather than weights.\n\n'Maximum' adds quantized compute and frees after every generation. Slowest, and quantized compute changes the output.\n\nLike the Device setting, audio shares ONE engine process-wide: whichever audio backend initializes last before the first audio generation wins, and changing this afterwards needs a SwarmUI restart. AUDIOLAB_VRAM_MODE overrides it for headless runs.")]
+        [ManualSettingsOptions(Impl = null, Vals = ["Auto", "Performance", "Balanced", "Aggressive", "Maximum"],
+            ManualNames = ["Auto (recommended)", "Performance (never free between stages)", "Balanced (free between stages)",
+                "Aggressive (smaller chunks, half-precision caches)", "Maximum (every lever, changes output)"])]
+        public string VramMode = "Auto";
     }
 
     /// <summary>Builds the Device dropdown from whatever compute backends the engine reports
@@ -303,6 +309,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
             // retargeted now. Say so rather than silently running on the wrong card.
             AddLoadStatus($"Audio is already running on '{inUse}', so '{device}' will not take effect until SwarmUI restarts.");
             Logs.Warning($"[AudioLab] Audio engine already built for '{inUse}', ignoring requested device '{device}'. Restart SwarmUI to change it.");
+        }
+        string vramMode = Settings?.VramMode;
+        string vramInUse = AudioEngineBridge.RequestVramMode(vramMode);
+        if (vramInUse is not null)
+        {
+            AddLoadStatus($"Audio is already running in VRAM mode '{vramInUse}', so '{vramMode}' will not take effect until SwarmUI restarts.");
+            Logs.Warning($"[AudioLab] Audio engine already built with VRAM mode '{vramInUse}', ignoring '{vramMode}'. Restart SwarmUI to change it.");
         }
         return true;
     }

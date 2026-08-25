@@ -5,6 +5,7 @@ using SwarmUI.Utils;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using HartsyInference.Audio.Cache;
 using HartsyInference.Audio.Streaming;
+using HartsyInference.Core.MemoryManagement;
 using HartsyInference.Engine;
 using HartsyInference.Engine.Dispatch;
 using HartsyInference.Engine.Requests;
@@ -141,9 +142,12 @@ public static class AudioEngineBridge
                 {
                     AlignModelsRoot();
                     string device = DeviceSelector();
-                    _engine = new InferenceEngine(device);
+                    VramPolicy policy = VramPolicySelector();
+                    _engine = new InferenceEngine(device, new EngineOptions { VramPolicy = policy });
                     _builtDevice = device;
-                    Logs.Init($"[AudioLab] HartsyInference engine created for device '{device}' (backend: {_engine.BackendDescription}).");
+                    _builtVramMode = _requestedVramMode;
+                    Logs.Init($"[AudioLab] HartsyInference engine created for device '{device}' "
+                        + $"(backend: {_engine.BackendDescription}, VRAM mode: {_requestedVramMode ?? "Auto"}).");
                 }
                 return _engine;
             }
@@ -588,5 +592,49 @@ public static class AudioEngineBridge
             return env.Trim();
         }
         return string.IsNullOrWhiteSpace(_requestedDevice) ? "auto" : _requestedDevice;
+    }
+
+    /// <summary>VRAM mode the engine was actually built with, or null while it doesn't exist yet.</summary>
+    private static string _builtVramMode;
+
+    /// <summary>VRAM mode the audio backend last asked for; null = follow the engine's own default.</summary>
+    private static string _requestedVramMode;
+
+    /// <summary>Asks for audio work to run under <paramref name="mode"/> (a <see cref="VramTier"/> name, or null/"Auto"
+    /// to leave it to the engine). Returns null when the request is honoured, or the mode the engine was already
+    /// built with when it is too late to change.</summary>
+    /// <remarks>Same one-shot contract as <see cref="RequestDevice"/>, and for the same reason: audio shares a
+    /// process-wide engine built on first use, so this is effectively a global setting whose last writer before that
+    /// first generation wins. Changing it afterwards needs a SwarmUI restart.</remarks>
+    public static string RequestVramMode(string mode)
+    {
+        lock (_engineLock)
+        {
+            string normalized = string.IsNullOrWhiteSpace(mode) ? null : mode.Trim();
+            if (_builtVramMode is not null && !string.Equals(_builtVramMode, normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                return _builtVramMode;
+            }
+            _requestedVramMode = normalized;
+            return null;
+        }
+    }
+
+    /// <summary>The VRAM policy for the engine, or null to inherit the environment. AUDIOLAB_VRAM_MODE overrides the backend setting for headless/debug runs, mirroring AUDIOLAB_DEVICE.</summary>
+    private static VramPolicy VramPolicySelector()
+    {
+        string env = Environment.GetEnvironmentVariable("AUDIOLAB_VRAM_MODE");
+        string mode = !string.IsNullOrWhiteSpace(env) ? env.Trim() : _requestedVramMode;
+        if (string.IsNullOrWhiteSpace(mode) || mode.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+        if (!Enum.TryParse(mode, ignoreCase: true, out VramTier tier))
+        {
+            Logs.Warning($"[AudioLab] VRAM mode '{mode}' is not recognized; using Auto. "
+                + "Valid: Auto, Performance, Balanced, Aggressive, Maximum.");
+            return null;
+        }
+        return VramPolicy.For(tier);
     }
 }
