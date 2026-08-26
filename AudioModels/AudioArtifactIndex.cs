@@ -31,7 +31,9 @@ public static class AudioArtifactIndex
     public const string ComponentKey = "hartsy.component";
     /// <summary>Metadata value of <see cref="ComponentKey"/> that marks the one selectable entrypoint.</summary>
     public const string PrimaryComponent = "main";
-    /// <summary>Metadata key pointing at another family's artifact identity, for catalog rows that share weights.</summary>
+    /// <summary>Metadata key recording that an artifact is a copy of another family's weights. Informational
+    /// only — the catalog's <see cref="AudioModelDefinition.BackedByArtifact"/> is what admits a shared row,
+    /// because it also covers rows whose backing family ships no file of their own.</summary>
     public const string AliasKey = "hartsy.alias_of";
 
     private static readonly object _lock = new();
@@ -99,6 +101,8 @@ public static class AudioArtifactIndex
         }
         Dictionary<string, AudioArtifact> admitted = [];
         int scanned = 0, unknownArch = 0, nonPrimary = 0;
+        // Snapshot once: the registry rebuilds every provider definition on each access.
+        IReadOnlyList<AudioProviderDefinition> providers = AudioProviderRegistry.All;
         foreach (T2IModel model in handler.Models.Values)
         {
             scanned++;
@@ -117,7 +121,7 @@ public static class AudioArtifactIndex
                 continue;
             }
             meta.TryGetValue(ModelKey, out string modelId);
-            foreach ((AudioProviderDefinition provider, AudioModelDefinition row) in ResolveCatalogRows(providerId, modelId, meta))
+            foreach ((AudioProviderDefinition provider, AudioModelDefinition row) in ResolveCatalogRows(providers, providerId, modelId))
             {
                 string displayName = provider.GetFullModelName(row.Id);
                 admitted[displayName] = new AudioArtifact(displayName, provider.Id, row.Id, model.RawFilePath,
@@ -144,12 +148,12 @@ public static class AudioArtifactIndex
     /// <summary>Every catalog row this artifact backs. Usually one, but a row may declare that another
     /// family's artifact backs it (whisper-streaming rides on the Whisper base weights), and such a row can
     /// never match on its own provider id.</summary>
-    private static List<(AudioProviderDefinition, AudioModelDefinition)> ResolveCatalogRows(string providerId, string modelId,
-        IReadOnlyDictionary<string, string> meta)
+    private static List<(AudioProviderDefinition, AudioModelDefinition)> ResolveCatalogRows(
+        IReadOnlyList<AudioProviderDefinition> providers, string providerId, string modelId)
     {
         List<(AudioProviderDefinition, AudioModelDefinition)> rows = [];
-        AddRow(rows, providerId, modelId);
-        foreach (AudioProviderDefinition provider in AudioProviderRegistry.All)
+        AddRow(rows, providers, providerId, modelId);
+        foreach (AudioProviderDefinition provider in providers)
         {
             foreach (AudioModelDefinition row in provider.Models)
             {
@@ -162,9 +166,18 @@ public static class AudioArtifactIndex
         return rows;
     }
 
-    private static void AddRow(List<(AudioProviderDefinition, AudioModelDefinition)> rows, string providerId, string modelId)
+    private static void AddRow(List<(AudioProviderDefinition, AudioModelDefinition)> rows,
+        IReadOnlyList<AudioProviderDefinition> providers, string providerId, string modelId)
     {
-        AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId);
+        AudioProviderDefinition provider = null;
+        foreach (AudioProviderDefinition candidate in providers)
+        {
+            if (candidate.Id == providerId)
+            {
+                provider = candidate;
+                break;
+            }
+        }
         if (provider is null)
         {
             Logs.Debug($"[AudioLab] Artifact names provider '{providerId}', which this build does not have; not admitted.");

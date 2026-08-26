@@ -346,6 +346,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
         LoadInstalledEnginesConfig();
 
+        // Before the provider loop: a file-backed provider projects from this index, so an empty one would
+        // register zero models and leave the backend's own model list empty until some later refresh.
+        AudioArtifactIndex.Rebuild();
+
         try
         {
             foreach (string providerId in InstalledEnginesSnapshot())
@@ -512,6 +516,17 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     RegisteredAudioModels[kvp.Key] = kvp.Value;
                     kvp.Value.Handler = Program.MainSDModels;
                 }
+                // The backend's own list is what Swarm's backend matching consults — a model that reaches
+                // MainSDModels but not here is visible in the selector and unroutable.
+                List<string> names = Models.GetOrCreate("Stable-Diffusion", () => []);
+                names.RemoveAll(n => n.StartsWith(prefix) && !projected.ContainsKey(n));
+                foreach (string name in projected.Keys)
+                {
+                    if (!names.Contains(name))
+                    {
+                        names.Add(name);
+                    }
+                }
             }
         }
     }
@@ -520,6 +535,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// Mirrors DynamicAPIBackend.UpdateRemoteModels().</summary>
     private void UpdateRemoteModels()
     {
+        // Re-project first: publishing from the pre-projection snapshot would leave every file-backed model
+        // out of RemoteModels until the next install or uninstall happened to rebuild it.
+        ReRegisterModelsAfterRefresh();
         int published;
         lock (_modelsLock)
         {
@@ -534,7 +552,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
             {
                 remoteSD[kvp.Key] = CreateModelMetadata(kvp.Value, kvp.Key);
             }
-            ReRegisterModelsAfterRefresh();
             published = remoteSD.Count;
         }
         Logs.Verbose($"[AudioLab] Published {published} audio models to RemoteModels");
