@@ -51,7 +51,7 @@ public static class AudioArtifactIdentity
             ["modelspec.architecture"] = classId,
             ["modelspec.implementation"] = "https://github.com/HartsyAI/HartsyInference",
             ["modelspec.title"] = row?.Name ?? $"{provider.Name} {modelId}",
-            ["modelspec.author"] = provider.Name,
+            ["modelspec.author"] = ResolveAuthor(row, provider),
             ["modelspec.description"] = row?.Description ?? "",
             ["modelspec.license"] = string.IsNullOrEmpty(row?.License) ? "Open Source" : row.License,
             ["modelspec.usage_hint"] = $"Audio processing via {provider.Name}",
@@ -78,6 +78,26 @@ public static class AudioArtifactIdentity
         {
             Logs.Error($"[AudioLab] Could not write '{sidecarPath}': {ex.Message}");
         }
+    }
+
+    /// <summary>Who published the weights, taken from the source repo's owner rather than the provider name.
+    ///
+    /// <para>A provider is AudioLab's integration ("Whisper STT"); the author is whoever released the model
+    /// ("openai"). Getting this from the URL keeps a stamp written here agreeing with the one the repack tool
+    /// embeds, instead of the two disagreeing about the same artifact.</para></summary>
+    private static string ResolveAuthor(AudioModelDefinition row, AudioProviderDefinition provider)
+    {
+        string url = row?.SourceUrl ?? "";
+        const string HfPrefix = "https://huggingface.co/";
+        if (url.StartsWith(HfPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            string owner = url[HfPrefix.Length..].Split('/')[0];
+            if (!string.IsNullOrWhiteSpace(owner))
+            {
+                return owner;
+            }
+        }
+        return provider.Name;
     }
 
     /// <summary>Removes the identity sidecar, so an uninstalled model stops being admitted even if some other
