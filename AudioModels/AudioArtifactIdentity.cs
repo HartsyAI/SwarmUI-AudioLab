@@ -68,6 +68,10 @@ public static class AudioArtifactIdentity
         try
         {
             File.WriteAllText(sidecarPath, identity.ToString());
+            // Core caches model metadata keyed on the WEIGHTS file's write time, so a sidecar appearing beside
+            // an unchanged file would be read for identity but never for title/author/license. The model's
+            // metadata really did just change, so say so.
+            File.SetLastWriteTimeUtc(primaryPath, DateTime.UtcNow);
             Logs.Info($"[AudioLab] Stamped '{Path.GetFileName(primaryPath)}' as {classId} ({providerId}/{modelId}).");
         }
         catch (Exception ex)

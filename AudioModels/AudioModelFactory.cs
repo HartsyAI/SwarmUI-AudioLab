@@ -77,9 +77,13 @@ public static class AudioModelFactory
             }
             // Keep the scanned object's identity (path, metadata, hash) and only rename it into the
             // "Audio Models/..." namespace the selector and every saved workflow already use.
+            // A scanned model with no metadata gets its filename as a title, which is not a name worth showing —
+            // fall back to the catalog's until the artifact carries a real one.
+            string scannedStem = Path.GetFileNameWithoutExtension(scanned.RawFilePath ?? "");
+            bool titleIsFilename = string.IsNullOrEmpty(scanned.Title) || scanned.Title == scannedStem;
             T2IModel projected = new(scanned.Handler, scanned.OriginatingFolderPath, scanned.RawFilePath, artifact.DisplayName)
             {
-                Title = string.IsNullOrEmpty(scanned.Title) || scanned.Title == scanned.Name ? row?.Name ?? artifact.ModelId : scanned.Title,
+                Title = titleIsFilename ? row?.Name ?? artifact.ModelId : scanned.Title,
                 Description = string.IsNullOrEmpty(scanned.Description) ? row?.Description ?? "" : scanned.Description,
                 ModelClass = scanned.ModelClass ?? GetOrCreateModelClass(row?.ModelClassId ?? provider.ModelClassId,
                     row?.ModelClassName ?? provider.ModelClassName, provider.Category),
