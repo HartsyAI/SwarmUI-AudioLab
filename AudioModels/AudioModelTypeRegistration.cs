@@ -27,8 +27,23 @@ public static class AudioModelTypeRegistration
     /// <c>OnInit</c>, which runs before core's first <c>RefreshAllModelSets</c>, so the first scan includes it.</summary>
     public static void Register()
     {
+        EnableOnnxScanning();
         RegisterHandler();
         Program.ModelPathsChangedEvent += OnModelPathsChanged;
+    }
+
+    /// <summary>Adds <c>.onnx</c> to the extensions core scans, so Piper voices are discoverable at all.
+    ///
+    /// <para>The list is process-global rather than per-handler, so this affects every model type. That is
+    /// acceptable because a stray <c>.onnx</c> elsewhere would simply be listed with no class, exactly as any
+    /// other unrecognized checkpoint is — and without it a Piper voice cannot be scanned, which also means its
+    /// <c>.swarm.json</c> is never read (core only consults sidecars for extensions it already scans).</para></summary>
+    private static void EnableOnnxScanning()
+    {
+        if (T2IModel.NativelySupportedModelExtensions.Add("onnx"))
+        {
+            Logs.Info("[AudioLab] Enabled '.onnx' model scanning (Piper voices).");
+        }
     }
 
     /// <summary>Drops the settings-change hook; the handler itself is owned by core's registry.</summary>
