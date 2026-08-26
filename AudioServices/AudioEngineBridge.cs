@@ -1,3 +1,4 @@
+using HartsyInference.Core.Configuration;
 using System.IO;
 using System.Runtime.CompilerServices;
 using Newtonsoft.Json.Linq;
@@ -564,7 +565,7 @@ public static class AudioEngineBridge
     {
         try
         {
-            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("HARTSYINFERENCE_MODELS")))
+            if (!string.IsNullOrEmpty(EngineKnobs.ModelsRoot.Value))
             {
                 return;
             }
@@ -573,7 +574,9 @@ public static class AudioEngineBridge
             string modelsRoot = Path.GetDirectoryName(audioRoot);
             if (!string.IsNullOrEmpty(modelsRoot))
             {
-                Environment.SetEnvironmentVariable("HARTSYINFERENCE_MODELS", modelsRoot);
+                // Set through the registry rather than the process environment: it is the engine's declared
+                // paths.modelsRoot, and an exported variable would outlive this process and leak into any other.
+                KnobStore.Set(EngineKnobs.ModelsRoot, modelsRoot);
                 Logs.Debug($"[AudioLab] Engine models root set to '{modelsRoot}'.");
             }
         }
