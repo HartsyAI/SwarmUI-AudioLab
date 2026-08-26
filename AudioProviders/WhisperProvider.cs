@@ -19,6 +19,7 @@ public sealed class WhisperProvider : IAudioProviderSource
         .AddFeatureFlag("audiolab_stt")
         .AddFeatureFlag("whisper_stt_params")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

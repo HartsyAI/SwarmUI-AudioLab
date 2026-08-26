@@ -2,6 +2,7 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Utils;
+using Hartsy.Extensions.AudioLab.AudioModels;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using HartsyInference.Audio.Cache;
 using HartsyInference.Audio.Streaming;
@@ -335,17 +336,41 @@ public static class AudioEngineBridge
     /// which is reachable only through a real generation. So this reports the state truthfully instead of
     /// pretending to download: the weights fetch inside the Engine's loader on the first generation. Restore the
     /// install-time download (with progress) once the Engine ships a prefetch entry point.</para></summary>
-    public static Task<JObject> EnsureWeightsAsync(string providerId, string modelId, Func<string, Task> onProgress, CancellationToken cancel)
+    public static async Task<JObject> EnsureWeightsAsync(string providerId, string modelId, Func<string, Task> onProgress, CancellationToken cancel)
     {
         if (!_bindings.TryGetValue(providerId ?? "", out AudioEngineBinding binding))
         {
-            return Task.FromResult(AudioIo.Error($"Provider '{providerId}' is not supported by the in-process audio engine yet."));
+            return AudioIo.Error($"Provider '{providerId}' is not supported by the in-process audio engine yet.");
         }
         cancel.ThrowIfCancellationRequested();
-        onProgress?.Invoke(binding.ManagesOwnWeights
-            ? $"Weights for '{modelId ?? binding.EngineId}' download inside the engine on first generation."
-            : $"Place the '{modelId ?? binding.EngineId}' checkpoint; it loads on first generation.");
-        return Task.FromResult(new JObject { ["success"] = true });
+        if (!binding.ManagesOwnWeights)
+        {
+            onProgress?.Invoke($"Place the '{modelId ?? binding.EngineId}' checkpoint; it loads on first generation.");
+            return new JObject { ["success"] = true };
+        }
+        ModelSpec spec = BuildSpec(providerId, binding, new Dictionary<string, object> { ["__model_id"] = modelId ?? "" });
+        try
+        {
+            Progress<AudioFetchProgress> progress = new(p => onProgress?.Invoke($"[{p.FilesDone}/{p.FileCount}] {p.File}"));
+            ModelPrefetchResult result = await Engine.ModelPrefetch.PrefetchAsync(spec, progress, cancel).ConfigureAwait(false);
+            onProgress?.Invoke(result.Message);
+            if (!result.Supported)
+            {
+                // Truthful, not fatal: the model still works, its weights just arrive on first generation.
+                return new JObject { ["success"] = true, ["prefetched"] = false, ["detail"] = result.Message };
+            }
+            AudioArtifactIdentity.WriteSidecar(result.PrimaryPath, providerId, modelId, binding.EngineId);
+            return new JObject { ["success"] = true, ["prefetched"] = true, ["files"] = result.Files.Count };
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] Prefetch failed for '{providerId}/{modelId}': {ex.Message}");
+            return AudioIo.Error($"Download failed for '{modelId ?? binding.EngineId}': {ex.Message}");
+        }
     }
 
     /// <summary>Drops resident audio pipelines to free memory.

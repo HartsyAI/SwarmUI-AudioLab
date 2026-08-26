@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using System.Runtime.InteropServices;
 using Hartsy.Extensions.AudioLab.AudioBackends;
+using Hartsy.Extensions.AudioLab.AudioModels;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using Hartsy.Extensions.AudioLab.AudioServices;
 using Hartsy.Extensions.AudioLab.WebAPI.Models;
@@ -633,7 +634,11 @@ public static class AudioLabAPI
                         // Name in Swarm's model registry, for generating via the core T2I pipeline.
                         ["swarm_model"] = provider.GetFullModelName(modelDef.Id),
                         // Per-model: are this variant's weights on disk? Unavailable engines never are.
-                        ["installed"] = available && AudioEngineBridge.WeightsPresent(provider.Id, modelDef.Id)
+                        // A validated artifact is the authoritative answer; WeightsPresent is the fallback for
+                        // families not yet file-backed, and it reports "installed" for any provider whose
+                        // location it cannot determine.
+                        ["installed"] = available && (AudioArtifactIndex.IsInstalled(provider.Id, modelDef.Id)
+                            || AudioEngineBridge.WeightsPresent(provider.Id, modelDef.Id))
                     });
                 }
 

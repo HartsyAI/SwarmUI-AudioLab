@@ -1385,6 +1385,22 @@ public class DynamicAudioBackend : AbstractT2IBackend
     private void DeleteProviderWeights(string providerId, AudioProviderDefinition definition)
     {
         HashSet<string> mine = WeightLocationsForProvider(providerId, definition);
+        // The locations above are derived from catalog metadata, which can name a different repo than the one
+        // the engine actually downloaded from. Anything the artifact index admitted is ground truth, so fold in
+        // the directory each admitted artifact really lives in.
+        foreach (AudioArtifact artifact in AudioArtifactIndex.Admitted.Values)
+        {
+            if (artifact.ProviderId != providerId || string.IsNullOrEmpty(artifact.ArtifactPath))
+            {
+                continue;
+            }
+            AudioArtifactIdentity.RemoveSidecar(artifact.ArtifactPath);
+            string dir = Path.GetDirectoryName(artifact.ArtifactPath);
+            if (!string.IsNullOrEmpty(dir))
+            {
+                try { mine.Add(Path.GetFullPath(dir)); } catch { /* unparseable path — skip */ }
+            }
+        }
         if (mine.Count == 0)
         {
             Logs.Info($"[AudioLab] No deletable weight locations known for '{providerId}', nothing removed.");

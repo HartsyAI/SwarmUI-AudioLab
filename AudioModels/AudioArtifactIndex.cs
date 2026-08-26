@@ -23,6 +23,10 @@ public sealed record AudioArtifact(string DisplayName, string ProviderId, string
 /// silently produced a null provider for any name that did not match the expected shape.</para></summary>
 public static class AudioArtifactIndex
 {
+    /// <summary>Metadata key carrying the identity-block version.</summary>
+    public const string ArtifactSchemaKey = "hartsy.artifact_schema";
+    /// <summary>Metadata key carrying the engine's model-family id.</summary>
+    public const string EngineKey = "hartsy.engine_id";
     /// <summary>Metadata key carrying AudioLab's provider id.</summary>
     public const string ProviderKey = "hartsy.provider_id";
     /// <summary>Metadata key carrying the catalog model/variant id.</summary>
