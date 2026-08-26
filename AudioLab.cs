@@ -1,5 +1,6 @@
 using Hartsy.Extensions.AudioLab.AudioAPI;
 using Hartsy.Extensions.AudioLab.AudioBackends;
+using Hartsy.Extensions.AudioLab.AudioModels;
 using Hartsy.Extensions.AudioLab.AudioProviders;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using Hartsy.Extensions.AudioLab.AudioServices;
@@ -75,6 +76,9 @@ public class AudioLab : Extension
     {
         try
         {
+            // Before core's first RefreshAllModelSets, so Models/audio is in the very first scan.
+            AudioModelTypeRegistration.Register();
+
             // Register T2I parameters for audio workflows (TTS, STT, Music, Clone, FX, SFX)
             AudioLabParams.RegisterAll();
             Logs.Info("[AudioLab] Registered audio T2I parameters");
@@ -135,6 +139,7 @@ public class AudioLab : Extension
     {
         try
         {
+            AudioModelTypeRegistration.Unregister();
             WakeWordService.Stop();
         }
         catch (Exception ex)

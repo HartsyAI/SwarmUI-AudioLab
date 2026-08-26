@@ -18,6 +18,7 @@ public sealed class AudioProviderDefinitionBuilder
     private string _engineGroup = "default";
     private bool _notImplemented = false;
     private bool _isApiProvider = false;
+    private bool _fileBacked = false;
     private string _apiKeySettingsId = "";
 
     #endregion
@@ -59,6 +60,9 @@ public sealed class AudioProviderDefinitionBuilder
     /// <summary>Marks this provider as having no C# engine implementation yet.</summary>
     public AudioProviderDefinitionBuilder WithNotImplemented() { _notImplemented = true; return this; }
 
+    /// <summary>Marks this provider's models as coming from scanned artifacts rather than code registration.</summary>
+    public AudioProviderDefinitionBuilder WithFileBackedModels() { _fileBacked = true; return this; }
+
     /// <summary>Marks this provider as API-based (no local models, requires an API key).</summary>
     /// <param name="apiKeySettingsId">The key name for user settings lookup (e.g. "elevenlabs_api").</param>
     public AudioProviderDefinitionBuilder WithApiProvider(string apiKeySettingsId)
@@ -92,6 +96,7 @@ public sealed class AudioProviderDefinitionBuilder
             EngineGroup = _engineGroup,
             NotImplemented = _notImplemented,
             IsApiProvider = _isApiProvider,
+            FileBacked = _fileBacked,
             ApiKeySettingsId = _apiKeySettingsId
         };
     }

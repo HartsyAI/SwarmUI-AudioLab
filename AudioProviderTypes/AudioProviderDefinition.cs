@@ -42,6 +42,12 @@ public sealed class AudioProviderDefinition
     /// Used with <c>user.GetGenericData(ApiKeySettingsId, "key")</c>.</summary>
     public string ApiKeySettingsId { get; init; } = "";
 
+    /// <summary>Whether this provider's models come from scanned artifacts on disk rather than being
+    /// registered from code. Flipped per family as its repack ships and the engine can prefetch it; until
+    /// then the provider keeps registering virtual entries so it does not vanish from the selector mid-migration.
+    /// Cloud/API providers stay false permanently — they have no local artifact by design.</summary>
+    public bool FileBacked { get; init; } = false;
+
     /// <summary>Creates the full model name with the Audio Models prefix for SwarmUI routing.</summary>
     public string GetFullModelName(string modelId) => $"Audio Models/{ModelPrefix}/{modelId}";
 }

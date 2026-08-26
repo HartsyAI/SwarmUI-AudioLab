@@ -79,6 +79,10 @@ public static class AudioConfiguration
     /// <summary>Root directory of the AudioLab extension.</summary>
     public static string ExtensionDirectory { get; set; } = "";
 
+    /// <summary>Folder name under each Swarm model root that holds audio weights. Shared with the "Audio"
+    /// T2IModelHandler registration so the scanned folders and the install target can't drift apart.</summary>
+    public const string ModelRootFolderName = "audio";
+
     /// <summary>Root directory for audio model storage. Set in AudioLab.OnPreInit to
     /// "{Swarm ModelRoot}/audio"; the literal below is only a pre-init fallback.</summary>
     public static string ModelRoot { get; set; } = "Models/audio";
@@ -95,7 +99,7 @@ public static class AudioConfiguration
     /// a restart picks up a changed server setting.</summary>
     public static void SyncModelRootFromServer()
     {
-        ModelRoot = Path.Combine(Program.ServerSettings.Paths.ActualModelRoot, "audio");
+        ModelRoot = Path.Combine(Program.ServerSettings.Paths.ActualModelRoot, ModelRootFolderName);
         string full = Path.GetFullPath(ModelRoot);
         foreach (string sub in Categories)
         {

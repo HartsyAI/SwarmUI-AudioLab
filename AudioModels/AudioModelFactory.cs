@@ -50,6 +50,52 @@ public static class AudioModelFactory
         };
     }
 
+    /// <summary>Builds the selector entries for a file-backed provider from artifacts actually on disk.
+    ///
+    /// <para>Unlike <see cref="CreateAllModels"/> these are not invented: a catalog row appears only when
+    /// <see cref="AudioArtifactIndex"/> admitted a validated artifact for it, so an uninstalled or
+    /// half-downloaded model has no entry at all. Displayed metadata comes from the scanned file, which is
+    /// what makes title/author/license/hash reflect the artifact rather than a hand-written table.</para></summary>
+    public static Dictionary<string, T2IModel> ProjectScannedModels(AudioProviderDefinition provider)
+    {
+        Dictionary<string, T2IModel> models = [];
+        foreach (AudioArtifact artifact in AudioArtifactIndex.Admitted.Values)
+        {
+            if (artifact.ProviderId != provider.Id)
+            {
+                continue;
+            }
+            T2IModel scanned = artifact.ScannedModel;
+            AudioModelDefinition row = null;
+            foreach (AudioModelDefinition candidate in provider.Models)
+            {
+                if (candidate.Id == artifact.ModelId)
+                {
+                    row = candidate;
+                    break;
+                }
+            }
+            // Keep the scanned object's identity (path, metadata, hash) and only rename it into the
+            // "Audio Models/..." namespace the selector and every saved workflow already use.
+            T2IModel projected = new(scanned.Handler, scanned.OriginatingFolderPath, scanned.RawFilePath, artifact.DisplayName)
+            {
+                Title = string.IsNullOrEmpty(scanned.Title) || scanned.Title == scanned.Name ? row?.Name ?? artifact.ModelId : scanned.Title,
+                Description = string.IsNullOrEmpty(scanned.Description) ? row?.Description ?? "" : scanned.Description,
+                ModelClass = scanned.ModelClass ?? GetOrCreateModelClass(row?.ModelClassId ?? provider.ModelClassId,
+                    row?.ModelClassName ?? provider.ModelClassName, provider.Category),
+                StandardWidth = 0,
+                StandardHeight = 0,
+                IsSupportedModelType = true,
+                PreviewImage = string.IsNullOrEmpty(scanned.PreviewImage) || scanned.PreviewImage == PlaceholderImage
+                    ? LoadPreviewImage(provider.Id) : scanned.PreviewImage,
+                Metadata = scanned.Metadata,
+            };
+            models[artifact.DisplayName] = projected;
+            Logs.Debug($"[AudioModelFactory] Projected file-backed model: {artifact.DisplayName} <- {artifact.ArtifactPath}");
+        }
+        return models;
+    }
+
     /// <summary>Creates all T2IModel instances for a provider.</summary>
     public static Dictionary<string, T2IModel> CreateAllModels(AudioProviderDefinition provider)
     {
@@ -72,12 +118,24 @@ public static class AudioModelFactory
     {
         if (!_modelClasses.TryGetValue(id, out T2IModelClass modelClass))
         {
-            T2IModelCompatClass compat = T2IModelClassSorter.RegisterCompat(new()
+            // Both sorter registries are Dictionary.Add and throw on a duplicate id. Core owns audio classes
+            // of its own (ace-step-1_5, minimax-music-3), so adopt an existing class instead of colliding.
+            string key = id.ToLowerInvariant();
+            if (T2IModelClassSorter.ModelClasses.TryGetValue(key, out T2IModelClass existing))
             {
-                ID = id,
-                ShortCode = GetShortCode(category),
-                IsAudioModel = true
-            });
+                _modelClasses[id] = existing;
+                Logs.Debug($"[AudioModelFactory] Reusing already-registered model class: {id}");
+                return existing;
+            }
+            if (!T2IModelClassSorter.CompatClasses.TryGetValue(key, out T2IModelCompatClass compat))
+            {
+                compat = T2IModelClassSorter.RegisterCompat(new()
+                {
+                    ID = id,
+                    ShortCode = GetShortCode(category),
+                    IsAudioModel = true
+                });
+            }
             modelClass = new T2IModelClass
             {
                 ID = id,
@@ -85,6 +143,9 @@ public static class AudioModelFactory
                 CompatClass = compat,
                 StandardWidth = 0,
                 StandardHeight = 0,
+                // Deliberately never matches by heuristic: a scanned audio artifact is classified from its
+                // embedded modelspec.architecture, which the sorter checks before it consults any predicate.
+                // A predicate here would only let one audio class steal another's files.
                 IsThisModelOfClass = (model, header) => false
             };
             _modelClasses[id] = modelClass;

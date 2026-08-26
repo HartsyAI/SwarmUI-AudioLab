@@ -37,4 +37,10 @@ public sealed class AudioModelDefinition
     /// <summary>When true, the model is downloaded by its Python library at runtime rather than
     /// pre-downloaded from HuggingFace during installation (e.g. Whisper, Moonshine, Demucs).</summary>
     public bool SelfManaged { get; init; }
+
+    /// <summary>"{providerId}/{modelId}" of the artifact that backs this row, when it is not this row's own.
+    /// Set it where several catalog rows share one file — a streaming variant riding on the base weights, or
+    /// a quantization produced on-device from them — so the row is admitted when that artifact is present
+    /// instead of waiting for a file it will never have.</summary>
+    public string BackedByArtifact { get; init; }
 }

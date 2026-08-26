@@ -334,6 +334,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             RemoteModels.Clear();
         }
         Program.ModelRefreshEvent -= ReRegisterModelsAfterRefresh;
+        Program.ModelPathsChangedEvent -= ReRegisterModelsAfterPathChange;
 
         // Re-read on every init so restarting this backend picks up a changed server ModelRoot.
         AudioConfiguration.SyncModelRootFromServer();
@@ -397,6 +398,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             }
             ReconcileWeights();
             Program.ModelRefreshEvent += ReRegisterModelsAfterRefresh;
+            Program.ModelPathsChangedEvent += ReRegisterModelsAfterPathChange;
 
             // Nothing to start — local inference is delegated to HartsyInference.Engine (via
             // AudioEngineBridge) and cloud providers to their API handlers. The backend is ready as soon
@@ -428,7 +430,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// Mirrors DynamicAPIBackend.RegisterModelsForProvider().</summary>
     private void RegisterModelsForProvider(AudioProviderDefinition provider)
     {
-        Dictionary<string, T2IModel> models = AudioModelFactory.CreateAllModels(provider);
+        Dictionary<string, T2IModel> models = provider.FileBacked
+            ? AudioModelFactory.ProjectScannedModels(provider)
+            : AudioModelFactory.CreateAllModels(provider);
         List<string> modelNames = [];
         foreach (KeyValuePair<string, T2IModel> kvp in models)
         {
@@ -453,6 +457,62 @@ public class DynamicAudioBackend : AbstractT2IBackend
         else
         {
             Models.TryAdd("Stable-Diffusion", modelNames);
+        }
+    }
+
+    /// <summary>Re-projects after a model-path settings save.
+    ///
+    /// <para>That path does NOT fire <see cref="Program.ModelRefreshEvent"/>: core calls BuildModelLists (which
+    /// replaces MainSDModels with a brand-new handler) then RefreshAllModelSets directly, and only then raises
+    /// this event. Without this hook every audio model silently disappears until the next manual refresh, since
+    /// the entries were re-injected into a handler that has since been thrown away.</para></summary>
+    private void ReRegisterModelsAfterPathChange()
+    {
+        AudioConfiguration.SyncModelRootFromServer();
+        ReRegisterModelsAfterRefresh();
+    }
+
+    /// <summary>Re-scans disk and rebuilds the entries of every file-backed provider, so a model that was just
+    /// installed appears and one whose files were deleted goes away.
+    ///
+    /// <para>The "Audio" handler subscribes its own Refresh to <see cref="Program.ModelRefreshEvent"/> when it
+    /// is registered in OnInit, which is before this backend exists — so by the time this runs on that event,
+    /// the disk scan it reads has already completed.</para></summary>
+    private void RefreshFileBackedModels()
+    {
+        List<AudioProviderDefinition> fileBacked = [];
+        foreach (AudioProviderMetadata meta in _providers.Values)
+        {
+            if (meta.Definition.FileBacked)
+            {
+                fileBacked.Add(meta.Definition);
+            }
+        }
+        if (fileBacked.Count == 0)
+        {
+            return;
+        }
+        AudioArtifactIndex.Rebuild();
+        foreach (AudioProviderDefinition provider in fileBacked)
+        {
+            Dictionary<string, T2IModel> projected = AudioModelFactory.ProjectScannedModels(provider);
+            lock (_modelsLock)
+            {
+                string prefix = $"Audio Models/{provider.ModelPrefix}/";
+                foreach (string stale in RegisteredAudioModels.Keys.Where(k => k.StartsWith(prefix)).ToList())
+                {
+                    if (!projected.ContainsKey(stale))
+                    {
+                        RegisteredAudioModels.Remove(stale);
+                        Program.MainSDModels.Models.Remove(stale, out _);
+                    }
+                }
+                foreach (KeyValuePair<string, T2IModel> kvp in projected)
+                {
+                    RegisteredAudioModels[kvp.Key] = kvp.Value;
+                    kvp.Value.Handler = Program.MainSDModels;
+                }
+            }
         }
     }
 
@@ -488,6 +548,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
         {
             return;
         }
+        RefreshFileBackedModels();
         int added = 0;
         // Also reached directly via Program.ModelRefreshEvent, not just from UpdateRemoteModels.
         lock (_modelsLock)
@@ -1596,11 +1657,20 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
     #region Private Helpers
 
-    /// <summary>Determines the provider ID from a model name by matching prefixes.</summary>
+    /// <summary>Determines the provider ID for a selected model.
+    ///
+    /// <para>A file-backed model is resolved through the artifact index, which knows what the file on disk
+    /// actually is. The prefix match below is the fallback for providers still registering virtual entries,
+    /// and is why the display name has to keep its shape until every family is migrated.</para></summary>
     private string GetProviderIdFromModel(string modelName)
     {
         if (string.IsNullOrEmpty(modelName)) return null;
 
+        AudioArtifact artifact = AudioArtifactIndex.Lookup(modelName);
+        if (artifact is not null)
+        {
+            return artifact.ProviderId;
+        }
         foreach (AudioProviderMetadata meta in _providers.Values)
         {
             string prefix = $"Audio Models/{meta.Definition.ModelPrefix}/";
@@ -1621,10 +1691,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
         _ => 30.0,
     };
 
-    /// <summary>Gets the AudioModelDefinition for a model by extracting the model ID from the full name.</summary>
+    /// <summary>Gets the AudioModelDefinition for a selected model, preferring the artifact index over the
+    /// last-segment split (which cannot tell a variant id from any other trailing path component).</summary>
     private static AudioModelDefinition GetModelDefinition(string modelName, AudioProviderDefinition provider)
     {
-        string modelId = modelName.Split('/').LastOrDefault() ?? "";
+        AudioArtifact artifact = AudioArtifactIndex.Lookup(modelName);
+        string modelId = artifact?.ModelId ?? modelName.Split('/').LastOrDefault() ?? "";
         return provider.Models.FirstOrDefault(m => m.Id == modelId);
     }
 
