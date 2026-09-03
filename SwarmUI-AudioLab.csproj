@@ -68,7 +68,7 @@
          nuget.org (that requires a git push in the read-only-git engine repo, left to the user).
          2.0.0-alpha.33 = kept in lockstep with SwarmUI-HartsyInference-Backend's pin; both extensions load
          their own copy of the engine, so a version split between them is a skew hazard, not an isolation win. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.40" />
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.46" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
