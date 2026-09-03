@@ -156,6 +156,50 @@ public static class AudioIo
         };
     }
 
+    /// <summary>Reads sample rate, channel count and bit depth from a WAV's <c>fmt </c> chunk.
+    ///
+    /// <para>Necessary because providers emit at their own native rate — Piper 22.05 kHz, Kokoro and most cloud
+    /// handlers 24 kHz — and <c>ProcessTTS</c> does not report it back, so the only reliable source is the file
+    /// itself. Falls back to 24 kHz mono 16-bit, the most common TTS shape, when no <c>fmt </c> chunk is
+    /// found.</para></summary>
+    public static (int SampleRate, int Channels, int BitsPerSample) ReadWavFormat(byte[] wav)
+    {
+        for (int i = 0; i < wav.Length - 24; i++)
+        {
+            if (wav[i] == 'f' && wav[i + 1] == 'm' && wav[i + 2] == 't' && wav[i + 3] == ' ')
+            {
+                return (BitConverter.ToInt32(wav, i + 12), BitConverter.ToInt16(wav, i + 10), BitConverter.ToInt16(wav, i + 22));
+            }
+        }
+        return (24000, 1, 16);
+    }
+
+    /// <summary>Returns just the samples from a WAV, locating the <c>data</c> chunk rather than assuming a
+    /// 44-byte header — encoders that write a <c>LIST</c>/<c>INFO</c> chunk push the audio further in, and
+    /// blindly skipping 44 bytes would prepend chunk bytes to the audio as a burst of noise.</summary>
+    public static byte[] StripWavHeader(byte[] wav)
+    {
+        for (int i = 0; i < wav.Length - 8; i++)
+        {
+            if (wav[i] == 'd' && wav[i + 1] == 'a' && wav[i + 2] == 't' && wav[i + 3] == 'a')
+            {
+                int dataSize = BitConverter.ToInt32(wav, i + 4);
+                int dataStart = i + 8;
+                int actualSize = Math.Min(dataSize, wav.Length - dataStart);
+                byte[] pcm = new byte[actualSize];
+                Buffer.BlockCopy(wav, dataStart, pcm, 0, actualSize);
+                return pcm;
+            }
+        }
+        if (wav.Length > 44)
+        {
+            byte[] pcm = new byte[wav.Length - 44];
+            Buffer.BlockCopy(wav, 44, pcm, 0, pcm.Length);
+            return pcm;
+        }
+        return wav;
+    }
+
     /// <summary>Encodes a mono <c>float[]</c> waveform to a base64 16-bit PCM WAV string (pure C#, no ffmpeg).
     /// WAV is AudioLab's default output format and needs no external encoder.</summary>
     public static string EncodeMonoWavBase64(float[] samples, int sampleRate)

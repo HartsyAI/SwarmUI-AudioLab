@@ -109,6 +109,8 @@ public static class WakeWordEndpoints
             ["devices"] = new JArray(WakeWordService.Devices.ToArray()),
             ["words"] = new JArray(WakeWordService.Words.ToArray()),
             ["model_root"] = WakeWordService.ModelRoot(),
+            ["noise_suppression"] = WakeWordService.GetSettings().NoiseSuppression,
+            ["denoiser_available"] = WakeWordService.DenoiserAvailable,
         };
     }
 

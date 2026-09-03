@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net.WebSockets;
 using System.Runtime.InteropServices;
 using Hartsy.Extensions.AudioLab.AudioBackends;
@@ -50,6 +51,7 @@ public static class AudioLabAPI
             API.RegisterAPICall(ProcessAudio, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(ProcessSTT, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(ProcessTTS, false, AudioLabPermissions.PermProcessAudio);
+            API.RegisterAPICall(AudioLabSpeakRaw, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(ProcessWorkflow, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(GetAllProvidersStatus, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(GetInstallationStatus, false, AudioLabPermissions.PermCheckStatus);
@@ -363,6 +365,150 @@ public static class AudioLabAPI
     }
 
     /// <summary>Process Text-to-Speech (backward compatible).</summary>
+    /// <summary>Synthesizes speech and writes it as raw 16 kHz mono 16-bit PCM, returning a URL the caller
+    /// fetches with a plain GET.
+    ///
+    /// <para>Exists for voice satellites. <see cref="ProcessTTS"/> returns a whole WAV base64-encoded inside a
+    /// JSON envelope, and never reports the sample rate it synthesized at; a microcontroller with a few hundred
+    /// KB of RAM cannot buffer 320 KB of base64 to recover 240 KB of audio, and would have to parse the WAV's
+    /// <c>fmt </c> chunk to find out what rate it got. Here the rate is fixed by the server, the container is
+    /// gone, and the body is bytes the device can feed straight to its DAC.</para>
+    ///
+    /// <para>Two steps on purpose: SwarmUI's API layer returns JSON, so this returns a URL under
+    /// <c>/Audio/</c>, which serves raw bytes with a <c>Content-Length</c> and needs no session id. That second
+    /// request is the one shaped for a small HTTP client.</para>
+    ///
+    /// <para>Request: <c>{ text (required), provider_id?, voice?, language?, volume?, sample_rate? }</c>.
+    /// Response: <c>{ success, url, sample_rate, channels, bits_per_sample, samples, duration }</c>.</para></summary>
+    public static async Task<JObject> AudioLabSpeakRaw(Session session, JObject input)
+    {
+        try
+        {
+            string text = input["text"]?.ToString();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return AudioLab.CreateErrorResponse("text is required.", "invalid_request");
+            }
+            int targetRate = input["sample_rate"]?.Value<int>() ?? 16000;
+            if (targetRate is < 8000 or > 48000)
+            {
+                return AudioLab.CreateErrorResponse("sample_rate must be between 8000 and 48000.", "invalid_request");
+            }
+            string requestedProvider = input["provider_id"]?.ToString();
+            // Default to Piper: it is the CPU-fastest TTS here, and its native 22.05 kHz is resampled below
+            // anyway, so nothing is gained by picking a higher-rate model for a device that wants 16 kHz.
+            AudioProviderDefinition provider = !string.IsNullOrEmpty(requestedProvider)
+                ? AudioProviderRegistry.GetById(requestedProvider)
+                : AudioProviderRegistry.GetById("piper_tts") ?? AudioProviderRegistry.GetByCategory(AudioCategory.TTS).FirstOrDefault();
+            if (provider is null)
+            {
+                return AudioLab.CreateErrorResponse($"No TTS provider available (requested: '{requestedProvider}')", "no_provider");
+            }
+
+            Dictionary<string, object> args = new()
+            {
+                ["text"] = text,
+                ["voice"] = input["voice"]?.ToString() ?? AudioConfiguration.DefaultVoice,
+                ["language"] = input["language"]?.ToString() ?? AudioConfiguration.DefaultLanguage,
+                ["volume"] = input["volume"]?.Value<double>() ?? 1.0
+            };
+            JObject result = await AudioServerManager.Instance.ProcessAsync(provider, args, session?.User);
+            if (result["success"]?.Value<bool>() != true)
+            {
+                return result;
+            }
+            string base64 = result["audio_data"]?.ToString();
+            if (string.IsNullOrEmpty(base64))
+            {
+                return AudioLab.CreateErrorResponse("The TTS provider returned no audio.", "no_audio");
+            }
+
+            byte[] wav = Convert.FromBase64String(base64);
+            (int sourceRate, int channels, int bits) = AudioIo.ReadWavFormat(wav);
+            float[] mono = PcmToMono(AudioIo.StripWavHeader(wav), channels, bits);
+            if (sourceRate != targetRate)
+            {
+                mono = HartsyInference.Audio.Io.Resampler.Create(sourceRate, targetRate).Resample(mono);
+            }
+
+            byte[] pcm = new byte[mono.Length * 2];
+            for (int i = 0; i < mono.Length; i++)
+            {
+                short sample = (short)Math.Clamp(mono[i] * 32767f, short.MinValue, short.MaxValue);
+                pcm[i * 2] = (byte)(sample & 0xFF);
+                pcm[i * 2 + 1] = (byte)((sample >> 8) & 0xFF);
+            }
+
+            string dir = Path.Combine(Utilities.CombinePathWithAbsolute(Environment.CurrentDirectory, Program.DataDir, "Audio"), "tts");
+            Directory.CreateDirectory(dir);
+            SweepOldClips(dir);
+            string name = $"{Guid.NewGuid():N}.raw";
+            await File.WriteAllBytesAsync(Path.Combine(dir, name), pcm);
+
+            return new JObject
+            {
+                ["success"] = true,
+                ["url"] = $"Audio/tts/{name}",
+                ["sample_rate"] = targetRate,
+                ["channels"] = 1,
+                ["bits_per_sample"] = 16,
+                ["samples"] = mono.Length,
+                ["duration"] = (double)mono.Length / targetRate
+            };
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] SpeakRaw failed: {ex.ReadableString()}");
+            return AudioLab.CreateErrorResponse(ex.Message, "tts_error");
+        }
+    }
+
+    /// <summary>Decodes interleaved PCM to a mono float waveform, averaging channels. Handles the 16- and
+    /// 32-bit forms providers actually emit; anything else is rejected rather than silently misread as noise.</summary>
+    private static float[] PcmToMono(byte[] pcm, int channels, int bitsPerSample)
+    {
+        if (channels < 1) channels = 1;
+        int bytesPerSample = bitsPerSample / 8;
+        if (bitsPerSample is not (16 or 32))
+        {
+            throw new NotSupportedException($"Unsupported WAV bit depth {bitsPerSample}; expected 16 or 32.");
+        }
+        int frames = pcm.Length / (bytesPerSample * channels);
+        float[] mono = new float[frames];
+        for (int f = 0; f < frames; f++)
+        {
+            float sum = 0f;
+            for (int c = 0; c < channels; c++)
+            {
+                int offset = (f * channels + c) * bytesPerSample;
+                sum += bitsPerSample == 16
+                    ? BitConverter.ToInt16(pcm, offset) / 32768f
+                    : BitConverter.ToSingle(pcm, offset);
+            }
+            mono[f] = sum / channels;
+        }
+        return mono;
+    }
+
+    /// <summary>Deletes clips older than an hour. These are one-shot handoffs — the device fetches immediately
+    /// and never again — so without this the directory grows without bound for the life of the install.</summary>
+    private static void SweepOldClips(string dir)
+    {
+        try
+        {
+            DateTime cutoff = DateTime.UtcNow.AddHours(-1);
+            foreach (string file in Directory.EnumerateFiles(dir, "*.raw"))
+            {
+                if (File.GetLastWriteTimeUtc(file) < cutoff) File.Delete(file);
+            }
+        }
+        catch (Exception ex)
+        {
+            // A clip we failed to delete is clutter, not a reason to fail the request that is about to succeed.
+            Logs.Debug($"[AudioLab] Could not sweep old TTS clips: {ex.Message}");
+        }
+    }
+
     public static async Task<JObject> ProcessTTS(Session session, JObject input)
     {
         try
