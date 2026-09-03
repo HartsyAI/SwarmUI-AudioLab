@@ -79,8 +79,19 @@ const WakeWordUI = {
             getRequiredElementById('wakeword_status_body').innerHTML =
                 `<div><strong>Port:</strong> ${data.running ? data.port : 'n/a'}</div>`
                 + `<div><strong>Models:</strong> <code>${escapeHtml(data.model_root ?? '')}</code></div>`
-                + `<div><strong>Satellites:</strong> ${devices.length === 0 ? '<em>none connected</em>' : devices.map(escapeHtml).join(', ')}</div>`;
+                + `<div><strong>Satellites:</strong> ${devices.length === 0 ? '<em>none connected</em>' : devices.map(escapeHtml).join(', ')}</div>`
+                + `<div><strong>Noise suppression:</strong> ${this.denoiseStatus(data)}</div>`;
         }, 0, e => getRequiredElementById('wakeword_status_body').innerHTML = `<span class="text-danger">${escapeHtml(e)}</span>`);
+    },
+
+    /// Distinguishes "off" from "on but the weights were never produced" -- the second runs unsuppressed and
+    /// would otherwise look identical to working.
+    denoiseStatus(data) {
+        if (!data.noise_suppression) { return '<em>off</em>'; }
+        if (data.denoiser_available) { return 'on'; }
+        return '<span class="text-warning">on, but no denoiser weights found &mdash; running unsuppressed.'
+            + ' Convert them with <code>tools/convert_pth_to_safetensors.py</code> and place the result at'
+            + ' <code>{models}/audio/wake/denoise/rnnoise.safetensors</code>.</span>';
     },
 
     refreshWords() {
@@ -128,6 +139,7 @@ const WakeWordUI = {
             getRequiredElementById('wakeword_setting_model').value = s.TranscribeModel ?? 'whisper';
             getRequiredElementById('wakeword_setting_tcp').checked = s.EnableTcpListener !== false;
             getRequiredElementById('wakeword_setting_token').value = s.AuthToken ?? '';
+            getRequiredElementById('wakeword_setting_denoise').checked = !!s.NoiseSuppression;
         });
     },
 
@@ -142,6 +154,7 @@ const WakeWordUI = {
                 TranscribeModel: getRequiredElementById('wakeword_setting_model').value,
                 EnableTcpListener: getRequiredElementById('wakeword_setting_tcp').checked,
                 AuthToken: getRequiredElementById('wakeword_setting_token').value,
+                NoiseSuppression: getRequiredElementById('wakeword_setting_denoise').checked,
             }
         }, data => {
             if (!data.success) { showError(`Could not save settings: ${data.error}`); }
@@ -249,6 +262,8 @@ const WakeWordUI = {
                         <span class="audiolab-wake-hint">Off for a tunnel-only setup: nothing listens on the LAN and satellites use the WebSocket route.</span></label>
                     <label>Shared secret<input type="text" id="wakeword_setting_token" class="form-control" placeholder="(empty = no authentication)">
                         <span class="audiolab-wake-hint">Satellites send this in their hello frame. Empty is fine on a trusted LAN, but set it before this is reachable from the internet, or anyone who finds the endpoint can stream audio in and read every transcript.</span></label>
+                    <label>Noise suppression<input type="checkbox" id="wakeword_setting_denoise" class="form-check-input">
+                        <span class="audiolab-wake-hint" id="wakeword_denoise_hint">Runs RNNoise over each satellite's audio before the wake model scores it, so it hears speech rather than the room. Costs compute per connected satellite. Transcription and speaker identification still use the raw microphone feed.</span></label>
                 </div>
                 <div class="audiolab-wake-actions">
                     <button id="wakeword_save_settings_btn" class="basic-button btn-primary">Save Settings</button>

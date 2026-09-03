@@ -53,6 +53,13 @@ public static class WakeWordService
     /// <summary>Wake words currently loaded.</summary>
     public static IReadOnlyCollection<string> Words => _service?.Words ?? [];
 
+    /// <summary>Whether the RNNoise weights are present, independent of whether suppression is switched on. The
+    /// weights are a conversion of upstream's PyTorch checkpoint rather than a downloadable artifact, so this is
+    /// how the UI tells "not enabled" apart from "enabled but the file was never produced" — the second silently
+    /// runs unsuppressed.</summary>
+    public static bool DenoiserAvailable =>
+        File.Exists(Path.Combine(ModelRoot(), "denoise", "rnnoise.safetensors"));
+
     /// <summary>Per-word settings as the engine has them persisted.</summary>
     public static IReadOnlyDictionary<string, WakeWordConfig> WordSettings =>
         _service?.WordSettings ?? new Dictionary<string, WakeWordConfig>();
@@ -85,6 +92,7 @@ public static class WakeWordService
                     Webhooks = settings.Webhooks ?? [],
                     EnableTcpListener = settings.EnableTcpListener,
                     AuthToken = string.IsNullOrWhiteSpace(settings.AuthToken) ? null : settings.AuthToken,
+                    NoiseSuppression = settings.NoiseSuppression,
                 });
                 service.Detected += OnDetected;
                 service.Start();
@@ -334,4 +342,12 @@ public class WakeWordSettings
     /// on a trusted LAN. **Set it before exposing this to the internet** — without it, anyone who reaches the
     /// endpoint can stream audio in and receive every detection, including transcripts of what was said.</summary>
     public string AuthToken { get; set; } = "";
+
+    /// <summary>Whether to run RNNoise over satellite audio before scoring it, so the wake model hears speech
+    /// rather than the room. Requires the denoiser weights (install them from the Wake Word tab); without them
+    /// the listener logs and runs unsuppressed. Costs real compute per connected satellite, so it is opt-in.
+    ///
+    /// <para>Only the wake scoring sees the cleaned audio — transcription and speaker identification still get
+    /// the raw microphone feed.</para></summary>
+    public bool NoiseSuppression { get; set; }
 }

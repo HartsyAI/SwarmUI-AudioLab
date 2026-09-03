@@ -822,11 +822,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
                         if (!formatRead)
                         {
-                            (sampleRate, channels, bitsPerSample) = ReadWavFormat(audioBytes);
+                            (sampleRate, channels, bitsPerSample) = AudioIo.ReadWavFormat(audioBytes);
                             formatRead = true;
                         }
 
-                        pcmChunks.Add(StripWavHeader(audioBytes));
+                        pcmChunks.Add(AudioIo.StripWavHeader(audioBytes));
 
                         AudioFile chunkAudio = new(audioBytes, MediaType.AudioWav);
                         takeOutput(new T2IEngine.ImageOutput { File = chunkAudio, IsReal = false });
@@ -2434,50 +2434,6 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
 
         return chunks;
-    }
-
-    /// <summary>Reads WAV format info (sample rate, channels, bits per sample) from a WAV byte array.</summary>
-    private static (int sampleRate, int channels, int bitsPerSample) ReadWavFormat(byte[] wav)
-    {
-        // Find "fmt " chunk
-        for (int i = 0; i < wav.Length - 24; i++)
-        {
-            if (wav[i] == 'f' && wav[i + 1] == 'm' && wav[i + 2] == 't' && wav[i + 3] == ' ')
-            {
-                int channels = BitConverter.ToInt16(wav, i + 10);
-                int sampleRate = BitConverter.ToInt32(wav, i + 12);
-                int bitsPerSample = BitConverter.ToInt16(wav, i + 22);
-                return (sampleRate, channels, bitsPerSample);
-            }
-        }
-        // Defaults for typical TTS output
-        return (24000, 1, 16);
-    }
-
-    /// <summary>Strips the WAV header and returns only raw PCM data bytes.</summary>
-    private static byte[] StripWavHeader(byte[] wav)
-    {
-        // Find "data" chunk
-        for (int i = 0; i < wav.Length - 8; i++)
-        {
-            if (wav[i] == 'd' && wav[i + 1] == 'a' && wav[i + 2] == 't' && wav[i + 3] == 'a')
-            {
-                int dataSize = BitConverter.ToInt32(wav, i + 4);
-                int dataStart = i + 8;
-                int actualSize = Math.Min(dataSize, wav.Length - dataStart);
-                byte[] pcm = new byte[actualSize];
-                Buffer.BlockCopy(wav, dataStart, pcm, 0, actualSize);
-                return pcm;
-            }
-        }
-        // If no data chunk found, skip standard 44-byte header
-        if (wav.Length > 44)
-        {
-            byte[] pcm = new byte[wav.Length - 44];
-            Buffer.BlockCopy(wav, 44, pcm, 0, pcm.Length);
-            return pcm;
-        }
-        return wav;
     }
 
     /// <summary>Builds a complete WAV file from concatenated PCM data.</summary>
