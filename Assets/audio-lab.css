@@ -2309,3 +2309,15 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
 }
 .audiolab-wake-hint { color: var(--text-soft); font-size: 0.8em; }
 .audiolab-wake-status code { color: var(--text-soft); }
+
+/* Wake model install rows: label on the left, action on the right, wrapping on narrow panes. */
+.audiolab-wake-model-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--light-border);
+}
+.audiolab-wake-model-row > div:first-child { flex: 1 1 18rem; }
+.audiolab-wake-model-row select { flex: 0 0 auto; width: auto; }

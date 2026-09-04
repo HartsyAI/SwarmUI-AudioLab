@@ -81,7 +81,64 @@ const WakeWordUI = {
                 + `<div><strong>Models:</strong> <code>${escapeHtml(data.model_root ?? '')}</code></div>`
                 + `<div><strong>Satellites:</strong> ${devices.length === 0 ? '<em>none connected</em>' : devices.map(escapeHtml).join(', ')}</div>`
                 + `<div><strong>Noise suppression:</strong> ${this.denoiseStatus(data)}</div>`;
+            this.renderModels(data);
         }, 0, e => getRequiredElementById('wakeword_status_body').innerHTML = `<span class="text-danger">${escapeHtml(e)}</span>`);
+    },
+
+    /// The listener fails closed with a bare "backbone not found" until these are downloaded, and nothing in
+    /// the UI used to offer to download them — the install routes existed but were only reachable over the API.
+    renderModels(data) {
+        const el = document.getElementById('wakeword_models_body');
+        if (!el) { return; }
+        const heads = data.installed_heads ?? [];
+        const stock = data.available_stock_heads ?? [];
+        const ok = (yes, yesText, noText) => yes
+            ? `<span class="text-success">${yesText}</span>`
+            : `<span class="text-warning">${noText}</span>`;
+        let html = `<div class="audiolab-wake-model-row">`
+            + `<div><strong>Backbone</strong> &mdash; ${ok(data.backbone_installed, 'installed', 'not installed; the listener cannot start without it')}</div>`
+            + `<button class="basic-button" id="wakeword_install_backbone">${data.backbone_installed ? 'Reinstall' : 'Install'} backbone</button>`
+            + `</div>`;
+        html += `<div class="audiolab-wake-model-row">`
+            + `<div><strong>Wake words</strong> &mdash; ${heads.length ? escapeHtml(heads.join(', ')) : '<span class="text-warning">none installed; install a stock word or train one</span>'}</div>`;
+        if (stock.length) {
+            html += `<select id="wakeword_stock_pick" class="form-select">`
+                + stock.map(w => `<option value="${escapeHtml(w)}">${escapeHtml(w)}</option>`).join('')
+                + `</select><button class="basic-button" id="wakeword_install_head">Install</button>`;
+        }
+        html += `</div>`;
+        html += `<div class="audiolab-wake-model-row">`
+            + `<div><strong>Denoiser</strong> &mdash; ${ok(data.denoiser_available, 'installed', 'not installed; noise suppression will run unsuppressed')}</div>`
+            + `<button class="basic-button" id="wakeword_install_denoiser">${data.denoiser_available ? 'Reinstall' : 'Install'} denoiser</button>`
+            + `</div>`
+            + `<div class="audiolab-wake-hint">The denoiser has no canonical download &mdash; it is a conversion of upstream RNNoise's PyTorch checkpoint. Set a URL under Settings to install it from.</div>`;
+        html += `<div id="wakeword_install_progress" class="small"></div>`;
+        el.innerHTML = html;
+        const bind = (id, fn) => { const b = document.getElementById(id); if (b) { b.addEventListener('click', fn); } };
+        bind('wakeword_install_backbone', () => this.installModel('AudioLabWakeInstallBackbone', {}, 'backbone'));
+        bind('wakeword_install_head', () => this.installModel('AudioLabWakeInstallStockHead',
+            { word: getRequiredElementById('wakeword_stock_pick').value }, 'wake word'));
+        bind('wakeword_install_denoiser', () => this.installModel('AudioLabWakeInstallDenoiser', {}, 'denoiser'));
+    },
+
+    /// Shared driver for the three installs: same status/success/error frames the training route uses.
+    installModel(route, params, label) {
+        const progress = getRequiredElementById('wakeword_install_progress');
+        progress.innerHTML = `<em>Downloading ${escapeHtml(label)}\u2026</em>`;
+        makeWSRequest(route, params, data => {
+            if (data.status) {
+                progress.insertAdjacentHTML('beforeend', `<div>${escapeHtml(data.status)}</div>`);
+            }
+            else if (data.success) {
+                progress.insertAdjacentHTML('beforeend', `<div class="text-success">${escapeHtml(label)} installed.</div>`);
+                // Refreshing rebuilds this panel, so the buttons reflect what is now on disk.
+                this.refreshStatus();
+                this.refreshWords();
+            }
+            else if (data.error) {
+                progress.insertAdjacentHTML('beforeend', `<div class="text-danger">${escapeHtml(data.error)}</div>`);
+            }
+        });
     },
 
     /// Distinguishes "off" from "on but the weights were never produced" -- the second runs unsuppressed and
@@ -140,6 +197,7 @@ const WakeWordUI = {
             getRequiredElementById('wakeword_setting_tcp').checked = s.EnableTcpListener !== false;
             getRequiredElementById('wakeword_setting_token').value = s.AuthToken ?? '';
             getRequiredElementById('wakeword_setting_denoise').checked = !!s.NoiseSuppression;
+            getRequiredElementById('wakeword_setting_denoiser_url').value = s.DenoiserUrl ?? '';
         });
     },
 
@@ -155,6 +213,7 @@ const WakeWordUI = {
                 EnableTcpListener: getRequiredElementById('wakeword_setting_tcp').checked,
                 AuthToken: getRequiredElementById('wakeword_setting_token').value,
                 NoiseSuppression: getRequiredElementById('wakeword_setting_denoise').checked,
+                DenoiserUrl: getRequiredElementById('wakeword_setting_denoiser_url').value.trim(),
             }
         }, data => {
             if (!data.success) { showError(`Could not save settings: ${data.error}`); }
@@ -248,6 +307,13 @@ const WakeWordUI = {
         </div>
         <div id="wakeword_status_body" class="audiolab-wake-status"><em>Loading…</em></div>
 
+        <div class="audiolab-cat-group" data-wake-group>
+            <div class="audiolab-cat-header"><span class="audiolab-cat-arrow">&#x2B9F;</span><span>Models</span></div>
+            <div class="audiolab-cat-body audiolab-wake-body">
+                <div id="wakeword_models_body"><em>Loading…</em></div>
+            </div>
+        </div>
+
         <div class="audiolab-cat-group collapsed" data-wake-group>
             <div class="audiolab-cat-header"><span class="audiolab-cat-arrow">&#x2B9F;</span><span>Settings</span></div>
             <div class="audiolab-cat-body audiolab-wake-body">
@@ -262,6 +328,8 @@ const WakeWordUI = {
                         <span class="audiolab-wake-hint">Off for a tunnel-only setup: nothing listens on the LAN and satellites use the WebSocket route.</span></label>
                     <label>Shared secret<input type="text" id="wakeword_setting_token" class="form-control" placeholder="(empty = no authentication)">
                         <span class="audiolab-wake-hint">Satellites send this in their hello frame. Empty is fine on a trusted LAN, but set it before this is reachable from the internet, or anyone who finds the endpoint can stream audio in and read every transcript.</span></label>
+                    <label>Denoiser URL<input type="text" id="wakeword_setting_denoiser_url" class="form-control" placeholder="(empty = no denoiser download configured)">
+                        <span class="audiolab-wake-hint">Where to download the RNNoise weights from. There is no default: they are a conversion of upstream's PyTorch checkpoint, so whoever hosts the converted file decides where it lives. Save, then use Install below.</span></label>
                     <label>Noise suppression<input type="checkbox" id="wakeword_setting_denoise" class="form-check-input">
                         <span class="audiolab-wake-hint" id="wakeword_denoise_hint">Runs RNNoise over each satellite's audio before the wake model scores it, so it hears speech rather than the room. Costs compute per connected satellite. Transcription and speaker identification still use the raw microphone feed.</span></label>
                 </div>
