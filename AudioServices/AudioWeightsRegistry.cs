@@ -206,6 +206,17 @@ public static class AudioWeightsRegistry
             : [];
     }
 
+    /// <summary>Model ids registered under <paramref name="providerId"/>, so a UI can offer what is actually
+    /// available for one-click install instead of hardcoding a list that drifts from this file.</summary>
+    public static IReadOnlyCollection<string> ModelsFor(string providerId)
+    {
+        if (providerId is null || !_registry.TryGetValue(providerId, out Dictionary<string, DownloadSpec[]> models))
+        {
+            return [];
+        }
+        return [.. models.Keys.OrderBy(k => k)];
+    }
+
     /// <summary>All distinct files across every model of a provider (deduped by filename). Prefer
     /// per-model installs (<see cref="SpecsFor"/>) — the full-provider set is large now that every
     /// variant is distinct weights.</summary>

@@ -53,6 +53,39 @@ public static class WakeWordService
     /// <summary>Wake words currently loaded.</summary>
     public static IReadOnlyCollection<string> Words => _service?.Words ?? [];
 
+    /// <summary>Whether the shared backbone is on disk. The listener fails closed without it, so the UI needs
+    /// to tell "not installed yet" apart from a real fault.</summary>
+    public static bool BackboneInstalled
+    {
+        get
+        {
+            string dir = Path.Combine(ModelRoot(), "backbone");
+            return File.Exists(Path.Combine(dir, "melspectrogram.onnx"))
+                && File.Exists(Path.Combine(dir, "embedding_model.onnx"));
+        }
+    }
+
+    /// <summary>Wake-word heads present on disk, whether or not the listener is running. <see cref="Words"/>
+    /// only reports loaded heads, which is empty while stopped — and "no words" is exactly what a user needs to
+    /// see before starting.</summary>
+    public static IReadOnlyCollection<string> InstalledHeads
+    {
+        get
+        {
+            string dir = Path.Combine(ModelRoot(), "heads");
+            if (!Directory.Exists(dir)) return [];
+            return [.. Directory.EnumerateFiles(dir)
+                .Where(f => f.EndsWith(".onnx", StringComparison.OrdinalIgnoreCase)
+                         || f.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase))
+                .Select(Path.GetFileNameWithoutExtension)
+                .Distinct()
+                .OrderBy(n => n)];
+        }
+    }
+
+    /// <summary>Stock wake words offered for one-click install.</summary>
+    public static IReadOnlyCollection<string> AvailableStockHeads => AudioWeightsRegistry.ModelsFor("wake_stock_heads");
+
     /// <summary>Whether the RNNoise weights are present, independent of whether suppression is switched on. The
     /// weights are a conversion of upstream's PyTorch checkpoint rather than a downloadable artifact, so this is
     /// how the UI tells "not enabled" apart from "enabled but the file was never produced" — the second silently
@@ -246,6 +279,29 @@ public static class WakeWordService
         return true;
     }
 
+    /// <summary>Downloads the RNNoise denoiser from <paramref name="url"/> into <c>{ModelRoot}/denoise/</c>.
+    ///
+    /// <para>Takes a URL rather than reading <see cref="AudioWeightsRegistry"/> like the backbone and heads do,
+    /// because there is no canonical download: the weights are a conversion of upstream's PyTorch checkpoint
+    /// (see <c>tools/convert_pth_to_safetensors.py</c> in the engine repo), so whoever hosts the converted file
+    /// decides where it lives. Configuring it as a setting also means swapping in a re-quantized build later is
+    /// a text edit rather than an extension release.</para>
+    ///
+    /// <para>Reuses the same atomic download-and-verify path as every other weight. With no published hash to
+    /// pin, an interrupted download is caught by the size floor rather than silently accepted.</para></summary>
+    public static async Task<bool> InstallDenoiserAsync(string url, Func<string, Task> onProgress, CancellationToken cancel = default)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return false;
+        }
+        AudioWeightsRegistry.DownloadSpec spec = new(Url: url.Trim(), FileName: "rnnoise.safetensors", Sha256: "");
+        string dir = Path.Combine(ModelRoot(), "denoise");
+        Directory.CreateDirectory(dir);
+        await AudioWeights.EnsureWeightAsync(spec, dir, onProgress, cancel);
+        return true;
+    }
+
     /// <summary>Downloads one of openWakeWord's pretrained stock heads into <c>{ModelRoot}/heads/</c> — the
     /// quickest way to get the listener past its fail-closed "no heads loaded" check for testing, before a
     /// real word is trained via <c>AudioLabWakeTrainWord</c>. Returns false for a word not in
@@ -350,4 +406,10 @@ public class WakeWordSettings
     /// <para>Only the wake scoring sees the cleaned audio — transcription and speaker identification still get
     /// the raw microphone feed.</para></summary>
     public bool NoiseSuppression { get; set; }
+
+    /// <summary>Where to download the RNNoise denoiser from. Empty until you host one — the weights are a
+    /// conversion of upstream's PyTorch checkpoint, not a file with a canonical home, so there is no sensible
+    /// default to ship. Kept as a setting rather than baked into the weights registry so a re-quantized or
+    /// self-hosted build can be swapped in without an extension release.</summary>
+    public string DenoiserUrl { get; set; } = "";
 }

@@ -58,6 +58,7 @@ public static class WakeWordEndpoints
         API.RegisterAPICall(AudioLabWakeSaveSettings, true, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeInstallBackbone, true, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeInstallStockHead, true, WakeWordPermissions.PermManage);
+        API.RegisterAPICall(AudioLabWakeInstallDenoiser, true, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeStart, true, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeStop, true, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeConfigureWord, true, WakeWordPermissions.PermManage);
@@ -111,6 +112,9 @@ public static class WakeWordEndpoints
             ["model_root"] = WakeWordService.ModelRoot(),
             ["noise_suppression"] = WakeWordService.GetSettings().NoiseSuppression,
             ["denoiser_available"] = WakeWordService.DenoiserAvailable,
+            ["backbone_installed"] = WakeWordService.BackboneInstalled,
+            ["installed_heads"] = new JArray(WakeWordService.InstalledHeads.ToArray()),
+            ["available_stock_heads"] = new JArray(WakeWordService.AvailableStockHeads.ToArray()),
         };
     }
 
@@ -266,6 +270,35 @@ public static class WakeWordEndpoints
         catch (Exception ex)
         {
             Logs.Error($"[AudioLab][Wake] Installing stock head '{word}' failed: {ex.ReadableString()}");
+            await ws.SendJson(new JObject { ["error"] = ex.Message }, API.WebsocketTimeout);
+        }
+        return null;
+    }
+
+    /// <summary>Downloads the RNNoise denoiser from the configured <c>DenoiserUrl</c> into the wake model
+    /// directory's <c>denoise/</c> subfolder. Streams progress the same way the backbone install does.
+    ///
+    /// <para>Unlike the backbone and heads there is no registry entry to read: the weights are a conversion of
+    /// upstream's PyTorch checkpoint, so the URL is a setting. Fails with a clear message rather than a silent
+    /// no-op when it has not been set.</para></summary>
+    public static async Task<JObject> AudioLabWakeInstallDenoiser(Session session, WebSocket ws)
+    {
+        try
+        {
+            async Task SendAsync(JObject payload) => await ws.SendJson(payload, API.WebsocketTimeout).ConfigureAwait(false);
+            string url = WakeWordService.GetSettings().DenoiserUrl;
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                await SendAsync(new JObject { ["error"] = "No denoiser URL is configured. Set one in the wake settings first — the weights are a conversion of upstream's PyTorch checkpoint, so there is no default download." });
+                return null;
+            }
+            bool installed = await WakeWordService.InstallDenoiserAsync(url,
+                msg => SendAsync(new JObject { ["status"] = msg }), Program.GlobalProgramCancel);
+            await SendAsync(new JObject { ["success"] = installed });
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab][Wake] Installing the denoiser failed: {ex.ReadableString()}");
             await ws.SendJson(new JObject { ["error"] = ex.Message }, API.WebsocketTimeout);
         }
         return null;
