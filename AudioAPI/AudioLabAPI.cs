@@ -405,10 +405,26 @@ public static class AudioLabAPI
                 return AudioLab.CreateErrorResponse($"No TTS provider available (requested: '{requestedProvider}')", "no_provider");
             }
 
+            // A voice satellite sends text and nothing else, so this route has to produce audio with no
+            // parameters at all — and the generic "default" sentinel does not survive the trip for Piper.
+            // When no concrete voice is named, the engine model token falls back to AudioLab's model id
+            // ("piper"), and since Piper's weights are selected BY the voice, the engine then looks for a
+            // voice literally called piper and fails with
+            //   HuggingFace file not found: rhasspy/piper-voices/piper.onnx
+            // Naming the voice explicitly is what makes an unparameterised request work. Verified against a
+            // real install 2026-09-05: with "default" every call failed, with this value the same call
+            // returned 1.20s of non-silent 16 kHz mono. Piper only — the zero-shot providers accept the
+            // sentinel and pick their own speaker, so leave those alone.
+            string voice = input["voice"]?.ToString();
+            if (string.IsNullOrWhiteSpace(voice))
+            {
+                voice = provider.Id.Equals("piper_tts", StringComparison.OrdinalIgnoreCase)
+                    ? "en_US-lessac-medium" : AudioConfiguration.DefaultVoice;
+            }
             Dictionary<string, object> args = new()
             {
                 ["text"] = text,
-                ["voice"] = input["voice"]?.ToString() ?? AudioConfiguration.DefaultVoice,
+                ["voice"] = voice,
                 ["language"] = input["language"]?.ToString() ?? AudioConfiguration.DefaultLanguage,
                 ["volume"] = input["volume"]?.Value<double>() ?? 1.0
             };
