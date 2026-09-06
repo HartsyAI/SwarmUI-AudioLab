@@ -84,8 +84,13 @@
          toolkit that disagree all report available and then throw on the first real operation, in the middle
          of a user's request. The probe runs one matmul and checks the answer instead.          2.0.0-alpha.53 = WakeFrameCodec can write a payload after a header, and WakeService.SendAudioAsync
          paces a spoken reply over the wake socket. Needed by the turn orchestrator; also what makes the
-         status frames reachable from an endpoint here. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.53" />
+         status frames reachable from an endpoint here.
+
+         2.0.0-alpha.54 = WakeServiceOptions.HostHandlesTurns marks the transcript frame `handled`, which is the
+         only thing that stops a satellite answering a turn the server is already answering; and
+         WakeService.BeginAudio streams one reply across the several pieces synthesis produces it in, instead of
+         one send per sentence that the device reads as one reply per sentence. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.54" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
