@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading.Channels;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using Hartsy.Extensions.AudioLab.AudioServices;
 using HartsyInference.Audio.Streaming;
@@ -113,8 +114,42 @@ public static class SpeakStreamRoute
         long samplesOut = 0;
         try
         {
-            await foreach (byte[] block in SynthesizeAsync(provider, args, targetRate, session.User, context.RequestAborted)
-                .ConfigureAwait(false))
+            // Synthesis runs into a buffer, and the socket drains it, rather than the socket pulling the
+            // engine along.
+            //
+            // The engine holds its generation lock for the whole of an enumeration, and the consumer here is a
+            // microcontroller that paces the stream by withholding TCP acknowledgements — so pulling chunks
+            // straight down the socket would hold that lock for as long as the reply takes to PLAY, not as
+            // long as it takes to make. Five seconds instead of one and a bit, during which no transcription
+            // can start. That is the audit's fourth bug, made worse by the change meant to help.
+            //
+            // With a buffer between them the enumeration finishes at synthesis speed and the lock goes back.
+            // The bound is generous — a spoken reply is a handful of sentences — and exists only so a
+            // pathological input cannot grow without limit.
+            Channel<byte[]> pcm = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(32)
+            {
+                SingleReader = true,
+                SingleWriter = true,
+                FullMode = BoundedChannelFullMode.Wait,
+            });
+            Task producer = Task.Run(async () =>
+            {
+                try
+                {
+                    await foreach (byte[] block in SynthesizeAsync(provider, args, targetRate, session.User,
+                        context.RequestAborted).ConfigureAwait(false))
+                    {
+                        await pcm.Writer.WriteAsync(block, context.RequestAborted).ConfigureAwait(false);
+                    }
+                    pcm.Writer.Complete();
+                }
+                catch (Exception ex)
+                {
+                    pcm.Writer.Complete(ex);
+                }
+            }, CancellationToken.None);
+
+            await foreach (byte[] block in pcm.Reader.ReadAllAsync(context.RequestAborted).ConfigureAwait(false))
             {
                 if (firstByteAt < 0)
                 {
@@ -124,6 +159,7 @@ public static class SpeakStreamRoute
                 await context.Response.Body.FlushAsync(context.RequestAborted).ConfigureAwait(false);
                 samplesOut += block.Length / 2;
             }
+            await producer.ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
