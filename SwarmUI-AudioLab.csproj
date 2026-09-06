@@ -76,8 +76,14 @@
          raised below buys 1.5 s less than it says: a question is cut off at UtteranceSeconds - 1.5.
          2.0.0-alpha.50 = Piper implements IStreamingTtsRunner by splitting on sentence boundaries, which is
          what /AudioLab/SpeakStream needs to send audio before the whole reply has been synthesized. Measured
-         on the audit's four-sentence passage: first sentence at 1.797s against 8.315s for the whole thing. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.50" />
+         on the audit's four-sentence passage: first sentence at 1.797s against 8.315s for the whole thing.
+         2.0.0-alpha.51 = status frames on the wake socket, so a satellite's light can say what the server is
+         doing during the seconds it is otherwise silent.
+         2.0.0-alpha.52 = BackendFactory.ProbeCuda / ResolveProbed. Resolving "auto" from whether a GPU is
+         VISIBLE picks a card that may not work: kernels for another architecture, no free memory, a driver and
+         toolkit that disagree all report available and then throw on the first real operation, in the middle
+         of a user's request. The probe runs one matmul and checks the answer instead. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.52" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak

@@ -78,6 +78,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
             ManualNames = ["Auto (recommended)", "Performance (never free between stages)", "Balanced (free between stages)",
                 "Aggressive (smaller chunks, half-precision caches)", "Maximum (every lever, changes output)"])]
         public string VramMode = "Auto";
+
+        [ConfigComment("Free host RAM, in GB, below which loading a new audio model first unloads every other one.\n\nAudio runners accumulate: each holds its own multi-GB copy of its weights, and nothing evicts them until this floor is crossed. Left too low, a box that switches between speech, transcription and music gets OOM-killed by the kernel rather than slowed — observed at 21.8 GB resident on a 32 GB machine, and again at 11.5 GB with a desktop session sharing it.\n\n0 leaves the engine's own default (14 GB). Raise it on a machine doing anything else; lower it only if you know the working set fits.\n\nHost RAM is process-wide, so with several audio backends each judges the floor independently. HARTSY_AUDIO_EVICT_BELOW_GB overrides this for headless runs.")]
+        public int EvictBelowGb = 0;
     }
 
     /// <summary>Builds the Device dropdown from whatever compute backends the engine reports
@@ -288,6 +291,24 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
     /// <summary>Pushes the configured compute device to the shared engine, failing the backend loudly on a bad
     /// selector instead of letting it die mid-generation. Returns false when the backend was set to ERRORED.</summary>
+    /// <summary>Publishes the eviction floor to the engine, and says what it ended up as.
+    ///
+    /// <para>The knob has always existed as an environment variable and has therefore been invisible: a host
+    /// being OOM-killed had no way to find the lever from the UI, and no way to see which value was in force.
+    /// Setting it here writes the same variable the engine reads, and the log line is so that a number nobody
+    /// set is still a number somebody can see.</para></summary>
+    private void ApplyEvictionFloor()
+    {
+        int gb = Settings?.EvictBelowGb ?? 0;
+        if (gb <= 0)
+        {
+            Logs.Debug("[AudioLab] Audio eviction floor left at the engine default.");
+            return;
+        }
+        Environment.SetEnvironmentVariable("HARTSY_AUDIO_EVICT_BELOW_GB", gb.ToString());
+        Logs.Init($"[AudioLab] Audio models will be evicted when free host RAM drops below {gb} GB.");
+    }
+
     private bool ApplyDeviceSetting()
     {
         string device = string.IsNullOrWhiteSpace(Settings?.Device) ? "auto" : Settings.Device.Trim();
@@ -339,6 +360,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
         // Re-read on every init so restarting this backend picks up a changed server ModelRoot.
         AudioConfiguration.SyncModelRootFromServer();
 
+        ApplyEvictionFloor();
         if (!ApplyDeviceSetting())
         {
             return;
