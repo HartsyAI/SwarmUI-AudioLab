@@ -143,7 +143,7 @@ public static class AudioEngineBridge
                 if (_engine is null)
                 {
                     AlignModelsRoot();
-                    string device = DeviceSelector();
+                    string device = ResolveDeviceLoudly(DeviceSelector());
                     VramPolicy policy = VramPolicySelector();
                     _engine = new InferenceEngine(device, new EngineOptions { VramPolicy = policy });
                     _builtDevice = device;
@@ -608,6 +608,37 @@ public static class AudioEngineBridge
             _requestedDevice = device;
             return null;
         }
+    }
+
+    /// <summary>Turns <c>auto</c> into a concrete device by actually running something on the GPU, and says
+    /// out loud what it decided.
+    ///
+    /// <para>Left to the engine, <c>auto</c> is resolved from whether a CUDA device can be seen — which is a
+    /// different question from whether it works. Kernels built for another architecture, a card with no free
+    /// memory, a driver and toolkit that disagree: each of those is visible, and each throws on the first real
+    /// operation. The engine builds its backend lazily inside the first generation, so that throw surfaces as a
+    /// failed request from a user rather than as a line in the startup log.</para>
+    ///
+    /// <para>So the probe runs here instead: one small matmul compared against the CPU, once, before the
+    /// engine exists. A host that ends up on the CPU learns it at boot and learns why.</para></summary>
+    private static string ResolveDeviceLoudly(string selector)
+    {
+        if (!string.Equals(selector, "auto", StringComparison.OrdinalIgnoreCase))
+        {
+            return selector;
+        }
+        string resolved = BackendFactory.ResolveProbed("auto");
+        if (resolved == "cuda")
+        {
+            Logs.Init("[AudioLab] Device 'auto' resolved to CUDA; a test matmul on the GPU matched the CPU.");
+        }
+        else
+        {
+            // Info, not Debug: a box that quietly runs audio on the CPU when it has a GPU in it is the single
+            // most expensive misconfiguration here, and it is invisible from the outside.
+            Logs.Info($"[AudioLab] Device 'auto' resolved to CPU — {BackendFactory.CudaProbeFailureReason ?? "no GPU was usable"}");
+        }
+        return resolved;
     }
 
     /// <summary>The configured compute device for audio work, or <c>auto</c>. Comes from the audio backend's
