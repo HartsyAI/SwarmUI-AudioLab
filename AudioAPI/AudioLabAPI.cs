@@ -335,6 +335,25 @@ public static class AudioLabAPI
                 ["audio_data"] = request.AudioData,
                 ["language"] = request.Language
             };
+            // A requested model used to be read off the request and then dropped on the floor: whatever the
+            // caller asked for, the engine got no variant and loaded the provider's default. Tiny and turbo are
+            // a factor of twenty apart in cost, so silently ignoring the choice is not a small thing — it is
+            // the difference between a transcription that keeps up with a conversation and one that does not.
+            // The variant travels as __model_id, the same key the generate path injects.
+            string requestedModel = input["model"]?.ToString();
+            if (!string.IsNullOrWhiteSpace(requestedModel))
+            {
+                AudioModelDefinition chosen = sttProvider.Models
+                    .FirstOrDefault(m => m.Id.Equals(requestedModel, StringComparison.OrdinalIgnoreCase));
+                if (chosen is null)
+                {
+                    return AudioLab.CreateErrorResponse(
+                        $"'{requestedModel}' is not a model of '{sttProvider.Id}'. Available: "
+                        + string.Join(", ", sttProvider.Models.Select(m => m.Id)) + ".",
+                        "unknown_model");
+                }
+                args["__model_id"] = chosen.Id;
+            }
 
             long sttStart = Environment.TickCount64;
             JObject result = await AudioServerManager.Instance.ProcessAsync(sttProvider, args, session?.User);
@@ -481,7 +500,7 @@ public static class AudioLabAPI
 
     /// <summary>Decodes interleaved PCM to a mono float waveform, averaging channels. Handles the 16- and
     /// 32-bit forms providers actually emit; anything else is rejected rather than silently misread as noise.</summary>
-    private static float[] PcmToMono(byte[] pcm, int channels, int bitsPerSample)
+    internal static float[] PcmToMono(byte[] pcm, int channels, int bitsPerSample)
     {
         if (channels < 1) channels = 1;
         int bytesPerSample = bitsPerSample / 8;
