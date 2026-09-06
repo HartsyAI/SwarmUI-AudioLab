@@ -112,6 +112,11 @@ const WakeWordUI = {
             + `<button class="basic-button" id="wakeword_install_denoiser">${data.denoiser_available ? 'Reinstall' : 'Install'} denoiser</button>`
             + `</div>`
             + `<div class="audiolab-wake-hint">The denoiser has no canonical download &mdash; it is a conversion of upstream RNNoise's PyTorch checkpoint. Set a URL under Settings to install it from.</div>`;
+        html += `<div class="audiolab-wake-model-row">`
+            + `<div><strong>End of speech</strong> &mdash; ${ok(data.vad_installed, 'installed', 'not installed; every utterance waits a fixed 3s and anything longer is cut off')}</div>`
+            + `<button class="basic-button" id="wakeword_install_vad">${data.vad_installed ? 'Reinstall' : 'Install'} end-of-speech model</button>`
+            + `</div>`
+            + `<div class="audiolab-wake-hint">Silero VAD, from its own repository. With it the utterance ends when you stop talking, so a short command is transcribed at once and a long question is allowed to finish.</div>`;
         html += `<div id="wakeword_install_progress" class="small"></div>`;
         el.innerHTML = html;
         const bind = (id, fn) => { const b = document.getElementById(id); if (b) { b.addEventListener('click', fn); } };
@@ -119,6 +124,7 @@ const WakeWordUI = {
         bind('wakeword_install_head', () => this.installModel('AudioLabWakeInstallStockHead',
             { word: getRequiredElementById('wakeword_stock_pick').value }, 'wake word'));
         bind('wakeword_install_denoiser', () => this.installModel('AudioLabWakeInstallDenoiser', {}, 'denoiser'));
+        bind('wakeword_install_vad', () => this.installModel('AudioLabWakeInstallVad', {}, 'end-of-speech model'));
     },
 
     /// Shared driver for the three installs: same status/success/error frames the training route uses.
@@ -198,6 +204,9 @@ const WakeWordUI = {
             getRequiredElementById('wakeword_setting_token').value = s.AuthToken ?? '';
             getRequiredElementById('wakeword_setting_denoise').checked = !!s.NoiseSuppression;
             getRequiredElementById('wakeword_setting_denoiser_url').value = s.DenoiserUrl ?? '';
+            getRequiredElementById('wakeword_setting_eos').checked = s.UseEndOfSpeech !== false;
+            getRequiredElementById('wakeword_setting_eos_silence').value = s.EndOfSpeechSilenceMs ?? 500;
+            getRequiredElementById('wakeword_setting_utterance').value = s.UtteranceSeconds ?? 8;
         });
     },
 
@@ -214,6 +223,9 @@ const WakeWordUI = {
                 AuthToken: getRequiredElementById('wakeword_setting_token').value,
                 NoiseSuppression: getRequiredElementById('wakeword_setting_denoise').checked,
                 DenoiserUrl: getRequiredElementById('wakeword_setting_denoiser_url').value.trim(),
+                UseEndOfSpeech: getRequiredElementById('wakeword_setting_eos').checked,
+                EndOfSpeechSilenceMs: parseInt(getRequiredElementById('wakeword_setting_eos_silence').value),
+                UtteranceSeconds: parseFloat(getRequiredElementById('wakeword_setting_utterance').value),
             }
         }, data => {
             if (!data.success) { showError(`Could not save settings: ${data.error}`); }
@@ -330,6 +342,12 @@ const WakeWordUI = {
                         <span class="audiolab-wake-hint">Satellites send this in their hello frame. Empty is fine on a trusted LAN, but set it before this is reachable from the internet, or anyone who finds the endpoint can stream audio in and read every transcript.</span></label>
                     <label>Denoiser URL<input type="text" id="wakeword_setting_denoiser_url" class="form-control" placeholder="(empty = no denoiser download configured)">
                         <span class="audiolab-wake-hint">Where to download the RNNoise weights from. There is no default: they are a conversion of upstream's PyTorch checkpoint, so whoever hosts the converted file decides where it lives. Save, then use Install below.</span></label>
+                    <label>End the utterance when you stop talking<input type="checkbox" id="wakeword_setting_eos" class="form-check-input" checked>
+                        <span class="audiolab-wake-hint">Needs the end-of-speech model installed above. Off, transcription starts a fixed three seconds after the wake word: a short command waits the full three seconds and a longer question is cut off mid-word.</span></label>
+                    <label>End-of-speech silence (ms)<input type="number" id="wakeword_setting_eos_silence" class="form-control" value="500" min="100" max="3000" step="50">
+                        <span class="audiolab-wake-hint">How long a pause has to be before it counts as the end. Below about 400ms it will cut people off mid-sentence.</span></label>
+                    <label>Longest utterance (s)<input type="number" id="wakeword_setting_utterance" class="form-control" value="8" min="2" max="30" step="0.5">
+                        <span class="audiolab-wake-hint">Caps both the audio transcribed and how long end-of-speech waits, so someone who never stops talking still gets an answer.</span></label>
                     <label>Noise suppression<input type="checkbox" id="wakeword_setting_denoise" class="form-check-input">
                         <span class="audiolab-wake-hint" id="wakeword_denoise_hint">Runs RNNoise over each satellite's audio before the wake model scores it, so it hears speech rather than the room. Costs compute per connected satellite. Transcription and speaker identification still use the raw microphone feed.</span></label>
                 </div>

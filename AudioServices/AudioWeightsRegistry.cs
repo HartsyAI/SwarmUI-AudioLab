@@ -75,6 +75,17 @@ public static class AudioWeightsRegistry
     /// AudioProviderDefinition (no AudioCategory.Wake), so this is looked up directly by
     /// WakeWordService.InstallBackboneAsync via SpecsFor("wake", "backbone") rather than through the
     /// AudioProviderDefinition-based install flow.</para></summary>
+    // Silero VAD v6, from silero-vad's own repository (MIT). Deliberately NOT from openWakeWord's release,
+    // which pins an older revision whose learned tensors differ from this one — see the engine's
+    // docs/Research/WAKE_WORD_DETECTION.md. The engine reads this ONNX directly, so there is no conversion
+    // step and nothing for anyone to host. Hash taken from the downloaded bytes 2026-09-05.
+    private static readonly DownloadSpec[] WakeVad =
+    [
+        new(Url: "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx",
+            FileName: "silero_vad.onnx",
+            Sha256: "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"),
+    ];
+
     private static readonly DownloadSpec[] WakeBackbone =
     [
         new(Url: OpenWakeWordRelease + "melspectrogram.onnx",
@@ -144,6 +155,7 @@ public static class AudioWeightsRegistry
         ["wake"] = new()
         {
             ["backbone"] = WakeBackbone,
+            ["vad"] = WakeVad,
         },
         // Only "hey_jarvis" is pinned here — the only stock head actually downloaded and sha256-verified
         // (2026-08-19). openWakeWord's v0.5.1 release also ships alexa_v0.1.onnx and hey_mycroft_v0.1.onnx

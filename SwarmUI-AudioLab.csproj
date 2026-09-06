@@ -71,7 +71,7 @@
          2.0.0-alpha.47 = threads the CPU kernels. Piper's whole forward pass ran on one core, which is what
          made synthesis 89-96% of every voice turn on the CPU-only box this extension serves; measured 15x
          faster (real-time factor 3.1 -> 0.21) on an 8-core dev machine. Also brings HARTSY_CPU_THREADS. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.47" />
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.48" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
