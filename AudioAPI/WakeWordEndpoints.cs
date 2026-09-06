@@ -53,6 +53,7 @@ public static class WakeWordEndpoints
         API.RegisterAPICall(AudioLabWakeEvents, false, WakeWordPermissions.PermListen);
         API.RegisterAPICall(AudioLabWakeRecentDetections, false, WakeWordPermissions.PermListen);
         API.RegisterAPICall(AudioLabWakeListWords, false, WakeWordPermissions.PermListen);
+        API.RegisterAPICall(AudioLabWakeSendStatus, true, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeListSpeakers, false, WakeWordPermissions.PermListen);
         API.RegisterAPICall(AudioLabWakeGetSettings, false, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeSaveSettings, true, WakeWordPermissions.PermManage);
@@ -195,6 +196,40 @@ public static class WakeWordEndpoints
             });
         }
         return new JObject { ["success"] = true, ["words"] = words };
+    }
+
+    /// <summary>Sends one status frame to a connected satellite, so its lights and sounds can be checked
+    /// without speaking to it.
+    ///
+    /// <para>The device shows what the server is doing during a turn — captured, transcribing, thinking,
+    /// speaking — and until now the only way to see that working was to say the wake word and watch. That makes
+    /// a device whose handling is broken indistinguishable from one that is simply not being sent anything.
+    /// This sends a chosen state on demand.</para>
+    ///
+    /// <para>Request: <c>{ device_id (required), state (required), detail? }</c>. Unknown device ids are
+    /// accepted and ignored by the engine, because a satellite that has just dropped is not an error.</para></summary>
+    public static async Task<JObject> AudioLabWakeSendStatus(Session session, JObject rawInput)
+    {
+        string deviceId = rawInput["device_id"]?.ToString();
+        string state = rawInput["state"]?.ToString();
+        if (string.IsNullOrWhiteSpace(deviceId) || string.IsNullOrWhiteSpace(state))
+        {
+            return new JObject { ["success"] = false, ["error"] = "device_id and state are both required." };
+        }
+        if (!WakeStatus.IsKnown(state))
+        {
+            return new JObject
+            {
+                ["success"] = false,
+                ["error"] = $"'{state}' is not a status a device understands. Known: {WakeStatus.Captured}, "
+                    + $"{WakeStatus.Transcribing}, {WakeStatus.Thinking}, {WakeStatus.Speaking}, "
+                    + $"{WakeStatus.Done}, {WakeStatus.Error}.",
+            };
+        }
+        bool running = await WakeWordService.SendStatusAsync(deviceId, state, rawInput["detail"]?.ToString());
+        return running
+            ? new JObject { ["success"] = true, ["device_id"] = deviceId, ["state"] = state }
+            : new JObject { ["success"] = false, ["error"] = "The wake listener is not running." };
     }
 
     /// <summary>Current shared settings.</summary>
