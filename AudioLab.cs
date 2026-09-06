@@ -117,6 +117,7 @@ public class AudioLab : Extension
         try
         {
             SpeakStreamRoute.Register();
+            VoiceTurnOrchestrator.Start();
         }
         catch (Exception ex)
         {
@@ -151,6 +152,7 @@ public class AudioLab : Extension
         try
         {
             AudioModelTypeRegistration.Unregister();
+            VoiceTurnOrchestrator.Stop();
             WakeWordService.Stop();
         }
         catch (Exception ex)
