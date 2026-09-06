@@ -60,6 +60,17 @@ public static class WakeWordService
     /// one that is not receiving the frames at all. This sends one on demand, so the device end can be checked
     /// on its own and so an operator can confirm a satellite is reachable and paying attention without saying
     /// the wake word at it.</para></summary>
+    /// <summary>Sends spoken audio to a satellite over the socket it already has open, paced to real time.</summary>
+    /// <returns>Bytes delivered; zero when the listener is not running or the device is not connected.</returns>
+    public static async Task<int> SendAudioAsync(string deviceId, ReadOnlyMemory<byte> pcm, int sampleRate,
+        CancellationToken cancel = default)
+    {
+        WakeService service = _service;
+        return service is null
+            ? 0
+            : await service.SendAudioAsync(deviceId, pcm, sampleRate, cancel).ConfigureAwait(false);
+    }
+
     /// <returns>False when the listener is not running.</returns>
     public static async Task<bool> SendStatusAsync(string deviceId, string state, string detail = null)
     {
@@ -236,6 +247,9 @@ public static class WakeWordService
         ["score"] = evt.Score,
         ["route"] = evt.Route,
         ["transcript"] = evt.Transcript,
+        // The transcript with the wake phrase removed. Empty means the user said the wake word and nothing
+        // else; absent means an engine old enough not to separate them.
+        ["command"] = evt.Command,
         ["speaker"] = evt.Speaker,
         ["detected_at"] = evt.DetectedAtUtc.ToString("O"),
     };
@@ -418,6 +432,16 @@ public class WakeWordSettings
 {
     /// <summary>Whether the listener starts with SwarmUI.</summary>
     public bool Enabled { get; set; }
+
+    /// <summary>Whether the server runs the whole voice turn and sends the reply back down the wake socket.
+    ///
+    /// <para>Off by default, because it changes what an existing satellite does without that satellite being
+    /// updated: a device still running its own turn would speak every reply twice. Turn it on together with
+    /// firmware that plays <c>audio</c> frames.</para></summary>
+    public bool ServerSideTurns { get; set; }
+
+    /// <summary>Assistant the server-side turn asks. Empty means whichever one is active.</summary>
+    public string AssistantId { get; set; } = "";
 
     /// <summary>TCP port satellites connect to.</summary>
     public int Port { get; set; } = 10800;
