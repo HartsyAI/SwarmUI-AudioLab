@@ -171,15 +171,20 @@ public static class VoiceTurnOrchestrator
     private static async Task<(string Reply, string Error)> AskAssistantAsync(string text, CancellationToken cancel)
     {
         WakeWordSettings settings = WakeWordService.GetSettings();
-        // The port actually bound, not the configured one: they differ when the configured port was taken and
-        // the server moved rather than refusing to start.
-        string baseUrl = $"http://127.0.0.1:{WebServer.Port}/API";
+        // Whatever address this server is actually listening on, not 127.0.0.1. A server bound to one specific
+        // interface — which is how the production box is configured — refuses the loopback address, and the
+        // whole turn failed there with nothing to say but "could not open a session". PageURL is the existing
+        // answer to the same question: it maps a wildcard bind to localhost and otherwise uses the real host.
+        string baseUrl = $"{WebServer.PageURL}/API";
 
         JObject session = await PostAsync($"{baseUrl}/GetNewSession", new JObject(), cancel).ConfigureAwait(false);
         string sessionId = session?["session_id"]?.ToString();
         if (string.IsNullOrEmpty(sessionId))
         {
-            return (null, "could not open a session for the assistant call.");
+            // The reason, not just the fact. This travels to the device as the `error` status detail and shows
+            // up in a bench run, which on a box whose logs are not readable from here is the only way anyone
+            // finds out why a turn produced silence.
+            return (null, $"could not open a session at {baseUrl}: {_lastPostFailure ?? "no session_id in the reply"}");
         }
 
         JObject request = new()
@@ -206,6 +211,10 @@ public static class VoiceTurnOrchestrator
             : (reply, null);
     }
 
+    /// <summary>Why the last loopback call failed, so a caller can say something more useful than "it did not
+    /// work". Best-effort and racy across concurrent turns, which is acceptable for a diagnostic.</summary>
+    private static string _lastPostFailure;
+
     private static async Task<JObject> PostAsync(string url, JObject body, CancellationToken cancel)
     {
         try
@@ -221,6 +230,7 @@ public static class VoiceTurnOrchestrator
         }
         catch (Exception ex)
         {
+            _lastPostFailure = ex.Message;
             Logs.Debug($"[AudioLab][Turn] {url} failed: {ex.Message}");
             return null;
         }
