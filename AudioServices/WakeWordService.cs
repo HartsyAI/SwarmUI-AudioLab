@@ -53,6 +53,25 @@ public static class WakeWordService
     /// <summary>Wake words currently loaded.</summary>
     public static IReadOnlyCollection<string> Words => _service?.Words ?? [];
 
+    /// <summary>Tells one connected satellite what to show, out of band.
+    ///
+    /// <para>Status frames normally arrive as a side effect of a turn, which makes the device's half of that
+    /// feature testable only by speaking to it — and a satellite whose light never changes looks identical to
+    /// one that is not receiving the frames at all. This sends one on demand, so the device end can be checked
+    /// on its own and so an operator can confirm a satellite is reachable and paying attention without saying
+    /// the wake word at it.</para></summary>
+    /// <returns>False when the listener is not running.</returns>
+    public static async Task<bool> SendStatusAsync(string deviceId, string state, string detail = null)
+    {
+        WakeService service = _service;
+        if (service is null)
+        {
+            return false;
+        }
+        await service.SendStatusAsync(deviceId, state, detail).ConfigureAwait(false);
+        return true;
+    }
+
     /// <summary>Whether the shared backbone is on disk. The listener fails closed without it, so the UI needs
     /// to tell "not installed yet" apart from a real fault.</summary>
     public static bool BackboneInstalled

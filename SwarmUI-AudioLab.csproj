@@ -82,8 +82,10 @@
          2.0.0-alpha.52 = BackendFactory.ProbeCuda / ResolveProbed. Resolving "auto" from whether a GPU is
          VISIBLE picks a card that may not work: kernels for another architecture, no free memory, a driver and
          toolkit that disagree all report available and then throw on the first real operation, in the middle
-         of a user's request. The probe runs one matmul and checks the answer instead. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.52" />
+         of a user's request. The probe runs one matmul and checks the answer instead.          2.0.0-alpha.53 = WakeFrameCodec can write a payload after a header, and WakeService.SendAudioAsync
+         paces a spoken reply over the wake socket. Needed by the turn orchestrator; also what makes the
+         status frames reachable from an endpoint here. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.53" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
