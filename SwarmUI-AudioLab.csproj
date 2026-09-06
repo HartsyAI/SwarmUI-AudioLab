@@ -73,8 +73,11 @@
          faster (real-time factor 3.1 -> 0.21) on an 8-core dev machine. Also brings HARTSY_CPU_THREADS.
          2.0.0-alpha.49 = end-of-speech stops counting the same silence twice, and the utterance wait uses the
          whole of UtteranceSeconds instead of UtteranceSeconds minus the lead-in. Without this the setting
-         raised below buys 1.5 s less than it says: a question is cut off at UtteranceSeconds - 1.5. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.49" />
+         raised below buys 1.5 s less than it says: a question is cut off at UtteranceSeconds - 1.5.
+         2.0.0-alpha.50 = Piper implements IStreamingTtsRunner by splitting on sentence boundaries, which is
+         what /AudioLab/SpeakStream needs to send audio before the whole reply has been synthesized. Measured
+         on the audit's four-sentence passage: first sentence at 1.797s against 8.315s for the whole thing. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.50" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
