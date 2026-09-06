@@ -111,6 +111,17 @@ public class AudioLab : Extension
     /// install with no voice satellite never binds a port or holds a detection thread.</para></summary>
     public override void OnPreLaunch()
     {
+        // Core has finished mapping its own routes and has not started listening yet, which is the one window
+        // an extension can add a raw HTTP endpoint in. Registered unconditionally: it costs nothing until
+        // something posts to it, and a device that wants streamed speech has no other way to ask.
+        try
+        {
+            SpeakStreamRoute.Register();
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] Could not register the streaming speech route: {ex.ReadableString()}");
+        }
         try
         {
             if (!WakeWordService.GetSettings().Enabled)
