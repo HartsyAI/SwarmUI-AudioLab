@@ -83,8 +83,14 @@ public static class VoiceTurnOrchestrator
         }
         // A configured route means an external orchestrator owns this word. Answering it here as well would
         // give the user two replies, from two systems that do not know about each other.
+        //
+        // But the transcript went out marked `handled`, because that mark is set for the whole listener and not
+        // per word — so the device has already stood down and is waiting for a reply this is about to not send.
+        // Releasing it here is the difference between the external route answering a device that is listening
+        // and one that sits deaf for the whole 45 seconds its watchdog takes to give up.
         if (!string.IsNullOrWhiteSpace(payload["route"]?.ToString()))
         {
+            _ = WakeWordService.SendStatusAsync(deviceId, WakeStatus.Done);
             return;
         }
         // Prefer the command; fall back to the transcript only when the engine did not separate them. An
