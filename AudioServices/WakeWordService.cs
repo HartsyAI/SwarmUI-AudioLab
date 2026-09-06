@@ -72,6 +72,27 @@ public static class WakeWordService
         return true;
     }
 
+    /// <summary>Sends one whole spoken reply to a satellite over the socket it already has open, paced to real
+    /// time.</summary>
+    /// <returns>Bytes delivered; zero when the listener is not running or the device is not connected.</returns>
+    public static async Task<int> SendAudioAsync(string deviceId, ReadOnlyMemory<byte> pcm, int sampleRate,
+        CancellationToken cancel = default)
+    {
+        WakeService service = _service;
+        return service is null
+            ? 0
+            : await service.SendAudioAsync(deviceId, pcm, sampleRate, cancel).ConfigureAwait(false);
+    }
+
+    /// <summary>Opens one spoken reply to a satellite, to be written as the sentences of it are synthesized.
+    ///
+    /// <para>Not the same as calling <see cref="SendAudioAsync"/> once per sentence: that numbers each call's
+    /// frames from zero, which the device reads as a new reply starting, so it resets its playback ring and
+    /// loses whatever of the previous sentence it had not played yet.</para></summary>
+    /// <returns>Null when the listener is not running or the device is not connected.</returns>
+    public static WakeAudioStream BeginAudio(string deviceId, int sampleRate)
+        => _service?.BeginAudio(deviceId, sampleRate);
+
     /// <summary>Whether the shared backbone is on disk. The listener fails closed without it, so the UI needs
     /// to tell "not installed yet" apart from a real fault.</summary>
     public static bool BackboneInstalled
@@ -148,6 +169,11 @@ public static class WakeWordService
                     EnableTcpListener = settings.EnableTcpListener,
                     AuthToken = string.IsNullOrWhiteSpace(settings.AuthToken) ? null : settings.AuthToken,
                     NoiseSuppression = settings.NoiseSuppression,
+                    // Puts "handled":true on the transcript frame, which is the only thing that stops a
+                    // satellite answering the turn itself. It has to be on the frame: Detected is raised after
+                    // the frame is written, so anything the orchestrator sent would arrive at a device that had
+                    // already started its own assistant call, and both replies would play at once.
+                    HostHandlesTurns = settings.ServerSideTurns,
                 });
                 service.Detected += OnDetected;
                 service.Start();
@@ -236,6 +262,9 @@ public static class WakeWordService
         ["score"] = evt.Score,
         ["route"] = evt.Route,
         ["transcript"] = evt.Transcript,
+        // The transcript with the wake phrase removed. Empty means the user said the wake word and nothing
+        // else; absent means an engine old enough not to separate them.
+        ["command"] = evt.Command,
         ["speaker"] = evt.Speaker,
         ["detected_at"] = evt.DetectedAtUtc.ToString("O"),
     };
@@ -418,6 +447,17 @@ public class WakeWordSettings
 {
     /// <summary>Whether the listener starts with SwarmUI.</summary>
     public bool Enabled { get; set; }
+
+    /// <summary>Whether the server runs the whole voice turn and sends the reply back down the wake socket.
+    ///
+    /// <para>Off by default. When it is on, every transcript frame is marked <c>handled</c>, and a satellite
+    /// new enough to read that stands down and plays what arrives on the socket instead of running a turn of
+    /// its own. Older firmware does not read the mark, so it answers the turn as well and the reply is spoken
+    /// twice — turn this on together with firmware that plays <c>audio</c> frames.</para></summary>
+    public bool ServerSideTurns { get; set; }
+
+    /// <summary>Assistant the server-side turn asks. Empty means whichever one is active.</summary>
+    public string AssistantId { get; set; } = "";
 
     /// <summary>TCP port satellites connect to.</summary>
     public int Port { get; set; } = 10800;

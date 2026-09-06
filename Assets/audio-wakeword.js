@@ -207,6 +207,8 @@ const WakeWordUI = {
             getRequiredElementById('wakeword_setting_eos').checked = s.UseEndOfSpeech !== false;
             getRequiredElementById('wakeword_setting_eos_silence').value = s.EndOfSpeechSilenceMs ?? 500;
             getRequiredElementById('wakeword_setting_utterance').value = s.UtteranceSeconds ?? 12;
+            getRequiredElementById('wakeword_setting_server_turns').checked = s.ServerSideTurns === true;
+            getRequiredElementById('wakeword_setting_assistant').value = s.AssistantId ?? '';
         });
     },
 
@@ -226,6 +228,8 @@ const WakeWordUI = {
                 UseEndOfSpeech: getRequiredElementById('wakeword_setting_eos').checked,
                 EndOfSpeechSilenceMs: parseInt(getRequiredElementById('wakeword_setting_eos_silence').value),
                 UtteranceSeconds: parseFloat(getRequiredElementById('wakeword_setting_utterance').value),
+                ServerSideTurns: getRequiredElementById('wakeword_setting_server_turns').checked,
+                AssistantId: getRequiredElementById('wakeword_setting_assistant').value.trim(),
             }
         }, data => {
             if (!data.success) { showError(`Could not save settings: ${data.error}`); }
@@ -348,6 +352,10 @@ const WakeWordUI = {
                         <span class="audiolab-wake-hint">How long a pause has to be before it counts as the end. Below about 400ms it will cut people off mid-sentence.</span></label>
                     <label>Longest utterance (s)<input type="number" id="wakeword_setting_utterance" class="form-control" value="12" min="2" max="15" step="0.5">
                         <span class="audiolab-wake-hint">Caps both the audio transcribed and how long end-of-speech waits, so someone who never stops talking still gets an answer.</span></label>
+                    <label>Answer on the server<input type="checkbox" id="wakeword_setting_server_turns" class="form-check-input">
+                        <span class="audiolab-wake-hint">The server asks the assistant, synthesizes the reply, and sends the audio back down the socket the satellite already has open — instead of the satellite opening three connections of its own to do it. Needs firmware that plays <code>audio</code> frames: turn it on for a device that still runs its own turn and every reply is spoken twice. Wake words with a route configured are left alone, since a route means something else owns that turn.</span></label>
+                    <label>Assistant<input type="text" id="wakeword_setting_assistant" class="form-control" placeholder="(the active one)">
+                        <span class="audiolab-wake-hint">Which assistant answers, when the server runs the turn. Empty means whichever is currently active.</span></label>
                     <label>Noise suppression<input type="checkbox" id="wakeword_setting_denoise" class="form-check-input">
                         <span class="audiolab-wake-hint" id="wakeword_denoise_hint">Runs RNNoise over each satellite's audio before the wake model scores it, so it hears speech rather than the room. Costs compute per connected satellite. Transcription and speaker identification still use the raw microphone feed.</span></label>
                 </div>
