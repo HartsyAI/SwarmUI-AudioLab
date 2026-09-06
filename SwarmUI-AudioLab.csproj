@@ -67,8 +67,11 @@
          (Kyutai TTS). Packed to the local feed (`hartsy-local-nuget`) 2026-08-09; not yet pushed to
          nuget.org (that requires a git push in the read-only-git engine repo, left to the user).
          2.0.0-alpha.33 = kept in lockstep with SwarmUI-HartsyInference-Backend's pin; both extensions load
-         their own copy of the engine, so a version split between them is a skew hazard, not an isolation win. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.46" />
+         their own copy of the engine, so a version split between them is a skew hazard, not an isolation win.
+         2.0.0-alpha.47 = threads the CPU kernels. Piper's whole forward pass ran on one core, which is what
+         made synthesis 89-96% of every voice turn on the CPU-only box this extension serves; measured 15x
+         faster (real-time factor 3.1 -> 0.21) on an 8-core dev machine. Also brings HARTSY_CPU_THREADS. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.47" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
