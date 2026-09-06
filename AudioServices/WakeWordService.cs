@@ -120,6 +120,9 @@ public static class WakeWordService
                     BindAddress = settings.BindAddress,
                     ModelRoot = string.IsNullOrWhiteSpace(settings.ModelRoot) ? null : settings.ModelRoot,
                     TranscribeOnDetection = settings.TranscribeOnDetection,
+            UseEndOfSpeech = settings.UseEndOfSpeech,
+            EndOfSpeechSilenceMs = settings.EndOfSpeechSilenceMs,
+            UtteranceSeconds = settings.UtteranceSeconds,
                     TranscribeModel = settings.TranscribeModel,
                     IdentifySpeakers = settings.IdentifySpeakers,
                     Webhooks = settings.Webhooks ?? [],
@@ -289,6 +292,34 @@ public static class WakeWordService
     ///
     /// <para>Reuses the same atomic download-and-verify path as every other weight. With no published hash to
     /// pin, an interrupted download is caught by the size floor rather than silently accepted.</para></summary>
+    /// <summary>Downloads Silero VAD into <c>{ModelRoot}/vad/</c>, the model that lets an utterance end when the
+    /// speaker stops instead of after a fixed three seconds.
+    ///
+    /// <para>Unlike the denoiser this takes no URL: the file has a canonical home (silero-vad's own repository,
+    /// MIT) and the engine reads that ONNX directly, so there is nothing to convert and nothing for anyone to
+    /// host. Same atomic download-and-verify path as the backbone, against a pinned sha256.</para></summary>
+    public static async Task<bool> InstallVadAsync(Func<string, Task> onProgress, CancellationToken cancel = default)
+    {
+        AudioWeightsRegistry.DownloadSpec[] specs = AudioWeightsRegistry.SpecsFor("wake", "vad");
+        if (specs.Length == 0)
+        {
+            return false;
+        }
+        string dir = Path.Combine(ModelRoot(), "vad");
+        Directory.CreateDirectory(dir);
+        foreach (AudioWeightsRegistry.DownloadSpec spec in specs)
+        {
+            cancel.ThrowIfCancellationRequested();
+            await AudioWeights.EnsureWeightAsync(spec, dir, onProgress, cancel);
+        }
+        return true;
+    }
+
+    /// <summary>Whether the end-of-speech model is on disk.</summary>
+    public static bool VadInstalled =>
+        File.Exists(Path.Combine(ModelRoot(), "vad", "silero_vad.onnx"))
+        || File.Exists(Path.Combine(ModelRoot(), "vad", "silero_vad_16k.safetensors"));
+
     public static async Task<bool> InstallDenoiserAsync(string url, Func<string, Task> onProgress, CancellationToken cancel = default)
     {
         if (string.IsNullOrWhiteSpace(url))
@@ -412,4 +443,19 @@ public class WakeWordSettings
     /// default to ship. Kept as a setting rather than baked into the weights registry so a re-quantized or
     /// self-hosted build can be swapped in without an extension release.</summary>
     public string DenoiserUrl { get; set; } = "";
+
+    /// <summary>Whether to end an utterance when the speaker stops rather than after a fixed wait.
+    ///
+    /// <para>Off, transcription starts a fixed three seconds after the word fires — which truncates anyone
+    /// whose question runs past that, and makes everyone else wait the full three seconds for a two-word
+    /// command. Needs the VAD installed (<c>AudioLabWakeInstallVad</c>); without it the engine logs and falls
+    /// back to the fixed wait rather than refusing to listen.</para></summary>
+    public bool UseEndOfSpeech { get; set; } = true;
+
+    /// <summary>Silence, in milliseconds, that ends an utterance. 500 ms is about the shortest a person can
+    /// pause mid-sentence without it reading as the end of one.</summary>
+    public int EndOfSpeechSilenceMs { get; set; } = 500;
+
+    /// <summary>Longest utterance captured around a detection, and the cap on how long end-of-speech waits.</summary>
+    public double UtteranceSeconds { get; set; } = 8.0;
 }

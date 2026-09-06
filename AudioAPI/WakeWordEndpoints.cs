@@ -59,6 +59,7 @@ public static class WakeWordEndpoints
         API.RegisterAPICall(AudioLabWakeInstallBackbone, true, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeInstallStockHead, true, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeInstallDenoiser, true, WakeWordPermissions.PermManage);
+        API.RegisterAPICall(AudioLabWakeInstallVad, true, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeStart, true, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeStop, true, WakeWordPermissions.PermManage);
         API.RegisterAPICall(AudioLabWakeConfigureWord, true, WakeWordPermissions.PermManage);
@@ -112,6 +113,7 @@ public static class WakeWordEndpoints
             ["model_root"] = WakeWordService.ModelRoot(),
             ["noise_suppression"] = WakeWordService.GetSettings().NoiseSuppression,
             ["denoiser_available"] = WakeWordService.DenoiserAvailable,
+            ["vad_installed"] = WakeWordService.VadInstalled,
             ["backbone_installed"] = WakeWordService.BackboneInstalled,
             ["installed_heads"] = new JArray(WakeWordService.InstalledHeads.ToArray()),
             ["available_stock_heads"] = new JArray(WakeWordService.AvailableStockHeads.ToArray()),
@@ -211,7 +213,12 @@ public static class WakeWordEndpoints
         {
             JObject incoming = rawInput["settings"] as JObject
                 ?? throw new InvalidOperationException("A 'settings' object is required.");
-            WakeWordSettings settings = incoming.ToObject<WakeWordSettings>()
+            // Merged over what is stored rather than deserialized on its own: the UI posts the fields it has
+            // inputs for, and anything it omits — ModelRoot and Webhooks today, plus every field added since
+            // the page was written — would otherwise be silently reset to its default on every save.
+            JObject merged = JObject.FromObject(WakeWordService.GetSettings());
+            merged.Merge(incoming, new JsonMergeSettings { MergeArrayHandling = MergeArrayHandling.Replace });
+            WakeWordSettings settings = merged.ToObject<WakeWordSettings>()
                 ?? throw new InvalidOperationException("Settings could not be parsed.");
             if (settings.Port is < 1 or > 65535)
             {
@@ -299,6 +306,42 @@ public static class WakeWordEndpoints
         catch (Exception ex)
         {
             Logs.Error($"[AudioLab][Wake] Installing the denoiser failed: {ex.ReadableString()}");
+            await ws.SendJson(new JObject { ["error"] = ex.Message }, API.WebsocketTimeout);
+        }
+        return null;
+    }
+
+    /// <summary>Downloads Silero VAD, the model that ends an utterance when the speaker stops.
+    ///
+    /// <para>Without it the service waits a fixed three seconds after the wake word and then transcribes, which
+    /// cuts off any question longer than that and makes every short command wait the full three seconds. Takes
+    /// no URL, unlike the denoiser: this file has a canonical MIT home and the engine reads its ONNX directly,
+    /// so there is nothing to convert and nothing to host.</para></summary>
+    public static async Task<JObject> AudioLabWakeInstallVad(Session session, WebSocket ws)
+    {
+        try
+        {
+            async Task SendAsync(JObject payload) => await ws.SendJson(payload, API.WebsocketTimeout).ConfigureAwait(false);
+            bool installed = await WakeWordService.InstallVadAsync(
+                msg => SendAsync(new JObject { ["status"] = msg }), Program.GlobalProgramCancel);
+            if (installed && WakeWordService.Running)
+            {
+                // The model set is built at Start, so a listener that came up without a VAD is still running
+                // without one. Restart it rather than reporting success on something that has not taken effect.
+                await SendAsync(new JObject { ["status"] = "Restarting the listener to pick up the new model." });
+                WakeWordService.Stop();
+                string error = WakeWordService.Start();
+                if (error is not null)
+                {
+                    await SendAsync(new JObject { ["error"] = error });
+                    return null;
+                }
+            }
+            await SendAsync(new JObject { ["success"] = installed });
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab][Wake] Installing the end-of-speech model failed: {ex.ReadableString()}");
             await ws.SendJson(new JObject { ["error"] = ex.Message }, API.WebsocketTimeout);
         }
         return null;
