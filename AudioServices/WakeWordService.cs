@@ -456,6 +456,10 @@ public class WakeWordSettings
     /// pause mid-sentence without it reading as the end of one.</summary>
     public int EndOfSpeechSilenceMs { get; set; } = 500;
 
-    /// <summary>Longest utterance captured around a detection, and the cap on how long end-of-speech waits.</summary>
-    public double UtteranceSeconds { get; set; } = 8.0;
+    /// <summary>Longest utterance captured around a detection, and the cap on how long end-of-speech waits.
+    ///
+    /// <para>Twelve seconds, matching the engine: a spoken question runs longer than it reads, and eight
+    /// truncated a question that took 8.6 s to say. The ceiling is the engine's fifteen-second capture buffer.
+    /// End-of-speech means an ordinary command never waits for the headroom.</para></summary>
+    public double UtteranceSeconds { get; set; } = 12.0;
 }
