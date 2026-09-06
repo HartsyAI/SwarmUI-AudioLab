@@ -43,3 +43,4 @@
 nuget.config
 NuGet.config
 Nuget.config
+Directory.Build.props

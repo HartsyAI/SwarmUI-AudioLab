@@ -224,6 +224,19 @@ public static class WakeWordEndpoints
             {
                 return new JObject { ["success"] = false, ["error"] = $"Port {settings.Port} is out of range." };
             }
+            // The engine keeps a fixed-size capture ring and silently clamps a longer request to it, so a
+            // larger number here does not buy a longer question — it just stops meaning anything, and the
+            // setting quietly lies about what the device will accept.
+            double maxUtterance = WakeSession.CaptureCapacitySamples / 16_000.0;
+            if (settings.UtteranceSeconds is < 1 || settings.UtteranceSeconds > maxUtterance)
+            {
+                return new JObject
+                {
+                    ["success"] = false,
+                    ["error"] = $"Longest utterance must be between 1 and {maxUtterance:0.#} seconds; the engine "
+                                + $"keeps only {maxUtterance:0.#} seconds of audio to transcribe from.",
+                };
+            }
             WakeWordService.SaveSettings(settings);
             string error = WakeWordService.ApplySettings();
             return new JObject { ["success"] = error is null, ["error"] = error, ["running"] = WakeWordService.Running };

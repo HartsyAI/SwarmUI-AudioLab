@@ -206,7 +206,7 @@ const WakeWordUI = {
             getRequiredElementById('wakeword_setting_denoiser_url').value = s.DenoiserUrl ?? '';
             getRequiredElementById('wakeword_setting_eos').checked = s.UseEndOfSpeech !== false;
             getRequiredElementById('wakeword_setting_eos_silence').value = s.EndOfSpeechSilenceMs ?? 500;
-            getRequiredElementById('wakeword_setting_utterance').value = s.UtteranceSeconds ?? 8;
+            getRequiredElementById('wakeword_setting_utterance').value = s.UtteranceSeconds ?? 12;
         });
     },
 
@@ -346,7 +346,7 @@ const WakeWordUI = {
                         <span class="audiolab-wake-hint">Needs the end-of-speech model installed above. Off, transcription starts a fixed three seconds after the wake word: a short command waits the full three seconds and a longer question is cut off mid-word.</span></label>
                     <label>End-of-speech silence (ms)<input type="number" id="wakeword_setting_eos_silence" class="form-control" value="500" min="100" max="3000" step="50">
                         <span class="audiolab-wake-hint">How long a pause has to be before it counts as the end. Below about 400ms it will cut people off mid-sentence.</span></label>
-                    <label>Longest utterance (s)<input type="number" id="wakeword_setting_utterance" class="form-control" value="8" min="2" max="30" step="0.5">
+                    <label>Longest utterance (s)<input type="number" id="wakeword_setting_utterance" class="form-control" value="12" min="2" max="15" step="0.5">
                         <span class="audiolab-wake-hint">Caps both the audio transcribed and how long end-of-speech waits, so someone who never stops talking still gets an answer.</span></label>
                     <label>Noise suppression<input type="checkbox" id="wakeword_setting_denoise" class="form-check-input">
                         <span class="audiolab-wake-hint" id="wakeword_denoise_hint">Runs RNNoise over each satellite's audio before the wake model scores it, so it hears speech rather than the room. Costs compute per connected satellite. Transcription and speaker identification still use the raw microphone feed.</span></label>
