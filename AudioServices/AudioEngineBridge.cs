@@ -87,6 +87,7 @@ public static class AudioEngineBridge
         ["audiogen_sfx"] = new AudioEngineBinding("audiogen", AudioEngineService.Music, true),
         ["acestep_music"] = new AudioEngineBinding("acestep", AudioEngineService.Music, false),
         ["yue_music"] = new AudioEngineBinding("yue", AudioEngineService.Music, false),
+        ["yue2_music"] = new AudioEngineBinding("yue2", AudioEngineService.Music, true),
         ["heartlib_music"] = new AudioEngineBinding("heartmula", AudioEngineService.Music, true),
         ["stableaudio_music"] = new AudioEngineBinding("stableaudio", AudioEngineService.Music, true),
         // Self-downloading: the engine fetches the diffusers-format subfolders on first generation.
@@ -113,6 +114,7 @@ public static class AudioEngineBridge
         ["gptsovits_clone"] = "lj1995/GPT-SoVITS",
         ["openvoice_clone"] = "myshell-ai/OpenVoiceV2",
         ["resemble_enhance_fx"] = "ResembleAI/resemble-enhance",
+        ["yue2_music"] = "Comfy-Org/YuE2",
     };
 
     /// <summary>Engine-managed providers that don't use the HuggingFace cache at all, mapped to the
@@ -528,7 +530,7 @@ public static class AudioEngineBridge
                 // half-cleaned cache is "missing"). Cheap heuristic: any file over ~1 MB.
                 if (Directory.Exists(path)
                     && Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)
-                        .Any(f => new FileInfo(f).Length > 1_000_000))
+                        .Any(f => AudioWeights.WeightFileSize(f) > 1_000_000))
                 {
                     return true;
                 }

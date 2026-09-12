@@ -43,6 +43,7 @@ public static class AudioProviderDefinitions
         MusicGenProvider.Instance,
         AudioGenProvider.Instance,
         YuEProvider.Instance,
+        YuE2Provider.Instance,
         // Local voice conversion providers
         OpenVoiceProvider.Instance,
         RVCProvider.Instance,

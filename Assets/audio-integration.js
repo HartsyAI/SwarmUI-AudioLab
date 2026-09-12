@@ -52,6 +52,7 @@ const AudioLabConfig = {
         resemble_enhance_fx: { category: 'audiolab_audioproc', providerFlag: 'resemble_enhance_fx_params' },
         audiogen_sfx: { category: 'audiolab_audiogen', extraFlags: ['audiocraft_sampling'] },
         yue_music: { category: 'audiolab_audiogen', providerFlag: 'yue_music_params' },
+        yue2_music: { category: 'audiolab_audiogen', providerFlag: 'yue2_music_params' },
         heartlib_music: { category: 'audiolab_audiogen', providerFlag: 'heartlib_music_params' },
         minimax_music3: { category: 'audiolab_audiogen', providerFlag: 'minimax_music3_params' },
         stableaudio_music: { category: 'audiolab_audiogen', providerFlag: 'stableaudio_music_params' },

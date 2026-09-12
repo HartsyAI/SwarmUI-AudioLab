@@ -2212,6 +2212,36 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["run_n_segments"] = input.TryGet(AudioLabParams.YuESegments, out int yueSegs) ? yueSegs : 2;
                 break;
 
+            case "yue2_music":
+                // Same split as v1 and ACE-Step: the main Prompt is style/genre tags, the dedicated Lyrics param
+                // is the lyrics. Every knob below is written only when the user actually set it, so an untouched
+                // panel leaves the engine on its own release defaults rather than on this file's guesses.
+                args["genre"] = input.Get(T2IParamTypes.Prompt, "");
+                args["prompt"] = input.TryGet(AudioLabParams.Yue2Lyrics, out string y2Lyrics) ? y2Lyrics : "";
+                args["seed"] = input.TryGet(T2IParamTypes.Seed, out long y2Seed) ? y2Seed : -1L;
+                if (input.TryGet(AudioLabParams.Yue2PlanningMode, out string y2Cot) && !string.IsNullOrWhiteSpace(y2Cot))
+                    args["yue2_cot"] = y2Cot;
+                if (input.TryGet(AudioLabParams.Yue2Score, out string y2Score) && !string.IsNullOrWhiteSpace(y2Score))
+                    args["yue2_abc"] = y2Score;
+                if (input.TryGet(AudioLabParams.Yue2Guidance, out double y2Cfg)) args["cfg_scale"] = y2Cfg;
+                if (input.TryGet(AudioLabParams.Yue2AcousticSteps, out int y2Steps)) args["infer_step"] = y2Steps;
+                if (input.TryGet(AudioLabParams.Yue2Temperature, out double y2Temp)) args["temperature"] = y2Temp;
+                if (input.TryGet(AudioLabParams.Yue2TopP, out double y2TopP)) args["top_p"] = y2TopP;
+                if (input.TryGet(AudioLabParams.Yue2TopK, out int y2TopK)) args["top_k"] = y2TopK;
+                if (input.TryGet(AudioLabParams.Yue2RepetitionPenalty, out double y2RepPen))
+                    args["repetition_penalty"] = y2RepPen;
+                if (input.TryGet(AudioLabParams.Yue2PenaltyWindow, out int y2Window)) args["yue2_penalty_window"] = y2Window;
+                if (input.TryGet(AudioLabParams.Yue2MinTokens, out int y2MinTok)) args["yue2_min_tokens"] = y2MinTok;
+                if (input.TryGet(AudioLabParams.Yue2ScoreTemperature, out double y2AbcTemp))
+                    args["yue2_abc_temperature"] = y2AbcTemp;
+                if (input.TryGet(AudioLabParams.Yue2ScoreTopP, out double y2AbcTopP)) args["yue2_abc_top_p"] = y2AbcTopP;
+                if (input.TryGet(AudioLabParams.Yue2ScoreTopK, out int y2AbcTopK)) args["yue2_abc_top_k"] = y2AbcTopK;
+                if (input.TryGet(AudioLabParams.Yue2ScoreRepetitionPenalty, out double y2AbcRepPen))
+                    args["yue2_abc_repetition_penalty"] = y2AbcRepPen;
+                if (input.TryGet(AudioLabParams.Yue2ScoreMaxTokens, out int y2AbcMaxTok))
+                    args["yue2_abc_max_tokens"] = y2AbcMaxTok;
+                break;
+
             case "heartlib_music":
                 // HeartMuLa semantics (mirror ACE-Step): main Prompt = vocal-style tags → genre; the dedicated
                 // Lyrics param = lyrics → prompt. MusicHandler maps genre→HeartMulaTags, prompt→HeartMulaLyrics.

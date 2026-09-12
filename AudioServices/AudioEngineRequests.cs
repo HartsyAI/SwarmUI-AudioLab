@@ -124,6 +124,19 @@ public static class AudioEngineRequests
             LmTopK = (int)Double(args, "lm_top_k", 0d),
             LmTopP = Double(args, "lm_top_p", 0.9),
             LmNegativePrompt = AudioIo.Str(args, "lm_negative_prompt"),
+            // YuE2's own knobs. Its two passes sample very differently, so the shared Temperature/TopK/TopP/
+            // RepetitionPenalty above drive the codec-token pass and the yue2_abc_* set drives the score planner.
+            // Each stays null when the key is absent so the engine keeps its release default.
+            Yue2Cot = AudioIo.Str(args, "yue2_cot"),
+            Yue2Abc = AudioIo.Str(args, "yue2_abc"),
+            Yue2AbcTemperature = args.ContainsKey("yue2_abc_temperature") ? Double(args, "yue2_abc_temperature", 0.7) : null,
+            Yue2AbcTopP = args.ContainsKey("yue2_abc_top_p") ? Double(args, "yue2_abc_top_p", 0.9) : null,
+            Yue2AbcTopK = args.ContainsKey("yue2_abc_top_k") ? (int)Double(args, "yue2_abc_top_k", 30) : null,
+            Yue2AbcRepetitionPenalty = args.ContainsKey("yue2_abc_repetition_penalty")
+                ? Double(args, "yue2_abc_repetition_penalty", 1.005) : null,
+            Yue2AbcMaxTokens = args.ContainsKey("yue2_abc_max_tokens") ? (int)Double(args, "yue2_abc_max_tokens", 4096) : null,
+            Yue2PenaltyWindow = args.ContainsKey("yue2_penalty_window") ? (int)Double(args, "yue2_penalty_window", 50) : null,
+            Yue2MinTokens = args.ContainsKey("yue2_min_tokens") ? (int)Double(args, "yue2_min_tokens", 200) : null,
             // Audio-conditioned editing modes. All three are mutually exclusive; the Engine re-validates.
             Continuation = task.Equals("complete", StringComparison.OrdinalIgnoreCase) ? RequireSource(source, task) : null,
             Repaint = task.Equals("repaint", StringComparison.OrdinalIgnoreCase) ? RequireSource(source, task) : null,

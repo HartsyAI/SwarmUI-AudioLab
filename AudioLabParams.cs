@@ -504,6 +504,43 @@ public static class AudioLabParams
 
     #endregion
 
+    #region Music — YuE2 (flag: yue2_music_params)
+
+    /// <summary>Song lyrics with [verse]/[chorus] section markers for YuE2. Feature flag: <c>yue2_music_params</c>.</summary>
+    public static T2IRegisteredParam<string> Yue2Lyrics;
+    /// <summary>How much of a score YuE2 plans before rendering audio. Feature flag: <c>yue2_music_params</c>.</summary>
+    public static T2IRegisteredParam<string> Yue2PlanningMode;
+    /// <summary>An ABC score rendered verbatim instead of a planned one. Feature flag: <c>yue2_music_params</c>.</summary>
+    public static T2IRegisteredParam<string> Yue2Score;
+    /// <summary>Sampling temperature for the codec-token pass — the one you hear. Feature flag: <c>yue2_music_params</c>.</summary>
+    public static T2IRegisteredParam<double> Yue2Temperature;
+    /// <summary>Nucleus threshold for the codec-token pass. Feature flag: <c>yue2_music_params</c>.</summary>
+    public static T2IRegisteredParam<double> Yue2TopP;
+    /// <summary>Top-K for the codec-token pass. Feature flag: <c>yue2_music_params</c>.</summary>
+    public static T2IRegisteredParam<int> Yue2TopK;
+    /// <summary>Repetition penalty for the codec-token pass. Feature flag: <c>yue2_music_params</c>.</summary>
+    public static T2IRegisteredParam<double> Yue2RepetitionPenalty;
+    /// <summary>How many recent tokens the repetition penalty looks back over. Feature flag: <c>yue2_music_params</c>.</summary>
+    public static T2IRegisteredParam<int> Yue2PenaltyWindow;
+    /// <summary>Tokens the song must produce before it may end. Feature flag: <c>yue2_music_params</c>.</summary>
+    public static T2IRegisteredParam<int> Yue2MinTokens;
+    /// <summary>Classifier-free guidance, near 1.0 by design. Feature flag: <c>yue2_music_params</c>.</summary>
+    public static T2IRegisteredParam<double> Yue2Guidance;
+    /// <summary>Flow-matching ODE steps for the acoustic stack. Feature flag: <c>yue2_music_params</c>.</summary>
+    public static T2IRegisteredParam<int> Yue2AcousticSteps;
+    /// <summary>Score planner temperature, far cooler than the codec pass. Feature flag: <c>yue2_music_params</c>.</summary>
+    public static T2IRegisteredParam<double> Yue2ScoreTemperature;
+    /// <summary>Score planner nucleus threshold. Feature flag: <c>yue2_music_params</c>.</summary>
+    public static T2IRegisteredParam<double> Yue2ScoreTopP;
+    /// <summary>Score planner top-K. Feature flag: <c>yue2_music_params</c>.</summary>
+    public static T2IRegisteredParam<int> Yue2ScoreTopK;
+    /// <summary>Score planner repetition penalty. Feature flag: <c>yue2_music_params</c>.</summary>
+    public static T2IRegisteredParam<double> Yue2ScoreRepetitionPenalty;
+    /// <summary>Score planner token ceiling. Feature flag: <c>yue2_music_params</c>.</summary>
+    public static T2IRegisteredParam<int> Yue2ScoreMaxTokens;
+
+    #endregion
+
     #region Music — HeartLib (flag: heartlib_music_params)
 
     /// <summary>Song lyrics with [Verse]/[Chorus]/[Bridge] section markers for HeartLib. Feature flag: <c>heartlib_music_params</c>.</summary>
@@ -1876,6 +1913,109 @@ public static class AudioLabParams
             "2",
             Min: 0, Max: 10, Step: 1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -1, Group: AudioGenGroup, FeatureFlag: "yue_music_params", IsAdvanced: true));
+
+        #endregion
+
+        #region Music — YuE2
+        // Display names deliberately avoid a "YuE2" prefix: T2IParamTypes.CleanTypeName keeps only a-z, so the
+        // digit is stripped and "YuE2 Lyrics" would collide with v1's "YuE Lyrics" and throw at registration.
+        // Naming them for the two passes instead is both collision-free and clearer about what each knob drives.
+        Yue2Lyrics = T2IParamTypes.Register<string>(new("Song Lyrics",
+            "Lyrics for YuE2. Put one section tag on its own line, then that section's lines under it:\n"
+            + "  [verse] [chorus] [bridge] [intro] [outro]\n\n"
+            + "STYLE / GENRE tags go in the main Prompt box (NOT here), comma-separated:\n"
+            + "  upbeat indie pop, bright acoustic guitar, female vocals, 120 bpm",
+            "",
+            ViewType: ParamViewType.PROMPT,
+            OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "yue2_music_params"));
+
+        Yue2PlanningMode = T2IParamTypes.Register<string>(new("Score Planning Mode",
+            "How much of a score YuE2 writes before it renders any audio.\n"
+            + "Full plans melody and chords, melody plans the tune alone, off skips straight to audio.",
+            "full",
+            GetValues: _ => ["full///Full (melody + chords)", "melody///Melody only", "off///Off (straight to audio)"],
+            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "yue2_music_params"));
+
+        Yue2Score = T2IParamTypes.Register<string>(new("Song Score (ABC)",
+            "An ABC score to render verbatim, skipping the planning pass. Leave empty to let YuE2 write one.\n"
+            + "Generating once with planning on and reading the score back out of the result metadata gives you\n"
+            + "something to edit and feed in here.\nIgnored when Score Planning Mode is off.",
+            "",
+            ViewType: ParamViewType.PROMPT,
+            OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
+
+        Yue2Guidance = T2IParamTypes.Register<double>(new("Song Guidance",
+            "Classifier-free guidance. YuE2 runs at or just above 1.0 — the release uses 1.01 with planning off\n"
+            + "and 1.0 otherwise. Anything much higher distorts rather than sharpens.",
+            "1.0",
+            Min: 1.0, Max: 3.0, Step: 0.01, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -6, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
+
+        Yue2AcousticSteps = T2IParamTypes.Register<int>(new("Acoustic Steps",
+            "Flow-matching ODE steps for the acoustic stack. The release uses 32; fewer is faster and grainier.",
+            "32",
+            Min: 8, Max: 128, Step: 1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
+
+        Yue2Temperature = T2IParamTypes.Register<double>(new("Song Temperature",
+            "Sampling temperature for the pass that emits codec tokens — the audio you actually hear.",
+            "1.0",
+            Min: 0.1, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -4, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
+
+        Yue2TopP = T2IParamTypes.Register<double>(new("Song Top P",
+            "Nucleus threshold for the codec-token pass.", "0.95",
+            Min: 0.01, Max: 1.0, Step: 0.01, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -3, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
+
+        Yue2TopK = T2IParamTypes.Register<int>(new("Song Top K",
+            "Top-K for the codec-token pass. 0 disables it.", "100",
+            Min: 0, Max: 1000, Step: 10, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -2, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
+
+        Yue2RepetitionPenalty = T2IParamTypes.Register<double>(new("Song Repetition Penalty",
+            "Penalty on tokens seen inside the window below. The release uses 1.2 for this pass.", "1.2",
+            Min: 1.0, Max: 2.0, Step: 0.01, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -1, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
+
+        Yue2PenaltyWindow = T2IParamTypes.Register<int>(new("Song Penalty Window",
+            "How many recent tokens the repetition penalty looks back over.", "50",
+            Min: 0, Max: 512, Step: 1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: 0, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
+
+        Yue2MinTokens = T2IParamTypes.Register<int>(new("Song Minimum Tokens",
+            "Tokens the song must produce before it is allowed to end, at 25 per second of audio.\n"
+            + "Clamped down when the requested duration is shorter than this.",
+            "200",
+            Min: 0, Max: 9000, Step: 25, ViewType: ParamViewType.SLIDER,
+            OrderPriority: 1, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
+
+        Yue2ScoreTemperature = T2IParamTypes.Register<double>(new("Score Temperature",
+            "Temperature for the score planner. It runs far cooler than the codec pass — the release uses 0.7.",
+            "0.7",
+            Min: 0.1, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: 2, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
+
+        Yue2ScoreTopP = T2IParamTypes.Register<double>(new("Score Top P",
+            "Nucleus threshold for the score planner.", "0.9",
+            Min: 0.01, Max: 1.0, Step: 0.01, ViewType: ParamViewType.SLIDER,
+            OrderPriority: 3, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
+
+        Yue2ScoreTopK = T2IParamTypes.Register<int>(new("Score Top K",
+            "Top-K for the score planner. 0 disables it.", "30",
+            Min: 0, Max: 1000, Step: 5, ViewType: ParamViewType.SLIDER,
+            OrderPriority: 4, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
+
+        Yue2ScoreRepetitionPenalty = T2IParamTypes.Register<double>(new("Score Repetition Penalty",
+            "Penalty on repeated tokens in the score planner. The release uses 1.005 — a score repeats by nature.",
+            "1.005",
+            Min: 1.0, Max: 2.0, Step: 0.005, ViewType: ParamViewType.SLIDER,
+            OrderPriority: 5, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
+
+        Yue2ScoreMaxTokens = T2IParamTypes.Register<int>(new("Score Max Tokens",
+            "Token ceiling for the score planner. A score that hits it is reported as truncated.", "4096",
+            Min: 256, Max: 16384, Step: 128, ViewType: ParamViewType.SLIDER,
+            OrderPriority: 6, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
 
         #endregion
 

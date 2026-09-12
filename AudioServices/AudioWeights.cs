@@ -126,6 +126,30 @@ public static class AudioWeights
     /// canonical hash to verify against. Catches the common "interrupted download left a stub" failure.</summary>
     private const long MinPlausibleCheckpointBytes = 1_000_000;
 
+    /// <summary>Size of the weight file at <paramref name="path"/>, following a symlink to its target.</summary>
+    /// <remarks><see cref="FileInfo.Length"/> on a symlink reports the length of the stored target PATH, not the
+    /// file it points at — a symlinked 7.8 GB checkpoint measures ~85 bytes. Every size heuristic here would then
+    /// read a perfectly good link as missing or truncated, and the engine's own cache layout explicitly invites
+    /// symlinks ("symlink it into ours without renaming"), so this has to resolve the link before measuring.</remarks>
+    public static long WeightFileSize(string path)
+    {
+        try
+        {
+            FileInfo info = new(path);
+            if (info.LinkTarget is null)
+            {
+                return info.Length;
+            }
+            // returnFinalTarget walks a chain of links; null means the link is dangling.
+            return info.ResolveLinkTarget(returnFinalTarget: true) is FileInfo target && target.Exists ? target.Length : 0L;
+        }
+        catch (Exception ex)
+        {
+            Logs.Debug($"[AudioLab] Could not size '{path}': {ex.Message}");
+            return 0L;
+        }
+    }
+
     /// <summary>Downloads one checkpoint to <paramref name="dir"/> if not already present. Atomic
     /// (.tmp stage + move) so an interrupted download never masquerades as complete. An already-present file
     /// is integrity-checked (hash when the spec has one, else a size floor); a bad file is deleted and
@@ -147,7 +171,7 @@ public static class AudioWeights
             else
             {
                 // No canonical hash published — at least reject a clearly-truncated file.
-                long len = new FileInfo(targetPath).Length;
+                long len = WeightFileSize(targetPath);
                 ok = len >= MinPlausibleCheckpointBytes;
                 if (!ok)
                 {

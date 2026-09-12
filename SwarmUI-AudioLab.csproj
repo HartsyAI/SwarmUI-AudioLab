@@ -95,8 +95,14 @@
          sample. Halving the bytes is not about the link's average speed — it doubles how long a fixed send
          buffer rides out a stall, and a satellite on a marginal link loses audio in stalls, not to slowness.
          Needed here so the wake listener accepts what the firmware now offers; without it the server refuses
-         the hello and the device falls back to 16-bit. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.55" />
+         the hello and the device falls back to 16-bit.
+
+         2.0.0-alpha.67 = YuE2. The catalog entry, the `Yue2*` fields on MusicRequest (planning mode, a score to
+         render verbatim, the score planner's own sampler block, penalty window, min tokens) and the audio
+         endpoints finally serialising AudioResult.Meta, which is where YuE2 reports that a song hit its token
+         budget before it ended. Without the bump the provider here compiles against a MusicRequest that has no
+         YuE2 fields at all. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.67" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
