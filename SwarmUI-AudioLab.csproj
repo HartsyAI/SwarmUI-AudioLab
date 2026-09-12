@@ -111,8 +111,14 @@
          2.0.0-alpha.70 = YuE2's semantic pass projects and samples only the 32,769-id window it can actually
          draw from instead of the whole 184,704-wide vocabulary, which is a 5.6x cut to the per-token head GEMM,
          the logit read-back and the host-side sampling scans. The same song generates in 109 s, which puts it
-         ahead of the reference implementation's own rate on identical lyrics. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.70" />
+         ahead of the reference implementation's own rate on identical lyrics.
+
+         2.0.0-alpha.73 = causal PREFILL stops running on the decode-tuned attention kernel and takes cuDNN's
+         fused engine instead (6.8x on that op), and YuE2's acoustic attention block runs at its buffers' dtype
+         end to end once ApplyRopeSingle accepts an F16 activation. Together a 3.9-minute song generates in
+         97s instead of 107s. The prefill half of that is shared code, so every long prompt in the engine
+         benefits, not only music. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.73" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
