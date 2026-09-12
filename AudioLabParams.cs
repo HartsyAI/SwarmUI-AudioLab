@@ -1570,9 +1570,14 @@ public static class AudioLabParams
 
         #region Music Shared
         Duration = T2IParamTypes.Register<double>(new("Max Duration",
-            "Maximum duration of generated audio in seconds.\nThe actual output may be shorter depending on lyrics/content.\nLonger durations need more time and VRAM.",
+            "Maximum duration of generated audio in seconds.\nThe actual output may be shorter depending on lyrics/content.\nLonger durations need more time and VRAM.\n"
+            + "This is a ceiling, not a target: a model that finishes early returns the shorter take, and one that\n"
+            + "would run past it is cut off there, so set it above what the lyrics need rather than at the length you want.",
             "30",
-            Min: 1, Max: 300, Step: 1, ViewType: ParamViewType.SLIDER,
+            // 360 is YuE2's own ceiling (9000 semantic tokens at 25 a second). Models with a lower real limit
+            // clamp internally — Stable Audio Open Small caps at 11.89s inside the pipeline — so this only has to
+            // be high enough not to be the binding constraint for the longest-form model here.
+            Min: 1, Max: 360, Step: 1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "audiolab_audiogen"));
 
         #endregion
