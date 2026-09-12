@@ -243,7 +243,7 @@ public static class AudioEngineBridge
     /// <summary>Shapes an Engine audio result into AudioLab's success JObject. The Engine already returns encoded
     /// container bytes, so this is just base64.</summary>
     private static JObject Audio(AudioResult result)
-        => AudioIo.AudioResult(Convert.ToBase64String(result.Data), result.Format, result.DurationSeconds);
+        => AudioIo.AudioResult(Convert.ToBase64String(result.Data), result.Format, result.DurationSeconds, result.Meta);
 
     /// <summary>Streams a TTS provider's audio incrementally via the Engine's native streaming path
     /// (<c>ISpeechService.SynthesizeStreamAsync</c>) — one call with the full prompt, chunks arrive as generation

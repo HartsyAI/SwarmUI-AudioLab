@@ -245,13 +245,26 @@ public static class AudioIo
     private static short ToPcm16(float v) => (short)Math.Clamp((int)MathF.Round(v * 32767f), short.MinValue, short.MaxValue);
 
     /// <summary>Success result for an audio-producing request (TTS / voice-conv / FX / music).</summary>
-    public static JObject AudioResult(string audioBase64, string outputFormat, double durationSeconds) => new()
+    public static JObject AudioResult(string audioBase64, string outputFormat, double durationSeconds,
+        IReadOnlyDictionary<string, string> meta = null)
     {
-        ["success"] = true,
-        ["audio_data"] = audioBase64,
-        ["output_format"] = outputFormat,
-        ["duration"] = durationSeconds,
-    };
+        JObject result = new()
+        {
+            ["success"] = true,
+            ["audio_data"] = audioBase64,
+            ["output_format"] = outputFormat,
+            ["duration"] = durationSeconds,
+        };
+        // Whatever the engine chose to say about how the take came out (seed, channels, and for YuE2 whether the
+        // song ran out of token budget). Carried verbatim so a new key needs no change here.
+        if (meta is { Count: > 0 })
+        {
+            JObject carried = [];
+            foreach ((string key, string value) in meta) { carried[key] = value; }
+            result["meta"] = carried;
+        }
+        return result;
+    }
 
     /// <summary>Success result for a transcription (STT) request.</summary>
     public static JObject TranscriptionResult(string text, string language) => new()

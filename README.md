@@ -182,6 +182,7 @@ whether the engine downloads on first use or exposes per model installs.
 | [MusicGen](https://huggingface.co/facebook/musicgen-small) | 3 | ~10GB to ~6GB | CC-BY-NC-4.0 | on first use |
 | [Stable Audio Open Small](https://huggingface.co/stabilityai/stable-audio-open-small) | 1 | ~3GB | Stability AI Community License | on first use |
 | [YuE Music](https://huggingface.co/m-a-p/YuE-s1-7B-anneal-en-cot) | 4 | ~16GB (fp16) | Apache-2.0 | installed per model |
+| [YuE2 Music](https://huggingface.co/Comfy-Org/YuE2) | 1 | ~9GB (bf16) | CC-BY-NC-4.0 | on first use |
 
 #### Voice Conversion (3 engines, 3 models)
 
@@ -217,8 +218,11 @@ The short version as of the most recent passes:
   VibeVoice is a long form model that destabilizes on short prompts, and NeuTTS can append a garbled tail.
 - **Some are gated on engine work** and refuse cleanly with a specific reason rather than failing at generation
   time: Piper, Zonos, MeloTTS and CosyVoice each need front end pieces the engine does not have yet.
-- **Music generation works** across ACE-Step, MusicGen, AudioGen, HeartLib and YuE, though the large autoregressive
-  models are slow on consumer cards.
+- **Music generation works** across ACE-Step, MusicGen, AudioGen, HeartLib, YuE and YuE2, though the large
+  autoregressive models are slow on consumer cards. YuE2 shares only its name with YuE: it plans an editable ABC
+  score from your style tags and lyrics, then renders it to 48 kHz stereo, and its weights are non-commercial.
+  Its duration is a hard token budget at 25 tokens a second, so a song asked for in under about 90 seconds
+  usually stops mid-phrase — the UI says so when that happens.
 
 ### Measured speed
 

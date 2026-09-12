@@ -729,6 +729,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                         "ogg" => MediaType.AudioOgg,
                         _ => MediaType.AudioWav,
                     };
+                    ReportTruncation(result, takeOutput);
                     AudioFile audio = new(audioBytes, mediaType);
                     takeOutput(audio);
                 }
@@ -1739,6 +1740,24 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
     /// <summary>Default generation length when neither the core "Duration" param nor AudioLab's "Max Duration"
     /// was set, per provider. Everything not listed keeps the general-purpose 30s default.</summary>
+    /// <summary>Surfaces a song the model cut short because it ran out of token budget.</summary>
+    /// <remarks>Nothing about the audio itself says this happened — it simply stops mid-phrase — so it has to be
+    /// reported. The status frame below does NOT currently render: measured 2026-09-12, the Generate tab shows no
+    /// per-result notice for one, whether it is sent before or after the audio. It is emitted anyway because that
+    /// is the channel a backend has and the STT path already uses it, so this starts working if the tab learns to
+    /// display them. What does reach a caller today is the Info log and <c>meta.truncated</c> on the engine's own
+    /// HTTP result; a UI user's only signal is that the song is shorter than Max Duration.</remarks>
+    private static void ReportTruncation(JObject result, Action<object> takeOutput)
+    {
+        if (result["meta"]?["truncated"]?.ToString() != "true")
+        {
+            return;
+        }
+        const string message = "The song reached its token budget before it ended; raise Max Duration for a complete take.";
+        Logs.Info($"[AudioLab] {message}");
+        takeOutput(new JObject { ["gen_progress"] = new JObject { ["current_status"] = message } });
+    }
+
     private static double DefaultDurationFor(string providerId) => providerId switch
     {
         "audiogen_sfx" => 10.0,
