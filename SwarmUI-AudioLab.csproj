@@ -106,8 +106,13 @@
          2.0.0-alpha.68 = YuE2's acoustic pass stops using the decode-tuned attention kernel. It is prefill
          shaped — every frame of the song is a query row — and the general entry reaches cuDNN's fused engine,
          which is 26x on an op that was ~89% of that stack. A 3.9-minute song generates in 119 s instead of
-         17.8 minutes, which is the difference between this model being usable here and not. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.68" />
+         17.8 minutes, which is the difference between this model being usable here and not.
+
+         2.0.0-alpha.70 = YuE2's semantic pass projects and samples only the 32,769-id window it can actually
+         draw from instead of the whole 184,704-wide vocabulary, which is a 5.6x cut to the per-token head GEMM,
+         the logit read-back and the host-side sampling scans. The same song generates in 109 s, which puts it
+         ahead of the reference implementation's own rate on identical lyrics. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.70" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
