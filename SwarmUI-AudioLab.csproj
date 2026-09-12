@@ -101,8 +101,13 @@
          render verbatim, the score planner's own sampler block, penalty window, min tokens) and the audio
          endpoints finally serialising AudioResult.Meta, which is where YuE2 reports that a song hit its token
          budget before it ended. Without the bump the provider here compiles against a MusicRequest that has no
-         YuE2 fields at all. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.67" />
+         YuE2 fields at all.
+
+         2.0.0-alpha.68 = YuE2's acoustic pass stops using the decode-tuned attention kernel. It is prefill
+         shaped — every frame of the song is a query row — and the general entry reaches cuDNN's fused engine,
+         which is 26x on an op that was ~89% of that stack. A 3.9-minute song generates in 119 s instead of
+         17.8 minutes, which is the difference between this model being usable here and not. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.68" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
