@@ -729,7 +729,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                         "ogg" => MediaType.AudioOgg,
                         _ => MediaType.AudioWav,
                     };
-                    ReportTruncation(result, takeOutput);
+                    ReportTruncation(result, takeOutput, user_input);
                     AudioFile audio = new(audioBytes, mediaType);
                     takeOutput(audio);
                 }
@@ -1747,13 +1747,22 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// is the channel a backend has and the STT path already uses it, so this starts working if the tab learns to
     /// display them. What does reach a caller today is the Info log and <c>meta.truncated</c> on the engine's own
     /// HTTP result; a UI user's only signal is that the song is shorter than Max Duration.</remarks>
-    private static void ReportTruncation(JObject result, Action<object> takeOutput)
+    private static void ReportTruncation(JObject result, Action<object> takeOutput, T2IParamInput input)
     {
         if (result["meta"]?["truncated"]?.ToString() != "true")
         {
             return;
         }
-        const string message = "The song reached its token budget before it ended; raise Max Duration for a complete take.";
+        string message = "The song reached its token budget before it ended; raise Max Duration for a complete take.";
+        // A budget below what was asked for means the prompt ate the context, so raising Max Duration would not
+        // help — the lyrics or the score have to give.
+        if (double.TryParse(result["meta"]?["budgetSeconds"]?.ToString(), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double granted)
+            && input.TryGet(AudioLabParams.Duration, out double asked) && granted < asked - 0.001)
+        {
+            message = $"The prompt and score left room for only {granted:0.#}s of the {asked:0.#}s requested, and the "
+                + "song used all of it; shorten the lyrics or the score for a longer take.";
+        }
         Logs.Info($"[AudioLab] {message}");
         takeOutput(new JObject { ["gen_progress"] = new JObject { ["current_status"] = message } });
     }
@@ -2259,6 +2268,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     args["yue2_abc_repetition_penalty"] = y2AbcRepPen;
                 if (input.TryGet(AudioLabParams.Yue2ScoreMaxTokens, out int y2AbcMaxTok))
                     args["yue2_abc_max_tokens"] = y2AbcMaxTok;
+                if (input.TryGet(AudioLabParams.Yue2ScorePenaltyWindow, out int y2AbcWindow))
+                    args["yue2_abc_penalty_window"] = y2AbcWindow;
                 break;
 
             case "heartlib_music":

@@ -538,6 +538,8 @@ public static class AudioLabParams
     public static T2IRegisteredParam<double> Yue2ScoreRepetitionPenalty;
     /// <summary>Score planner token ceiling. Feature flag: <c>yue2_music_params</c>.</summary>
     public static T2IRegisteredParam<int> Yue2ScoreMaxTokens;
+    /// <summary>Repetition-penalty lookback for YuE2's score planner. Feature flag: <c>yue2_music_params</c>.</summary>
+    public static T2IRegisteredParam<int> Yue2ScorePenaltyWindow;
 
     #endregion
 
@@ -1574,10 +1576,11 @@ public static class AudioLabParams
             + "This is a ceiling, not a target: a model that finishes early returns the shorter take, and one that\n"
             + "would run past it is cut off there, so set it above what the lyrics need rather than at the length you want.",
             "30",
-            // 360 is YuE2's own ceiling (9000 semantic tokens at 25 a second). Models with a lower real limit
-            // clamp internally — Stable Audio Open Small caps at 11.89s inside the pipeline — so this only has to
-            // be high enough not to be the binding constraint for the longest-form model here.
-            Min: 1, Max: 360, Step: 1, ViewType: ParamViewType.SLIDER,
+            // 900 is YuE2's ceiling: 25 semantic tokens a second against a 24,576-token context, less room for the
+            // prompt. The real limit is per-request and lower — YuE2 trims this to what the lyrics and score leave
+            // and reports the granted length. Models with a lower limit clamp internally (ACE-Step 600s, HeartMuLa
+            // and YuE v1 300s, Stable Audio Open Small 11.89s), so this only has to clear the longest-form model.
+            Min: 1, Max: 900, Step: 1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "audiolab_audiogen"));
 
         #endregion
@@ -1985,14 +1988,16 @@ public static class AudioLabParams
 
         Yue2PenaltyWindow = T2IParamTypes.Register<int>(new("Song Penalty Window",
             "How many recent tokens the repetition penalty looks back over.", "50",
-            Min: 0, Max: 512, Step: 1, ViewType: ParamViewType.SLIDER,
+            // 1-100 is the release's own bound and the Engine rejects the rest, so a wider slider here is not a
+            // wider range — it is positions that throw.
+            Min: 1, Max: 100, Step: 1, ViewType: ParamViewType.SLIDER,
             OrderPriority: 0, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
 
         Yue2MinTokens = T2IParamTypes.Register<int>(new("Song Minimum Tokens",
             "Tokens the song must produce before it is allowed to end, at 25 per second of audio.\n"
             + "Clamped down when the requested duration is shorter than this.",
             "200",
-            Min: 0, Max: 9000, Step: 25, ViewType: ParamViewType.SLIDER,
+            Min: 0, Max: 22500, Step: 25, ViewType: ParamViewType.SLIDER,
             OrderPriority: 1, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
 
         Yue2ScoreTemperature = T2IParamTypes.Register<double>(new("Score Temperature",
@@ -2021,6 +2026,13 @@ public static class AudioLabParams
             "Token ceiling for the score planner. A score that hits it is reported as truncated.", "4096",
             Min: 256, Max: 16384, Step: 128, ViewType: ParamViewType.SLIDER,
             OrderPriority: 6, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
+
+        Yue2ScorePenaltyWindow = T2IParamTypes.Register<int>(new("Score Penalty Window",
+            "How many recent tokens the score planner's repetition penalty looks back over. The release uses 100,\n"
+            + "twice the codec pass's 50, because a score is meant to repeat over a longer span than a phrase.",
+            "100",
+            Min: 1, Max: 100, Step: 1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: 7, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
 
         #endregion
 

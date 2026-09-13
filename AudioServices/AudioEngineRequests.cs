@@ -135,6 +135,8 @@ public static class AudioEngineRequests
             Yue2AbcRepetitionPenalty = args.ContainsKey("yue2_abc_repetition_penalty")
                 ? Double(args, "yue2_abc_repetition_penalty", 1.005) : null,
             Yue2AbcMaxTokens = args.ContainsKey("yue2_abc_max_tokens") ? (int)Double(args, "yue2_abc_max_tokens", 4096) : null,
+            Yue2AbcPenaltyWindow = args.ContainsKey("yue2_abc_penalty_window")
+                ? (int)Double(args, "yue2_abc_penalty_window", 100) : null,
             Yue2PenaltyWindow = args.ContainsKey("yue2_penalty_window") ? (int)Double(args, "yue2_penalty_window", 50) : null,
             Yue2MinTokens = args.ContainsKey("yue2_min_tokens") ? (int)Double(args, "yue2_min_tokens", 200) : null,
             // Audio-conditioned editing modes. All three are mutually exclusive; the Engine re-validates.

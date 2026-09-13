@@ -117,8 +117,15 @@
          fused engine instead (6.8x on that op), and YuE2's acoustic attention block runs at its buffers' dtype
          end to end once ApplyRopeSingle accepts an F16 activation. Together a 3.9-minute song generates in
          97s instead of 107s. The prefill half of that is shared code, so every long prompt in the engine
-         benefits, not only music. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.73" />
+         benefits, not only music.
+
+         2.0.0-alpha.74 = REQUIRED by this extension's source, not just an upgrade: Score Penalty Window maps to
+         MusicRequest.Yue2AbcPenaltyWindow, which does not exist before alpha.74, and Max Duration's 900 s
+         ceiling is inert against an engine that clamps at 360. It also carries the budget clamp behind
+         meta.budgetSeconds, which ReportTruncation reads to tell "the prompt ate the context" apart from "the
+         song ran long". Verified through SwarmUI: 431 s of continuous music, and a 900 s request against a
+         large score correctly reports 718.8 s granted instead of failing. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.74" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
