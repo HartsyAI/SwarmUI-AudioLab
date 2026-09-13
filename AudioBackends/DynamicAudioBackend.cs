@@ -729,7 +729,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                         "ogg" => MediaType.AudioOgg,
                         _ => MediaType.AudioWav,
                     };
-                    ReportTruncation(result, takeOutput, user_input);
+                    ReportTruncation(result, takeOutput, user_input, provider.Id);
                     AudioFile audio = new(audioBytes, mediaType);
                     takeOutput(audio);
                 }
@@ -1747,7 +1747,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// is the channel a backend has and the STT path already uses it, so this starts working if the tab learns to
     /// display them. What does reach a caller today is the Info log and <c>meta.truncated</c> on the engine's own
     /// HTTP result; a UI user's only signal is that the song is shorter than Max Duration.</remarks>
-    private static void ReportTruncation(JObject result, Action<object> takeOutput, T2IParamInput input)
+    private static void ReportTruncation(JObject result, Action<object> takeOutput, T2IParamInput input, string providerId)
     {
         if (result["meta"]?["truncated"]?.ToString() != "true")
         {
@@ -1756,9 +1756,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
         string message = "The song reached its token budget before it ended; raise Max Duration for a complete take.";
         // A budget below what was asked for means the prompt ate the context, so raising Max Duration would not
         // help — the lyrics or the score have to give.
+        double asked = RequestedDuration(input, providerId);
         if (double.TryParse(result["meta"]?["budgetSeconds"]?.ToString(), System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out double granted)
-            && input.TryGet(AudioLabParams.Duration, out double asked) && granted < asked - 0.001)
+            && granted < asked - 0.001)
         {
             message = $"The prompt and score left room for only {granted:0.#}s of the {asked:0.#}s requested, and the "
                 + "song used all of it; shorten the lyrics or the score for a longer take.";
@@ -1766,6 +1767,15 @@ public class DynamicAudioBackend : AbstractT2IBackend
         Logs.Info($"[AudioLab] {message}");
         takeOutput(new JObject { ["gen_progress"] = new JObject { ["current_status"] = message } });
     }
+
+    /// <summary>The clip length a request asked for, resolved exactly as the request itself resolves it. Kept in
+    /// one place because a message ABOUT the duration that reads a different param than the one that was SENT is
+    /// worse than no message — a user on the core param was told the generic story while their real ceiling went
+    /// unnamed.</summary>
+    private static double RequestedDuration(T2IParamInput input, string providerId)
+        => input.TryGet(T2IParamTypes.Text2AudioDuration, out double coreDur) ? coreDur
+            : input.TryGet(AudioLabParams.Duration, out double genDur) ? genDur
+            : DefaultDurationFor(providerId);
 
     private static double DefaultDurationFor(string providerId) => providerId switch
     {
@@ -1863,9 +1873,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 // (Stable Audio Open Small's DiT physically caps at 11.89s; anything past that is clamped
                 // inside StableAudioPipeline.Generate) or ran past what the model was tuned for (AudioGen was
                 // trained on 10s clips per Meta's release; quality degrades noticeably beyond that).
-                args["duration"] = input.TryGet(T2IParamTypes.Text2AudioDuration, out double coreDur) ? coreDur
-                    : input.TryGet(AudioLabParams.Duration, out double genDur) ? genDur
-                    : DefaultDurationFor(provider.Id);
+                args["duration"] = RequestedDuration(input, provider.Id);
                 // Shared AudioCraft sampling (audiocraft_sampling flag)
                 if (input.TryGet(AudioLabParams.GuidanceScale, out double genGuidance))
                     args["cfg_coef"] = genGuidance;
