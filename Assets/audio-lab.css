@@ -2330,12 +2330,10 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
     background: var(--background-soft);
     border: 1px solid var(--shadow);
     border-radius: 0.4rem;
+    /* abcjs engraves with fill="currentColor", so the staff follows the theme from here. */
+    color: var(--text);
 }
 .daw-score-sheet svg { max-width: 100%; }
-/* abcjs engraves black-on-paper, so on a dark theme the whole drawing is inverted rather than recoloured
-   element by element. Swarm swaps theme FILES rather than setting an attribute, so the class is applied from
-   JS after reading --background. */
-.daw-score-sheet.score-invert svg { filter: invert(1) hue-rotate(180deg); }
 .daw-score-sheet .abcjs-note_selected path, .daw-score-sheet .playing-note path { fill: var(--emphasis); }
 .daw-score-src { font-family: var(--font-monospace); font-size: 0.78rem; white-space: pre; overflow-wrap: normal; }
 .daw-score-field { display: flex; align-items: center; gap: 0.3rem; }

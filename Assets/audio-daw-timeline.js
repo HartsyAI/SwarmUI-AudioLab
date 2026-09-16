@@ -1,7 +1,7 @@
 /**
  * AudioDawTimeline — Timeline ruler with time markers, playhead, zoom, and loop region.
  * Renders a canvas-based ruler synced to the clip lanes scroll position.
- * Reuses SwarmUI utilities: createDiv(), formatTime from AudioLabPlayer.
+ * Reuses SwarmUI utilities: createDiv(), durationStringifyColons.
  */
 const AudioDawTimeline = (() => {
     'use strict';

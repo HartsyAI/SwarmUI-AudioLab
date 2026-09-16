@@ -558,7 +558,6 @@ const AudioLabPlayer = (() => {
         createMini,
         createRecorder,
         getById,
-        destroyAll,
-        formatTime
+        destroyAll
     };
 })();

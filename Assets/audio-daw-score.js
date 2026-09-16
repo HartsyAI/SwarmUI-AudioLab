@@ -503,23 +503,6 @@ const AudioDawScore = (() => {
         if (typeof doNoticePopover === 'function') doNoticePopover(msg, `notice-pop-${kind}`);
     }
 
-    /** Relative luminance of a theme colour. Swarm themes are separate stylesheets, so the only reliable
-     *  light/dark signal is the resolved value of --background. */
-    function isDark(color) {
-        const c = (color || '').trim();
-        let r, g, b;
-        const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(c);
-        if (hex) {
-            const h = hex[1].length === 3 ? hex[1].replace(/./g, ch => ch + ch) : hex[1];
-            [r, g, b] = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16));
-        }
-        else {
-            const rgb = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i.exec(c);
-            if (!rgb) return true;
-            [r, g, b] = rgb.slice(1, 4).map(Number);
-        }
-        return (0.2126 * r + 0.7152 * g + 0.0722 * b) < 128;
-    }
 
     // ===== state =====
 
@@ -619,12 +602,10 @@ const AudioDawScore = (() => {
             return;
         }
         prep = prepareForEngraving(current.abc);
-        const css = getComputedStyle(document.body);
-        const accent = css.getPropertyValue('--emphasis').trim() || '#7855e1';
-        host.classList.toggle('score-invert', isDark(css.getPropertyValue('--background')));
+        const accent = getComputedStyle(document.body).getPropertyValue('--emphasis').trim() || '#7855e1';
         try {
+            // Fixed staffwidth + re-engrave on resize rather than `responsive`, which scales the glyphs to fit.
             ABCJS.renderAbc(host, prep.text, {
-                responsive: 'resize',
                 add_classes: true,
                 staffwidth: Math.max(320, host.clientWidth - 40),
                 wrap: { preferredMeasuresPerLine: 4, minSpacing: 1.6, maxSpacing: 2.7 },
@@ -632,11 +613,26 @@ const AudioDawScore = (() => {
                 dragColor: accent,
                 clickListener: onScoreClick
             });
+            watchWidth(host);
         }
         catch (e) {
             console.error('[AudioDawScore] Engraving failed:', e);
             host.innerHTML = `<span class="daw-score-err">Could not draw this score: ${escapeHtml(e.message)}</span>`;
         }
+    }
+
+    /** staffwidth is a fixed pixel count, so the engraving has to be redrawn when the panel is resized. */
+    let widthWatcher = null, lastWidth = 0;
+    function watchWidth(host) {
+        lastWidth = host.clientWidth;
+        if (widthWatcher || typeof ResizeObserver === 'undefined') return;
+        widthWatcher = new ResizeObserver(() => {
+            const w = host.clientWidth;
+            if (!w || Math.abs(w - lastWidth) < 24) return;
+            lastWidth = w;
+            renderSheet();
+        });
+        widthWatcher.observe(host);
     }
 
     /** Clicking a note selects the text that produced it — through the offset map, since abcjs reports
