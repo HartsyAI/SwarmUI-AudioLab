@@ -550,6 +550,27 @@ const AudioDawScore = (() => {
         els.lyrics.placeholder = '[Verse]\nThe words to sing. Leave empty for an instrumental.';
         parent.appendChild(els.lyrics);
 
+        // Numbered notation: how the YuE2 researchers dictated a melody correction ("1155665 / 4433221").
+        parent.appendChild(fieldLabel('Melody by degree'));
+        const numRow = createDiv(null, 'daw-stems-action-row');
+        els.numbers = document.createElement('input');
+        els.numbers.type = 'text';
+        els.numbers.className = 'daw-generate-reftext';
+        els.numbers.placeholder = '1155665 / 4433221';
+        els.numbers.title = 'Scale degrees in the current key. Spaces or / start a new bar, 0 is a rest.';
+        numRow.appendChild(els.numbers);
+        els.numberOctave = document.createElement('select');
+        els.numberOctave.className = 'daw-fx-select';
+        for (const [v, l] of [['0', 'Low'], ['1', 'Mid'], ['2', 'High']]) {
+            const o = document.createElement('option');
+            o.value = v; o.textContent = l;
+            els.numberOctave.appendChild(o);
+        }
+        els.numberOctave.value = '1';
+        numRow.appendChild(els.numberOctave);
+        button(numRow, 'Write bars', 'basic-button btn-sm', insertNumbered);
+        parent.appendChild(numRow);
+
         parent.appendChild(fieldLabel('ABC score'));
         els.src = document.createElement('textarea');
         els.src.className = 'daw-generate-text daw-score-src';
@@ -682,16 +703,15 @@ const AudioDawScore = (() => {
         els.tempo.value = bpm === null ? '' : String(bpm);
 
         els.sections.innerHTML = '';
-        const { sections } = scanBody(abc);
-        for (const s of sections) {
+        sectionSpans(abc).forEach((s, i) => {
             const chip = createDiv(null, 'daw-fx-pick daw-score-chip');
             const name = createSpan(null, 'daw-fx-pick-name');
             name.textContent = s.label || '(unnamed)';
             chip.appendChild(name);
-            chip.title = 'Jump to this section in the ABC source';
-            chip.addEventListener('click', () => selectLine(s.line));
+            chip.title = 'Rename, duplicate, reorder or delete this section';
+            chip.addEventListener('click', (e) => openSectionMenu(e, i));
             els.sections.appendChild(chip);
-        }
+        });
 
         const mode = abc.trim() ? modeForScore(abc) : null;
         els.modeNote.textContent = mode === null ? ''
@@ -864,6 +884,16 @@ const AudioDawScore = (() => {
         }
         if (t.count >= 2) items.push({ label: 'Split in two', action: splitNote });
         items.push({ label: 'Merge with next', action: mergeWithNext });
+        const per = unitsPerBar(parseHeader(current.abc));
+        if (per) {
+            for (const [label, frac] of [['Whole', 1], ['Half', 2], ['Quarter', 4], ['Eighth', 8], ['Sixteenth', 16]]) {
+                const units = Math.round(per / frac);
+                if (units >= 1 && units !== t.count) {
+                    items.push({ label: `Length: ${label}`, action: () => setDuration(units) });
+                }
+            }
+            if (t.count * 1.5 % 1 === 0) items.push({ label: 'Length: dotted', action: () => setDuration(t.count * 1.5) });
+        }
         if (cb.showMenu) cb.showMenu(ev, items);
     }
 
@@ -908,6 +938,202 @@ const AudioDawScore = (() => {
         const nextCount = m[4] ? parseInt(m[4], 10) : 1;
         edit(replaceRange(current.abc, t.start, t.end + m[0].length,
             tokenText(t, { count: t.count + nextCount, forceCount: true, tie: m[6] || '' })));
+    }
+
+    // ===== durations =====
+
+    /** Unit counts per bar, in L: units. 4/4 at L:1/16 is 16. */
+    function unitsPerBar(h) {
+        const m = meterFraction(h.M), l = meterFraction(h.L);
+        return m && l ? Math.round(m / l) : null;
+    }
+
+    /** The text range of the bar containing pos, bounded by barlines and by its own line. */
+    function barBounds(abc, pos) {
+        const lineStart = abc.lastIndexOf('\n', pos - 1) + 1;
+        let lineEnd = abc.indexOf('\n', pos);
+        if (lineEnd < 0) lineEnd = abc.length;
+        let start = lineStart, end = lineEnd;
+        for (let i = pos - 1; i >= lineStart; i--) if (abc[i] === '|') { start = i + 1; break; }
+        for (let i = pos; i < lineEnd; i++) if (abc[i] === '|') { end = i; break; }
+        return { start, end };
+    }
+
+    /** Note and rest tokens inside a range, skipping quoted chord symbols. */
+    function barTokens(abc, from, to) {
+        const out = [];
+        let i = from;
+        while (i < to) {
+            if (abc[i] === '"') { const j = abc.indexOf('"', i + 1); i = j < 0 || j >= to ? to : j + 1; continue; }
+            const m = NOTE_TOKEN.exec(abc.slice(i, to));
+            if (m && m[0]) {
+                out.push({
+                    start: i, end: i + m[0].length,
+                    accidental: m[1], letter: m[2], marks: m[3],
+                    count: m[4] ? parseInt(m[4], 10) : 1, hasCount: !!m[4],
+                    fraction: m[5] || '', tie: m[6] || '', isRest: /[xzZ]/.test(m[2])
+                });
+                i += m[0].length;
+                continue;
+            }
+            i++;
+        }
+        return out;
+    }
+
+    /**
+     * Change a note's length and keep the bar full by taking the difference out of the bar's rests (or giving
+     * it back to them). A bar that cannot absorb the change is left alone and said so — silently producing a
+     * short bar is the one outcome worth refusing.
+     */
+    function setDuration(units) {
+        const t = selection?.token;
+        if (!t || !current) return;
+        const h = parseHeader(current.abc);
+        const per = unitsPerBar(h);
+        if (!per) { notice('The header needs M: and L: before durations can be edited', 'yellow'); return; }
+        const bar = barBounds(current.abc, t.start);
+        const toks = barTokens(current.abc, bar.start, bar.end);
+        const target = toks.find(x => x.start === t.start);
+        if (!target) return;
+        const total = toks.reduce((s, x) => s + x.count, 0);
+        let excess = (total - target.count + units) - per;
+
+        // A rest is about to follow, so a tie on the target would bind a note to a rest — not legal ABC.
+        const keepTie = excess < 0 ? '' : target.tie;
+        const edits = [{ start: target.start, end: target.end, text: tokenText(target, { count: units, forceCount: true, tie: keepTie }) }];
+        if (excess > 0) {
+            // Take it back from rests, nearest first.
+            const rests = toks.filter(x => x.isRest && x.start !== target.start)
+                .sort((a, b) => Math.abs(a.start - target.start) - Math.abs(b.start - target.start));
+            for (const r of rests) {
+                if (excess <= 0) break;
+                const take = Math.min(r.count, excess);
+                excess -= take;
+                edits.push(r.count - take === 0
+                    ? { start: r.start, end: r.end, text: '' }
+                    : { start: r.start, end: r.end, text: tokenText(r, { count: r.count - take, forceCount: true }) });
+            }
+            if (excess > 0) { notice(`This bar has no rest to shorten — it would run ${excess} units over`, 'yellow'); return; }
+        }
+        else if (excess < 0) {
+            edits.push({ start: target.end, end: target.end, text: `z${-excess}` });
+        }
+        let abc = current.abc;
+        for (const e of edits.sort((a, b) => b.start - a.start)) abc = replaceRange(abc, e.start, e.end, e.text);
+        edit(abc);
+    }
+
+    // ===== sections =====
+
+    /** A section runs from its % comment to just before the next one. Moving whole sections keeps both voices
+     *  in step by construction, which is what makes structural edits safe. */
+    function sectionSpans(abc) {
+        const lines = abc.split('\n');
+        const marks = [];
+        let inHeader = true;
+        for (let i = 0; i < lines.length; i++) {
+            const t = lines[i].trim();
+            if (inHeader) { if (/^K:/.test(t)) inHeader = false; continue; }
+            if (t.startsWith('%')) marks.push({ label: t.replace(/^%+\s*/, '').trim(), line: i });
+        }
+        return marks.map((m, i) => ({
+            ...m,
+            endLine: i + 1 < marks.length ? marks[i + 1].line - 1 : lines.length - 1
+        }));
+    }
+
+    function withSections(abc, fn) {
+        const lines = abc.split('\n');
+        const spans = sectionSpans(abc);
+        if (!spans.length) return null;
+        const out = fn(lines, spans);
+        return out === null ? null : out.join('\n');
+    }
+
+    function openSectionMenu(ev, index) {
+        const spans = sectionSpans(current?.abc || '');
+        const s = spans[index];
+        if (!s) return;
+        const items = [
+            { label: 'Jump to it', action: () => selectLine(s.line) },
+            { label: 'Rename…', action: () => {
+                const v = prompt('Section name:', s.label);
+                if (v === null) return;
+                edit(withSections(current.abc, (lines) => {
+                    lines[s.line] = `% ${v.trim()}`;
+                    return lines;
+                }));
+            } },
+            { label: 'Duplicate', action: () => edit(withSections(current.abc, (lines) => {
+                const block = lines.slice(s.line, s.endLine + 1);
+                lines.splice(s.endLine + 1, 0, ...block);
+                return lines;
+            })) }
+        ];
+        if (index > 0) items.push({ label: 'Move earlier', action: () => edit(withSections(current.abc, (lines, sp) => {
+            const prev = sp[index - 1];
+            const block = lines.slice(s.line, s.endLine + 1);
+            lines.splice(s.line, block.length);
+            lines.splice(prev.line, 0, ...block);
+            return lines;
+        })) });
+        if (index < spans.length - 1) items.push({ label: 'Move later', action: () => edit(withSections(current.abc, (lines, sp) => {
+            const next = sp[index + 1];
+            const block = lines.slice(s.line, s.endLine + 1);
+            const nextBlock = lines.slice(next.line, next.endLine + 1);
+            lines.splice(s.line, block.length + nextBlock.length, ...nextBlock, ...block);
+            return lines;
+        })) });
+        if (spans.length > 1) items.push({ label: 'Delete section', action: () => edit(withSections(current.abc, (lines) => {
+            lines.splice(s.line, s.endLine - s.line + 1);
+            return lines;
+        })) });
+        if (cb.showMenu) cb.showMenu(ev, items);
+    }
+
+    // ===== numbered melody =====
+
+    /**
+     * Turn scale degrees into bars of ABC, the way the YuE2 researchers corrected a melody by typing
+     * "1155665 / 4433221". Groups split on / or whitespace, one group per bar, 0 is a rest.
+     */
+    function numbersToAbc(digits, h, octave) {
+        const per = unitsPerBar(h);
+        const tonic = /^([A-G])/.exec(h.K || 'C');
+        if (!per || !tonic) return null;
+        const base = LETTERS.indexOf(tonic[1]) + 7 * octave;
+        const groups = digits.split(/[\s/|,]+/).map(g => g.replace(/[^0-7]/g, '')).filter(Boolean);
+        if (!groups.length) return null;
+        const bars = [];
+        for (const group of groups) {
+            const each = Math.floor(per / group.length);
+            if (each < 1) return null;   // more degrees than the bar has units
+            let used = 0;
+            const notes = [...group].map(ch => {
+                const d = parseInt(ch, 10);
+                used += each;
+                if (d === 0) return `z${each}`;
+                const pt = pitchToken(base + (d - 1));
+                return `${pt.letter}${pt.marks}${each}`;
+            });
+            if (used < per) notes.push(`z${per - used}`);
+            bars.push(notes.join(''));
+        }
+        return bars.join('|');
+    }
+
+    function insertNumbered() {
+        const raw = els.numbers.value.trim();
+        if (!raw || !current?.abc.trim()) return;
+        const h = parseHeader(current.abc);
+        const octave = parseInt(els.numberOctave.value, 10) || 1;
+        const bars = numbersToAbc(raw, h, octave);
+        if (!bars) { notice('Could not read those degrees — use digits 1-7, 0 for a rest', 'yellow'); return; }
+        if (!selection?.token) { notice('Select a bar on the staff first — the new bars replace it', 'yellow'); return; }
+        const bar = barBounds(current.abc, selection.token.start);
+        edit(replaceRange(current.abc, bar.start, bar.end, bars));
+        notice(`Wrote ${bars.split('|').length} bar(s) from degrees`, 'green');
     }
 
     function stripAllChords() {
@@ -1005,6 +1231,7 @@ const AudioDawScore = (() => {
         validate, hasChords, stripChords, modeForScore, prepareForEngraving, toOriginal,
         parseHeader, scanBody, countBars, chunkBlocks,
         splitElement, transposeToken, pitchIndex, pitchToken, tokenText,
+        unitsPerBar, barBounds, barTokens, sectionSpans, numbersToAbc,
         _state: () => ({ abc: current?.abc || '', selection, undoDepth: history.undo.length })
     };
 })();
