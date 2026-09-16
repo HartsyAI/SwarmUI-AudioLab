@@ -88,10 +88,15 @@ const AudioLabConfig = {
 
     // `audiolab_output` belongs here: the backend advertises it for every non-STT provider, so without it in
     // the remove list the Audio Output Format params render on image models too.
-    categoryFlags: ['audiolab_tts', 'audiolab_stt', 'audiolab_audiogen', 'audiolab_clone', 'audiolab_audioproc', 'audiolab_output'],
+    categoryFlags: ['audiolab_tts', 'audiolab_stt', 'audiolab_audiogen', 'audiolab_clone', 'audiolab_audioproc', 'audiolab_output', 'audiolab_duration'],
 
     /** Flags core owns and grants itself. Never add or remove these — core's own grant wins either way. */
     coreOwnedFlags: ['text2audio', 'audio_ace_inputs'],
+
+    /** Class ids whose compat class core grants `text2audio` to, so core's Text2Audio Duration renders for them
+     *  and AudioLab's own Max Duration must not. 'acestep_music_turbo' is ours but sits under core's
+     *  ace-step-1_5 compat, and core grants by COMPAT class, so it belongs here too. */
+    coreDurationArchs: ['ace-step-1_5', 'acestep_music_turbo', 'minimax-music-3', 'yue-2'],
 
     /** Core image params to hide when an audio model is selected. */
     coreParamsToHide: [
@@ -215,6 +220,10 @@ featureSetChangers.push(() => {
     // Mirrors DynamicAudioBackend: every non-STT provider advertises the output-format flag.
     if (config.category != 'audiolab_stt') {
         activeSet.add('audiolab_output');
+    }
+    // Our Max Duration only for families core does not already give a duration to.
+    if (config.category == 'audiolab_audiogen' && !AudioLabConfig.coreDurationArchs.includes(curArch)) {
+        activeSet.add('audiolab_duration');
     }
     const otherAudioFlags = AudioLabConfig.allAudioFlags.filter(f => !activeSet.has(f));
     const removeFlags = [...AudioLabConfig.incompatibleFlags, ...otherAudioFlags];

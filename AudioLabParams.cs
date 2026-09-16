@@ -1579,12 +1579,12 @@ public static class AudioLabParams
             + "This is a ceiling, not a target: a model that finishes early returns the shorter take, and one that\n"
             + "would run past it is cut off there, so set it above what the lyrics need rather than at the length you want.",
             "30",
-            // 900 is YuE2's ceiling: 25 semantic tokens a second against a 24,576-token context, less room for the
-            // prompt. The real limit is per-request and lower — YuE2 trims this to what the lyrics and score leave
-            // and reports the granted length. Models with a lower limit clamp internally (ACE-Step 600s, HeartMuLa
-            // and YuE v1 300s, Stable Audio Open Small 11.89s), so this only has to clear the longest-form model.
+            // This param now only serves the families core does NOT classify — ACE-Step, MiniMax-Music-3 and
+            // YuE2 take core's Text2Audio Duration instead. The longest-form model left on it is YuE v1 or
+            // HeartMuLa at 300s; the rest clamp lower internally (Stable Audio Open Small 11.89s). The ceiling
+            // stays at 900 so a workflow saved when YuE2 used this param still loads its value unchanged.
             Min: 1, Max: 900, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "audiolab_audiogen"));
+            OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "audiolab_duration"));
 
         #endregion
 

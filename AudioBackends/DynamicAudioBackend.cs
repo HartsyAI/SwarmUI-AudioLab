@@ -228,6 +228,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// <summary>Feature flag carrying the audio output-format params. Every non-STT provider advertises it.</summary>
     public const string OutputFlag = "audiolab_output";
 
+    /// <summary>Feature flag carrying AudioLab's own Max Duration. Audio-generation providers advertise it, but
+    /// the JS withholds it from the families core gives its own Text2Audio Duration to, so only one duration
+    /// control is ever on screen.</summary>
+    public const string DurationFlag = "audiolab_duration";
+
     /// <summary>Maps AudioCategory enum to category-level feature flag names.</summary>
     public static readonly Dictionary<AudioCategory, string> CategoryFlags = new()
     {
@@ -412,6 +417,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 if (definition.Category != AudioCategory.STT)
                 {
                     _supportedFeatureSet.TryAdd(OutputFlag, 0);
+                }
+                if (definition.Category == AudioCategory.AudioGeneration)
+                {
+                    _supportedFeatureSet.TryAdd(DurationFlag, 0);
                 }
                 foreach (string flag in definition.FeatureFlags)
                 {
@@ -1645,6 +1654,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
             {
                 _supportedFeatureSet.TryAdd(OutputFlag, 0);
             }
+            if (meta.Definition.Category == AudioCategory.AudioGeneration)
+            {
+                _supportedFeatureSet.TryAdd(DurationFlag, 0);
+            }
             foreach (string flag in meta.Definition.FeatureFlags)
             {
                 _supportedFeatureSet.TryAdd(flag, 0);
@@ -1905,7 +1918,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
         // 1b. Output format args (shared across all audio-producing categories)
         if (provider.Category != AudioCategory.STT)
         {
-            args["output_format"] = input.TryGet(AudioLabParams.AudioOutputFormat, out string fmt) ? fmt : "wav_16";
+            // Core gained its own Audio Format param (mp3/wav/flac/ogg). Prefer it when the user set it — it is
+            // toggleable and advanced, so it is absent unless they did. Ours stays because it reaches every
+            // category, not just text2audio models, and carries a bit depth core's four values cannot express.
+            args["output_format"] = input.TryGet(T2IParamTypes.AudioFormat, out string coreFmt) && !string.IsNullOrEmpty(coreFmt)
+                ? (coreFmt == "wav" ? "wav_16" : coreFmt)
+                : input.TryGet(AudioLabParams.AudioOutputFormat, out string fmt) ? fmt : "wav_16";
             args["output_quality"] = input.TryGet(AudioLabParams.AudioQuality, out string qual) ? qual : "high";
         }
 

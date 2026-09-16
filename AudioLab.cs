@@ -176,7 +176,7 @@ public class AudioLab : Extension
     private static void RegisterFeatureFlags()
     {
         // Category-level flags (one per AudioCategory), plus the output-format flag the backend advertises.
-        string[] categoryFlags = [.. DynamicAudioBackend.CategoryFlags.Values, DynamicAudioBackend.OutputFlag];
+        string[] categoryFlags = [.. DynamicAudioBackend.CategoryFlags.Values, DynamicAudioBackend.OutputFlag, DynamicAudioBackend.DurationFlag];
 
         // Per-provider flags from each provider's FeatureFlags list
         string[] providerFlags = AudioProviderRegistry.All
