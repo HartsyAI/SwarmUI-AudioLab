@@ -184,6 +184,36 @@ public class AudioLab : Extension
 
         foreach (string flag in categoryFlags) T2IEngine.DisregardedFeatureFlags.Add(flag);
         foreach (string flag in providerFlags) T2IEngine.DisregardedFeatureFlags.Add(flag);
+        WarnOnUndeclaredFeatureFlags([.. categoryFlags, .. providerFlags]);
+    }
+
+    /// <summary>Complains at startup about any param of ours carrying a flag nothing grants.
+    ///
+    /// <para>The failure it catches is silent by construction: <see cref="T2IEngine"/> drops a backend whose
+    /// features don't cover a job's required flags and names neither the param nor the flag, so a param with a
+    /// typo'd or never-registered flag just makes every generation touching it refuse. Flags in
+    /// <c>DisregardedFeatureFlags</c> never gate a backend, so they are fine; core's own flags are core's to
+    /// grant. Anything else that starts "audiolab_" or ends "_params" is ours and has to be accounted for.
+    /// Mirrors SwarmUIHartsyInference.WarnOnUndeclaredFeatureFlags.</para></summary>
+    private static void WarnOnUndeclaredFeatureFlags(HashSet<string> declared)
+    {
+        foreach (T2IParamType type in T2IParamTypes.Types.Values)
+        {
+            if (string.IsNullOrEmpty(type.FeatureFlag))
+            {
+                continue;
+            }
+            foreach (string flag in type.FeatureFlag.Split(','))
+            {
+                bool isOurs = flag.StartsWith("audiolab_", StringComparison.Ordinal) || flag.EndsWith("_params", StringComparison.Ordinal);
+                if (isOurs && !declared.Contains(flag) && !T2IEngine.DisregardedFeatureFlags.Contains(flag))
+                {
+                    Logs.Error($"[AudioLab] Param '{type.Name}' requires feature flag '{flag}', which nothing "
+                        + "registers — every generation using that param will be refused with no explanation. "
+                        + "Add it to a provider's FeatureFlags, or drop the flag.");
+                }
+            }
+        }
     }
 
     /// <summary>Creates a standardized error response for API endpoints.</summary>

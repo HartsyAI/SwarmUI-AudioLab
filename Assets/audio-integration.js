@@ -103,8 +103,8 @@ const AudioLabConfig = {
         'steps', 'cfgscale', 'width', 'height', 'sidelength', 'aspectratio',
         'batchsize', 'initimage', 'initimagecreativity', 'initimageresettonorm',
         'initimagenoise', 'maskimage', 'maskblur', 'maskgrow', 'maskshrinkgrow',
-        'useinpaintingencode', 'initimagerecompositemask', 'unsamplepprompt', 'zeronegative',
-        'seamlesstileable', 'cascadelatentcompression', 'sd3textencs',
+        'useinpaintingencode', 'initimagerecompositemask', 'unsamplerprompt', 'zeronegative',
+        'seamlesstileable', 'cascadelatentcompression', 'sdtextencs',
         'fluxguidancescale', 'fluxdisableguidance', 'clipstopatlayer',
         'vaetilesize', 'vaetileoverlap', 'removebackground', 'automaticvae',
         'modelspecificenhancements'
@@ -141,6 +141,16 @@ const AudioLabConfig = {
         'freeu', 'teacache', 'text2video', 'yolov8', 'aitemplate', 'sdcpp'
     ],
 
+    /** True when this param sits in, or under, a group that is meaningless for audio models. */
+    inHiddenGroup(param) {
+        for (let group = param.group; group; group = group.parent) {
+            if (this.coreGroupsToHide.includes(group.id)) {
+                return true;
+            }
+        }
+        return false;
+    },
+
     /** Check if the given architecture is an AudioLab model. */
     isAudioModel(arch) {
         return arch in this.archToCategory;
@@ -171,40 +181,6 @@ featureSetChangers.push(() => {
     const curArch = currentModelHelper.curArch;
     const isAudioModel = AudioLabConfig.isAudioModel(curArch);
 
-    for (const param of gen_param_types) {
-        if (AudioLabConfig.coreParamsToHide.includes(param.id)) {
-            if (isAudioModel) {
-                if (!param.hasOwnProperty('original_feature_flag_audiolab')) {
-                    param.original_feature_flag_audiolab = param.feature_flag;
-                }
-                param.feature_flag = '__audiolab_incompatible__';
-            } else if (param.hasOwnProperty('original_feature_flag_audiolab')) {
-                param.feature_flag = param.original_feature_flag_audiolab;
-                delete param.original_feature_flag_audiolab;
-            }
-        }
-        let inHiddenGroup = false;
-        let currentGroup = param.group;
-        while (currentGroup) {
-            if (AudioLabConfig.coreGroupsToHide.includes(currentGroup.id)) {
-                inHiddenGroup = true;
-                break;
-            }
-            currentGroup = currentGroup.parent;
-        }
-        if (inHiddenGroup) {
-            if (isAudioModel) {
-                if (!param.hasOwnProperty('original_feature_flag_audiolab_group')) {
-                    param.original_feature_flag_audiolab_group = param.feature_flag;
-                }
-                param.feature_flag = '__audiolab_incompatible__';
-            } else if (param.hasOwnProperty('original_feature_flag_audiolab_group')) {
-                param.feature_flag = param.original_feature_flag_audiolab_group;
-                delete param.original_feature_flag_audiolab_group;
-            }
-        }
-    }
-
     if (!isAudioModel) {
         // Only ever add/remove flags AudioLab owns. Removes are applied after adds, so returning a core flag
         // here would undo core's own grant of it.
@@ -230,6 +206,60 @@ featureSetChangers.push(() => {
     const addFlags = ['prompt', ...activeSet];
 
     return [addFlags, removeFlags];
+});
+
+/**
+ * Hides core's image-only params when an audio model is selected.
+ *
+ * This is core's own seam for "extra logic for showing/hiding specific params", and it runs after core has
+ * already decided visibility from the real feature flags. Setting `dataset.disabled` is what actually matters:
+ * `isParamEnabled` reads it, so a param hidden here is also left out of the generation request.
+ *
+ * It replaces an older approach that overwrote `param.feature_flag` on the shared `gen_param_types` objects and
+ * stashed the original alongside. That state is global — API-Backends and the HartsyInference backend patch the
+ * same field — and a param caught by BOTH lists below had its second stash capture the first's sentinel, so
+ * switching back to an image model restored the sentinel and hid Width/Height and the whole Init Image group
+ * until the page was reloaded. Nothing is stashed here, so there is nothing to restore and nothing to collide.
+ */
+hideParamCallbacks.push((groups) => {
+    if (typeof gen_param_types == 'undefined' || !gen_param_types) {
+        return;
+    }
+    if (!AudioLabConfig.isAudioModel(currentModelHelper.curArch)) {
+        return;
+    }
+    for (const param of gen_param_types) {
+        if (!AudioLabConfig.coreParamsToHide.includes(param.id) && !AudioLabConfig.inHiddenGroup(param)) {
+            continue;
+        }
+        const elem = document.getElementById(`input_${param.id}`);
+        const box = elem ? findParentOfClass(elem, 'auto-input') : null;
+        if (!box) {
+            continue;
+        }
+        const wasVisible = box.style.display != 'none';
+        if (!box.dataset.visible_controlled) {
+            box.style.display = 'none';
+        }
+        box.dataset.disabled = 'true';
+        if (!wasVisible) {
+            continue;
+        }
+        // Core counted this param toward its groups before calling us; take it back out, or the group header
+        // stays open around nothing and its altered-count badge overstates.
+        const toggler = document.getElementById(`input_${param.id}_toggle`);
+        const wasAltered = toggler ? toggler.checked : `${getInputVal(elem)}` != `${param.default}`;
+        for (let group = param.group; group; group = group.parent) {
+            const groupData = groups[group.id];
+            if (!groupData) {
+                continue;
+            }
+            groupData.visible = Math.max(0, groupData.visible - 1);
+            if (wasAltered) {
+                groupData.altered = Math.max(0, groupData.altered - 1);
+            }
+        }
+    }
 });
 
 /** Auto-play queue for streaming TTS chunks. Uses the Web Audio API (AudioContext + decodeAudioData +
