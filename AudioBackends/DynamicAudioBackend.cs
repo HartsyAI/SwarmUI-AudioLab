@@ -465,7 +465,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
     #region Model Registration
 
     /// <summary>Registers models for a specific provider into MainSDModels.
-    /// Mirrors DynamicAPIBackend.RegisterModelsForProvider().</summary>
+    /// Mirrors DynamicAPIBackend.RegisterModelsForProvider().
+    ///
+    /// <para>Writing into core's own model dictionary looks like something <see cref="ModelsAPI.ExtraModelProviders"/>
+    /// (which this backend also registers) should cover, and for the model LIST it does. It cannot cover
+    /// generation: <c>T2IParamSet</c>'s model resolution reads <c>Program.T2IModelSets[subtype]</c> and nothing
+    /// else, so a model absent from there resolves to null and the request fails before reaching any backend.
+    /// Until core can resolve a param model through the extra providers too, the entry has to exist here.</para></summary>
     private void RegisterModelsForProvider(AudioProviderDefinition provider)
     {
         Dictionary<string, T2IModel> models = provider.FileBacked

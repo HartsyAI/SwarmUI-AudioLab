@@ -18,16 +18,29 @@ namespace Hartsy.Extensions.AudioLab;
 public class AudioLab : Extension
 {
     /// <summary>Current extension version.</summary>
-    public static new readonly string Version = "4.0.0";
+    public const string ExtensionVersion = "4.0.0";
+
+    /// <summary>Fills in the fields core shows on the Extensions tab. Called once, after OnFirstInit.</summary>
+    public override void PopulateMetadata()
+    {
+        Version = ExtensionVersion;
+        ExtensionAuthor = "Hartsy AI";
+        Description = "Audio generation, transcription, voice conversion and a multi-track DAW, running on the "
+            + "in-process HartsyInference engine.";
+        License = "MIT";
+        ReadmeURL = "https://github.com/HartsyAI/SwarmUI-AudioLab";
+        Tags = ["audio", "tts", "stt", "music"];
+    }
 
     /// <summary>Pre-initialization — registers providers and web assets before SwarmUI core is ready.</summary>
     public override void OnPreInit()
     {
         try
         {
-            // Set extension directory for Python path resolution
-            string projectRoot = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", ".."));
-            AudioConfiguration.ExtensionDirectory = Path.GetFullPath(Path.Combine(projectRoot, "Extensions", "SwarmUI-AudioLab"));
+            // Core sets FilePath while loading the extension, before this hook. Deriving it from the assembly
+            // location instead used to hardcode the checkout folder name, so renaming the directory silently
+            // broke every provider preview image.
+            AudioConfiguration.ExtensionDirectory = Path.GetFullPath(FilePath);
             Logs.Info($"[AudioLab] Extension directory: {AudioConfiguration.ExtensionDirectory}");
 
             // Settings load well before extension pre-init, so the server's model root is known here.

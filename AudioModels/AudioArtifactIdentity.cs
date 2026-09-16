@@ -70,7 +70,9 @@ public static class AudioArtifactIdentity
             File.WriteAllText(sidecarPath, identity.ToString());
             // Core caches model metadata keyed on the WEIGHTS file's write time, so a sidecar appearing beside
             // an unchanged file would be read for identity but never for title/author/license. The model's
-            // metadata really did just change, so say so.
+            // metadata really did just change, so say so. Core offers no way to invalidate one cache entry —
+            // ResetMetadataFrom upserts from a T2IModel we do not have yet at stamp time, and
+            // MassRemoveMetadata would drop every model's — so the file's own timestamp is the only lever.
             File.SetLastWriteTimeUtc(primaryPath, DateTime.UtcNow);
             Logs.Info($"[AudioLab] Stamped '{Path.GetFileName(primaryPath)}' as {classId} ({providerId}/{modelId}).");
         }

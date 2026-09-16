@@ -341,11 +341,24 @@ const AudioStreamPlayer = {
 };
 
 /** Hook into doGenerate + internalHandleData for streaming audio playback. */
-setTimeout(() => {
+/**
+ * Wraps the generate handler so streamed TTS chunks play as they arrive.
+ *
+ * Core exposes no hook for this (there is no equivalent of hideParamCallbacks or backendsRevisedCallbacks on
+ * the generate handler), so the two methods are wrapped in place. Waiting for the handler by polling a frame at
+ * a time rather than guessing a delay: a fixed timeout either fired before the page was ready on a slow load,
+ * silently installing nothing, or made everyone else wait for the slowest case.
+ */
+function audioLabInstallGenerateHooks(attemptsLeft = 600) {
     const handler = typeof mainGenHandler !== 'undefined' ? mainGenHandler
                   : typeof genHandler !== 'undefined' ? genHandler : null;
     if (!handler) {
-        console.warn('[audiolab] No generate handler found, streaming hooks not installed');
+        if (attemptsLeft > 0) {
+            requestAnimationFrame(() => audioLabInstallGenerateHooks(attemptsLeft - 1));
+        }
+        else {
+            console.warn('[audiolab] No generate handler found, streaming hooks not installed');
+        }
         return;
     }
 
@@ -382,12 +395,21 @@ setTimeout(() => {
     };
 
     console.log('[audiolab] Streaming audio hooks installed');
-}, 600);
+}
+audioLabInstallGenerateHooks();
 
-setTimeout(() => {
+// Run the first pass once the param list exists, rather than at a guessed moment after load.
+function audioLabInitialParamPass(attemptsLeft = 600) {
+    if (typeof gen_param_types == 'undefined' || !gen_param_types) {
+        if (attemptsLeft > 0) {
+            requestAnimationFrame(() => audioLabInitialParamPass(attemptsLeft - 1));
+        }
+        return;
+    }
     reviseBackendFeatureSet();
     hideUnsupportableParams();
-}, 500);
+}
+audioLabInitialParamPass();
 
 /** Category display order and labels for the engine manager UI. */
 const ENGINE_CATEGORIES = [
