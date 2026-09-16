@@ -30,6 +30,9 @@ const AudioDawScore = (() => {
     let suppressSrcSync = false;
     let selection = null;   // { start, end, voice, chord, token } in ORIGINAL coordinates
     const history = { undo: [], redo: [] };
+    let visual = null;      // the rendered tune; carries noteTimings for highlighting
+    let synth = null, timing = null;
+    let highlighted = [], lastSystemTop = null, lastTimingIndex = -1;
 
     // ===== ABC reading =====
 
@@ -478,6 +481,20 @@ const AudioDawScore = (() => {
         title.textContent = 'Score';
         head.appendChild(title);
         const btns = createDiv(null, 'daw-fx-card-btns');
+        els.play = miniButton('Play', 'Hear the plan in the browser before spending a render on it', playPlan);
+        els.stop = miniButton('Stop', 'Stop the audition', stopPlan);
+        els.stop.disabled = true;
+        const chordsLabel = document.createElement('label');
+        chordsLabel.className = 'daw-score-toggle';
+        chordsLabel.title = 'Play the chord symbols as accompaniment';
+        els.chords = document.createElement('input');
+        els.chords.type = 'checkbox';
+        els.chords.checked = true;
+        chordsLabel.appendChild(els.chords);
+        chordsLabel.appendChild(document.createTextNode(' Chords'));
+        btns.appendChild(els.play);
+        btns.appendChild(els.stop);
+        btns.appendChild(chordsLabel);
         els.undo = miniButton('Undo', 'Undo the last score edit (Ctrl+Z while the score has focus)', undo);
         els.redo = miniButton('Redo', 'Redo (Ctrl+Y)', redo);
         btns.appendChild(els.undo);
@@ -490,6 +507,7 @@ const AudioDawScore = (() => {
                 .catch(() => notice('Could not copy to the clipboard', 'yellow'));
         }));
         btns.appendChild(miniButton('Save', 'Download the ABC score as a .abc file', downloadScore));
+        btns.appendChild(miniButton('MIDI', 'Download the plan as a MIDI file', exportMidi));
         head.appendChild(btns);
         card.appendChild(head);
 
@@ -607,7 +625,9 @@ const AudioDawScore = (() => {
 
         const help = createDiv(null, 'daw-stems-desc');
         help.textContent = 'Click a chord symbol to reharmonise, a note to edit it, or drag a note up and down '
-            + 'to change its pitch. The score is a plan the model performs, not a recording of it.';
+            + 'to change its pitch. Play auditions the plan in the browser — instrument samples are fetched '
+            + 'from the internet the first time and cached by it. The score is a plan the model performs, '
+            + 'not a recording of it.';
         parent.appendChild(help);
     }
 
@@ -758,9 +778,11 @@ const AudioDawScore = (() => {
         }
         prep = prepareForEngraving(current.abc);
         const accent = getComputedStyle(document.body).getPropertyValue('--emphasis').trim() || '#7855e1';
+        stopPlan();
+        lastTimingIndex = -1;
         try {
             // Fixed staffwidth + re-engrave on resize rather than `responsive`, which scales the glyphs to fit.
-            ABCJS.renderAbc(host, prep.text, {
+            visual = ABCJS.renderAbc(host, prep.text, {
                 add_classes: true,
                 staffwidth: Math.max(320, host.clientWidth - 40),
                 wrap: { preferredMeasuresPerLine: 4, minSpacing: 1.6, maxSpacing: 2.7 },
@@ -769,7 +791,9 @@ const AudioDawScore = (() => {
                 dragging: true,
                 selectTypes: ['note'],
                 clickListener: onScoreClick
-            });
+            })[0];
+            // Populates visual.noteTimings, which is what the DAW transport is followed against.
+            if (visual) new ABCJS.TimingCallbacks(visual, { eventCallback: () => {} });
             watchWidth(host);
         }
         catch (e) {
@@ -1136,6 +1160,117 @@ const AudioDawScore = (() => {
         notice(`Wrote ${bars.split('|').length} bar(s) from degrees`, 'green');
     }
 
+    // ===== audition =====
+
+    /**
+     * Play the plan in the browser. abcjs comps the quoted chords automatically, so this is the fastest way to
+     * hear whether a reharmonisation works — seconds, against minutes for a real render.
+     */
+    async function playPlan() {
+        if (!visual || !ABCJS.synth.supportsAudio()) {
+            notice('This browser cannot play audio here', 'yellow');
+            return;
+        }
+        stopPlan();
+        els.play.disabled = true;
+        try {
+            synth = new ABCJS.synth.CreateSynth();
+            await synth.init({ visualObj: visual, options: { chordsOff: !els.chords.checked } });
+            await synth.prime();
+            timing = new ABCJS.TimingCallbacks(visual, {
+                eventCallback: (ev) => { highlightTiming(ev); return ev ? undefined : 'continue'; }
+            });
+            synth.start();
+            timing.start();
+            els.stop.disabled = false;
+        }
+        catch (e) {
+            console.error('[AudioDawScore] Audition failed:', e);
+            notice('Could not play the plan — the instrument samples could not be fetched', 'yellow');
+            stopPlan();
+        }
+        finally {
+            els.play.disabled = false;
+        }
+    }
+
+    function stopPlan() {
+        try { timing?.stop(); } catch (_) {}
+        try { synth?.stop(); } catch (_) {}
+        timing = null; synth = null;
+        clearHighlight();
+        if (els.stop) els.stop.disabled = true;
+    }
+
+    function clearHighlight() {
+        for (const el of highlighted) el.classList?.remove('playing-note');
+        highlighted = [];
+        lastSystemTop = null;
+    }
+
+    /** Highlight what is sounding, and follow the music one staff system at a time rather than one note. */
+    function highlightTiming(ev) {
+        clearHighlightOnly();
+        if (!ev) return;
+        highlighted = (ev.elements || []).flat().filter(Boolean);
+        for (const el of highlighted) el.classList?.add('playing-note');
+        if (ev.top !== lastSystemTop) {
+            lastSystemTop = ev.top;
+            highlighted[0]?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+        }
+    }
+
+    function clearHighlightOnly() {
+        for (const el of highlighted) el.classList?.remove('playing-note');
+        highlighted = [];
+    }
+
+    /**
+     * Follow the DAW transport. The score carries the tempo it was PLANNED at, which the render only
+     * approximates, so this tracks the plan rather than claiming sample accuracy.
+     */
+    function syncTime(seconds) {
+        // The audition owns the highlight while it runs; two transports fighting over it helps nobody.
+        if (timing || !visual?.noteTimings?.length || !els.sheet?.isConnected) return;
+        const clip = selectedClip?.clip;
+        if (!clip || !current?.meta || clip.meta?.score?.abc !== current.abc) return;
+        const rel = seconds - (clip.startTime || 0) + (clip.offset || 0);
+        if (rel < 0) { clearHighlightOnly(); return; }
+        const ms = rel * 1000;
+        const timings = visual.noteTimings;
+        let lo = 0, hi = timings.length - 1, found = -1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (timings[mid].milliseconds <= ms) { found = mid; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        if (found < 0) { clearHighlightOnly(); return; }
+        if (found === lastTimingIndex) return;
+        lastTimingIndex = found;
+        highlightTiming(timings[found]);
+    }
+
+    function exportMidi() {
+        if (!current?.abc.trim()) return;
+        try {
+            // One entry per tune in the ABC; ours always holds exactly one.
+            const data = ABCJS.synth.getMidiFile(current.abc, { midiOutputType: 'binary' })[0];
+            if (!data) { notice('This score produced no MIDI', 'yellow'); return; }
+            const blob = new Blob([data], { type: 'audio/midi' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `${(current.meta?.label || 'score').replace(/[^\w-]+/g, '_')}.mid`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        }
+        catch (e) {
+            console.error('[AudioDawScore] MIDI export failed:', e);
+            notice('Could not build a MIDI file from this score', 'red');
+        }
+    }
+
     function stripAllChords() {
         if (!current?.abc.trim()) return;
         if (!hasChords(current.abc)) { notice('This score has no chord symbols', 'yellow'); return; }
@@ -1226,7 +1361,7 @@ const AudioDawScore = (() => {
     }
 
     return {
-        render, onSelection, loadScore, undo, redo,
+        render, onSelection, loadScore, undo, redo, syncTime, stopPlan,
         // exported for the DAW, for tests, and for later phases
         validate, hasChords, stripChords, modeForScore, prepareForEngraving, toOriginal,
         parseHeader, scanBody, countBars, chunkBlocks,

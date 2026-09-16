@@ -2765,6 +2765,8 @@ const AudioDaw = (() => {
         updatePlayheadPosition();
         updateTimeDisplay();
         updateMeters();
+        // Follow the transport on the staff, when the selected clip is the one the open score produced.
+        if (typeof AudioDawScore !== 'undefined') AudioDawScore.syncTime(state.currentTime);
         rafId = requestAnimationFrame(animatePlayhead);
     }
 

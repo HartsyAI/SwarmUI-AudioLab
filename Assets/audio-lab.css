@@ -2343,3 +2343,11 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
 .daw-score-err, .daw-score-warn { font-size: 0.78rem; line-height: 1.35; cursor: pointer; }
 .daw-score-err { color: var(--red); }
 .daw-score-warn { color: var(--yellow); }
+.daw-score-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    font-size: 0.75rem;
+    color: var(--text-soft);
+    cursor: pointer;
+}
