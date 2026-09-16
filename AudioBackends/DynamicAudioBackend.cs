@@ -748,6 +748,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                         _ => MediaType.AudioWav,
                     };
                     ReportTruncation(result, takeOutput, user_input, provider.Id);
+                    RecordPlannedScore(result, user_input);
                     AudioFile audio = new(audioBytes, mediaType);
                     takeOutput(audio);
                 }
@@ -1788,6 +1789,32 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
         Logs.Info($"[AudioLab] {message}");
         takeOutput(new JObject { ["gen_progress"] = new JObject { ["current_status"] = message } });
+    }
+
+    /// <summary>Carries the score a planning model wrote back to the caller, as generation metadata.
+    ///
+    /// <para>YuE2 plans an ABC score before it renders any audio, and that score is the only editable artifact
+    /// the model exposes — every "edit this song" workflow is edit-the-score-and-re-render. The engine already
+    /// returns it in <c>meta.abc</c>, but nothing read it, so the score was discarded on arrival and the Song
+    /// Score (ABC) param's own instruction to "read the score back out of the result metadata" was a promise the
+    /// extension never kept.</para>
+    ///
+    /// <para>It goes in <see cref="T2IParamInput.ExtraMeta"/> rather than back onto the Song Score param on
+    /// purpose. Metadata is built at save time, so a write here still lands; and core's "Reuse Parameters"
+    /// restores only <c>sui_image_params</c>, so a score echoed into the param would silently re-render the OLD
+    /// score on any reuse that changed the lyrics.</para></summary>
+    private static void RecordPlannedScore(JObject result, T2IParamInput input)
+    {
+        string score = result["meta"]?["abc"]?.ToString();
+        if (string.IsNullOrWhiteSpace(score))
+        {
+            return;
+        }
+        input.ExtraMeta["yue2_score"] = score;
+        if (result["meta"]?["abcTruncated"]?.ToString() == "true")
+        {
+            input.ExtraMeta["yue2_score_truncated"] = true;
+        }
     }
 
     /// <summary>The clip length a request asked for, resolved exactly as the request itself resolves it. Kept in

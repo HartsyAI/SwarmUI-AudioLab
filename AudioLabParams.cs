@@ -1865,15 +1865,19 @@ public static class AudioLabParams
         // Naming them for the two passes instead is both collision-free and clearer about what each knob drives.
         Yue2PlanningMode = T2IParamTypes.Register<string>(new("Score Planning Mode",
             "How much of a score YuE2 writes before it renders any audio.\n"
-            + "Full plans melody and chords, melody plans the tune alone, off skips straight to audio.",
+            + "Full plans melody and chords, melody plans the tune alone, off skips straight to audio.\n"
+            + "When you supply a score, match the mode to it: melody for a score with no chord symbols (this is\n"
+            + "the cover setting), full for a chord-annotated one. The mode picks the instruction the model was\n"
+            + "trained on, so a mismatch quietly degrades the result.",
             "full",
             GetValues: _ => ["full///Full (melody + chords)", "melody///Melody only", "off///Off (straight to audio)"],
             OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "yue2_music_params"));
 
         Yue2Score = T2IParamTypes.Register<string>(new("Song Score (ABC)",
             "An ABC score to render verbatim, skipping the planning pass. Leave empty to let YuE2 write one.\n"
-            + "Generating once with planning on and reading the score back out of the result metadata gives you\n"
-            + "something to edit and feed in here.\nIgnored when Score Planning Mode is off.",
+            + "Every generation that plans a score saves it under 'Yue2 Score' in the result metadata, so generate\n"
+            + "once, copy the score out, edit it and feed it back here. The Score tab of the Audio Lab does this\n"
+            + "round trip for you, with a staff view and an editor.\nIgnored when Score Planning Mode is off.",
             "",
             ViewType: ParamViewType.PROMPT,
             OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));

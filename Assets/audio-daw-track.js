@@ -41,7 +41,12 @@ const AudioDawTrack = (() => {
             fadeOut: 0,                // fade-out length in seconds
             muted: false,
             color: opts.color || null, // override track color
-            blobKey: opts.blobKey || `blob-${clipIdCounter}-${Date.now()}`
+            blobKey: opts.blobKey || `blob-${clipIdCounter}-${Date.now()}`,
+            // Free-form per-clip data that outlives undo and reload (currently { score } from the Score tab).
+            // Deliberately one bag rather than named fields: clip shape is whitelisted in four places
+            // (here, serializeTrack, restoreSnapshot, restoreProject) and each new field had to be added to
+            // all four or it vanished on the first undo.
+            meta: opts.meta ? JSON.parse(JSON.stringify(opts.meta)) : null
         };
     }
 
@@ -845,7 +850,8 @@ const AudioDawTrack = (() => {
                 fadeIn: c.fadeIn,
                 fadeOut: c.fadeOut,
                 muted: c.muted,
-                color: c.color
+                color: c.color,
+                meta: c.meta ? JSON.parse(JSON.stringify(c.meta)) : null
             }))
         };
     }

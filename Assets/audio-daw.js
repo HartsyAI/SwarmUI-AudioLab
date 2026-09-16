@@ -1250,7 +1250,9 @@ const AudioDaw = (() => {
      * endpoint the main Generate tab uses. The output is saved to the user's
      * outputs folder + history like any generation, and progress streams back.
      * @param {Object} opts - { model: Swarm model name, prompt, params: extra T2I params, onProgress(frac) }
-     * @returns {Promise<{blob: Blob, src: string}>} the produced audio + its View URL
+     * @returns {Promise<{blob: Blob, src: string, metadata: Object|null}>} the audio, its View URL, and the
+     *   parsed generation metadata (core sends it alongside the image; a planned score rides in
+     *   metadata.sui_extra_data.yue2_score)
      */
     function dawSwarmGenerate({ model, prompt, params = {}, onProgress = null }) {
         return new Promise((resolve, reject) => {
@@ -1265,13 +1267,61 @@ const AudioDaw = (() => {
                 if (data.error) { fail(data.error); return; }
                 if (data.image) {
                     const src = typeof data.image === 'string' ? data.image : data.image.image;
+                    const metadata = parseGenMetadata(data.metadata);
                     fetch(src)
                         .then(r => { if (!r.ok) throw new Error(`Output fetch failed (${r.status})`); return r.blob(); })
-                        .then(blob => { if (!settled) { settled = true; resolve({ blob, src }); } })
+                        .then(blob => { if (!settled) { settled = true; resolve({ blob, src, metadata }); } })
                         .catch(err => fail(err.message));
                 }
             }, (err) => fail(err || 'Generation failed'));
         });
+    }
+
+    /** Parse core's generation-metadata string. Malformed metadata must never fail a generation. */
+    function parseGenMetadata(raw) {
+        if (!raw) return null;
+        try {
+            return typeof raw === 'string' ? JSON.parse(raw) : raw;
+        }
+        catch (e) {
+            console.warn('[AudioLab] Could not parse generation metadata', e);
+            return null;
+        }
+    }
+
+    /**
+     * Pull the score a planning model wrote out of a generation's metadata.
+     * YuE2 writes it to sui_extra_data.yue2_score (see DynamicAudioBackend.RecordPlannedScore).
+     * @returns {Object|null} { abc, truncated } or null when the generation planned no score
+     */
+    function scoreFromMetadata(metadata) {
+        const abc = metadata?.sui_extra_data?.yue2_score;
+        if (!abc || !String(abc).trim()) return null;
+        return { abc: String(abc), truncated: metadata.sui_extra_data.yue2_score_truncated === true };
+    }
+
+    /**
+     * Build a clip's `meta` from a generation's metadata, so a rendered clip carries the score that produced it.
+     * Versions form a tree via `parent`, which is what makes "render a variation of this score" traceable.
+     * @returns {Object|null} null when the generation planned no score — clips stay metadata-free otherwise
+     */
+    function buildClipScoreMeta(metadata, { style = '', lyrics = '', model = '', engineId = '', label = '',
+            parent = null, source = 'planned', cot = null } = {}) {
+        const found = scoreFromMetadata(metadata);
+        if (!found) return null;
+        const params = metadata?.sui_image_params || {};
+        return {
+            score: {
+                abc: found.abc,
+                truncated: found.truncated,
+                style: style || params.text2audiostyle || '',
+                lyrics: lyrics || params.prompt || '',
+                cot: cot || params.scoreplanningmode || 'full',
+                seed: params.seed ?? null,
+                model, engineId, label, parent, source,
+                created: Date.now()
+            }
+        };
     }
 
     /** Fetch + cache the engine list (shared by the Generate tab, palette, and beat pads). */
@@ -1657,9 +1707,10 @@ const AudioDaw = (() => {
             const busy = createBusyIndicator(`Generating with ${eng.name}…`, 'generate');
             sideCol.appendChild(busy);
             try {
-                const { blob } = await dawSwarmGenerate({
+                const lyricsText = isMusicCat ? (lyricsArea?.value.trim() || '') : '';
+                const { blob, metadata } = await dawSwarmGenerate({
                     model: modelDef.swarm_model,
-                    prompt: isMusicCat ? (lyricsArea?.value.trim() || '') : promptText,
+                    prompt: isMusicCat ? lyricsText : promptText,
                     params,
                     onProgress: (frac) => busy.setProgress(frac)
                 });
@@ -1667,7 +1718,14 @@ const AudioDaw = (() => {
                 const track = addTrack({ name: eng.name });
                 await addClipToTrack(track, blob, {
                     name: promptText.slice(0, 28) || eng.name,
-                    startTime: snapTime(state.currentTime)
+                    startTime: snapTime(state.currentTime),
+                    meta: buildClipScoreMeta(metadata, {
+                        style: isMusicCat ? promptText : '',
+                        lyrics: lyricsText,
+                        model: modelDef.swarm_model,
+                        engineId: eng.id,
+                        label: promptText.slice(0, 28) || eng.name
+                    })
                 });
                 updateTotalDuration();
                 renderAllTracks();
@@ -3561,7 +3619,8 @@ const AudioDaw = (() => {
                     name: cs.name,
                     startTime: cs.startTime,
                     color: cs.color,
-                    blobKey: cs.blobKey
+                    blobKey: cs.blobKey,
+                    meta: cs.meta || null
                 });
                 clip.id = cs.id;
                 clip.duration = cs.duration;
@@ -4064,11 +4123,14 @@ const AudioDaw = (() => {
         for (let i = 0; i < count; i++) {
             const seed = Math.floor(Math.random() * 1e9);
             jobs.push(dawSwarmGenerate({ model, prompt: eng.usesPrompt ? prompt : '', params: eng.params(duration, seed, prompt) })
-                .then(({ blob }) => ({ blob, seed }))
+                .then(({ blob, metadata }) => ({ blob, seed, metadata }))
                 .catch(err => { console.error('[AudioDaw] Palette generation failed:', err); return null; }));
         }
         const done = (await Promise.all(jobs)).filter(Boolean);
-        return done.map(({ blob, seed }) => ({ blob, url: URL.createObjectURL(blob), prompt, seed, type }));
+        return done.map(({ blob, seed, metadata }) => ({
+            blob, url: URL.createObjectURL(blob), prompt, seed, type,
+            meta: buildClipScoreMeta(metadata, { style: prompt, model, engineId: eng.engineId, label: prompt.slice(0, 24) })
+        }));
     }
 
     function renderPalette() {
@@ -4161,7 +4223,7 @@ const AudioDaw = (() => {
             addBtn.addEventListener('click', async () => {
                 pushUndo();
                 const track = addTrack({ name: res.prompt.slice(0, 16) });
-                await addClipToTrack(track, res.blob, { name: res.prompt.slice(0, 24), startTime: snapTime(state.currentTime) });
+                await addClipToTrack(track, res.blob, { name: res.prompt.slice(0, 24), startTime: snapTime(state.currentTime), meta: res.meta || null });
                 updateTotalDuration();
                 renderAllTracks();
                 updateBottomPanel();
@@ -4213,7 +4275,9 @@ const AudioDaw = (() => {
 
     function serializeProject() {
         return {
-            version: 2,
+            // 3 added clip.meta (the Score tab's per-clip score). Version 2 projects load unchanged — a clip
+            // without meta simply has none.
+            version: 3,
             projectName: currentProjectName || null,
             bpm: state.bpm,
             masterLimiterEnabled: state.masterLimiterEnabled,
@@ -4298,7 +4362,8 @@ const AudioDaw = (() => {
                 const blob = blobs.get(cs.blobKey);
                 if (!blob) continue;
                 const clip = AudioDawTrack.createClip(blob, {
-                    name: cs.name, startTime: cs.startTime, color: cs.color, blobKey: cs.blobKey
+                    name: cs.name, startTime: cs.startTime, color: cs.color, blobKey: cs.blobKey,
+                    meta: cs.meta || null
                 });
                 const stored = blobStore.get(cs.blobKey);
                 if (stored?.decodedBuffer) {
