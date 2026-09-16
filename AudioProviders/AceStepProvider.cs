@@ -18,6 +18,9 @@ public sealed class AceStepProvider : IAudioProviderSource
         .WithModelClass("ace-step-1_5", "Ace Step 1.5")
         .AddFeatureFlag("audiolab_audiogen")
         .AddFeatureFlag("acestep_music_params")
+        // Only the non-turbo variants expose these in the UI, but the backend has to advertise the flag or
+        // T2IEngine refuses every generation that sets one of them, naming neither param nor flag.
+        .AddFeatureFlag("acestep_cfg_params")
         .AddFeatureFlag("acestep_lm_params")
         .AddFeatureFlag("acestep_task_params")
         .AddFeatureFlag("music_instrumental_param")
