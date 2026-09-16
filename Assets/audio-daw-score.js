@@ -18,12 +18,18 @@ const AudioDawScore = (() => {
     const ENGRAVABLE = [48, 32, 24, 16, 12, 8, 6, 4, 3, 2, 1];
     const EMPTY_HINT = 'No score loaded. Generate a song with YuE2 and press Load from clip, or paste a score below.';
 
+    // Scale degrees for numbered-melody entry, as semitones above the tonic.
+    const MAJOR_STEPS = [0, 2, 4, 5, 7, 9, 11];
+    const LETTERS = 'CDEFGAB';
+
     let cb = null;          // callbacks from audio-daw.js
     let els = {};           // cached DOM
     let current = null;     // { abc, meta } — meta is the clip.meta.score record this came from, when any
     let prep = null;        // { text, reps } from the last engraving pass
     let selectedClip = null;
     let suppressSrcSync = false;
+    let selection = null;   // { start, end, voice, chord, token } in ORIGINAL coordinates
+    const history = { undo: [], redo: [] };
 
     // ===== ABC reading =====
 
@@ -185,6 +191,102 @@ const AudioDawScore = (() => {
 
     /** The planning mode a score implies. Mismatching it is an out-of-distribution prompt, not a preference. */
     function modeForScore(abc) { return hasChords(abc) ? 'full' : 'melody'; }
+
+    // ===== note tokens =====
+
+    // accidental, letter, octave marks, duration, optional /n, tie
+    const NOTE_TOKEN = /^([\^=_]{0,2})([A-Ga-gxzZ])([,']*)(\d*)(\/\d*)?(-?)/;
+
+    /**
+     * Split an element span into its chord symbol (abcjs includes it) and the note token that follows.
+     * @returns {{chord: ?{start,end,name}, token: ?Object}} token carries absolute start/end plus its parts
+     */
+    function splitElement(abc, start, end) {
+        let i = start, chord = null;
+        while (i < end && abc[i] === '"') {
+            const j = abc.indexOf('"', i + 1);
+            if (j < 0 || j >= end) break;
+            chord = { start: i, end: j + 1, name: abc.slice(i + 1, j) };
+            i = j + 1;
+        }
+        const m = NOTE_TOKEN.exec(abc.slice(i, end));
+        const token = m ? {
+            start: i, end: i + m[0].length,
+            accidental: m[1], letter: m[2], marks: m[3],
+            count: m[4] ? parseInt(m[4], 10) : 1, hasCount: !!m[4],
+            fraction: m[5] || '', tie: m[6] || '',
+            isRest: /[xzZ]/.test(m[2])
+        } : null;
+        return { chord, token };
+    }
+
+    function tokenText(t, over = {}) {
+        const p = { ...t, ...over };
+        const count = p.count === 1 && !p.forceCount ? '' : String(p.count);
+        return `${p.accidental}${p.letter}${p.marks}${count}${p.fraction}${p.tie}`;
+    }
+
+    /** Absolute diatonic index: C=0..B=6, lowercase adds 7, each mark shifts an octave. */
+    function pitchIndex(letter, marks) {
+        const upper = letter.toUpperCase();
+        let n = LETTERS.indexOf(upper);
+        if (n < 0) return null;
+        if (letter !== upper) n += 7;
+        for (const m of marks) n += m === "'" ? 7 : -7;
+        return n;
+    }
+
+    function pitchToken(n) {
+        let oct = Math.floor(n / 7);
+        const letterIdx = ((n % 7) + 7) % 7;
+        let letter = LETTERS[letterIdx];
+        if (oct >= 1) { letter = letter.toLowerCase(); oct -= 1; }
+        return { letter, marks: oct > 0 ? "'".repeat(oct) : ','.repeat(-oct) };
+    }
+
+    /** Move a note by whole staff steps. The key signature supplies the accidental, so an explicit one is
+     *  dropped — it described the old pitch. */
+    function transposeToken(t, steps) {
+        const n = pitchIndex(t.letter, t.marks);
+        if (n === null) return null;
+        const moved = pitchToken(n + steps);
+        return tokenText(t, { ...moved, accidental: '' });
+    }
+
+    // ===== edit primitives =====
+
+    function replaceRange(abc, start, end, text) { return abc.slice(0, start) + text + abc.slice(end); }
+
+    function pushHistory() {
+        if (!current) return;
+        history.undo.push(current.abc);
+        if (history.undo.length > 100) history.undo.shift();
+        history.redo.length = 0;
+    }
+
+    function undo() {
+        if (!history.undo.length) return;
+        history.redo.push(current.abc);
+        current = { abc: history.undo.pop(), meta: current?.meta || null };
+        selection = null;
+        refresh();
+    }
+
+    function redo() {
+        if (!history.redo.length) return;
+        history.undo.push(current.abc);
+        current = { abc: history.redo.pop(), meta: current?.meta || null };
+        selection = null;
+        refresh();
+    }
+
+    /** Apply one edit: snapshot, swap the text, revalidate, re-engrave. */
+    function edit(newAbc) {
+        if (typeof newAbc !== 'string' || newAbc === current?.abc) return;
+        pushHistory();
+        current = { abc: newAbc, meta: current?.meta || null };
+        refresh();
+    }
 
     // ===== engraving prep =====
 
@@ -376,6 +478,11 @@ const AudioDawScore = (() => {
         title.textContent = 'Score';
         head.appendChild(title);
         const btns = createDiv(null, 'daw-fx-card-btns');
+        els.undo = miniButton('Undo', 'Undo the last score edit (Ctrl+Z while the score has focus)', undo);
+        els.redo = miniButton('Redo', 'Redo (Ctrl+Y)', redo);
+        btns.appendChild(els.undo);
+        btns.appendChild(els.redo);
+        btns.appendChild(miniButton('No chords', 'Strip every chord symbol — the melody-only form used for covers', stripAllChords));
         btns.appendChild(miniButton('Copy', 'Copy the ABC score to the clipboard', () => {
             if (!current?.abc) return;
             navigator.clipboard?.writeText(current.abc)
@@ -387,8 +494,21 @@ const AudioDawScore = (() => {
         card.appendChild(head);
 
         els.sheet = createDiv(null, 'daw-score-sheet');
+        els.sheet.tabIndex = 0;   // so the staff can take keyboard focus without stealing the DAW's shortcuts
+        els.sheet.addEventListener('keydown', onSheetKey);
         card.appendChild(els.sheet);
         parent.appendChild(card);
+    }
+
+    /** Scoped to the staff: the DAW's own shortcuts keep working everywhere else. */
+    function onSheetKey(e) {
+        const key = e.key;
+        if ((e.ctrlKey || e.metaKey) && key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+        if ((e.ctrlKey || e.metaKey) && key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
+        if (!selection?.token) return;
+        if (key === 'ArrowUp') { e.preventDefault(); applyTranspose(e.shiftKey ? 7 : 1); }
+        else if (key === 'ArrowDown') { e.preventDefault(); applyTranspose(e.shiftKey ? -7 : -1); }
+        else if (key === 'Delete' || key === 'Backspace') { e.preventDefault(); setRest(true); }
     }
 
     function buildControls(parent) {
@@ -436,9 +556,15 @@ const AudioDawScore = (() => {
         els.src.rows = 8;
         els.src.spellcheck = false;
         els.src.placeholder = EMPTY_HINT;
+        // Typing is one history entry per editing session, not per keystroke — the textarea keeps its own
+        // native undo for character-level work.
+        let typingSnapshot = false;
+        els.src.addEventListener('focus', () => { typingSnapshot = false; });
         els.src.addEventListener('input', () => {
             if (suppressSrcSync) return;
+            if (!typingSnapshot) { pushHistory(); typingSnapshot = true; }
             current = { abc: els.src.value, meta: current?.meta || null };
+            selection = null;
             scheduleRefresh();
         });
         parent.appendChild(els.src);
@@ -457,6 +583,11 @@ const AudioDawScore = (() => {
 
         els.modeNote = createDiv(null, 'daw-stems-desc');
         parent.appendChild(els.modeNote);
+
+        const help = createDiv(null, 'daw-stems-desc');
+        help.textContent = 'Click a chord symbol to reharmonise, a note to edit it, or drag a note up and down '
+            + 'to change its pitch. The score is a plan the model performs, not a recording of it.';
+        parent.appendChild(help);
     }
 
     function fieldLabel(text) {
@@ -507,6 +638,9 @@ const AudioDawScore = (() => {
     // ===== state =====
 
     function loadScore(abc, meta) {
+        history.undo.length = 0;
+        history.redo.length = 0;
+        selection = null;
         current = { abc: abc || '', meta: meta || null };
         if (meta) {
             if (typeof meta.style === 'string') els.style.value = meta.style;
@@ -523,8 +657,7 @@ const AudioDawScore = (() => {
 
     function applyEdit(abc) {
         if (typeof abc !== 'string' || !abc.trim()) return;
-        current = { abc, meta: current?.meta || null };
-        refresh();
+        edit(abc);
     }
 
     function refresh() {
@@ -532,6 +665,8 @@ const AudioDawScore = (() => {
         renderSheet();
         const issues = current?.abc.trim() ? validate(current.abc) : [];
         showIssues(issues);
+        if (els.undo) els.undo.disabled = !history.undo.length;
+        if (els.redo) els.redo.disabled = !history.redo.length;
     }
 
     function syncControls() {
@@ -611,6 +746,8 @@ const AudioDawScore = (() => {
                 wrap: { preferredMeasuresPerLine: 4, minSpacing: 1.6, maxSpacing: 2.7 },
                 selectionColor: accent,
                 dragColor: accent,
+                dragging: true,
+                selectTypes: ['note'],
                 clickListener: onScoreClick
             });
             watchWidth(host);
@@ -635,14 +772,149 @@ const AudioDawScore = (() => {
         widthWatcher.observe(host);
     }
 
-    /** Clicking a note selects the text that produced it — through the offset map, since abcjs reports
-     *  coordinates in the engraved text, not the original. */
-    function onScoreClick(abcelem) {
-        if (!els.src || !prep || abcelem?.startChar === undefined) return;
+    /**
+     * All editing enters here. abcjs reports coordinates in the ENGRAVED text and never modifies the ABC, so
+     * every gesture is mapped back to the original and applied as a text rewrite.
+     */
+    function onScoreClick(abcelem, tuneNumber, classes, analysis, drag, ev) {
+        if (!prep || !current || abcelem?.startChar === undefined) return;
         const start = toOriginal(prep.reps, abcelem.startChar);
         const end = toOriginal(prep.reps, abcelem.endChar);
-        els.src.focus();
-        els.src.setSelectionRange(start, Math.max(start + 1, end));
+        const parts = splitElement(current.abc, start, end);
+        selection = { start, end, voice: analysis?.voice ?? 0, ...parts };
+
+        if (els.src) {
+            els.src.setSelectionRange(start, Math.max(start + 1, end));
+        }
+        // A drag is a pitch change; abcjs reports how many staff steps, we rewrite the note.
+        if (drag && drag.step) {
+            applyTranspose(drag.step);
+            return;
+        }
+        // Clicking the chord symbol edits the harmony, not the note it is attached to.
+        if (analysis?.clickedName === 'chord' || (!parts.token && parts.chord)) {
+            openChordMenu(ev, abcelem);
+            return;
+        }
+        if (parts.token) openNoteMenu(ev);
+    }
+
+    function applyTranspose(steps) {
+        const t = selection?.token;
+        if (!t || t.isRest) { notice('Rests have no pitch to move', 'yellow'); return; }
+        const text = transposeToken(t, steps);
+        if (text === null) return;
+        edit(replaceRange(current.abc, t.start, t.end, text));
+    }
+
+    // ===== chords =====
+
+    const CHORD_QUALITIES = ['', 'maj7', 'maj9', '6', '7', '9', '13', 'm', 'm7', 'm9', 'm11', 'sus4', 'dim', 'aug'];
+
+    function openChordMenu(ev, abcelem) {
+        const existing = selection?.chord?.name || abcelem?.chord?.[0]?.name || '';
+        const rootMatch = /^([A-G][#b]?)(.*)$/.exec(existing);
+        const root = rootMatch ? rootMatch[1] : 'C';
+        const bass = /\/[A-G][#b]?$/.exec(existing)?.[0] || '';
+        const items = CHORD_QUALITIES.map(q => ({
+            label: `${root}${q}${bass}` + (`${root}${q}${bass}` === existing ? '  •' : ''),
+            action: () => setChord(`${root}${q}${bass}`)
+        }));
+        items.push({ label: 'Custom…', action: () => {
+            const v = prompt('Chord symbol:', existing);
+            if (v !== null) setChord(v.trim());
+        } });
+        if (existing) items.push({ label: 'Remove chord', action: () => setChord('') });
+        if (cb.showMenu) cb.showMenu(ev, items);
+    }
+
+    /** Write a chord onto the selected element, replacing or inserting the quoted span before its note. */
+    function setChord(name) {
+        if (!selection) return;
+        const { chord, token } = selection;
+        if (chord) {
+            const text = name ? `"${name}"` : '';
+            edit(replaceRange(current.abc, chord.start, chord.end, text));
+        }
+        else if (name && token) {
+            edit(replaceRange(current.abc, token.start, token.start, `"${name}"`));
+        }
+    }
+
+    // ===== notes =====
+
+    function openNoteMenu(ev) {
+        const t = selection?.token;
+        if (!t) return;
+        const items = [];
+        if (!t.isRest) {
+            items.push({ label: 'Up a step', action: () => applyTranspose(1) });
+            items.push({ label: 'Down a step', action: () => applyTranspose(-1) });
+            items.push({ label: 'Up an octave', action: () => applyTranspose(7) });
+            items.push({ label: 'Down an octave', action: () => applyTranspose(-7) });
+            items.push({ label: 'Sharp', action: () => setAccidental('^') });
+            items.push({ label: 'Flat', action: () => setAccidental('_') });
+            items.push({ label: 'Natural', action: () => setAccidental('=') });
+            if (t.accidental) items.push({ label: 'Clear accidental', action: () => setAccidental('') });
+            items.push({ label: t.tie ? 'Untie from next' : 'Tie to next', action: toggleTie });
+            items.push({ label: 'Turn into a rest', action: () => setRest(true) });
+        }
+        else if (t.letter !== 'Z') {
+            items.push({ label: 'Turn into a note', action: () => setRest(false) });
+        }
+        if (t.count >= 2) items.push({ label: 'Split in two', action: splitNote });
+        items.push({ label: 'Merge with next', action: mergeWithNext });
+        if (cb.showMenu) cb.showMenu(ev, items);
+    }
+
+    function setAccidental(acc) {
+        const t = selection?.token;
+        if (!t || t.isRest) return;
+        edit(replaceRange(current.abc, t.start, t.end, tokenText(t, { accidental: acc })));
+    }
+
+    /** A tie only means anything between two notes, so it is written on the earlier one. */
+    function toggleTie() {
+        const t = selection?.token;
+        if (!t) return;
+        edit(replaceRange(current.abc, t.start, t.end, tokenText(t, { tie: t.tie ? '' : '-' })));
+    }
+
+    function setRest(toRest) {
+        const t = selection?.token;
+        if (!t) return;
+        const letter = toRest ? 'z' : 'c';
+        edit(replaceRange(current.abc, t.start, t.end,
+            tokenText(t, { letter, marks: toRest ? '' : t.marks, accidental: '', tie: '' })));
+    }
+
+    /** Halve the note and repeat it, so the bar total is unchanged. */
+    function splitNote() {
+        const t = selection?.token;
+        if (!t || t.count < 2) return;
+        const a = Math.ceil(t.count / 2), b = t.count - a;
+        const text = tokenText(t, { count: a, forceCount: true, tie: '' })
+            + tokenText(t, { count: b, forceCount: true });
+        edit(replaceRange(current.abc, t.start, t.end, text));
+    }
+
+    /** Absorb the following note or rest into this one. Total duration is unchanged, so the bar still balances. */
+    function mergeWithNext() {
+        const t = selection?.token;
+        if (!t) return;
+        const rest = current.abc.slice(t.end);
+        const m = /^(\s*)((?:"[^"]*")?)([\^=_]{0,2}[A-Ga-gxz][,']*)(\d*)((?:\/\d*)?)(-?)/.exec(rest);
+        if (!m) { notice('Nothing to merge into — the bar ends here', 'yellow'); return; }
+        const nextCount = m[4] ? parseInt(m[4], 10) : 1;
+        edit(replaceRange(current.abc, t.start, t.end + m[0].length,
+            tokenText(t, { count: t.count + nextCount, forceCount: true, tie: m[6] || '' })));
+    }
+
+    function stripAllChords() {
+        if (!current?.abc.trim()) return;
+        if (!hasChords(current.abc)) { notice('This score has no chord symbols', 'yellow'); return; }
+        edit(stripChords(current.abc));
+        notice('Chords stripped — this score now renders in Melody mode', 'green');
     }
 
     // ===== actions =====
@@ -728,9 +1000,11 @@ const AudioDawScore = (() => {
     }
 
     return {
-        render, onSelection, loadScore,
-        // exported for the DAW and for later phases
+        render, onSelection, loadScore, undo, redo,
+        // exported for the DAW, for tests, and for later phases
         validate, hasChords, stripChords, modeForScore, prepareForEngraving, toOriginal,
-        parseHeader, scanBody, countBars, chunkBlocks
+        parseHeader, scanBody, countBars, chunkBlocks,
+        splitElement, transposeToken, pitchIndex, pitchToken, tokenText,
+        _state: () => ({ abc: current?.abc || '', selection, undoDepth: history.undo.length })
     };
 })();
