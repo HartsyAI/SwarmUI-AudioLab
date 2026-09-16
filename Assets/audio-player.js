@@ -246,17 +246,17 @@ const AudioLabPlayer = (() => {
         });
         ws.on('timeupdate', (currentTime) => {
             const currentEl = el?.querySelector('.alp-current');
-            if (currentEl) currentEl.textContent = formatTime(currentTime);
+            if (currentEl) currentEl.textContent = durationStringifyColons(currentTime);
             fire(state, 'timeupdate', currentTime);
         });
         ws.on('decode', (duration) => {
             const durationEl = el?.querySelector('.alp-duration');
-            if (durationEl) durationEl.textContent = formatTime(duration);
+            if (durationEl) durationEl.textContent = durationStringifyColons(duration);
             fire(state, 'decode', duration);
         });
         ws.on('ready', (duration) => {
             const durationEl = el?.querySelector('.alp-duration');
-            if (durationEl) durationEl.textContent = formatTime(duration);
+            if (durationEl) durationEl.textContent = durationStringifyColons(duration);
             fire(state, 'ready', duration);
         });
     }
@@ -266,12 +266,6 @@ const AudioLabPlayer = (() => {
         if (cbs) cbs.forEach(cb => cb(...args));
     }
 
-    function formatTime(seconds) {
-        if (!seconds || !isFinite(seconds)) return '0:00';
-        const m = Math.floor(seconds / 60);
-        const s = Math.floor(seconds % 60);
-        return `${m}:${s.toString().padStart(2, '0')}`;
-    }
 
     /**
      * Build the public API object for a player instance.

@@ -11,6 +11,9 @@
 const AudioDaw = (() => {
     'use strict';
 
+    /** MM:SS with one decimal, via core's shared formatter (which also rolls over past an hour). */
+    const durationStringifyColons2 = (seconds) => durationStringifyColons(seconds, 1);
+
     const MAX_UNDO = 30;
 
     // ===== DAW STATE =====
@@ -745,7 +748,7 @@ const AudioDaw = (() => {
                 nameEl.title = clip.name;
                 clipCard.appendChild(nameEl);
                 const metaEl = createDiv(null, 'daw-clip-card-meta');
-                metaEl.textContent = `${track.name} · ${formatTimePrecise(clip.duration)}s · starts at ${formatTimePrecise(clip.startTime)}s`;
+                metaEl.textContent = `${track.name} · ${durationStringifyColons2(clip.duration)}s · starts at ${durationStringifyColons2(clip.startTime)}s`;
                 clipCard.appendChild(metaEl);
                 const waveHolder = createDiv(null, 'daw-clip-card-wave');
                 clipCard.appendChild(waveHolder);
@@ -1161,7 +1164,7 @@ const AudioDaw = (() => {
             for (const { clip, track } of allClips) {
                 const opt = document.createElement('option');
                 opt.value = clip.id;
-                const dur = formatTimePrecise(clip.duration - clip.offset - clip.trimEnd);
+                const dur = durationStringifyColons2(clip.duration - clip.offset - clip.trimEnd);
                 opt.textContent = `${track.name}: ${clip.name} (${dur}s)`;
                 srcSelect.appendChild(opt);
             }
@@ -2684,8 +2687,8 @@ const AudioDaw = (() => {
 
     function updateTimeDisplay() {
         if (!timeDisplayEl) return;
-        const current = formatTimePrecise(state.currentTime);
-        const total = formatTimePrecise(state.totalDuration);
+        const current = durationStringifyColons2(state.currentTime);
+        const total = durationStringifyColons2(state.totalDuration);
         timeDisplayEl.textContent = `${current} / ${total}`;
         const beatsEl = transportEl?.querySelector('.daw-lcd-beats');
         if (beatsEl) {
@@ -4789,14 +4792,6 @@ const AudioDaw = (() => {
         } catch {
             return 'Audio Clip';
         }
-    }
-
-    function formatTimePrecise(seconds) {
-        if (!seconds || !isFinite(seconds) || seconds < 0) return '0:00.0';
-        const m = Math.floor(seconds / 60);
-        const s = Math.floor(seconds % 60);
-        const ms = Math.floor((seconds % 1) * 10);
-        return `${m}:${s.toString().padStart(2, '0')}.${ms}`;
     }
 
     function resetState() {
