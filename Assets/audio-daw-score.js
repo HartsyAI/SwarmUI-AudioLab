@@ -623,6 +623,8 @@ const AudioDawScore = (() => {
         els.modeNote = createDiv(null, 'daw-stems-desc');
         parent.appendChild(els.modeNote);
 
+        buildLlmCard(parent);
+
         const help = createDiv(null, 'daw-stems-desc');
         help.textContent = 'Click a chord symbol to reharmonise, a note to edit it, or drag a note up and down '
             + 'to change its pitch. Play auditions the plan in the browser — instrument samples are fetched '
@@ -1269,6 +1271,288 @@ const AudioDawScore = (() => {
             console.error('[AudioDawScore] MIDI export failed:', e);
             notice('Could not build a MIDI file from this score', 'red');
         }
+    }
+
+    // ===== LLM editing (through the LLMAssistant extension) =====
+
+    const LLM_PRESETS = [
+        ['Reharmonise — jazz', 'Reharmonise with extended jazz voicings: major and minor ninths, dominant thirteenths, and a few tasteful substitutions.'],
+        ['Reharmonise — modern', 'Reharmonise with modern harmony: chromatic bass movement, brief tonicisations and a tritone substitution or two.'],
+        ['Reharmonise — simpler', 'Simplify the harmony to plain triads and sevenths that a small band could play.'],
+        ['Add a bridge', 'Add an eight-bar bridge before the final chorus that departs from the home key and returns to it.'],
+        ['Make the Ins answer the vocal', 'Where the vocal rests, give the instrumental voice a short answering phrase drawn from the vocal melody.'],
+        ['Lift the last chorus', 'Raise the energy of the final chorus: a fuller instrumental line and a more emphatic harmony.']
+    ];
+    const LLM_INVARIANTS = [
+        ['exact', 'Keep every pitch and rhythm exactly'],
+        ['pitch', 'Keep the pitches, rhythm may move'],
+        ['contour', 'Keep the melodic shape only'],
+        ['free', 'Adapt the melody within reason']
+    ];
+
+    function buildLlmCard(parent) {
+        const card = createDiv(null, 'daw-fx-card');
+        const head = createDiv(null, 'daw-fx-card-head');
+        const title = createSpan(null, 'daw-fx-card-title');
+        title.textContent = 'Edit with an LLM';
+        head.appendChild(title);
+        card.appendChild(head);
+        els.llmBody = createDiv(null, 'daw-score-llm');
+        card.appendChild(els.llmBody);
+        parent.appendChild(card);
+        renderLlmUnavailable('Checking…');
+        probeLlm();
+    }
+
+    function renderLlmUnavailable(message, link) {
+        els.llmBody.innerHTML = '';
+        const note = createDiv(null, 'daw-stems-desc');
+        note.textContent = message;
+        els.llmBody.appendChild(note);
+        if (link) {
+            const a = document.createElement('a');
+            a.href = link;
+            a.target = '_blank';
+            a.rel = 'noopener';
+            a.textContent = 'SwarmUI-LLMAssistant on GitHub';
+            a.className = 'daw-stems-desc';
+            els.llmBody.appendChild(a);
+        }
+    }
+
+    const LLM_MISSING = 'Swarm does not have native LLM support. Install the LLMAssistant extension to edit '
+        + 'scores with an LLM.';
+
+    async function probeLlm() {
+        let available = false;
+        try {
+            const r = await AudioLabAPI.callAPI('AudioLabScoreCapabilities', {});
+            available = !!r?.llm_available;
+        }
+        catch (_) { available = false; }
+        if (!available) {
+            renderLlmUnavailable(LLM_MISSING, 'https://github.com/HartsyAI/SwarmUI-LLMAssistant');
+            return;
+        }
+        // The endpoint refuses an empty model, so the list has to be in hand before the card is usable.
+        let models = [];
+        try {
+            models = await new Promise((resolve) => genericRequest('LLMAssistantGetModels', {},
+                (d) => resolve(d?.models || []), 0, () => resolve([])));
+        }
+        catch (_) { models = []; }
+        if (!models.length) {
+            renderLlmUnavailable('LLMAssistant is installed but has no LLM model available. Add a .gguf to '
+                + 'Models/llm, or configure a remote provider in its settings.');
+            return;
+        }
+        buildLlmControls(models);
+    }
+
+    function buildLlmControls(models) {
+        const body = els.llmBody;
+        body.innerHTML = '';
+
+        const presetRow = createDiv(null, 'daw-fx-browser');
+        for (const [label, text] of LLM_PRESETS) {
+            const chip = createDiv(null, 'daw-fx-pick daw-score-chip');
+            const n = createSpan(null, 'daw-fx-pick-name');
+            n.textContent = label;
+            chip.appendChild(n);
+            chip.addEventListener('click', () => { els.llmPrompt.value = text; els.llmPrompt.focus(); });
+            presetRow.appendChild(chip);
+        }
+        body.appendChild(presetRow);
+
+        els.llmPrompt = document.createElement('textarea');
+        els.llmPrompt.className = 'daw-generate-text';
+        els.llmPrompt.rows = 2;
+        els.llmPrompt.placeholder = 'What should change? Pick a preset above or describe it.';
+        body.appendChild(els.llmPrompt);
+
+        const row = createDiv(null, 'daw-stems-action-row');
+        const scopeWrap = createDiv(null, 'daw-score-field');
+        const scopeLbl = createSpan(null, 'daw-stems-ctl-label');
+        scopeLbl.textContent = 'Scope';
+        els.llmScope = document.createElement('select');
+        els.llmScope.className = 'daw-fx-select';
+        for (const [v, l] of [['whole', 'Whole score'], ['chords', 'Chords only'], ['section', 'One section']]) {
+            const o = document.createElement('option'); o.value = v; o.textContent = l;
+            els.llmScope.appendChild(o);
+        }
+        scopeWrap.appendChild(scopeLbl); scopeWrap.appendChild(els.llmScope);
+        row.appendChild(scopeWrap);
+
+        const keepWrap = createDiv(null, 'daw-score-field');
+        const keepLbl = createSpan(null, 'daw-stems-ctl-label');
+        keepLbl.textContent = 'Keep';
+        els.llmKeep = document.createElement('select');
+        els.llmKeep.className = 'daw-fx-select';
+        for (const [v, l] of LLM_INVARIANTS) {
+            const o = document.createElement('option'); o.value = v; o.textContent = l;
+            els.llmKeep.appendChild(o);
+        }
+        els.llmKeep.value = 'exact';
+        keepWrap.appendChild(keepLbl); keepWrap.appendChild(els.llmKeep);
+        row.appendChild(keepWrap);
+
+        const modelWrap = createDiv(null, 'daw-score-field');
+        const modelLbl = createSpan(null, 'daw-stems-ctl-label');
+        modelLbl.textContent = 'Model';
+        els.llmModel = document.createElement('select');
+        els.llmModel.className = 'daw-fx-select';
+        for (const m of models) {
+            const o = document.createElement('option');
+            o.value = m.id;
+            o.textContent = m.name || m.title || m.id;
+            els.llmModel.appendChild(o);
+        }
+        modelWrap.appendChild(modelLbl); modelWrap.appendChild(els.llmModel);
+        row.appendChild(modelWrap);
+
+        els.llmRun = button(row, 'Rewrite', 'basic-button btn-sm btn-primary daw-stems-go', runLlmEdit);
+        body.appendChild(row);
+
+        els.llmStatus = createDiv(null, 'daw-stems-desc daw-score-llm-status');
+        body.appendChild(els.llmStatus);
+    }
+
+    /** The dialect rules the model has to honour. No double braces anywhere — LLMAssistant substitutes those. */
+    function llmInstruction(keep, scope) {
+        const keepText = {
+            exact: 'Do not change any pitch or rhythm in either voice.',
+            pitch: 'Keep every pitch; rhythm may be adjusted.',
+            contour: 'Keep the melodic shape; individual pitches and rhythms may change.',
+            free: 'You may adapt the melody, but it must stay recognisable.'
+        }[keep] || '';
+        const scopeText = {
+            whole: 'You may edit the whole score.',
+            chords: 'Change ONLY the quoted chord symbols. Every note must stay byte-identical.',
+            section: 'Confine the edit to the section the user names; leave the rest untouched.'
+        }[scope] || '';
+        return [
+            'You edit ABC music scores for the YuE2 music model. Reply with the complete edited score and nothing else, inside one ```abc fence.',
+            '',
+            'The dialect is strict:',
+            '- Exactly two voices, with the ids Vocal and Ins. Keep the V: header lines exactly as given.',
+            '- The body alternates V: Vocal and V: Ins blocks. Within each such pair BOTH voices must contain the same number of bars. Zn is an n-bar rest used to pad the silent voice.',
+            '- Every bar must hold exactly the number of L: units the M: meter calls for.',
+            '- Chord symbols are quoted strings attached to the Vocal voice, and may change mid-bar.',
+            '- Section names are % comment lines. Keep them meaningful.',
+            '- Do not add w: lyric lines. Lyrics are supplied separately.',
+            '',
+            scopeText,
+            keepText
+        ].filter(Boolean).join('\n');
+    }
+
+    async function runLlmEdit() {
+        if (!current?.abc.trim()) return;
+        const ask = els.llmPrompt.value.trim();
+        if (!ask) { notice('Say what should change first', 'yellow'); return; }
+        els.llmRun.disabled = true;
+        els.llmStatus.textContent = 'Asking the model…';
+        const instruction = llmInstruction(els.llmKeep.value, els.llmScope.value);
+        try {
+            let reply = await askLlm(instruction, buildLlmInput(ask));
+            let candidate = extractAbc(reply);
+            let issues = candidate ? validate(candidate).filter(i => i.severity === 'error') : [{ message: 'No ```abc block came back.' }];
+            if (issues.length) {
+                // One correction pass: hand back exactly what failed rather than guessing.
+                els.llmStatus.textContent = 'The first attempt was not valid; asking again with the errors…';
+                reply = await askLlm(instruction, buildLlmInput(ask)
+                    + '\n\nA previous attempt was rejected for these reasons. Fix them:\n'
+                    + issues.map(i => `- ${i.message}`).join('\n')
+                    + (candidate ? `\n\nThat attempt was:\n${candidate}` : ''));
+                candidate = extractAbc(reply);
+                issues = candidate ? validate(candidate).filter(i => i.severity === 'error') : [{ message: 'No ```abc block came back.' }];
+            }
+            if (!candidate || issues.length) {
+                els.llmStatus.textContent = 'The model could not produce a valid score: '
+                    + issues.map(i => i.message).join(' ');
+                return;
+            }
+            offerLlmResult(candidate);
+        }
+        catch (e) {
+            els.llmStatus.textContent = llmErrorText(e);
+        }
+        finally {
+            els.llmRun.disabled = false;
+        }
+    }
+
+    function buildLlmInput(ask) {
+        const parts = [`Requested change: ${ask}`];
+        if (els.style.value.trim()) parts.push(`Style prompt: ${els.style.value.trim()}`);
+        if (els.lyrics.value.trim()) parts.push(`Lyrics:\n${els.lyrics.value.trim()}`);
+        parts.push(`Score:\n${current.abc}`);
+        return parts.join('\n\n');
+    }
+
+    function askLlm(instructionText, sampleInput) {
+        return new Promise((resolve, reject) => {
+            genericRequest('LLMAssistantTestInstruction', { instructionText, sampleInput, model: els.llmModel.value },
+                (data) => {
+                    if (data?.success === false) reject(new Error(data.error || 'The LLM refused the request'));
+                    else resolve(data?.response || '');
+                },
+                0,
+                (err) => reject(new Error(String(err || 'The LLM request failed'))));
+        });
+    }
+
+    /** Three different reasons this can fail, and they need three different answers. */
+    function llmErrorText(e) {
+        const msg = String(e?.message || e);
+        if (/bad_route|Unknown API route/i.test(msg)) return LLM_MISSING;
+        if (/bad_permissions|lack permissions/i.test(msg)) {
+            return 'Your account does not have the llm_chat permission, which LLMAssistant requires.';
+        }
+        return msg;
+    }
+
+    function extractAbc(reply) {
+        if (!reply) return null;
+        const fenced = /```(?:abc)?\s*\n([\s\S]*?)```/i.exec(reply);
+        const text = (fenced ? fenced[1] : reply).trim();
+        return /(^|\n)K:/.test(text) ? text : null;
+    }
+
+    /** Never overwrite silently: show what changed and let the user take it or leave it. */
+    function offerLlmResult(candidate) {
+        const d = diffScores(current.abc, candidate);
+        els.llmStatus.innerHTML = '';
+        const summary = createDiv(null, 'daw-stems-clipinfo');
+        summary.innerHTML = `<strong>${d.chords} chord${d.chords === 1 ? '' : 's'}</strong> and `
+            + `<strong>${d.bars} bar${d.bars === 1 ? '' : 's'}</strong> changed`
+            + (d.headers.length ? `, plus ${escapeHtml(d.headers.join(', '))}` : '')
+            + `. ${d.notesTouched ? 'Notes were edited.' : 'No note was moved.'}`;
+        els.llmStatus.appendChild(summary);
+        const row = createDiv(null, 'daw-stems-action-row');
+        button(row, 'Apply', 'basic-button btn-sm btn-primary', () => {
+            edit(candidate);
+            els.llmStatus.textContent = 'Applied. Undo puts the previous score back.';
+        });
+        button(row, 'Discard', 'basic-button btn-sm', () => { els.llmStatus.textContent = 'Discarded.'; });
+        els.llmStatus.appendChild(row);
+    }
+
+    /** A chord-level diff, because chord-only rewrites are the common case and the one worth confirming. */
+    function diffScores(a, b) {
+        const chordsA = chordSpans(a).map(c => c.name);
+        const chordsB = chordSpans(b).map(c => c.name);
+        let chords = Math.abs(chordsA.length - chordsB.length);
+        for (let i = 0; i < Math.min(chordsA.length, chordsB.length); i++) if (chordsA[i] !== chordsB[i]) chords++;
+        // Normalise incidental whitespace: a reply is trimmed on arrival, and a lost trailing newline must not
+        // read as "notes were edited" on an edit that only touched chords.
+        const stripped = (s) => s.split('\n').map(l => l.replace(/"[^"]*"/g, '').trimEnd()).join('\n').trim();
+        const barsA = stripped(a).split('|'), barsB = stripped(b).split('|');
+        let bars = Math.abs(barsA.length - barsB.length);
+        for (let i = 0; i < Math.min(barsA.length, barsB.length); i++) if (barsA[i] !== barsB[i]) bars++;
+        const ha = parseHeader(a), hb = parseHeader(b);
+        const headers = ['M', 'L', 'K', 'Q'].filter(k => ha[k] !== hb[k]).map(k => `${k}:`);
+        return { chords, bars, headers, notesTouched: stripped(a) !== stripped(b) };
     }
 
     function stripAllChords() {

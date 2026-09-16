@@ -66,6 +66,7 @@ public static class AudioLabAPI
             API.RegisterAPICall(AudioLabLoadProject, false, AudioLabPermissions.PermDawProjects);
             API.RegisterAPICall(AudioLabListProjects, false, AudioLabPermissions.PermDawProjects);
             API.RegisterAPICall(AudioLabDeleteProject, true, AudioLabPermissions.PermDawProjects);
+            API.RegisterAPICall(AudioLabScoreCapabilities, false, AudioLabPermissions.PermDawProjects);
         }
         catch (Exception ex)
         {
@@ -766,6 +767,24 @@ public static class AudioLabAPI
         {
             return AudioLab.CreateErrorResponse("Failed to check installation status", "status_error", ex);
         }
+    }
+
+    /// <summary>Reports whether LLM-assisted score editing can run, so the Score tab can offer it or explain
+    /// why it cannot.
+    ///
+    /// <para>Swarm core has no usable LLM API: <c>LLMAPI.cs</c> exists but <c>Register()</c> is never called and
+    /// both of its endpoints throw, so text generation only exists when the separate LLMAssistant extension is
+    /// installed. Asking the API registry rather than the extension list checks the exact route we intend to
+    /// call, and it is answered per request because extensions initialise in directory order — LLMAssistant may
+    /// not have registered anything yet when AudioLab starts.</para></summary>
+    public static async Task<JObject> AudioLabScoreCapabilities(Session session, JObject input)
+    {
+        await Task.CompletedTask;
+        return new JObject
+        {
+            ["success"] = true,
+            ["llm_available"] = API.APIHandlers.ContainsKey("llmassistanttestinstruction")
+        };
     }
 
     #endregion

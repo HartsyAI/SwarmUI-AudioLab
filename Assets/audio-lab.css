@@ -2351,3 +2351,4 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
     color: var(--text-soft);
     cursor: pointer;
 }
+.daw-score-llm { display: flex; flex-direction: column; gap: 0.4rem; }
