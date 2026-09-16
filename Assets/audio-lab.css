@@ -2321,3 +2321,27 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
 }
 .audiolab-wake-model-row > div:first-child { flex: 1 1 18rem; }
 .audiolab-wake-model-row select { flex: 0 0 auto; width: auto; }
+
+/* ===== Score tab (ABC sheet editor) ===== */
+.daw-score-sheet {
+    overflow: auto;
+    max-height: 17rem;
+    padding: 0.4rem;
+    background: var(--background-soft);
+    border: 1px solid var(--shadow);
+    border-radius: 0.4rem;
+}
+.daw-score-sheet svg { max-width: 100%; }
+/* abcjs engraves black-on-paper, so on a dark theme the whole drawing is inverted rather than recoloured
+   element by element. Swarm swaps theme FILES rather than setting an attribute, so the class is applied from
+   JS after reading --background. */
+.daw-score-sheet.score-invert svg { filter: invert(1) hue-rotate(180deg); }
+.daw-score-sheet .abcjs-note_selected path, .daw-score-sheet .playing-note path { fill: var(--emphasis); }
+.daw-score-src { font-family: var(--font-monospace); font-size: 0.78rem; white-space: pre; overflow-wrap: normal; }
+.daw-score-field { display: flex; align-items: center; gap: 0.3rem; }
+.daw-score-field input { width: 5.5rem; }
+.daw-score-chip { padding: 0.2rem 0.5rem; cursor: pointer; }
+.daw-score-issues { display: flex; flex-direction: column; gap: 0.15rem; }
+.daw-score-err, .daw-score-warn { font-size: 0.78rem; line-height: 1.35; cursor: pointer; }
+.daw-score-err { color: var(--red); }
+.daw-score-warn { color: var(--yellow); }

@@ -612,10 +612,11 @@ const AudioDaw = (() => {
     function buildBottomPanel() {
         if (!bottomPanelEl) return;
         const pane = (id) => bottomPanelEl.querySelector(`.daw-bottom-tab-content[data-tab="${id}"]`);
-        // Beats + Generate are built ONCE per session (not in updateBottomPanel) so
-        // typed prompts and pattern edits survive selection-driven panel refreshes
+        // Beats + Generate + Score are built ONCE per session (not in updateBottomPanel) so
+        // typed prompts, pattern edits and a half-edited score survive selection-driven panel refreshes
         renderBeatsPanel(pane('beats'));
         renderGeneratePanel(pane('generate'));
+        if (typeof AudioDawScore !== 'undefined') AudioDawScore.render(pane('score'), scoreCallbacks());
         updateBottomPanel();
     }
 
@@ -707,6 +708,40 @@ const AudioDaw = (() => {
                     state.currentTime = P;
                     startPlayback();
                 }
+            }
+        };
+    }
+
+    /** What the Score tab is allowed to reach. The DAW IIFE exports only { open, close }, so a sibling module
+     *  gets an explicit surface rather than the closure. */
+    function scoreCallbacks() {
+        return {
+            modelFor: (engineId) => dawSwarmModelFor(engineId),
+            generate: (opts) => dawSwarmGenerate(opts),
+            busy: (label, tabId) => {
+                const busy = createBusyIndicator(label, tabId);
+                bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="score"]')?.appendChild(busy);
+                return busy;
+            },
+            showMenu: (e, items) => dawMenu(e, items),
+            getTransport: () => ({ bpm: state.bpm, timeSignature: state.timeSignature, currentTime: state.currentTime }),
+            /** Land a rendered score as its own track, carrying the score that produced it. */
+            addRenderedScore: async ({ blob, metadata, label, score }) => {
+                pushUndo();
+                const track = addTrack({ name: label || 'Score' });
+                // The engine re-plans nothing when a score is supplied, so the authoritative ABC is the one we
+                // sent; metadata only fills in what the request did not pin (seed, resolved style).
+                const planned = buildClipScoreMeta(metadata, { label }) || { score: {} };
+                const clip = await addClipToTrack(track, blob, {
+                    name: label || 'Score',
+                    startTime: snapTime(state.currentTime),
+                    meta: { score: { ...planned.score, ...score, label, created: Date.now() } }
+                });
+                updateTotalDuration();
+                renderAllTracks();
+                updateBottomPanel();
+                resyncPlayback();
+                return clip;
             }
         };
     }
@@ -928,6 +963,8 @@ const AudioDaw = (() => {
             AudioDawFx.renderFxPanel(fxContent, getSelectedTrack(), fxPanelCallbacks());
         }
 
+        // Selection only — the Score pane itself is built once, so an in-progress edit is never wiped.
+        if (typeof AudioDawScore !== 'undefined') AudioDawScore.onSelection(findClipById(state.selectedClipId));
     }
 
     /** Simple inline mixer fallback when AudioDawMixer module isn't loaded. */

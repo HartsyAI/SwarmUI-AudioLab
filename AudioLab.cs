@@ -62,6 +62,9 @@ public class AudioLab : Extension
             ScriptFiles.Add("Assets/lib/wavesurfer-timeline.min.js");
             ScriptFiles.Add("Assets/lib/wavesurfer-minimap.min.js");
             ScriptFiles.Add("Assets/lib/crunker.min.js");
+            // abcjs (MIT) engraves the ABC scores YuE2 plans. Vendored rather than CDN-loaded so the Score tab
+            // works on an offline install, like every other lib here.
+            ScriptFiles.Add("Assets/lib/abcjs-basic-min.min.js");
             ScriptFiles.Add("Assets/audio-player.js");
             ScriptFiles.Add("Assets/audio-api.js");
             ScriptFiles.Add("Assets/audio-core.js");
@@ -70,6 +73,7 @@ public class AudioLab : Extension
             ScriptFiles.Add("Assets/audio-daw-mixer.js");
             ScriptFiles.Add("Assets/audio-daw-fx.js");
             ScriptFiles.Add("Assets/audio-daw-store.js");
+            ScriptFiles.Add("Assets/audio-daw-score.js");
             ScriptFiles.Add("Assets/audio-daw.js");
             ScriptFiles.Add("Assets/audio-editor.js");
             ScriptFiles.Add("Assets/audio-integration.js");
