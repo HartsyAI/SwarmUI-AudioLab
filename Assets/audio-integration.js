@@ -40,11 +40,13 @@ const AudioLabConfig = {
         moonshine_stt: { category: 'audiolab_stt' },
         realtimestt_stt: { category: 'audiolab_stt' },
         musicgen_music: { category: 'audiolab_audiogen', extraFlags: ['audiocraft_sampling'] },
-        // `text2audio` unlocks core's Text2Audio group (duration/BPM/key/time-sig/language/style), which
-        // BuildEngineArgs already prefers over AudioLab's bespoke equivalents. Only ACE-Step gets it —
-        // every param in that group is meaningful here, which isn't true of the other music providers.
-        acestep_music: { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params', extraFlags: ['acestep_cfg_params', 'acestep_lm_params', 'acestep_task_params', 'music_instrumental_param', 'text2audio'] },
-        acestep_music_turbo: { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params', extraFlags: ['acestep_lm_params', 'acestep_task_params', 'music_instrumental_param', 'text2audio'] },
+        // Keys are model-class ids. The three families core classifies itself use CORE's ids, so core grants
+        // `text2audio` (and `audio_ace_inputs` for ACE-Step) on its own — listing those here would be pointless
+        // anyway, since core pushes them into removeMe for every class it doesn't recognise and removes win.
+        // 'acestep_music_turbo' is ours, registered under core's ace-step-1_5 compat, so it keeps its own
+        // gating while still reporting core's compat class.
+        'ace-step-1_5': { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params', extraFlags: ['acestep_cfg_params', 'acestep_lm_params', 'acestep_task_params', 'music_instrumental_param'] },
+        acestep_music_turbo: { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params', extraFlags: ['acestep_lm_params', 'acestep_task_params', 'music_instrumental_param'] },
         openvoice_clone: { category: 'audiolab_clone' },
         rvc_clone: { category: 'audiolab_clone', providerFlag: 'rvc_clone_params' },
         gptsovits_clone: { category: 'audiolab_clone', providerFlag: 'gptsovits_clone_params' },
@@ -52,9 +54,9 @@ const AudioLabConfig = {
         resemble_enhance_fx: { category: 'audiolab_audioproc', providerFlag: 'resemble_enhance_fx_params' },
         audiogen_sfx: { category: 'audiolab_audiogen', extraFlags: ['audiocraft_sampling'] },
         yue_music: { category: 'audiolab_audiogen', providerFlag: 'yue_music_params' },
-        yue2_music: { category: 'audiolab_audiogen', providerFlag: 'yue2_music_params' },
+        'yue-2': { category: 'audiolab_audiogen', providerFlag: 'yue2_music_params' },
         heartlib_music: { category: 'audiolab_audiogen', providerFlag: 'heartlib_music_params' },
-        minimax_music3: { category: 'audiolab_audiogen', providerFlag: 'minimax_music3_params' },
+        'minimax-music-3': { category: 'audiolab_audiogen', providerFlag: 'minimax_music3_params' },
         stableaudio_music: { category: 'audiolab_audiogen', providerFlag: 'stableaudio_music_params' },
         // API TTS providers
         elevenlabs_tts: { category: 'audiolab_tts', providerFlag: 'elevenlabs_tts_params' },
@@ -84,7 +86,12 @@ const AudioLabConfig = {
         dolby_audioproc: { category: 'audiolab_audioproc', providerFlag: 'dolby_audioproc_params' }
     },
 
-    categoryFlags: ['audiolab_tts', 'audiolab_stt', 'audiolab_audiogen', 'audiolab_clone', 'audiolab_audioproc'],
+    // `audiolab_output` belongs here: the backend advertises it for every non-STT provider, so without it in
+    // the remove list the Audio Output Format params render on image models too.
+    categoryFlags: ['audiolab_tts', 'audiolab_stt', 'audiolab_audiogen', 'audiolab_clone', 'audiolab_audioproc', 'audiolab_output'],
+
+    /** Flags core owns and grants itself. Never add or remove these — core's own grant wins either way. */
+    coreOwnedFlags: ['text2audio', 'audio_ace_inputs'],
 
     /** Core image params to hide when an audio model is selected. */
     coreParamsToHide: [
@@ -194,9 +201,9 @@ featureSetChangers.push(() => {
     }
 
     if (!isAudioModel) {
-        // `text2audio` is a CORE flag that core itself grants to native ace-step-1_5 models. Removes are
-        // applied after adds, so listing it here would undo core's own grant — leave it to core.
-        return [[], AudioLabConfig.allAudioFlags.filter(f => f != 'text2audio')];
+        // Only ever add/remove flags AudioLab owns. Removes are applied after adds, so returning a core flag
+        // here would undo core's own grant of it.
+        return [[], AudioLabConfig.allAudioFlags.filter(f => !AudioLabConfig.coreOwnedFlags.includes(f))];
     }
 
     const config = AudioLabConfig.archToCategory[curArch];
@@ -204,6 +211,10 @@ featureSetChangers.push(() => {
     const activeSet = new Set([config.category, ...activeExtraFlags]);
     if (config.providerFlag) {
         activeSet.add(config.providerFlag);
+    }
+    // Mirrors DynamicAudioBackend: every non-STT provider advertises the output-format flag.
+    if (config.category != 'audiolab_stt') {
+        activeSet.add('audiolab_output');
     }
     const otherAudioFlags = AudioLabConfig.allAudioFlags.filter(f => !activeSet.has(f));
     const removeFlags = [...AudioLabConfig.incompatibleFlags, ...otherAudioFlags];

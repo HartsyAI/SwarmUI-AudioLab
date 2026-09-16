@@ -79,6 +79,9 @@ public class AudioLab : Extension
             // Before core's first RefreshAllModelSets, so Models/audio is in the very first scan.
             AudioModelTypeRegistration.Register();
 
+            // Before anything reads a sidecar, so artifacts stamped under our old class ids still classify.
+            AudioModelFactory.RegisterLegacyClassRemaps();
+
             // Register T2I parameters for audio workflows (TTS, STT, Music, Clone, FX, SFX)
             AudioLabParams.RegisterAll();
             Logs.Info("[AudioLab] Registered audio T2I parameters");

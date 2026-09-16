@@ -15,7 +15,7 @@ public sealed class AceStepProvider : IAudioProviderSource
         .WithName("ACE-Step Music")
         .WithCategory(AudioCategory.AudioGeneration)
         .WithModelPrefix("AceStep")
-        .WithModelClass("acestep_music", "ACE-Step Music")
+        .WithModelClass("ace-step-1_5", "Ace Step 1.5")
         .AddFeatureFlag("audiolab_audiogen")
         .AddFeatureFlag("acestep_music_params")
         .AddFeatureFlag("acestep_lm_params")
