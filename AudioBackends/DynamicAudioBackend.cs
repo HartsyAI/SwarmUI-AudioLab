@@ -225,8 +225,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
         public override string[] Names => _options.Value.Names;
     }
 
+    /// <summary>Feature flag carrying the audio output-format params. Every non-STT provider advertises it.</summary>
+    public const string OutputFlag = "audiolab_output";
+
     /// <summary>Maps AudioCategory enum to category-level feature flag names.</summary>
-    private static readonly Dictionary<AudioCategory, string> CategoryFlags = new()
+    public static readonly Dictionary<AudioCategory, string> CategoryFlags = new()
     {
         [AudioCategory.TTS] = "audiolab_tts",
         [AudioCategory.STT] = "audiolab_stt",
@@ -408,7 +411,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 }
                 if (definition.Category != AudioCategory.STT)
                 {
-                    _supportedFeatureSet.TryAdd("audiolab_output", 0);
+                    _supportedFeatureSet.TryAdd(OutputFlag, 0);
                 }
                 foreach (string flag in definition.FeatureFlags)
                 {
@@ -1640,7 +1643,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
             }
             if (meta.Definition.Category != AudioCategory.STT)
             {
-                _supportedFeatureSet.TryAdd("audiolab_output", 0);
+                _supportedFeatureSet.TryAdd(OutputFlag, 0);
             }
             foreach (string flag in meta.Definition.FeatureFlags)
             {

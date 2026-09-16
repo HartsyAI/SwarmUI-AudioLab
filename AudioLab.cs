@@ -161,28 +161,26 @@ public class AudioLab : Extension
         }
     }
 
-    /// <summary>Registers all feature flags that should be disregarded for audio backends.
-    /// Mirrors the pattern from SwarmUI-API-Backends RegisterFeatureFlags().</summary>
+    /// <summary>Marks AudioLab's own feature flags as UI-visibility-only, so they never gate backend selection.
+    ///
+    /// <para>Only flags this extension owns belong here. <see cref="T2IEngine.DisregardedFeatureFlags"/> is
+    /// process-global and core consults it to decide whether a backend may be filtered out for lacking a feature
+    /// a request needs — so adding a CORE flag here disables that check for every generation in the process,
+    /// image ones included. This used to also add the image-only list ("controlnet", "refiners", "freeu",
+    /// "ipadapter", ...), which meant a ControlNet request would happily route to a backend that cannot do
+    /// ControlNet. Hiding image params on an audio model is the JS layer's job (see audio-integration.js), not
+    /// this set's.</para></summary>
     private static void RegisterFeatureFlags()
     {
-        // Category-level flags (one per AudioCategory)
-        string[] categoryFlags = ["audiolab_tts", "audiolab_stt", "audiolab_audiogen", "audiolab_clone", "audiolab_audioproc"];
+        // Category-level flags (one per AudioCategory), plus the output-format flag the backend advertises.
+        string[] categoryFlags = [.. DynamicAudioBackend.CategoryFlags.Values, DynamicAudioBackend.OutputFlag];
 
         // Per-provider flags from each provider's FeatureFlags list
         string[] providerFlags = AudioProviderRegistry.All
             .SelectMany(p => p.FeatureFlags).Distinct().ToArray();
 
-        // Image-only features incompatible with audio models
-        string[] incompatibleFlags = [
-            "sampling", "zero_negative", "refiners", "controlnet", "variation_seed",
-            "video", "autowebui", "comfyui", "frameinterps", "ipadapter", "sdxl",
-            "dynamic_thresholding", "cascade", "sd3", "flux-dev", "seamless",
-            "freeu", "teacache", "text2video", "yolov8", "aitemplate", "sdcpp"
-        ];
-
         foreach (string flag in categoryFlags) T2IEngine.DisregardedFeatureFlags.Add(flag);
         foreach (string flag in providerFlags) T2IEngine.DisregardedFeatureFlags.Add(flag);
-        foreach (string flag in incompatibleFlags) T2IEngine.DisregardedFeatureFlags.Add(flag);
     }
 
     /// <summary>Creates a standardized error response for API endpoints.</summary>
