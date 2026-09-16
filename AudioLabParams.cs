@@ -396,8 +396,6 @@ public static class AudioLabParams
 
     #region Music — ACE-Step Core (flag: acestep_music_params)
 
-    /// <summary>Song lyrics for ACE-Step generation. Feature flag: <c>acestep_music_params</c>.</summary>
-    public static T2IRegisteredParam<string> Lyrics;
     /// <summary>Diffusion inference step count for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<int> InferStep;
     /// <summary>Classifier-free guidance strength for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
@@ -406,14 +404,6 @@ public static class AudioLabParams
     public static T2IRegisteredParam<string> Instrumental;
     /// <summary>Style/genre tags for cloud music providers (Suno, Udio). Feature flag: <c>music_style_params</c>.</summary>
     public static T2IRegisteredParam<string> MusicStyle;
-    /// <summary>Beats per minute for ACE-Step music. Feature flag: <c>acestep_music_params</c>.</summary>
-    public static T2IRegisteredParam<int> BPM;
-    /// <summary>Musical key and scale for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
-    public static T2IRegisteredParam<string> KeyScale;
-    /// <summary>Musical time signature for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
-    public static T2IRegisteredParam<string> TimeSignature;
-    /// <summary>Vocal language for ACE-Step music. Feature flag: <c>acestep_music_params</c>.</summary>
-    public static T2IRegisteredParam<string> VocalLanguage;
     /// <summary>Noise schedule shift factor for ACE-Step. Feature flag: <c>acestep_music_params</c>.</summary>
     public static T2IRegisteredParam<double> ACEShift;
     /// <summary>ODE solver method for ACE-Step diffusion. Feature flag: <c>acestep_music_params</c>.</summary>
@@ -506,8 +496,6 @@ public static class AudioLabParams
 
     #region Music — YuE2 (flag: yue2_music_params)
 
-    /// <summary>Song lyrics with [verse]/[chorus] section markers for YuE2. Feature flag: <c>yue2_music_params</c>.</summary>
-    public static T2IRegisteredParam<string> Yue2Lyrics;
     /// <summary>How much of a score YuE2 plans before rendering audio. Feature flag: <c>yue2_music_params</c>.</summary>
     public static T2IRegisteredParam<string> Yue2PlanningMode;
     /// <summary>An ABC score rendered verbatim instead of a planned one. Feature flag: <c>yue2_music_params</c>.</summary>
@@ -558,8 +546,6 @@ public static class AudioLabParams
 
     #region Music — MiniMax Music 3 (flag: minimax_music3_params)
 
-    /// <summary>Song lyrics with section tags for MiniMax Music 3. Feature flag: <c>minimax_music3_params</c>.</summary>
-    public static T2IRegisteredParam<string> MiniMaxMusic3Lyrics;
     /// <summary>Flow-matching guidance strength. Feature flag: <c>minimax_music3_params</c>.</summary>
     public static T2IRegisteredParam<double> MiniMaxMusic3CFGScale;
     /// <summary>Flow-matching Euler steps per window. Feature flag: <c>minimax_music3_params</c>.</summary>
@@ -632,8 +618,25 @@ public static class AudioLabParams
     #endregion
 
     /// <summary>Registers all AudioLab parameters. Called from <see cref="AudioLab.OnInit"/>.</summary>
+    /// <summary>Points saved workflows at the core params that replaced our duplicates.
+    ///
+    /// <para>Only 1:1 replacements belong here. The retired lyrics params (ACE-Step "Lyrics", YuE2 "Song Lyrics",
+    /// "MiniMax Music 3 Lyrics") are deliberately NOT remapped: the convention also flipped, so an old preset has
+    /// its lyrics in one param and its style in Prompt, and the new one wants them the other way round. A remap
+    /// table cannot swap two values, and pointing lyrics at Prompt would collide with the style already there —
+    /// producing a plausible-looking song with the wrong words. Better to let those presets fail visibly.</para></summary>
+    private static void RegisterRemaps()
+    {
+        T2IParamTypes.ParameterRemaps["bpm"] = "textaudiobpm";
+        T2IParamTypes.ParameterRemaps["keyscale"] = "textaudiokeyscale";
+        T2IParamTypes.ParameterRemaps["timesignature"] = "textaudiotimesignature";
+        T2IParamTypes.ParameterRemaps["vocallanguage"] = "textaudiolanguage";
+    }
+
     public static void RegisterAll()
     {
+        RegisterRemaps();
+
         #region Groups
         TTSGroup = new("TTS", Open: true, OrderPriority: -28, Toggles: false,
             Description: "Text-to-speech parameters. Enter text in the Prompt box above.");
@@ -1613,19 +1616,6 @@ public static class AudioLabParams
         #endregion
 
         #region Music — ACE-Step Core
-        Lyrics = T2IParamTypes.Register<string>(new("Lyrics",
-            "Song lyrics for ACE-Step. Put one section tag on its own line, then that section's lines under it:\n"
-            + "  [verse] [chorus] [bridge] [intro] [outro]\n"
-            + "Use [Instrumental] (or leave empty) for an instrumental-only track.\n\n"
-            + "GENRE / STYLE goes in the main Prompt box (NOT here), as COMMA-separated tags:\n"
-            + "genre, mood, instruments, vocals, tempo. Example:\n"
-            + "  pop, electronic, upbeat, female vocals, catchy melody, 120 bpm\n\n"
-            + "EXAMPLE lyrics:\n  [Verse]\n  first verse lines\n  [Chorus]\n  the hook",
-            "[Instrumental]",
-            ViewType: ParamViewType.PROMPT,
-            OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
-
-
         InferStep = T2IParamTypes.Register<int>(new("Infer Steps",
             "Denoising steps. 0 uses the checkpoint default.\nUpstream guidance: turbo 1-20 (8 recommended), base 1-200 (32-64 recommended).",
             "0",
@@ -1653,61 +1643,6 @@ public static class AudioLabParams
             "",
             ViewType: ParamViewType.PROMPT,
             OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "music_style_params"));
-
-        BPM = T2IParamTypes.Register<int>(new("BPM",
-            "Beats per minute (30-300).\n0 = auto-detect via the LM planner, matching upstream\'s default of none.",
-            "0",
-            Min: 0, Max: 300, Step: 1, ViewType: ParamViewType.SLIDER,
-            OrderPriority: -4, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
-
-        KeyScale = T2IParamTypes.Register<string>(new("Key / Scale",
-            "Musical key and scale.\nLeave empty for auto-detection.",
-            "",
-            GetValues: _ => [
-                "///Auto",
-                "C major///C Major", "C minor///C Minor",
-                "C# major///C# Major", "C# minor///C# Minor",
-                "D major///D Major", "D minor///D Minor",
-                "Eb major///Eb Major", "Eb minor///Eb Minor",
-                "E major///E Major", "E minor///E Minor",
-                "F major///F Major", "F minor///F Minor",
-                "F# major///F# Major", "F# minor///F# Minor",
-                "G major///G Major", "G minor///G Minor",
-                "Ab major///Ab Major", "Ab minor///Ab Minor",
-                "A major///A Major", "A minor///A Minor",
-                "Bb major///Bb Major", "Bb minor///Bb Minor",
-                "B major///B Major", "B minor///B Minor"
-            ],
-            OrderPriority: -3, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
-
-        TimeSignature = T2IParamTypes.Register<string>(new("Time Signature",
-            "Musical time signature (beats per measure).",
-            "4",
-            GetValues: _ => [
-                "4///4/4 (Common Time)", "3///3/4 (Waltz)", "2///2/4 (March)", "6///6/8 (Compound)"
-            ],
-            OrderPriority: -2, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
-
-        VocalLanguage = T2IParamTypes.Register<string>(new("Vocal Language",
-            "Language for generated vocals.\nUpstream defaults to auto-detect, letting the LM infer it from the lyrics.",
-            "unknown",
-            GetValues: _ => [
-                "unknown///Auto-detect", 
-                "en///English", "zh///Chinese", "es///Spanish", "fr///French",
-                "de///German", "ja///Japanese", "ko///Korean", "pt///Portuguese",
-                "ru///Russian", "it///Italian", "ar///Arabic", "tr///Turkish",
-                "nl///Dutch", "pl///Polish", "sv///Swedish", "da///Danish",
-                "fi///Finnish", "no///Norwegian", "id///Indonesian", "vi///Vietnamese",
-                "th///Thai", "ms///Malay", "ro///Romanian", "cs///Czech",
-                "el///Greek", "hu///Hungarian", "uk///Ukrainian", "bg///Bulgarian",
-                "hr///Croatian", "sk///Slovak", "sl///Slovenian", "sr///Serbian",
-                "lt///Lithuanian", "lv///Latvian", "et///Estonian", "mk///Macedonian",
-                "sq///Albanian", "bs///Bosnian", "gl///Galician", "ka///Georgian",
-                "eu///Basque", "cy///Welsh", "ga///Irish", "mt///Maltese",
-                "is///Icelandic", "az///Azerbaijani", "kk///Kazakh", "uz///Uzbek",
-                "tg///Tajik", "mn///Mongolian"
-            ],
-            OrderPriority: -1, Group: AudioGenGroup, FeatureFlag: "acestep_music_params"));
 
         ACEShift = T2IParamTypes.Register<double>(new("Shift",
             "Timestep shift factor (documented range 1.0-5.0, default 1.0). 0 uses the checkpoint default.\nUpstream recommends 3.0 for turbo checkpoints, and it is NOT auto-corrected.",
@@ -1928,15 +1863,6 @@ public static class AudioLabParams
         // Display names deliberately avoid a "YuE2" prefix: T2IParamTypes.CleanTypeName keeps only a-z, so the
         // digit is stripped and "YuE2 Lyrics" would collide with v1's "YuE Lyrics" and throw at registration.
         // Naming them for the two passes instead is both collision-free and clearer about what each knob drives.
-        Yue2Lyrics = T2IParamTypes.Register<string>(new("Song Lyrics",
-            "Lyrics for YuE2. Put one section tag on its own line, then that section's lines under it:\n"
-            + "  [verse] [chorus] [bridge] [intro] [outro]\n\n"
-            + "STYLE / GENRE tags go in the main Prompt box (NOT here), comma-separated:\n"
-            + "  upbeat indie pop, bright acoustic guitar, female vocals, 120 bpm",
-            "",
-            ViewType: ParamViewType.PROMPT,
-            OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "yue2_music_params"));
-
         Yue2PlanningMode = T2IParamTypes.Register<string>(new("Score Planning Mode",
             "How much of a score YuE2 writes before it renders any audio.\n"
             + "Full plans melody and chords, melody plans the tune alone, off skips straight to audio.",
@@ -2081,29 +2007,6 @@ public static class AudioLabParams
         #endregion
 
         #region Music — MiniMax Music 3
-        MiniMaxMusic3Lyrics = T2IParamTypes.Register<string>(new("MiniMax Music 3 Lyrics",
-            "Song lyrics for MiniMax Music 3.\n\n"
-            + "SECTION TAGS:\n"
-            + "  [Intro] [Verse] [Pre-Chorus] [Chorus] [Post-Chorus] [Bridge] [Instrumental] [Solo] [Outro]\n"
-            + "  Each tag must be on its OWN line. Text sharing a line with a leading tag is DISCARDED by the\n"
-            + "  model's input contract, so '[Verse] first line' loses 'first line' entirely.\n"
-            + "  Repeat tags for multiple sections; do not number them.\n\n"
-            + "THE MUSIC DESCRIPTION goes in the main Prompt box, not here. For the best results use the\n"
-            + "  Structured Caption the model card recommends, in three sections, in this order:\n"
-            + "    Global Metadata: genre, bpm, key, scale, emotional progression, production profile\n"
-            + "    Vocal Details: gender, timbre, performance style, harmonies, vocal FX\n"
-            + "    Arrangement: primary/secondary instruments, groove, textures, spatial FX\n"
-            + "  A plain one-line description works too, with less control.\n\n"
-            + "AUTOMATIC: a leading [start] is added for you and every tag is lowercased, so do not type either.",
-            "",
-            Examples: [
-                "[verse]\nMorning light filtering through the pine\n[chorus]\nSoftly the world begins to breathe",
-                "[intro]\n[verse]\nI counted every streetlight on the way\n[pre-chorus]\nAnd none of them were yours\n[chorus]\nSo I drove until the radio gave out\n[bridge]\nThe map said turn around\n[outro]\nI did not turn around",
-                "[instrumental]\n[solo]\n[outro]",
-            ],
-            ViewType: ParamViewType.PROMPT,
-            OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "minimax_music3_params"));
-
         MiniMaxMusic3CFGScale = T2IParamTypes.Register<double>(new("MiniMax Music 3 CFG Scale",
             "Flow-matching guidance strength.\nThe reference recipe uses 1.7; the autoregressive stage's own guidance is fixed at 1.5.",
             "1.7",

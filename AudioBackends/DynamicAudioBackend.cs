@@ -2170,11 +2170,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "acestep_music":
-                // ACE-Step semantics: the main Prompt is the style/genre, the dedicated Lyrics param is the lyrics.
-                // The engine's music handler maps genre→style and prompt→lyrics, so route them accordingly here
-                // (overriding the category-level args["prompt"] = main prompt set above).
-                args["genre"] = input.Get(T2IParamTypes.Prompt, "");
-                args["prompt"] = input.TryGet(AudioLabParams.Lyrics, out string ly) ? ly : "[Instrumental]";
+                // Core's convention, which the engine already speaks: the main Prompt carries the LYRICS and
+                // Text2Audio Style carries the style/genre. MusicRequest calls those Prompt and Genre, so the
+                // mapping is direct. (This overrides the category-level args["prompt"] set above.)
+                args["genre"] = input.Get(T2IParamTypes.Text2AudioStyle, "");
+                string aceLyrics = input.Get(T2IParamTypes.Prompt, "");
+                args["prompt"] = string.IsNullOrWhiteSpace(aceLyrics) ? "[Instrumental]" : aceLyrics;
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long aceSeed) ? aceSeed : -1L;
                 args["infer_step"] = input.TryGet(AudioLabParams.InferStep, out int infStep) ? infStep : 0;   // 0 = model default
                 // turbo* variants are distilled for no-CFG sampling, so the 7.0 default actively degrades them.
@@ -2183,19 +2184,20 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     || modelDef?.Id?.StartsWith("xl-turbo", StringComparison.OrdinalIgnoreCase) == true;
                 args["guidance_scale"] = input.TryGet(AudioLabParams.ACEGuidanceScale, out double aceGuide) ? aceGuide : (aceIsTurbo ? 1.0 : 7.0);
                 args["instrumental"] = input.TryGet(AudioLabParams.Instrumental, out string aceInst) ? aceInst : "false";
-                // Prefer the CORE Swarm audio params (what Swarm users expect + the HartsyInference ACE-Step path
-                // reads); fall back to AudioLab's own params for existing AudioLab-UI workflows.
-                int aceBpmVal = input.TryGet(T2IParamTypes.Text2AudioBPM, out long coreBpm) ? (int)coreBpm
-                    : input.TryGet(AudioLabParams.BPM, out int aceBpm) ? aceBpm : 0;
-                // 0 = omit so the LM auto-detects, matching upstream's default of none.
-                if (aceBpmVal > 0) args["bpm"] = aceBpmVal;
-                string keyScale = input.TryGet(T2IParamTypes.Text2AudioKeyScale, out string coreKey) && !string.IsNullOrEmpty(coreKey) ? coreKey
-                    : input.TryGet(AudioLabParams.KeyScale, out string aceKey) ? aceKey : null;
-                if (!string.IsNullOrEmpty(keyScale)) args["key_scale"] = keyScale;
-                args["time_signature"] = input.TryGet(T2IParamTypes.Text2AudioTimeSignature, out string coreTs) && !string.IsNullOrEmpty(coreTs) ? coreTs
-                    : input.TryGet(AudioLabParams.TimeSignature, out string aceTs) ? aceTs : "4";
-                args["vocal_language"] = input.TryGet(T2IParamTypes.Text2AudioLanguage, out string coreLang) && !string.IsNullOrEmpty(coreLang) ? coreLang
-                    : input.TryGet(AudioLabParams.VocalLanguage, out string aceVl) ? aceVl : "unknown";
+                // Core owns these four outright now (flag "text2audio,audio_ace_inputs", granted to the
+                // ace-step-1_5 compat class this provider reports). They are toggleable, so an untouched panel
+                // leaves them absent and the engine keeps its own defaults.
+                if (input.TryGet(T2IParamTypes.Text2AudioBPM, out long coreBpm) && coreBpm > 0)
+                {
+                    // 0 = omit so the LM auto-detects, matching upstream's default of none.
+                    args["bpm"] = (int)coreBpm;
+                }
+                if (input.TryGet(T2IParamTypes.Text2AudioKeyScale, out string coreKey) && !string.IsNullOrEmpty(coreKey))
+                {
+                    args["key_scale"] = coreKey;
+                }
+                args["time_signature"] = input.TryGet(T2IParamTypes.Text2AudioTimeSignature, out string coreTs) && !string.IsNullOrEmpty(coreTs) ? coreTs : "4";
+                args["vocal_language"] = input.TryGet(T2IParamTypes.Text2AudioLanguage, out string coreLang) && !string.IsNullOrEmpty(coreLang) ? coreLang : "unknown";
                 // 0 = let the model decide; the shift1/shift3 checkpoints are trained at those exact values,
                 // so name them explicitly rather than relying on the engine to infer from the checkpoint.
                 double aceShiftDefault = modelDef?.Id switch
@@ -2252,11 +2254,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "yue2_music":
-                // Same split as v1 and ACE-Step: the main Prompt is style/genre tags, the dedicated Lyrics param
-                // is the lyrics. Every knob below is written only when the user actually set it, so an untouched
-                // panel leaves the engine on its own release defaults rather than on this file's guesses.
-                args["genre"] = input.Get(T2IParamTypes.Prompt, "");
-                args["prompt"] = input.TryGet(AudioLabParams.Yue2Lyrics, out string y2Lyrics) ? y2Lyrics : "";
+                // Core's convention: the main Prompt carries the lyrics, Text2Audio Style carries the style tags.
+                // Every knob below is written only when the user actually set it, so an untouched panel leaves the
+                // engine on its own release defaults rather than on this file's guesses.
+                args["genre"] = input.Get(T2IParamTypes.Text2AudioStyle, "");
+                args["prompt"] = input.Get(T2IParamTypes.Prompt, "");
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long y2Seed) ? y2Seed : -1L;
                 if (input.TryGet(AudioLabParams.Yue2PlanningMode, out string y2Cot) && !string.IsNullOrWhiteSpace(y2Cot))
                     args["yue2_cot"] = y2Cot;
@@ -2295,11 +2297,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "minimax_music3":
-                // Same split ACE-Step and HeartMuLa use, and the one the engine's MusicRequest already speaks:
-                // the main Prompt carries the music description (genre), the dedicated Lyrics param carries the
-                // words (prompt).
-                args["genre"] = input.Get(T2IParamTypes.Prompt, "");
-                args["prompt"] = input.TryGet(AudioLabParams.MiniMaxMusic3Lyrics, out string mmLy) ? mmLy : "";
+                // Core's convention, and the one the engine's MusicRequest already speaks: the main Prompt
+                // carries the words (prompt), Text2Audio Style carries the music description (genre).
+                args["genre"] = input.Get(T2IParamTypes.Text2AudioStyle, "");
+                args["prompt"] = input.Get(T2IParamTypes.Prompt, "");
                 args["cfg_scale"] = input.TryGet(AudioLabParams.MiniMaxMusic3CFGScale, out double mmCfg) ? mmCfg : 1.7;
                 args["infer_step"] = input.TryGet(AudioLabParams.MiniMaxMusic3Steps, out int mmSteps) ? mmSteps : 30;
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long mmSeed) ? mmSeed : -1L;

@@ -1633,7 +1633,12 @@ const AudioDaw = (() => {
                     if (refTextInput.value.trim()) params.referencetext = refTextInput.value.trim();
                 }
             } else {
-                if (lyricsArea?.value.trim()) params.lyrics = lyricsArea.value.trim();
+                // Core's convention: Prompt carries the lyrics, Text2Audio Style carries the style.
+                // The style box is the main one here, so it moves to text2audiostyle and the lyrics box
+                // becomes the prompt (see dawSwarmGenerate below, which sends promptText as the prompt).
+                if (isMusicCat) {
+                    params.text2audiostyle = promptText;
+                }
                 params.text2audioduration = Math.max(1, parseFloat(durationInput.value) || (isMusicCat ? 20 : 3));
                 const seed = parseInt(seedInput.value);
                 if (!isNaN(seed) && seed >= 0) params.seed = seed;
@@ -1651,7 +1656,7 @@ const AudioDaw = (() => {
             try {
                 const { blob } = await dawSwarmGenerate({
                     model: modelDef.swarm_model,
-                    prompt: promptText,
+                    prompt: isMusicCat ? (lyricsArea?.value.trim() || '') : promptText,
                     params,
                     onProgress: (frac) => busy.setProgress(frac)
                 });
@@ -4026,12 +4031,15 @@ const AudioDaw = (() => {
     }
 
     function paletteEngineFor(type) {
-        if (type === 'sfx') return { engineId: 'audiogen_sfx', params: (dur, seed) => ({ text2audioduration: dur, seed }) };
+        if (type === 'sfx') return { engineId: 'audiogen_sfx', usesPrompt: true, params: (dur, seed) => ({ text2audioduration: dur, seed }) };
         // loops/music: ACE-Step with tempo/time-signature hints from the transport
         return {
             engineId: 'acestep_music',
-            params: (dur, seed) => ({
+            // The palette prompt describes a loop, not lyrics — so it is the STYLE. Prompt stays empty, which
+            // ACE-Step reads as instrumental, which is what a palette loop should be.
+            params: (dur, seed, prompt) => ({
                 text2audioduration: dur, seed,
+                text2audiostyle: prompt || '',
                 text2audiobpm: state.bpm,
                 text2audiotimesignature: state.timeSignature.join('/')
             })
@@ -4052,7 +4060,7 @@ const AudioDaw = (() => {
         const jobs = [];
         for (let i = 0; i < count; i++) {
             const seed = Math.floor(Math.random() * 1e9);
-            jobs.push(dawSwarmGenerate({ model, prompt, params: eng.params(duration, seed) })
+            jobs.push(dawSwarmGenerate({ model, prompt: eng.usesPrompt ? prompt : '', params: eng.params(duration, seed, prompt) })
                 .then(({ blob }) => ({ blob, seed }))
                 .catch(err => { console.error('[AudioDaw] Palette generation failed:', err); return null; }));
         }
