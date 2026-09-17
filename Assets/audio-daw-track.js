@@ -439,6 +439,7 @@ const AudioDawTrack = (() => {
         let dragStartTime = 0;
         let isDragging = false;
         let dragTargetLane = null;
+        let outsideDrop = false;
 
         clipEl.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
@@ -447,6 +448,7 @@ const AudioDawTrack = (() => {
             dragStartY = e.clientY;
             dragStartTime = clip.startTime;
             dragTargetLane = null;
+            outsideDrop = false;
             clipEl.setPointerCapture(e.pointerId);
 
             // Edge auto-scroll: dragging against the viewport edge scrolls the
@@ -499,6 +501,9 @@ const AudioDawTrack = (() => {
                     if (edgeDir && !edgeRaf) edgeRaf = requestAnimationFrame(edgeTick);
                 }
 
+                // A pane below the timeline can claim the drag instead (the Score sheet reads what it is given).
+                outsideDrop = callbacks.onClipDragOver ? !!callbacks.onClipDragOver(me.clientX, me.clientY) : false;
+
                 // Vertical: detect target track lane for cross-track drag
                 const lanes = document.querySelectorAll('.daw-track-lane');
                 dragTargetLane = null;
@@ -524,8 +529,16 @@ const AudioDawTrack = (() => {
                 clipEl.removeEventListener('pointerup', onUp);
                 clipEl.classList.remove('dragging');
                 document.querySelectorAll('.daw-track-lane').forEach(l => l.classList.remove('daw-drop-target'));
+                if (callbacks.onClipDragOver) callbacks.onClipDragOver(-1, -1);
 
                 if (isDragging) {
+                    // Dropped off the timeline: the clip was read, not moved, so it goes back where it was.
+                    if (outsideDrop && callbacks.onClipDropOutside
+                        && callbacks.onClipDropOutside(clip, track, ue.clientX, ue.clientY)) {
+                        clip.startTime = dragStartTime;
+                        applyClipLayout(clipEl, clip);
+                        return;
+                    }
                     // Check for cross-track move
                     if (dragTargetLane && dragTargetLane !== track.laneEl) {
                         const targetTrackId = dragTargetLane.dataset.trackId;

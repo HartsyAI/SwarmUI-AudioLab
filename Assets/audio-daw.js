@@ -772,6 +772,17 @@ const AudioDaw = (() => {
                 if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
                 updateLaneGrid();
             },
+            /** A recording dropped on the Score sheet lands as a track like any other import. */
+            importClip: async (file) => {
+                pushUndo();
+                const track = addTrack({ name: file.name.replace(/\.[^.]+$/, '') });
+                const clip = await addClipToTrack(track, file, { name: file.name });
+                updateTotalDuration();
+                renderAllTracks();
+                updateBottomPanel();
+                resyncPlayback();
+                return { clip, track };
+            },
             selectClip: (clipId) => {
                 const found = findClipById(clipId);
                 if (!found) return;
@@ -2112,6 +2123,10 @@ const AudioDaw = (() => {
             onClipContext: (e, clip, track) => {
                 showClipContextMenu(e, clip, track);
             },
+            /** The Score sheet takes a clip dropped on it; its own drag is a pointer gesture, not HTML5 dnd. */
+            onClipDragOver: (x, y) => typeof AudioDawScore !== 'undefined' && AudioDawScore.clipDragOver(x, y),
+            onClipDropOutside: (clip, track, x, y) =>
+                typeof AudioDawScore !== 'undefined' && AudioDawScore.clipDropped(clip, x, y),
             onClipCrossTrack: (clip, srcTrack, targetTrackId) => {
                 const targetTrack = state.tracks.find(t => t.id === targetTrackId);
                 if (!targetTrack) return;

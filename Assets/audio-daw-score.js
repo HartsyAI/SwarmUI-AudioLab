@@ -40,7 +40,10 @@ const AudioDawScore = (() => {
     let soundFontUrl = null;
     let dragSection = null; // index of the section chip being dragged
 
+    // Tagging a chip drag keeps it and the sheet's own file drop from answering each other.
     const SECTION_MIME = 'application/x-audiolab-section';
+    const SCORE_FILE = /\.(abc|txt)$/i;
+    const AUDIO_FILE = /\.(wav|mp3|flac|ogg|m4a)$/i;
 
     // ===== ABC reading =====
 
@@ -522,6 +525,7 @@ const AudioDawScore = (() => {
         els.sheet = createDiv(null, 'daw-score-sheet');
         els.sheet.tabIndex = 0;   // so the staff can take keyboard focus without stealing the DAW's shortcuts
         els.sheet.addEventListener('keydown', onSheetKey);
+        setupSheetDrop(els.sheet);
         card.appendChild(els.sheet);
         parent.appendChild(card);
     }
@@ -915,6 +919,9 @@ const AudioDawScore = (() => {
                 : 'Select a clip with audio on the timeline first.',
             () => transcribeSelection('clip'));
         host.appendChild(row);
+        const hint = createDiv(null, 'daw-stems-desc');
+        hint.textContent = 'Or drop a clip, an .abc file or a recording onto this sheet.';
+        host.appendChild(hint);
     }
 
     /** Disabled says why in the card itself: a title on a disabled button is unreadable in some browsers. */
@@ -936,6 +943,76 @@ const AudioDawScore = (() => {
     /** The start screen names the live selection, so it is redrawn whenever that can have moved. */
     function refreshStartScreen() {
         if (els.sheet && !current?.abc.trim()) renderStartScreen(els.sheet);
+    }
+
+    // ===== drops onto the sheet =====
+
+    function setupSheetDrop(sheet) {
+        const mine = (e) => !e.dataTransfer || !e.dataTransfer.types.includes(SECTION_MIME);
+        sheet.addEventListener('dragover', (e) => {
+            if (!mine(e)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+            sheet.classList.add('daw-drop-target');
+        });
+        sheet.addEventListener('dragleave', (e) => {
+            if (!sheet.contains(e.relatedTarget)) sheet.classList.remove('daw-drop-target');
+        });
+        sheet.addEventListener('drop', (e) => {
+            if (!mine(e)) return;
+            e.preventDefault();
+            sheet.classList.remove('daw-drop-target');
+            const file = e.dataTransfer.files?.[0];
+            if (file) dropFile(file, { clientX: e.clientX, clientY: e.clientY });
+            else notice('Drop a clip, an .abc file or a recording', 'yellow');
+        });
+    }
+
+    async function dropFile(file, at) {
+        if (SCORE_FILE.test(file.name)) {
+            const text = await file.text();
+            // The same gate the paste path relies on: no K: and abcjs has nothing to engrave.
+            if (!/^\s*K:/m.test(text)) { notice(`${file.name} does not read as an ABC score`, 'yellow'); return; }
+            loadScore(text, { source: 'file', label: file.name.replace(/\.[^.]+$/, '').slice(0, 32) });
+            notice(`${file.name} loaded`, 'green');
+            return;
+        }
+        if (!AUDIO_FILE.test(file.name)) { notice(`The score sheet has no use for ${file.name}`, 'yellow'); return; }
+        if (!cb.importClip) return;
+        const added = await cb.importClip(file);
+        if (added?.clip) offerTranscribe(added.clip, at);
+    }
+
+    /** A recording that just arrived has one thing this tab can do with it, so it asks rather than assumes. */
+    function offerTranscribe(clip, at) {
+        if (cb.selectClip) cb.selectClip(clip.id);
+        if (!cb.showMenu) return;
+        cb.showMenu(at, [
+            { label: `Transcribe ${clip.name}`, action: () => runTranscribe({ clip, stem: false }, 'full', 'clip') },
+            { label: 'Leave it on the timeline', action: () => {} }
+        ]);
+    }
+
+    /** The DAW moves a clip with a pointer gesture, not HTML5 dnd, so the sheet is offered the pointer instead. */
+    function clipDragOver(x, y) {
+        if (!els.sheet) return false;
+        const r = els.sheet.getBoundingClientRect();
+        const over = r.width > 0 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+        els.sheet.classList.toggle('daw-drop-target', over);
+        return over;
+    }
+
+    function clipDropped(clip, x, y) {
+        if (!clipDragOver(x, y)) return false;
+        els.sheet.classList.remove('daw-drop-target');
+        const score = clip?.meta?.score;
+        if (score) {
+            loadScore(score.abc, { ...score, clipId: clip.id });
+            notice(`Score loaded from ${clip.name}`, 'green');
+        }
+        else if (clip?.blob) offerTranscribe(clip, { clientX: x, clientY: y });
+        else notice(`${clip?.name || 'That clip'} has neither a score nor audio`, 'yellow');
+        return true;
     }
 
     /**
@@ -2558,7 +2635,9 @@ const AudioDawScore = (() => {
         transcribeSelection, coverClip, showRendering, applyToProject,
         // exported for the DAW, for tests, and for later phases
         // the instrument contract: write into the score, and the grid and key to quantize against
-        insertNotes, getKey, getGrid, barAtTime, moveSection,
+        insertNotes, getKey, getGrid, barAtTime,
+        // the DAW hands a dragged clip to the sheet, since its clip drag is pointer-based
+        clipDragOver, clipDropped, moveSection,
         validate, hasChords, stripChords, modeForScore, prepareForEngraving, toOriginal,
         parseHeader, scanBody, countBars, chunkBlocks,
         splitElement, transposeToken, pitchIndex, pitchToken, tokenText,
