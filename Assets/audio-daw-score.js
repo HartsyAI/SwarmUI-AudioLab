@@ -621,14 +621,14 @@ const AudioDawScore = (() => {
 
         // Header fields — each edit rewrites the ABC header, so the text stays the single source of truth.
         const hdrRow = createDiv(null, 'daw-stems-action-row');
-        els.key = labelledInput(hdrRow, 'Key', 'daw-generate-reftext', v => applyEdit(setHeaderField(current.abc, 'K', v)));
-        els.meter = labelledInput(hdrRow, 'Meter', 'daw-generate-reftext', v => applyEdit(setHeaderField(current.abc, 'M', v)));
+        els.key = labelledInput(hdrRow, 'Key', 'daw-generate-reftext', v => applyEdit(setHeaderField(current.abc, 'K', v)), 'daw_score_key');
+        els.meter = labelledInput(hdrRow, 'Meter', 'daw-generate-reftext', v => applyEdit(setHeaderField(current.abc, 'M', v)), 'daw_score_meter');
         els.tempo = labelledInput(hdrRow, 'Tempo', 'daw-generate-reftext', v => {
             const bpm = parseFloat(v);
             if (!isFinite(bpm) || bpm <= 0) { syncControls(); return; }
             applyEdit(setHeaderField(current.abc, 'Q', `1/4=${Math.round(bpm)}`));
-        });
-        els.unit = labelledInput(hdrRow, 'Unit', 'daw-generate-reftext', null);
+        }, 'daw_score_tempo');
+        els.unit = labelledInput(hdrRow, 'Unit', 'daw-generate-reftext', null, 'daw_score_unit');
         els.unit.readOnly = true;
         els.unit.title = 'Unit note length (L:). The grid every duration is measured in.';
         button(hdrRow, 'Apply to project', 'basic-button btn-sm', applyToProject)
@@ -638,24 +638,24 @@ const AudioDawScore = (() => {
         els.sections = createDiv(null, 'daw-fx-browser');
         parent.appendChild(els.sections);
 
-        parent.appendChild(fieldLabel('Style'));
-        els.style = document.createElement('textarea');
+        parent.appendChild(fieldLabel('Style', 'daw_score_style_label'));
+        els.style = labelField(document.createElement('textarea'), 'daw_score_style_label');
         els.style.className = 'daw-generate-text';
         els.style.rows = 2;
         els.style.placeholder = 'Genre, instruments, mood — what the recording should sound like.';
         parent.appendChild(els.style);
 
-        parent.appendChild(fieldLabel('Lyrics'));
-        els.lyrics = document.createElement('textarea');
+        parent.appendChild(fieldLabel('Lyrics', 'daw_score_lyrics_label'));
+        els.lyrics = labelField(document.createElement('textarea'), 'daw_score_lyrics_label');
         els.lyrics.className = 'daw-generate-text';
         els.lyrics.rows = 3;
         els.lyrics.placeholder = '[Verse]\nThe words to sing. Leave empty for an instrumental.';
         parent.appendChild(els.lyrics);
 
         // Numbered notation: how the YuE2 researchers dictated a melody correction ("1155665 / 4433221").
-        parent.appendChild(fieldLabel('Melody by degree'));
+        parent.appendChild(fieldLabel('Melody by degree', 'daw_score_degree_label'));
         const numRow = createDiv(null, 'daw-stems-action-row');
-        els.numbers = document.createElement('input');
+        els.numbers = labelField(document.createElement('input'), 'daw_score_degree_label');
         els.numbers.type = 'text';
         els.numbers.className = 'daw-generate-reftext';
         els.numbers.placeholder = '1155665 / 4433221';
@@ -663,6 +663,7 @@ const AudioDawScore = (() => {
         numRow.appendChild(els.numbers);
         els.numberOctave = document.createElement('select');
         els.numberOctave.className = 'daw-fx-select';
+        els.numberOctave.setAttribute('aria-label', 'Octave the degrees are written in');
         for (const [v, l] of [['0', 'Low'], ['1', 'Mid'], ['2', 'High']]) {
             const o = document.createElement('option');
             o.value = v; o.textContent = l;
@@ -673,8 +674,8 @@ const AudioDawScore = (() => {
         button(numRow, 'Write bars', 'basic-button btn-sm', insertNumbered);
         parent.appendChild(numRow);
 
-        parent.appendChild(fieldLabel('ABC score'));
-        els.src = document.createElement('textarea');
+        parent.appendChild(fieldLabel('ABC score', 'daw_score_src_label'));
+        els.src = labelField(document.createElement('textarea'), 'daw_score_src_label');
         els.src.className = 'daw-generate-text daw-score-src';
         els.src.rows = 8;
         els.src.spellcheck = false;
@@ -693,6 +694,8 @@ const AudioDawScore = (() => {
         parent.appendChild(els.src);
 
         els.issues = createDiv(null, 'daw-score-issues');
+        els.issues.setAttribute('role', 'status');
+        els.issues.setAttribute('aria-live', 'polite');
         parent.appendChild(els.issues);
 
         const actions = createDiv(null, 'daw-stems-action-row');
@@ -740,19 +743,27 @@ const AudioDawScore = (() => {
         parent.appendChild(help);
     }
 
-    function fieldLabel(text) {
-        const l = createDiv(null, 'daw-stems-ctl-label');
+    function fieldLabel(text, id) {
+        const l = createDiv(id || null, 'daw-stems-ctl-label');
         l.textContent = text;
         return l;
     }
 
-    function labelledInput(row, label, cls, onCommit) {
+    /** Name a field by the label div above it, without moving either in the DOM. */
+    function labelField(field, labelId) {
+        field.setAttribute('aria-labelledby', labelId);
+        return field;
+    }
+
+    function labelledInput(row, label, cls, onCommit, id) {
         const wrap = createDiv(null, 'daw-score-field');
-        const l = createSpan(null, 'daw-stems-ctl-label');
+        const l = document.createElement('label');
+        l.className = 'daw-stems-ctl-label';
         l.textContent = label;
         const input = document.createElement('input');
         input.type = 'text';
         input.className = cls;
+        if (id) { input.id = id; l.htmlFor = id; }
         if (onCommit) {
             input.addEventListener('change', () => { if (current?.abc) onCommit(input.value.trim()); });
         }
@@ -776,6 +787,8 @@ const AudioDawScore = (() => {
         b.className = 'daw-fx-mini-btn';
         b.textContent = text;
         b.title = title;
+        // Starts with the visible text, so speaking the label still matches what a voice command would say.
+        b.setAttribute('aria-label', `${text} — ${title}`);
         b.addEventListener('click', onClick);
         return b;
     }
@@ -2501,7 +2514,9 @@ const AudioDawScore = (() => {
         for (const [btn, key] of [[els.melodyView, 'melodyAbc'], [els.fullView, 'fullAbc']]) {
             if (!btn) continue;
             btn.disabled = !both;
-            btn.classList.toggle('active', both && meta[key] === current.abc);
+            const on = both && meta[key] === current.abc;
+            btn.classList.toggle('active', on);
+            btn.setAttribute('aria-pressed', on ? 'true' : 'false');
         }
     }
 
