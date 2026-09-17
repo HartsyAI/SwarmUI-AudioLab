@@ -2217,8 +2217,13 @@ const AudioDawScore = (() => {
      * Read the score off a recording. One decode returns both renderings, so the Melody/Full toggle costs
      * nothing after this; the decode itself is roughly as long as the audio.
      */
-    async function runTranscribe(target, show) {
-        if (!target) { notice('Select a clip to transcribe', 'yellow'); return null; }
+    async function runTranscribe(target, show, which) {
+        if (!target) {
+            notice(which === 'stem' && selectedClip?.clip?.blob
+                ? 'No vocal stem for this clip yet — separate it in the Stems tab first'
+                : 'Select a clip to transcribe', 'yellow');
+            return null;
+        }
         transcribing = true;
         syncTranscribeButtons();
         const busy = cb.busy ? cb.busy(`Transcribing ${target.clip.name}…`, 'score') : null;
@@ -2235,6 +2240,10 @@ const AudioDawScore = (() => {
                 windowCount: result.window_count,
                 truncated: result.truncated,
                 clipId: target.clip.id,
+                // A transcription that refuses leaves the previous score in place, so the score alone cannot
+                // say whether it is the one just asked for.
+                at: Date.now(),
+                stem: !!target.stem,
                 sourceName: target.stem ? `vocal stem of ${target.of}` : target.clip.name,
                 source: 'transcribed',
                 parent: null,
@@ -2264,7 +2273,7 @@ const AudioDawScore = (() => {
     }
 
     function transcribeSelection(which) {
-        return runTranscribe(transcribeTarget(which), 'full');
+        return runTranscribe(transcribeTarget(which), 'full', which);
     }
 
     /** A cover is the transcribed melody in a new style. Render derives the mode from the chord content, so
