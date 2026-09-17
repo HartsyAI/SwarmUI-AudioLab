@@ -2128,7 +2128,9 @@ const AudioDawScore = (() => {
         const abc = current.abc;
         const mode = modeForScore(abc);
         const lyrics = els.lyrics.value.trim();
-        const parent = current.meta?.clipId || selectedClip?.clip?.id || null;
+        // Only the clip a score was LOADED from is its parent. Falling back to the selection would parent a
+        // drafted score under whatever was clicked last — including a click in the Versions panel.
+        const parent = current.meta?.clipId ?? null;
 
         els.go.disabled = true;
         els.variantGo.disabled = true;
