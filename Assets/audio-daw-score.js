@@ -643,7 +643,9 @@ const AudioDawScore = (() => {
         els.budget = createDiv(null, 'daw-stems-clipinfo daw-score-budget');
         parent.appendChild(els.budget);
 
+        buildVariantsCard(parent);
         buildLlmCard(parent);
+        buildVersionsCard(parent);
 
         const help = createDiv(null, 'daw-stems-desc');
         help.textContent = 'Click a chord symbol to reharmonise, a note to edit it, or drag a note up and down '
@@ -1577,6 +1579,160 @@ const AudioDawScore = (() => {
         return { chords, bars, headers, notesTouched: stripped(a) !== stripped(b) };
     }
 
+    // ===== versions =====
+
+    // Two picks at a time: the diff is between exactly two scores, and so is an A/B.
+    let picks = [];
+
+    function buildVariantsCard(parent) {
+        const card = createDiv(null, 'daw-fx-card');
+        const head = createDiv(null, 'daw-fx-card-head');
+        const title = createSpan(null, 'daw-fx-card-title');
+        title.textContent = 'Variants';
+        head.appendChild(title);
+        card.appendChild(head);
+        els.variantStyles = document.createElement('textarea');
+        els.variantStyles.className = 'daw-generate-text';
+        els.variantStyles.rows = 3;
+        els.variantStyles.placeholder = 'One style per line — each renders this same score into its own track.\n'
+            + 'Leave empty to vary only the seed.';
+        card.appendChild(els.variantStyles);
+        const row = createDiv(null, 'daw-stems-action-row');
+        const wrap = createDiv(null, 'daw-score-field');
+        const lbl = createSpan(null, 'daw-stems-ctl-label');
+        lbl.textContent = 'Seeds';
+        els.variantCount = document.createElement('select');
+        els.variantCount.className = 'daw-fx-select';
+        for (const n of [2, 3, 4]) {
+            const o = document.createElement('option');
+            o.value = String(n); o.textContent = '\u00D7' + n;
+            els.variantCount.appendChild(o);
+        }
+        els.variantCount.value = '3';
+        els.variantCount.title = 'How many takes to render when no style lines are given';
+        wrap.appendChild(lbl);
+        wrap.appendChild(els.variantCount);
+        row.appendChild(wrap);
+        els.variantGo = button(row, 'Render variants', 'basic-button btn-sm daw-stems-go', renderVariants);
+        card.appendChild(row);
+        parent.appendChild(card);
+    }
+
+    function buildVersionsCard(parent) {
+        const card = createDiv(null, 'daw-fx-card');
+        const head = createDiv(null, 'daw-fx-card-head');
+        const title = createSpan(null, 'daw-fx-card-title');
+        title.textContent = 'Versions';
+        head.appendChild(title);
+        const btns = createDiv(null, 'daw-fx-card-btns');
+        btns.appendChild(miniButton('Unsolo', 'Hear every track again', () => { cb.soloOnly?.(null); }));
+        head.appendChild(btns);
+        card.appendChild(head);
+        els.versions = createDiv(null, 'daw-fx-browser');
+        card.appendChild(els.versions);
+        els.versionDiff = createDiv(null, 'daw-stems-clipinfo');
+        card.appendChild(els.versionDiff);
+        els.versionActions = createDiv(null, 'daw-stems-action-row');
+        card.appendChild(els.versionActions);
+        parent.appendChild(card);
+    }
+
+    /** Depth-first over the parent links. A version whose parent is gone is a root of its own. */
+    function versionTree(entries) {
+        const byId = new Map(entries.map(e => [e.clip.id, e]));
+        const children = new Map();
+        const roots = [];
+        for (const e of entries) {
+            const parent = e.clip.meta.score.parent;
+            if (parent && byId.has(parent) && parent !== e.clip.id) {
+                if (!children.has(parent)) children.set(parent, []);
+                children.get(parent).push(e);
+            }
+            else roots.push(e);
+        }
+        const out = [];
+        const walk = (e, depth) => {
+            out.push({ entry: e, depth });
+            for (const c of children.get(e.clip.id) || []) walk(c, depth + 1);
+        };
+        for (const r of roots) walk(r, 0);
+        return out;
+    }
+
+    function renderVersions() {
+        if (!els.versions) return;
+        const entries = cb.listScoreClips ? cb.listScoreClips() : [];
+        const live = new Set(entries.map(e => e.clip.id));
+        picks = picks.filter(id => live.has(id));
+        els.versions.innerHTML = '';
+        if (!entries.length) {
+            const empty = createDiv(null, 'daw-stems-clipinfo');
+            empty.textContent = 'No scored clips yet. Render a score and every take lands here as a version.';
+            els.versions.appendChild(empty);
+        }
+        for (const { entry, depth } of versionTree(entries)) {
+            const { clip, track } = entry;
+            const score = clip.meta.score;
+            const pick = createDiv(null, 'daw-fx-pick daw-score-ver' + (picks.includes(clip.id) ? ' selected' : ''));
+            pick.style.marginLeft = `${depth * 0.9}rem`;
+            const name = createSpan(null, 'daw-fx-pick-name');
+            name.textContent = score.label || clip.name || 'Version';
+            pick.appendChild(name);
+            const meta = createDiv(null, 'daw-clip-card-meta');
+            const bits = [score.source || 'rendered', track.name];
+            if (score.seed !== null && score.seed !== undefined) bits.push(`seed ${score.seed}`);
+            if (score.style) bits.push(score.style.slice(0, 40));
+            meta.textContent = bits.join(' · ');
+            pick.appendChild(meta);
+            pick.title = 'Click to pick for comparison — two picks show the diff and let you A/B them';
+            pick.addEventListener('click', () => togglePick(clip.id));
+            els.versions.appendChild(pick);
+        }
+        renderVersionCompare(entries);
+    }
+
+    function togglePick(clipId) {
+        const at = picks.indexOf(clipId);
+        if (at >= 0) picks.splice(at, 1);
+        else {
+            picks.push(clipId);
+            if (picks.length > 2) picks.shift();
+        }
+        cb.selectClip?.(clipId);
+        renderVersions();
+    }
+
+    function renderVersionCompare(entries) {
+        els.versionDiff.textContent = '';
+        els.versionActions.innerHTML = '';
+        const chosen = picks.map(id => entries.find(e => e.clip.id === id)).filter(Boolean);
+        if (chosen.length !== 2) {
+            if (chosen.length === 1) {
+                button(els.versionActions, 'Load', 'basic-button btn-sm', () => loadVersion(chosen[0]));
+                button(els.versionActions, 'Solo', 'basic-button btn-sm', () => cb.soloOnly?.(chosen[0].track.id));
+            }
+            return;
+        }
+        const [a, b] = chosen;
+        const d = diffScores(a.clip.meta.score.abc, b.clip.meta.score.abc);
+        const parts = [];
+        parts.push(d.chords ? `${d.chords} chord symbol${d.chords === 1 ? '' : 's'} differ` : 'same chord symbols');
+        parts.push(d.bars ? `${d.bars} bar${d.bars === 1 ? '' : 's'} added or removed` : 'same bar count');
+        parts.push(d.notesTouched ? 'the notes moved' : 'every note is identical');
+        if (d.headers.length) parts.push(`${d.headers.join(' ')} changed`);
+        els.versionDiff.innerHTML = `<strong>${escapeHtml(a.clip.meta.score.label || a.clip.name)}</strong> vs `
+            + `<strong>${escapeHtml(b.clip.meta.score.label || b.clip.name)}</strong>: ${escapeHtml(parts.join(' · '))}.`;
+        button(els.versionActions, 'Solo A', 'basic-button btn-sm', () => cb.soloOnly?.(a.track.id));
+        button(els.versionActions, 'Solo B', 'basic-button btn-sm', () => cb.soloOnly?.(b.track.id));
+        button(els.versionActions, 'Load A', 'basic-button btn-sm', () => loadVersion(a));
+        button(els.versionActions, 'Load B', 'basic-button btn-sm', () => loadVersion(b));
+    }
+
+    function loadVersion(entry) {
+        loadScore(entry.clip.meta.score.abc, { ...entry.clip.meta.score, clipId: entry.clip.id });
+        notice('Score loaded', 'green');
+    }
+
     // ===== drafting =====
 
     /** Seconds as m:ss, for a budget a musician reads rather than counts. */
@@ -1656,6 +1812,8 @@ const AudioDawScore = (() => {
     function onSelection(sel) {
         selectedClip = sel || null;
         if (!els.clipInfo) return;
+        // Called from every updateBottomPanel, so adds, deletes and undo all redraw the tree for free.
+        renderVersions();
         const score = selectedClip?.clip?.meta?.score;
         els.load.disabled = !score;
         if (!selectedClip) {
@@ -1675,7 +1833,9 @@ const AudioDawScore = (() => {
     function loadFromSelectedClip() {
         const score = selectedClip?.clip?.meta?.score;
         if (!score) { notice('That clip has no score attached', 'yellow'); return; }
-        loadScore(score.abc, score);
+        // Pin the clip this came from: without it a render parents itself to whatever is selected at the time,
+        // so comparing two versions before rendering would rewrite the tree's edges.
+        loadScore(score.abc, { ...score, clipId: selectedClip.clip.id });
         notice('Score loaded', 'green');
     }
 
@@ -1691,49 +1851,90 @@ const AudioDawScore = (() => {
         setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     }
 
-    async function renderScore() {
+    /**
+     * Render one score under n sets of words. Every job sends the SAME ABC, so the takes differ only in what
+     * was asked around it — which is the only way an A/B between them says anything about the score.
+     */
+    async function runRenders(jobs) {
         if (!current?.abc.trim() || els.go.disabled) return;
         const model = cb.modelFor ? cb.modelFor('yue2_music') : null;
         if (!model) { notice('No YuE2 model is installed — install one from the Generate tab', 'yellow'); return; }
 
         const abc = current.abc;
         const mode = modeForScore(abc);
-        const style = els.style.value.trim();
         const lyrics = els.lyrics.value.trim();
-        const label = (style.slice(0, 24) || current.meta?.label || 'Score render');
+        const parent = current.meta?.clipId || selectedClip?.clip?.id || null;
 
         els.go.disabled = true;
-        const busy = cb.busy ? cb.busy('Rendering the score…', 'score') : null;
+        els.variantGo.disabled = true;
+        const busy = cb.busy
+            ? cb.busy(jobs.length > 1 ? `Rendering ${jobs.length} variants…` : 'Rendering the score…', 'score')
+            : null;
+        let finished = 0;
         try {
-            const { blob, metadata } = await cb.generate({
+            const takes = await Promise.all(jobs.map(job => cb.generate({
                 model,
                 prompt: lyrics,
                 params: {
                     songscoreabc: abc,
                     scoreplanningmode: mode,
-                    text2audiostyle: style
+                    text2audiostyle: job.style,
+                    ...(job.seed === undefined ? {} : { seed: job.seed })
                 },
-                onProgress: (frac) => busy?.setProgress(frac)
-            });
-            await cb.addRenderedScore({
-                blob, metadata, label,
-                score: {
-                    abc, style, lyrics, cot: mode, model,
-                    engineId: 'yue2_music',
-                    parent: current.meta?.clipId || selectedClip?.clip?.id || null,
-                    source: 'rendered'
-                }
-            });
-            notice('Score rendered into a new track', 'green');
-        }
-        catch (e) {
-            console.error('[AudioDawScore] Render failed:', e);
-            notice('Render failed: ' + e.message, 'red');
+                onProgress: (frac) => { if (jobs.length === 1) busy?.setProgress(frac); }
+            })
+                .then(take => ({ ...take, job }))
+                .catch(e => { console.error('[AudioDawScore] Render failed:', e); return { error: e, job }; })
+                .then(r => { finished++; if (jobs.length > 1) busy?.setProgress(finished / jobs.length); return r; })));
+
+            // Landed after every take is in hand, in the order asked for, as one undo step.
+            let added = 0;
+            for (const take of takes) {
+                if (take.error) continue;
+                await cb.addRenderedScore({
+                    blob: take.blob, metadata: take.metadata, label: take.job.label,
+                    snapshot: added === 0,
+                    score: {
+                        abc, style: take.job.style, lyrics, cot: mode, model,
+                        engineId: 'yue2_music',
+                        seed: take.job.seed ?? null,
+                        parent, source: 'rendered'
+                    }
+                });
+                added++;
+            }
+            const failed = takes.length - added;
+            if (!added) notice('Render failed: ' + (takes[0]?.error?.message || 'no audio came back'), 'red');
+            else notice(failed
+                ? `${added} of ${takes.length} rendered — ${failed} failed`
+                : added > 1 ? `${added} variants rendered into their own tracks` : 'Score rendered into a new track',
+                failed ? 'yellow' : 'green');
         }
         finally {
             busy?.done();
             els.go.disabled = false;
+            els.variantGo.disabled = false;
         }
+    }
+
+    function renderScore() {
+        const style = els.style.value.trim();
+        return runRenders([{ style, label: style.slice(0, 24) || current.meta?.label || 'Score render' }]);
+    }
+
+    /** One score against n style lines, or against n seeds when no lines are given. */
+    function renderVariants() {
+        if (!current?.abc.trim()) { notice('Load or draft a score first', 'yellow'); return; }
+        const seed = () => Math.floor(Math.random() * 1e9);
+        const lines = els.variantStyles.value.split('\n').map(l => l.trim()).filter(Boolean);
+        const baseStyle = els.style.value.trim();
+        const jobs = lines.length
+            ? lines.map(style => ({ style, seed: seed(), label: style.slice(0, 24) }))
+            : Array.from({ length: parseInt(els.variantCount.value, 10) || 3 }, (_, i) => ({
+                style: baseStyle, seed: seed(), label: `${baseStyle.slice(0, 18) || 'Take'} ${i + 1}`
+            }));
+        if (jobs.length === 1 && !lines.length) { notice('Ask for at least two takes, or give a style per line', 'yellow'); return; }
+        return runRenders(jobs);
     }
 
     return {

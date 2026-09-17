@@ -725,9 +725,28 @@ const AudioDaw = (() => {
             },
             showMenu: (e, items) => dawMenu(e, items),
             getTransport: () => ({ bpm: state.bpm, timeSignature: state.timeSignature, currentTime: state.currentTime }),
-            /** Land a rendered score as its own track, carrying the score that produced it. */
-            addRenderedScore: async ({ blob, metadata, label, score }) => {
-                pushUndo();
+            /** Every clip carrying a score, which is what the version tree is drawn from. */
+            listScoreClips: () => state.tracks.flatMap(t => t.clips.filter(c => c.meta?.score).map(c => ({ clip: c, track: t }))),
+            /** A/B rides the mixer's own solo, so the comparison is the one the ears already trust. */
+            soloOnly: (trackId) => {
+                for (const t of state.tracks) t.soloed = !!trackId && t.id === trackId;
+                updatePlaybackGains();
+                renderAllTracks();
+                updateBottomPanel();
+            },
+            selectClip: (clipId) => {
+                const found = findClipById(clipId);
+                if (!found) return;
+                state.selectedTrackId = found.track.id;
+                state.selectedClipId = clipId;
+                updateTrackSelection();
+                renderAllTracks();
+                updateBottomPanel();
+            },
+            /** Land a rendered score as its own track, carrying the score that produced it.
+             *  snapshot:false lets a batch of variants be one undo step rather than one per clip. */
+            addRenderedScore: async ({ blob, metadata, label, score, snapshot = true }) => {
+                if (snapshot) pushUndo();
                 const track = addTrack({ name: label || 'Score' });
                 // The engine re-plans nothing when a score is supplied, so the authoritative ABC is the one we
                 // sent; metadata only fills in what the request did not pin (seed, resolved style).
