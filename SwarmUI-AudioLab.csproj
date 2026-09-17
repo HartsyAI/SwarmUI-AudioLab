@@ -130,10 +130,12 @@
          IMusicService.PlanScoreAsync/BudgetAsync, which do not exist before alpha.78. YuE2 writes its ABC score
          in a first pass and renders it in a second, so planning alone returns the editable artifact in seconds
          where a full render takes minutes - measured 14 s to plan a 25 s request against 13 s to render that
-         same score back. alpha.79 additionally carries the SheetSage2 symbolic layer, which nothing here calls
-         yet; pinning it rather than .78 keeps this extension on the newest published engine, which is what the
-         sibling Hartsy extensions do. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.79" />
+         same score back. alpha.82 = REQUIRED by this extension's source: the Score tab's Transcribe reads a recording
+         into a score through ITranscribeService.RunScoreAsync, which does not exist before alpha.82. It returns
+         both renderings of the score from one decode, because the decode is the whole cost and stripping the
+         chord symbols out of the full rendering does NOT spell the melody rendering - a bar carrying a chord
+         cannot fold into a multi-bar rest, and a chord change inside a held note splits it into tied parts. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.82" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
