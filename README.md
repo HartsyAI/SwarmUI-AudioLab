@@ -38,6 +38,7 @@ Docker, and nothing to install beyond the extension itself.
 | **Wake word listener** | Voice satellites stream microphone audio in; detections are published on a WebSocket other extensions can subscribe to |
 | **Works like any Swarm model** | Pick an audio model in the Generate tab, type a prompt, and the result lands in your output history |
 | **Streaming speech** | Chunked text to speech plays back while it is still generating |
+| **Sheet music editing** | Read back the score YuE2 plans, edit the notes and harmony, audition it in the browser, and render the change |
 
 ## Requirements
 
@@ -303,8 +304,50 @@ one shot, an imported sample, or the currently selected clip.
 
 ![The drum machine](Assets/readme/daw-instruments.png)
 
-Piano roll, bass and synth appear as slots in the instrument browser and are not built yet; see
-[Roadmap](#roadmap).
+**Piano / Keys** plays into the [Score](#score) tab rather than rendering audio. Pick a voice, hit `Record into
+score`, play the on-screen keyboard, and `Stop and write` quantizes what you played onto the score's grid and
+writes it in at the playhead bar, spelled for the current key. A MIDI keyboard is offered too, but only where the
+browser allows it: Web MIDI needs a secure context, so a SwarmUI reached at a LAN address over plain HTTP will not
+have it. The on-screen keys work either way.
+
+Bass and synth appear as slots in the instrument browser and are not built yet; see [Roadmap](#roadmap).
+
+### Score
+
+YuE2 cannot edit audio — it has no audio input at all. What it does have is the **ABC score** it writes before it
+renders anything, and that score is editable. The Score tab is where you read it back, change it, and render the
+change.
+
+Select a clip a YuE2 generation produced and press **Load from clip**; the plan it performed appears as two staves,
+`Vocal` and `Ins`, with its chord symbols. **Draft plan** asks the model for a score without rendering audio, which
+is seconds rather than minutes. **Paste** takes one from anywhere.
+
+Everything is a text edit on the ABC, so there is one code path and one undo stack:
+
+- Click a chord symbol to reharmonise it, click a note for its menu (length, split, merge, tie, accidental,
+  octave, note to rest), or drag a note up and down to change its pitch.
+- Sections come from the `%` comment lines. The chips rename, duplicate, reorder and delete whole sections, which
+  keeps both voices in step by construction.
+- **Melody by degree** takes `1155665 / 4433221` and writes the bars.
+- **Edit with an LLM** rewrites the score to an instruction, with a scope and an invariant to hold fixed. It needs
+  the [LLMAssistant](https://github.com/HartsyAI/SwarmUI-LLMAssistant) extension; without it the card says so.
+- Every edit is validated against YuE2's dialect first: two voices under the right ids, matching bar counts per
+  chunk, every bar summing to the meter. Render stays disabled while an error stands.
+
+**Play** auditions the plan in the browser — chords comped, notes highlighted as they sound — so a reharmonisation
+can be judged in seconds instead of a render. **Download samples** fetches the piano samples once so that works
+without the internet; until then they come from the host abcjs ships with. **MIDI** exports the plan, **Save**
+writes a `.abc` file.
+
+**Render** sends the score back with your Style and Lyrics and lands the result as a new track. The planning mode is
+derived from the score, not chosen: chord symbols present means `full`, none means `melody`, which is the setting
+covers want. **Render variants** sends the same score under several style lines, or several seeds, at once.
+
+**Versions** is every clip carrying a score, drawn as the tree their `parent` links describe. Pick two and it tells
+you what actually differs — chord symbols, bar count, whether any note moved — and **Solo A** / **Solo B** compare
+them through the mixer's own solo.
+
+The score is a plan the model performs, not a recording of it. Do not read exact note realisation out of it.
 
 ### Generate
 
@@ -486,6 +529,7 @@ Per SwarmUI's extension standards, here is every outbound connection AudioLab ma
 | **huggingface.co** | Downloading model weights, on install or on first use | Yes, do not install engines. Nothing is fetched in the background otherwise |
 | **Meta's public CDN** | Demucs stem separation weights, on first use | Yes, do not use stem separation |
 | **Webhook URLs you configure** | One JSON POST per wake detection | Yes, leave the webhook list empty, which is the default |
+| **paulrosen.github.io** | Piano samples for the Score tab's browser audition, one small mp3 per pitch | Yes, press `Download samples` once and they are served locally from then on |
 | **Cloud provider APIs** | Not currently used at all, since every API engine is disabled | Not applicable |
 
 No telemetry, no analytics, no update pings, no ads.
@@ -494,8 +538,11 @@ No telemetry, no analytics, no update pings, no ads.
 
 Known and planned, so you can tell missing from broken:
 
-- **More DAW instruments.** The drum machine ships today. Piano roll, bass and synth are visible slots in the
-  instrument browser and are not implemented; selecting one says so rather than failing silently.
+- **More DAW instruments.** The drum machine and Piano / Keys ship today. Bass and synth are visible slots in the
+  instrument browser and are not implemented; selecting one says so rather than failing silently. The piano roll
+  itself is still to come — keys currently capture as a played phrase, not an editable grid.
+- **Section markers on the timeline.** The Score tab knows a song's sections; the ruler still only draws the
+  playhead and the loop region.
 - **Cloud API engines.** All 20 provider definitions exist but none are tested, so all are disabled. They get
   re-enabled per provider as each is verified.
 - **RealtimeSTT** needs a C# engine implementation.
@@ -532,3 +579,12 @@ by mcmonkey, and the [HartsyInference](https://www.nuget.org/packages/HartsyInfe
 
 Each model carries its own upstream license, shown on its card in the engine manager and in the tables above.
 Several are non commercial (F5-TTS, Fish Speech); check before shipping anything built with them.
+
+The Score tab engraves with [abcjs](https://github.com/paulrosen/abcjs) (MIT), vendored in `Assets/lib/`.
+
+Its browser audition plays samples from [paulrosen/midi-js-soundfonts](https://github.com/paulrosen/midi-js-soundfonts),
+the set abcjs points at by default. Those are pre-rendered General MIDI soundfonts from the
+[MIDI.js](https://github.com/gleitz/MIDI.js) project, whose sets are released under Creative Commons Attribution
+(FluidR3_GM) and Attribution-ShareAlike (MusyngKite, FatBoy) licenses; that repository's `abcjs/` set carries no
+license file of its own. None of it is redistributed here — `Download samples` fetches it to a gitignored folder on
+your own machine, and the licence that comes with it is upstream's, not AudioLab's.
