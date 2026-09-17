@@ -149,6 +149,69 @@ const AudioDawScore = (() => {
         return chunks;
     }
 
+    /** Blocks as scanBody reads them, carrying the source lines their music sits on. */
+    function voiceLineBlocks(abc) {
+        const lines = abc.split('\n');
+        const blocks = [];
+        let inHeader = true, cur = null;
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (inHeader) { if (/^K:/.test(line)) inHeader = false; continue; }
+            if (!line || line.startsWith('%')) continue;
+            const v = /^V:\s*(\S+)/.exec(line);
+            if (v) { cur = { voice: v[1], lines: [] }; blocks.push(cur); continue; }
+            if (/^[A-Za-z]:/.test(line) || !cur) continue;
+            cur.lines.push(i);
+        }
+        return blocks;
+    }
+
+    /** What countBars masks out, but length-preserving, so a barline's offset in the raw line stays valid. */
+    function maskLine(line) {
+        return line.replace(/"[^"]*"|![^!]*!|\{[^}]*\}|\[[A-Za-z]:[^\]]*\]/g, m => 'x'.repeat(m.length));
+    }
+
+    /** A line as its bars plus the barline closing each. A leading barline opens a bar, so it stays in the body. */
+    function barSegments(line) {
+        const masked = maskLine(line);
+        const segs = [];
+        let at = 0;
+        for (const m of masked.matchAll(/[|:]*\|[|:]*/g)) {
+            if (m.index === 0) continue;
+            segs.push({ body: line.slice(at, m.index), bar: line.slice(m.index, m.index + m[0].length) });
+            at = m.index + m[0].length;
+        }
+        return { segs, tail: line.slice(at) };
+    }
+
+    /**
+     * Pad the source so a chunk's voices show the same bar in the same column, which makes a voice drifting
+     * out of step visible before the validator says so. Spaces immediately before a barline can change neither
+     * a duration nor a beam — the barline already breaks both — so the score still says exactly what it did.
+     */
+    function alignBars(abc) {
+        const lines = abc.split('\n');
+        for (const chunk of chunkBlocks(voiceLineBlocks(abc))) {
+            if (chunk.length < 2) continue;
+            const depth = Math.min(...chunk.map(b => b.lines.length));
+            for (let j = 0; j < depth; j++) {
+                const cut = chunk.map(b => barSegments(lines[b.lines[j]]));
+                const count = cut[0].segs.length;
+                // Lines the two voices do not divide into the same bars have no columns to share.
+                if (!count || cut.some(c => c.segs.length !== count)) continue;
+                for (const c of cut) for (const seg of c.segs) seg.body = seg.body.replace(/\s+$/, '');
+                for (let k = 0; k < count; k++) {
+                    const width = Math.max(...cut.map(c => c.segs[k].body.length));
+                    for (const c of cut) c.segs[k].body = c.segs[k].body.padEnd(width);
+                }
+                chunk.forEach((b, v) => {
+                    lines[b.lines[j]] = cut[v].segs.map(seg => seg.body + seg.bar).join('') + cut[v].tail;
+                });
+            }
+        }
+        return lines.join('\n');
+    }
+
     /** Body character ranges holding music tokens — outside the header, comments, fields and quoted spans. */
     function safeRegions(abc) {
         const out = [];
@@ -514,6 +577,7 @@ const AudioDawScore = (() => {
         btns.appendChild(els.undo);
         btns.appendChild(els.redo);
         btns.appendChild(miniButton('No chords', 'Strip every chord symbol — the melody-only form used for covers', stripAllChords));
+        btns.appendChild(miniButton('Align bars', 'Pad the source so both voices\u2019 barlines line up column-wise', applyAlignBars));
         btns.appendChild(miniButton('Copy', 'Copy the ABC score to the clipboard', () => {
             if (!current?.abc) return;
             navigator.clipboard?.writeText(current.abc)
@@ -1359,6 +1423,23 @@ const AudioDawScore = (() => {
             bars.push(notes.join(''));
         }
         return bars.join('|');
+    }
+
+    function applyAlignBars() {
+        if (!current?.abc.trim()) return;
+        const aligned = alignBars(current.abc);
+        if (aligned === current.abc) { notice('The barlines already line up', 'green'); return; }
+        // abcjs quotes the offending column and a slice of the line back inside its own warnings, both of
+        // which padding moves, so the round-trip checks what this transform could actually break instead:
+        // that nothing but spaces was added, and that the verdict still has the same shape.
+        const bare = (text) => text.replace(/ /g, '');
+        const shape = (text) => validate(text).map(i => i.severity).join(',');
+        if (bare(aligned) !== bare(current.abc) || shape(aligned) !== shape(current.abc)) {
+            notice('Aligning would have changed what this score says — left as it was', 'yellow');
+            return;
+        }
+        edit(aligned);
+        notice('Barlines aligned', 'green');
     }
 
     function insertNumbered() {
@@ -2754,6 +2835,7 @@ const AudioDawScore = (() => {
         // the DAW hands a dragged clip to the sheet, since its clip drag is pointer-based
         clipDragOver, clipDropped, moveSection,
         validate, hasChords, stripChords, modeForScore, prepareForEngraving, toOriginal,
+        alignBars, barSegments, voiceLineBlocks,
         parseHeader, scanBody, countBars, chunkBlocks,
         splitElement, transposeToken, pitchIndex, pitchToken, tokenText,
         unitsPerBar, barBounds, barTokens, sectionSpans, numbersToAbc,
