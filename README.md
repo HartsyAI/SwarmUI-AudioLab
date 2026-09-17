@@ -319,6 +319,13 @@ YuE2 cannot edit audio — it has no audio input at all. What it does have is th
 renders anything, and that score is editable. The Score tab is where you read it back, change it, and render the
 change.
 
+An empty tab shows what it can start from rather than a sentence about it. **New blank score** writes eight empty
+bars in the project's own meter and tempo and hands you the staff to click notes into — nothing is generated and no
+model is needed. **Load from the clip** and **Transcribe a recording** name the selected clip, or say what to select
+instead. Dropping works too: a clip dragged off the timeline onto the sheet loads the score it carries, or offers to
+read one off it; an `.abc` or `.txt` file opens as a score; a `.wav`, `.mp3` or `.flac` lands as a track and offers to
+transcribe it.
+
 Select a clip a YuE2 generation produced and press **Load from clip**; the plan it performed appears as two staves,
 `Vocal` and `Ins`, with its chord symbols. **Draft plan** asks the model for a score without rendering audio, which
 is seconds rather than minutes. **Paste** takes one from anywhere.
@@ -337,7 +344,7 @@ Everything is a text edit on the ABC, so there is one code path and one undo sta
 - Click a chord symbol to reharmonise it, click a note for its menu (length, split, merge, tie, accidental,
   octave, note to rest), or drag a note up and down to change its pitch.
 - Sections come from the `%` comment lines. The chips rename, duplicate, reorder and delete whole sections, which
-  keeps both voices in step by construction.
+  keeps both voices in step by construction; dragging one chip onto another reorders them directly.
 - **Melody by degree** takes `1155665 / 4433221` and writes the bars.
 - **Edit with an LLM** rewrites the score to an instruction, with a scope and an invariant to hold fixed. It needs
   the [LLMAssistant](https://github.com/HartsyAI/SwarmUI-LLMAssistant) extension; without it the card says so.
