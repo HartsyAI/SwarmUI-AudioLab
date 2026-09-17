@@ -734,6 +734,8 @@ const AudioDaw = (() => {
                 renderAllTracks();
                 updateBottomPanel();
             },
+            findClip: (clipId) => findClipById(clipId),
+            seek: (seconds) => seekTo(seconds),
             /** Mono 24 kHz for the transcriber: one encoder, so the DAW's export and the model hear the same bytes. */
             encodeWav: (buffer) => audioBufferToWav(buffer),
             /** The Vocals track the Stems tab made from this clip — a cleaner melody to transcribe than the mix. */
@@ -748,6 +750,27 @@ const AudioDaw = (() => {
                     if (clip?.blob) return { clip, track };
                 }
                 return null;
+            },
+            /** Point the project's grid at what a score says. The transport controls display state, so both move. */
+            setTransport: ({ bpm, timeSignature }) => {
+                pushUndo();
+                if (bpm > 0) state.bpm = Math.round(bpm);
+                if (Array.isArray(timeSignature) && timeSignature.length === 2) state.timeSignature = timeSignature;
+                if (bpmInputEl) bpmInputEl.value = state.bpm;
+                const sig = transportEl?.querySelector('.daw-transport-timesig');
+                if (sig) {
+                    const want = state.timeSignature.join('/');
+                    // A meter the transport does not offer (7/8 off a score) still has to be selectable.
+                    if (![...sig.options].some(o => o.value === want)) {
+                        const opt = document.createElement('option');
+                        opt.value = want;
+                        opt.textContent = want;
+                        sig.appendChild(opt);
+                    }
+                    sig.value = want;
+                }
+                if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
+                updateLaneGrid();
             },
             selectClip: (clipId) => {
                 const found = findClipById(clipId);

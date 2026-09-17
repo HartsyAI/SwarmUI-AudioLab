@@ -555,6 +555,8 @@ const AudioDawScore = (() => {
         els.unit = labelledInput(hdrRow, 'Unit', 'daw-generate-reftext', null);
         els.unit.readOnly = true;
         els.unit.title = 'Unit note length (L:). The grid every duration is measured in.';
+        button(hdrRow, 'Apply to project', 'basic-button btn-sm', applyToProject)
+            .title = 'Set the project tempo and time signature to what this score is written in';
         parent.appendChild(hdrRow);
 
         els.sections = createDiv(null, 'daw-fx-browser');
@@ -762,8 +764,9 @@ const AudioDawScore = (() => {
             const name = createSpan(null, 'daw-fx-pick-name');
             name.textContent = s.label || '(unnamed)';
             chip.appendChild(name);
-            chip.title = 'Rename, duplicate, reorder or delete this section';
-            chip.addEventListener('click', (e) => openSectionMenu(e, i));
+            chip.title = 'Click to jump the playhead here · right-click to rename, duplicate, reorder or delete';
+            chip.addEventListener('click', (e) => seekToSection(e, s, i));
+            chip.addEventListener('contextmenu', (e) => { e.preventDefault(); openSectionMenu(e, i); });
             els.sections.appendChild(chip);
         });
 
@@ -1782,10 +1785,8 @@ const AudioDawScore = (() => {
         const g = getGrid();
         const perBar = g.secondsPerUnit * g.unitsPerBar;
         if (!(perBar > 0)) return 0;
-        const clip = selectedClip?.clip;
-        const origin = clip && clip.meta?.score?.abc === current?.abc
-            ? (clip.startTime || 0) - (clip.offset || 0) : 0;
-        return Math.max(0, Math.floor((seconds - origin) / perBar));
+        const origin = sourceOrigin();
+        return Math.max(0, Math.floor((seconds - (origin ?? 0)) / perBar));
     }
 
     // ===== offline audition =====
@@ -2270,6 +2271,53 @@ const AudioDawScore = (() => {
         return runRenders([{ style, label: `Cover: ${style.slice(0, 18)}` }]);
     }
 
+    // ===== analysis =====
+
+    /** Tempo and meter the score is written in, handed to the project's own grid. */
+    function applyToProject() {
+        const h = parseHeader(current?.abc || '');
+        const bpm = parseTempo(h.Q);
+        const m = /^(\d+)\s*\/\s*(\d+)$/.exec(h.M || '');
+        const meter = m ? [parseInt(m[1], 10), parseInt(m[2], 10)] : null;
+        if (!bpm && !meter) { notice('This score says nothing about tempo or meter', 'yellow'); return; }
+        if (!cb.setTransport) return;
+        cb.setTransport({ bpm: bpm || 0, timeSignature: meter });
+        notice(`Project set to ${[bpm ? `${Math.round(bpm)} BPM` : null, meter?.join('/')].filter(Boolean).join(' · ')}`, 'green');
+    }
+
+    /** Timeline time the score's first bar sits at — the clip it was read off, played from its own start. */
+    function sourceOrigin() {
+        const id = current?.meta?.clipId;
+        const found = id && cb.findClip ? cb.findClip(id) : null;
+        const clip = found?.clip
+            || (selectedClip?.clip?.meta?.score?.abc === current?.abc ? selectedClip.clip : null);
+        return clip ? (clip.startTime || 0) - (clip.offset || 0) : null;
+    }
+
+    /** Bar the first voice is on when a section starts — what a section chip seeks to. */
+    function sectionBar(abc, line) {
+        const lines = abc.split('\n');
+        let inHeader = true, voice = null, bars = 0;
+        for (let i = 0; i < Math.min(line, lines.length); i++) {
+            const t = lines[i].trim();
+            if (inHeader) { if (/^K:/.test(t)) inHeader = false; continue; }
+            const v = /^V:\s*(\S+)/.exec(t);
+            if (v) { voice = v[1]; continue; }
+            if (!t || t.startsWith('%')) continue;
+            if (voice === VOICE_IDS[0]) bars += countBars(lines[i]);
+        }
+        return bars;
+    }
+
+    function seekToSection(ev, span, index) {
+        const origin = sourceOrigin();
+        if (origin === null || !cb.seek) { openSectionMenu(ev, index); return; }
+        const g = getGrid();
+        const perBar = g.secondsPerUnit * g.unitsPerBar;
+        if (!(perBar > 0)) { openSectionMenu(ev, index); return; }
+        cb.seek(Math.max(0, origin + sectionBar(current.abc, span.line) * perBar));
+    }
+
     // ===== actions =====
 
     function onSelection(sel) {
@@ -2405,7 +2453,7 @@ const AudioDawScore = (() => {
 
     return {
         render, onSelection, loadScore, undo, redo, syncTime, stopPlan, draftPlan,
-        transcribeSelection, coverClip, showRendering,
+        transcribeSelection, coverClip, showRendering, applyToProject,
         // exported for the DAW, for tests, and for later phases
         // the instrument contract: write into the score, and the grid and key to quantize against
         insertNotes, getKey, getGrid, barAtTime,
