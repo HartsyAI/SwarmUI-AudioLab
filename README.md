@@ -161,7 +161,7 @@ whether the engine downloads on first use or exposes per model installs.
 | [ZipVoice](https://huggingface.co/k2-fsa/ZipVoice) | 1 | ~2GB | Apache 2.0 | on first use |
 | [Zonos TTS](https://huggingface.co/Zyphra/Zonos-v0.1-transformer) | 2 | ~4GB | Apache 2.0 | on first use |
 
-#### Speech to Text (6 engines, 17 models)
+#### Speech to Text (7 engines, 18 models)
 
 | Engine | Models | VRAM | License | Weights |
 | --- | --- | --- | --- | --- |
@@ -169,6 +169,7 @@ whether the engine downloads on first use or exposes per model installs.
 | [Kyutai STT](https://huggingface.co/kyutai/stt-1b-en_fr-trfs) | 2 | ~3 GB, ~6 GB | CC-BY 4.0 | on first use |
 | [Moonshine Streaming STT](https://huggingface.co/UsefulSensors/moonshine-streaming-tiny) | 3 | ~1.5GB to ~2GB | MIT | on first use |
 | [Moonshine STT](https://huggingface.co/UsefulSensors/moonshine-base) | 2 | CPU only, ~1GB (or CPU) | MIT | on first use |
+| [SheetSage2 Transcription](https://huggingface.co/Comfy-Org/YuE2) | 1 | ~4GB | CC-BY-NC-4.0 | on first use |
 | [Whisper Streaming](https://huggingface.co/openai/whisper-base) | 1 | ~1GB (or CPU) | MIT | on first use |
 | [Whisper STT](https://huggingface.co/openai/whisper-tiny) | 7 | ~10GB to ~6GB | Apache 2.0 / MIT | on first use |
 
@@ -322,6 +323,15 @@ Select a clip a YuE2 generation produced and press **Load from clip**; the plan 
 `Vocal` and `Ins`, with its chord symbols. **Draft plan** asks the model for a score without rendering audio, which
 is seconds rather than minutes. **Paste** takes one from anywhere.
 
+**Transcribe clip** reads the score out of a recording instead: SheetSage2 listens and writes the melody, the
+chord symbols, the key, the meter and the tempo. One listen returns two renderings — **Melody**, which is what a
+cover is rendered from, and **Full**, which keeps the harmony. They are not a substitution apart, so the toggle
+switches between the model's own two scores rather than deleting quoted text from one of them. **Cover this clip**
+runs the whole loop: transcribe, keep the melody, render it in your Style. Separate a song in the **Stems** tab
+first and **Transcribe vocal stem** reads the vocal alone, which is a cleaner melody than the mix. A long dense
+clip can fill the decoder's context, and it says so and asks for a shorter section. SheetSage2's weights are
+CC BY-NC 4.0, non-commercial only.
+
 Everything is a text edit on the ABC, so there is one code path and one undo stack:
 
 - Click a chord symbol to reharmonise it, click a note for its menu (length, split, merge, tie, accidental,
@@ -346,6 +356,9 @@ covers want. **Render variants** sends the same score under several style lines,
 **Versions** is every clip carrying a score, drawn as the tree their `parent` links describe. Pick two and it tells
 you what actually differs — chord symbols, bar count, whether any note moved — and **Solo A** / **Solo B** compare
 them through the mixer's own solo.
+
+**Apply to project** sets the project tempo and time signature to what the score is written in, and a section chip
+jumps the playhead to that section in the clip the score came from — right-click still opens the section's menu.
 
 The score is a plan the model performs, not a recording of it. Do not read exact note realisation out of it.
 
@@ -467,6 +480,8 @@ usual `ProcessTTS` fields.
 | --- | --- | --- | --- |
 | `ProcessTTS` | POST | `audio_process` | `provider_id`, `text`, `voice`, `language`, `volume`, `options`, `reference_audio`, `ref_text` |
 | `ProcessSTT` | POST | `audio_process` | `provider_id`, `audio_data`, `language`, `options` |
+| `AudioLabTranscribeScore` | POST | `audio_process` | `audio_data` (mono 24 kHz WAV), `provider_id`, `model` |
+| `AudioLabPlanScore` | POST | `audio_process` | `style`, `lyrics`, `duration`, `seed`, `cot`, `abc`, `budget_only` |
 | `ProcessAudio` | POST | `audio_process` | `provider_id`, `args` |
 | `ProcessWorkflow` | POST | `audio_process` | workflow steps |
 | `ConvertAudioFormat` | POST | `audio_process` | `audio_data`, `format` |
