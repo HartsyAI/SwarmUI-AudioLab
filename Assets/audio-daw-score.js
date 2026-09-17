@@ -1595,6 +1595,192 @@ const AudioDawScore = (() => {
         return { chords, bars, headers, notesTouched: stripped(a) !== stripped(b) };
     }
 
+    // ===== the instrument contract =====
+
+    const SHARP_ORDER = 'FCGDAEB', FLAT_ORDER = 'BEADGCF';
+    const MAJOR_SHARPS = { C: 0, G: 1, D: 2, A: 3, E: 4, B: 5, 'F#': 6, 'C#': 7, F: -1, Bb: -2, Eb: -3, Ab: -4, Db: -5, Gb: -6, Cb: -7 };
+    const SHARP_SPELL = [['C', 0], ['C', 1], ['D', 0], ['D', 1], ['E', 0], ['F', 0], ['F', 1], ['G', 0], ['G', 1], ['A', 0], ['A', 1], ['B', 0]];
+    const FLAT_SPELL = [['C', 0], ['D', -1], ['D', 0], ['E', -1], ['E', 0], ['F', 0], ['G', -1], ['G', 0], ['A', -1], ['A', 0], ['B', -1], ['B', 0]];
+
+    /** What the key signature already says about each letter. A minor key carries its relative major's. */
+    function keyAccidentals(k) {
+        const m = /^([A-G][#b]?)\s*(.*)$/.exec((k || 'C').trim());
+        let sharps = MAJOR_SHARPS[m ? m[1] : 'C'] ?? 0;
+        if (m && /^(m|min)/i.test(m[2]) && !/^maj/i.test(m[2])) sharps -= 3;
+        const accidentals = { C: 0, D: 0, E: 0, F: 0, G: 0, A: 0, B: 0 };
+        const order = sharps >= 0 ? SHARP_ORDER : FLAT_ORDER;
+        for (let i = 0; i < Math.abs(sharps); i++) accidentals[order[i]] = sharps >= 0 ? 1 : -1;
+        return { key: m ? m[1] : 'C', mode: m ? m[2] : '', sharps, accidentals };
+    }
+
+    /**
+     * A MIDI number as an ABC token, spelled against the key. This is the whole reason instruments cannot
+     * write ABC themselves: in K:D a bare F already means F sharp, so MIDI 65 has to be written =F.
+     */
+    function midiToAbc(midi, key) {
+        const pc = ((Math.round(midi) % 12) + 12) % 12;
+        const [letter, alt] = (key.sharps < 0 ? FLAT_SPELL : SHARP_SPELL)[pc];
+        const oct = Math.floor(Math.round(midi) / 12) - 1;
+        const want = key.accidentals[letter] || 0;
+        const mark = alt === want ? '' : alt === 1 ? '^' : alt === -1 ? '_' : '=';
+        return oct >= 5
+            ? `${mark}${letter.toLowerCase()}${"'".repeat(oct - 5)}`
+            : `${mark}${letter}${','.repeat(Math.max(0, 4 - oct))}`;
+    }
+
+    /** The key an instrument should quantize pitch against. */
+    function getKey() {
+        return keyAccidentals(parseHeader(current?.abc || '').K);
+    }
+
+    /** The grid an instrument should quantize time against. */
+    function getGrid() {
+        const h = parseHeader(current?.abc || '');
+        const l = meterFraction(h.L) || 1 / 32;
+        const bpm = parseTempo(h.Q) || (cb.getTransport ? cb.getTransport().bpm : 0) || 120;
+        return {
+            unitLength: h.L || '1/32',
+            unitsPerBar: unitsPerBar(h) || Math.round((meterFraction(h.M) || 1) / l),
+            meter: h.M || '4/4',
+            bpm,
+            secondsPerUnit: (60 / bpm) * l * 4
+        };
+    }
+
+    /** Bar spans per voice in body order. A Zn span stands for n bars behind one piece of text. */
+    function voiceBars(abc) {
+        const out = [];
+        let inHeader = true, voice = null, pos = 0;
+        for (const line of abc.split('\n')) {
+            const lineStart = pos;
+            pos += line.length + 1;
+            const t = line.trim();
+            if (inHeader) { if (/^K:/.test(t)) inHeader = false; continue; }
+            if (!t || t.startsWith('%')) continue;
+            const v = /^V:\s*(\S+)/.exec(t);
+            if (v) { voice = v[1]; continue; }
+            if (/^[A-Za-z]:/.test(t) || voice === null) continue;
+            const lineEnd = lineStart + line.length;
+            let barStart = lineStart;
+            const close = (end) => {
+                const text = abc.slice(barStart, end);
+                if (text.trim()) {
+                    const z = /^\s*Z(\d*)\s*$/.exec(text);
+                    out.push({ voice, start: barStart, end, bars: z ? (z[1] ? parseInt(z[1], 10) : 1) : 1 });
+                }
+                barStart = end + 1;
+            };
+            for (let i = lineStart; i < lineEnd; i++) {
+                if (abc[i] === '"') { const j = abc.indexOf('"', i + 1); i = j < 0 || j >= lineEnd ? lineEnd : j; continue; }
+                if (abc[i] === '|') close(i);
+            }
+            if (barStart < lineEnd) close(lineEnd);
+        }
+        return out;
+    }
+
+    /** A two-voice score in the transport's own meter and tempo, so an instrument has somewhere to play into. */
+    function blankScore() {
+        const tr = cb.getTransport ? cb.getTransport() : {};
+        const meter = Array.isArray(tr.timeSignature) ? `${tr.timeSignature[0]}/${tr.timeSignature[1]}` : '4/4';
+        const bpm = Math.round(tr.bpm || 120);
+        const per = unitsPerBar({ M: meter, L: '1/32' }) || 32;
+        const bars = Array(8).fill(`z${per}`).join('|') + '|';
+        return ['X:1', 'T:', `M:${meter}`, 'L:1/32', `Q:1/4=${bpm}`,
+            'V: Vocal clef=treble name="Vocal Melody" snm="Vocal"',
+            'V: Ins clef=treble name="Ins Melody" snm="Inst."',
+            'K:C', '% part 1', 'V: Vocal', bars, 'V: Ins', bars, ''].join('\n');
+    }
+
+    /**
+     * Write notes into one voice at a bar position. The public entry point for instruments.
+     *
+     * Every bar it touches is rewritten whole — leading rest, the notes clipped to the bar, trailing rest —
+     * so the bar sum is right by construction rather than by arithmetic afterwards, and a note crossing a
+     * barline is tied. The validator still has the last word: if the result has an error the score is left
+     * exactly as it was and the issues come back.
+     *
+     * @param {Object} req {voice, barIndex, offsetUnits, notes:[{midi, units}]}; midi null or absent = a rest.
+     * @returns {{ok: boolean, issues?: Array, bars?: [number, number]}}
+     */
+    function insertNotes({ voice = 'Vocal', barIndex = 0, offsetUnits = 0, notes = [] } = {}) {
+        const fail = (message) => ({ ok: false, issues: [{ severity: 'error', message }] });
+        const wanted = (Array.isArray(notes) ? notes : [])
+            .map(n => ({ midi: n.midi ?? null, units: Math.max(0, Math.round(n.units) || 0) }))
+            .filter(n => n.units > 0);
+        if (!wanted.length) return fail('No notes to write.');
+        if (!current?.abc.trim()) loadScore(blankScore(), { source: 'instrument', label: 'New score' });
+        const h = parseHeader(current.abc);
+        const per = unitsPerBar(h);
+        if (!per) return fail('The score needs M: and L: before notes can be written.');
+        const key = keyAccidentals(h.K);
+
+        const total = wanted.reduce((s, n) => s + n.units, 0);
+        const startAbs = Math.max(0, Math.round(barIndex)) * per + Math.max(0, Math.round(offsetUnits));
+        const endAbs = startAbs + total;
+        const firstBar = Math.floor(startAbs / per), lastBar = Math.ceil(endAbs / per) - 1;
+
+        let abc = current.abc;
+        // A Zn hides n bars behind one span, so anything written into it has to be opened up first.
+        for (let guard = 0; guard < 64; guard++) {
+            let at = 0, hit = null;
+            for (const b of voiceBars(abc).filter(x => x.voice === voice)) {
+                if (b.bars > 1 && at <= lastBar && at + b.bars > firstBar) { hit = b; break; }
+                at += b.bars;
+            }
+            if (!hit) break;
+            abc = replaceRange(abc, hit.start, hit.end, Array(hit.bars).fill(`z${per}`).join('|'));
+        }
+
+        const spans = [];
+        let at = 0;
+        for (const b of voiceBars(abc).filter(x => x.voice === voice)) { spans[at] = b; at += b.bars; }
+        if (lastBar >= at) {
+            return fail(`Voice ${voice} has ${at} bar${at === 1 ? '' : 's'}; this take needs ${lastBar + 1}. `
+                + 'Insert bars first — adding them here would desync the two voices.');
+        }
+
+        const edits = [];
+        let noteAt = 0, consumed = 0, posAbs = startAbs;
+        for (let bar = firstBar; bar <= lastBar; bar++) {
+            const span = spans[bar];
+            if (!span) return fail(`Voice ${voice} has no bar ${bar + 1} of its own to write into.`);
+            const pieces = [];
+            let filled = Math.max(0, Math.min(per, startAbs - bar * per));
+            if (filled > 0) pieces.push(`z${filled}`);
+            while (filled < per && posAbs < endAbs && noteAt < wanted.length) {
+                const n = wanted[noteAt];
+                const take = Math.min(n.units - consumed, per - filled);
+                const rest = n.midi === null;
+                const crosses = take < n.units - consumed;
+                pieces.push(`${rest ? 'z' : midiToAbc(n.midi, key)}${take}${!rest && crosses ? '-' : ''}`);
+                filled += take; posAbs += take; consumed += take;
+                if (consumed >= n.units) { noteAt++; consumed = 0; }
+            }
+            if (filled < per) pieces.push(`z${per - filled}`);
+            // The harmony belongs to the bar, not to the note that happened to carry it.
+            const chord = /^\s*("[^"]*")/.exec(abc.slice(span.start, span.end));
+            edits.push({ start: span.start, end: span.end, text: (chord ? chord[1] : '') + pieces.join('') });
+        }
+        for (const e of edits.sort((a, b) => b.start - a.start)) abc = replaceRange(abc, e.start, e.end, e.text);
+
+        const errors = validate(abc).filter(i => i.severity === 'error');
+        if (errors.length) return { ok: false, issues: errors };
+        edit(abc);
+        return { ok: true, bars: [firstBar, lastBar] };
+    }
+
+    /** Which bar of the loaded score a timeline position lands on, measured the way syncTime measures it. */
+    function barAtTime(seconds) {
+        const g = getGrid();
+        const perBar = g.secondsPerUnit * g.unitsPerBar;
+        if (!(perBar > 0)) return 0;
+        const clip = selectedClip?.clip;
+        const origin = clip && clip.meta?.score?.abc === current?.abc
+            ? (clip.startTime || 0) - (clip.offset || 0) : 0;
+        return Math.max(0, Math.floor((seconds - origin) / perBar));
+    }
+
     // ===== offline audition =====
 
     // Derived from this file's own URL: core serves extension files under the extension CLASS name, not
@@ -2019,10 +2205,13 @@ const AudioDawScore = (() => {
     return {
         render, onSelection, loadScore, undo, redo, syncTime, stopPlan, draftPlan,
         // exported for the DAW, for tests, and for later phases
+        // the instrument contract: write into the score, and the grid and key to quantize against
+        insertNotes, getKey, getGrid, barAtTime,
         validate, hasChords, stripChords, modeForScore, prepareForEngraving, toOriginal,
         parseHeader, scanBody, countBars, chunkBlocks,
         splitElement, transposeToken, pitchIndex, pitchToken, tokenText,
         unitsPerBar, barBounds, barTokens, sectionSpans, numbersToAbc,
+        keyAccidentals, midiToAbc, voiceBars, blankScore,
         _state: () => ({ abc: current?.abc || '', selection, undoDepth: history.undo.length }),
         _soundfontUrl: () => soundFontUrl
     };

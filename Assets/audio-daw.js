@@ -3910,12 +3910,216 @@ const AudioDaw = (() => {
         scheduleAutosave();
     }
 
+    // ===== PIANO / KEYS =====
+    // Plays into the Score tab rather than rendering audio: the score is the artifact YuE2 can act on, so a
+    // captured phrase becomes part of the plan instead of another clip to mix.
+
+    let keysState = { voice: 'Vocal', octave: 4, recording: null, midiAccess: null };
+
+    /** Web MIDI needs a secure context, and this server is usually reached over a LAN IP on plain HTTP.
+     *  The on-screen keyboard is therefore the path that always works; MIDI is the bonus when it exists. */
+    function keysMidiPossible() {
+        return !!(window.isSecureContext && navigator.requestMIDIAccess);
+    }
+
+    function keysBeep(midi) {
+        const ctx = getAudioContext();
+        if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
+        const osc = ctx.createOscillator(), gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.value = 440 * Math.pow(2, (midi - 69) / 12);
+        gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(); osc.stop(ctx.currentTime + 0.4);
+    }
+
+    function keysDown(midi) {
+        keysBeep(midi);
+        const rec = keysState.recording;
+        if (rec && !rec.held.has(midi)) rec.held.set(midi, performance.now());
+    }
+
+    function keysUp(midi) {
+        const rec = keysState.recording;
+        if (!rec || !rec.held.has(midi)) return;
+        rec.events.push({ midi, start: rec.held.get(midi), end: performance.now() });
+        rec.held.delete(midi);
+    }
+
+    /** Turn what was played into a run of notes and rests on the score's own grid. */
+    function keysQuantize(events, grid) {
+        const t0 = Math.min(...events.map(e => e.start));
+        const unit = (ms) => Math.round((ms / 1000) / grid.secondsPerUnit);
+        const out = [];
+        let cursor = 0;
+        for (const e of [...events].sort((a, b) => a.start - b.start)) {
+            const start = Math.max(cursor, unit(e.start - t0));
+            const units = Math.max(1, unit(e.end - t0) - start);
+            if (start > cursor) out.push({ midi: null, units: start - cursor });
+            out.push({ midi: e.midi, units });
+            cursor = start + units;
+        }
+        return out;
+    }
+
+    function keysStopRecording(panelContainer) {
+        const rec = keysState.recording;
+        keysState.recording = null;
+        if (!rec || !rec.events.length) {
+            renderBeatsPanel(panelContainer);
+            return;
+        }
+        const grid = AudioDawScore.getGrid();
+        const result = AudioDawScore.insertNotes({
+            voice: keysState.voice,
+            barIndex: rec.bar,
+            offsetUnits: 0,
+            notes: keysQuantize(rec.events, grid)
+        });
+        if (typeof doNoticePopover === 'function') {
+            doNoticePopover(result.ok
+                ? `Wrote ${rec.events.length} note${rec.events.length === 1 ? '' : 's'} into ${keysState.voice} from bar ${rec.bar + 1}`
+                : (result.issues?.[0]?.message || 'Those notes would not fit the score'),
+                result.ok ? 'notice-pop-green' : 'notice-pop-yellow');
+        }
+        if (result.ok) switchBottomTab('score');
+        renderBeatsPanel(panelContainer);
+    }
+
+    function renderKeysInstrument(card, panelContainer) {
+        const head = createDiv(null, 'daw-stems-action-row');
+        const voiceWrap = createDiv(null, 'daw-score-field');
+        const voiceLbl = createSpan(null, 'daw-stems-ctl-label');
+        voiceLbl.textContent = 'Voice';
+        const voiceSel = document.createElement('select');
+        voiceSel.className = 'daw-fx-select';
+        for (const v of ['Vocal', 'Ins']) {
+            const o = document.createElement('option');
+            o.value = v; o.textContent = v;
+            voiceSel.appendChild(o);
+        }
+        voiceSel.value = keysState.voice;
+        voiceSel.addEventListener('change', () => { keysState.voice = voiceSel.value; });
+        voiceWrap.appendChild(voiceLbl); voiceWrap.appendChild(voiceSel);
+        head.appendChild(voiceWrap);
+
+        const octWrap = createDiv(null, 'daw-score-field');
+        const octLbl = createSpan(null, 'daw-stems-ctl-label');
+        octLbl.textContent = 'Octave';
+        const octSel = document.createElement('select');
+        octSel.className = 'daw-fx-select';
+        for (const n of [2, 3, 4, 5, 6]) {
+            const o = document.createElement('option');
+            o.value = String(n); o.textContent = 'C' + n;
+            octSel.appendChild(o);
+        }
+        octSel.value = String(keysState.octave);
+        octSel.addEventListener('change', () => { keysState.octave = parseInt(octSel.value, 10); renderBeatsPanel(panelContainer); });
+        octWrap.appendChild(octLbl); octWrap.appendChild(octSel);
+        head.appendChild(octWrap);
+
+        const recBtn = document.createElement('button');
+        recBtn.className = 'basic-button btn-sm btn-primary daw-stems-go';
+        recBtn.textContent = keysState.recording ? 'Stop and write' : 'Record into score';
+        recBtn.title = 'Play the keys below; what you play lands in the score at the playhead bar';
+        recBtn.addEventListener('click', () => {
+            if (keysState.recording) { keysStopRecording(panelContainer); return; }
+            keysState.recording = { bar: AudioDawScore.barAtTime(state.currentTime), events: [], held: new Map() };
+            renderBeatsPanel(panelContainer);
+        });
+        head.appendChild(recBtn);
+        card.appendChild(head);
+
+        const grid = AudioDawScore.getGrid();
+        const key = AudioDawScore.getKey();
+        const info = createDiv(null, 'daw-stems-desc');
+        info.textContent = keysState.recording
+            ? `Recording into ${keysState.voice} from bar ${keysState.recording.bar + 1}. Stop and write puts it in the score.`
+            : `Writes into the Score tab at the playhead bar, in ${key.key}${key.mode} on the ${grid.unitLength} grid at ${Math.round(grid.bpm)} BPM.`;
+        card.appendChild(info);
+
+        // Two rows: the black keys sit above the white ones, with gaps where a piano has none.
+        const BLACK = [1, 1, 0, 1, 1, 1, 0];
+        const WHITE = [0, 2, 4, 5, 7, 9, 11];
+        const base = (keysState.octave + 1) * 12;
+        const blackRow = createDiv(null, 'daw-keys-row');
+        const whiteRow = createDiv(null, 'daw-keys-row');
+        const NAMES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+        for (let o = 0; o < 2; o++) {
+            for (let i = 0; i < 7; i++) {
+                const white = base + o * 12 + WHITE[i];
+                whiteRow.appendChild(keyButton(`${NAMES[i]}${keysState.octave + o}`, white));
+                if (BLACK[i]) blackRow.appendChild(keyButton(`${NAMES[i]}♯`, white + 1));
+                else blackRow.appendChild(keySpacer());
+            }
+        }
+        whiteRow.appendChild(keyButton(`C${keysState.octave + 2}`, base + 24));
+        blackRow.appendChild(keySpacer());
+        card.appendChild(blackRow);
+        card.appendChild(whiteRow);
+
+        const midiRow = createDiv(null, 'daw-stems-desc');
+        if (!keysMidiPossible()) {
+            midiRow.textContent = 'A MIDI keyboard needs a page served over HTTPS or from localhost; over a LAN '
+                + 'address the browser will not offer it. The keys above work either way.';
+        }
+        else if (keysState.midiAccess) {
+            const names = [...keysState.midiAccess.inputs.values()].map(i => i.name);
+            midiRow.textContent = names.length ? `MIDI in: ${names.join(', ')}` : 'MIDI is on, but no input is connected.';
+        }
+        else {
+            const btn = document.createElement('button');
+            btn.className = 'basic-button btn-sm';
+            btn.textContent = 'Connect MIDI keyboard';
+            btn.addEventListener('click', () => connectKeysMidi(panelContainer));
+            midiRow.appendChild(btn);
+        }
+        card.appendChild(midiRow);
+    }
+
+    function keyButton(label, midi) {
+        const b = document.createElement('button');
+        b.className = 'basic-button btn-sm daw-keys-key';
+        b.textContent = label;
+        b.dataset.midi = String(midi);
+        b.addEventListener('pointerdown', (e) => { e.preventDefault(); keysDown(midi); });
+        b.addEventListener('pointerup', () => keysUp(midi));
+        b.addEventListener('pointerleave', () => keysUp(midi));
+        return b;
+    }
+
+    function keySpacer() {
+        const s = createDiv(null, 'daw-keys-key daw-keys-gap');
+        return s;
+    }
+
+    async function connectKeysMidi(panelContainer) {
+        try {
+            keysState.midiAccess = await navigator.requestMIDIAccess();
+            for (const input of keysState.midiAccess.inputs.values()) {
+                input.onmidimessage = (ev) => {
+                    const [status, note, velocity] = ev.data;
+                    const cmd = status & 0xf0;
+                    if (cmd === 0x90 && velocity > 0) keysDown(note);
+                    else if (cmd === 0x80 || (cmd === 0x90 && velocity === 0)) keysUp(note);
+                };
+            }
+            renderBeatsPanel(panelContainer);
+        }
+        catch (err) {
+            console.error('[AudioDaw] MIDI access denied:', err);
+            if (typeof doNoticePopover === 'function') doNoticePopover('MIDI access was refused: ' + err.message, 'notice-pop-yellow');
+        }
+    }
+
     // Instrument browser: the drum machine ships today; the rest are planned
     // slots (clicking one explains what's coming). New instruments plug in by
     // flipping ready:true and rendering their UI in renderBeatsPanel.
     const DAW_INSTRUMENTS = [
         { id: 'drums', name: 'Drum Machine', desc: '16/32-step sample sequencer', ready: true },
-        { id: 'keys', name: 'Piano / Keys', desc: 'Piano roll, coming soon', ready: false },
+        { id: 'keys', name: 'Piano / Keys', desc: 'Play a phrase into the score', ready: true },
         { id: 'bass', name: 'Bass', desc: 'Coming soon', ready: false },
         { id: 'synth', name: 'Synth', desc: 'Coming soon', ready: false }
     ];
@@ -3950,9 +4154,18 @@ const AudioDaw = (() => {
         }
         panel.appendChild(browser);
 
-        // Selected instrument UI (drum machine is the only one wired so far)
         const instCard = createDiv(null, 'daw-fx-card daw-inst-card');
         panel.appendChild(instCard);
+        if (activeInstrument === 'keys') {
+            if (typeof AudioDawScore === 'undefined') {
+                const missing = createDiv(null, 'daw-stems-desc');
+                missing.textContent = 'The Score tab did not load, so there is nothing to play into.';
+                instCard.appendChild(missing);
+                return;
+            }
+            renderKeysInstrument(instCard, container);
+            return;
+        }
 
         // Header controls
         const head = createDiv(null, 'daw-stems-model-row');

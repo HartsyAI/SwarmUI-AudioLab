@@ -2355,4 +2355,6 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
 .daw-score-budget:empty { display: none; }
 .daw-score-ver { padding: 0.45rem 0.6rem; gap: 0.15rem; }
 .daw-score-ver.selected { border-color: var(--emphasis); }
-
+.daw-keys-row { display: flex; gap: 0.2rem; flex-wrap: nowrap; overflow-x: auto; }
+.daw-keys-key { min-width: 2.6rem; }
+.daw-keys-gap { visibility: hidden; }
