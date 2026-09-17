@@ -894,7 +894,15 @@ public static class AudioLabAPI
                 }
                 args["__model_id"] = chosen.Id;
             }
-            return await AudioServerManager.Instance.TranscribeScoreAsync(provider, args);
+            JObject result = await AudioServerManager.Instance.TranscribeScoreAsync(provider, args);
+            if (input["unload_after"]?.Value<bool>() == true)
+            {
+                // Coarser than it sounds: the engine has no per-model unload, so this releases every resident
+                // audio model. Run whatever the transcription returned — a refusal is the case most likely to
+                // have been caused by the memory this frees.
+                AudioEngineBridge.Unload(provider.Id, args.TryGetValue("__model_id", out object chosenId) ? chosenId as string : null);
+            }
+            return result;
         }
         catch (Exception ex)
         {

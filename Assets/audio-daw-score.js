@@ -2476,6 +2476,16 @@ const AudioDawScore = (() => {
         els.transcribe = button(row, 'Transcribe clip', 'basic-button btn-sm', () => transcribeSelection('clip'));
         els.transcribeStem = button(row, 'Transcribe vocal stem', 'basic-button btn-sm', () => transcribeSelection('stem'));
         els.cover = button(row, 'Cover this clip', 'basic-button btn-sm btn-primary', coverClip);
+        const freeLabel = document.createElement('label');
+        freeLabel.className = 'daw-score-toggle';
+        freeLabel.htmlFor = 'daw_score_unload';
+        freeLabel.title = 'Releases every resident audio model, not only SheetSage2 — the engine has no per-model unload';
+        els.unloadAfter = document.createElement('input');
+        els.unloadAfter.type = 'checkbox';
+        els.unloadAfter.id = 'daw_score_unload';
+        freeLabel.appendChild(els.unloadAfter);
+        freeLabel.appendChild(document.createTextNode(' Free audio models after'));
+        row.appendChild(freeLabel);
         card.appendChild(row);
 
         els.transcribeInfo = createDiv(null, 'daw-stems-clipinfo');
@@ -2485,6 +2495,8 @@ const AudioDawScore = (() => {
         desc.textContent = 'SheetSage2 reads the score behind a recording — melody, chords, key, meter and tempo. '
             + 'It comes back in two renderings from one listen: Melody is what a cover is rendered from, Full '
             + 'keeps the harmony. Cover transcribes the clip and renders its melody in the style above. '
+            + 'It is about 1.4 GB and stays resident afterwards unless Free audio models after is ticked, '
+            + 'which releases every loaded audio model rather than just this one. '
             + 'Weights are CC BY-NC 4.0 — non-commercial use only.';
         card.appendChild(desc);
         parent.appendChild(card);
@@ -2599,7 +2611,8 @@ const AudioDawScore = (() => {
         try {
             const wav = await toModelWav(target.clip.blob);
             const result = await AudioLabAPI.callAPI('AudioLabTranscribeScore', {
-                audio_data: await AudioLabCore.readAsBase64(wav)
+                audio_data: await AudioLabCore.readAsBase64(wav),
+                unload_after: !!els.unloadAfter?.checked
             });
             if (!result?.success) throw new Error(result?.error || 'The transcription came back empty');
             const meta = {
