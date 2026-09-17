@@ -2336,6 +2336,18 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
 }
 .daw-score-sheet svg { max-width: 100%; }
 .daw-score-sheet .abcjs-note_selected path, .daw-score-sheet .playing-note path { fill: var(--emphasis); }
+/* The transport is abcjs's own SynthController; abcjs-audio.css is not vendored, so its job is done here. */
+.daw-score-transport { margin-top: 0.35rem; }
+.daw-score-transport .abcjs-css-warning { display: none; }
+.daw-score-transport .abcjs-inline-audio { display: flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; color: var(--text-soft); }
+.daw-score-transport .abcjs-inline-audio.abcjs-disabled { opacity: 0.4; pointer-events: none; }
+.daw-score-transport .abcjs-btn { width: 1.6rem; height: 1.6rem; padding: 0.2rem; background: transparent; border: 1px solid var(--shadow); border-radius: 0.25rem; color: var(--text-soft); cursor: pointer; }
+.daw-score-transport .abcjs-btn:hover, .daw-score-transport .abcjs-btn.abcjs-pushed { color: var(--emphasis); border-color: var(--emphasis); }
+.daw-score-transport .abcjs-btn svg { display: block; width: 100%; height: 100%; fill: currentColor; }
+.daw-score-transport .abcjs-midi-progress-background { position: relative; flex: 1; height: 0.7rem; padding: 0; background: var(--background-soft); border: 1px solid var(--shadow); border-radius: 0.35rem; cursor: pointer; }
+.daw-score-transport .abcjs-midi-progress-indicator { position: absolute; top: 0; width: 0.35rem; height: 100%; background: var(--emphasis); border-radius: 0.35rem; }
+.daw-score-transport .abcjs-midi-clock { font-family: var(--font-monospace); min-width: 2.6rem; }
+.daw-score-transport .abcjs-midi-tempo { width: 3.4rem; }
 .daw-score-src { font-family: var(--font-monospace); font-size: 0.78rem; white-space: pre; overflow-wrap: normal; }
 .daw-score-field { display: flex; align-items: center; gap: 0.3rem; }
 .daw-score-field input { width: 5.5rem; }

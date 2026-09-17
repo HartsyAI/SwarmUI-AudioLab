@@ -34,7 +34,10 @@ const AudioDawScore = (() => {
     let selection = null;   // { start, end, voice, chord, token } in ORIGINAL coordinates
     const history = { undo: [], redo: [] };
     let visual = null;      // the rendered tune; carries noteTimings for highlighting
-    let synth = null, timing = null;
+    let synthCtl = null;
+    // The plan's own timings. A warped audition replaces visual.noteTimings with tempo-scaled ones, and the
+    // DAW playhead follows the plan rather than the audition.
+    let planTimings = null;
     let highlighted = [], lastSystemTop = null, lastTimingIndex = -1;
     // null = abcjs's own remote host. Set once the local samples are all present.
     let soundFontUrl = null;
@@ -492,19 +495,19 @@ const AudioDawScore = (() => {
         title.textContent = 'Score';
         head.appendChild(title);
         const btns = createDiv(null, 'daw-fx-card-btns');
-        els.play = miniButton('Play', 'Hear the plan in the browser before spending a render on it', playPlan);
-        els.stop = miniButton('Stop', 'Stop the audition', stopPlan);
-        els.stop.disabled = true;
+        els.play = miniButton('Play', 'Hear the plan in the browser before spending a render on it', playPause);
         const chordsLabel = document.createElement('label');
         chordsLabel.className = 'daw-score-toggle';
         chordsLabel.title = 'Play the chord symbols as accompaniment';
+        chordsLabel.htmlFor = 'daw_score_chords';
         els.chords = document.createElement('input');
         els.chords.type = 'checkbox';
+        els.chords.id = 'daw_score_chords';
         els.chords.checked = true;
+        els.chords.addEventListener('change', setTransportTune);
         chordsLabel.appendChild(els.chords);
         chordsLabel.appendChild(document.createTextNode(' Chords'));
         btns.appendChild(els.play);
-        btns.appendChild(els.stop);
         btns.appendChild(chordsLabel);
         els.undo = miniButton('Undo', 'Undo the last score edit (Ctrl+Z while the score has focus)', undo);
         els.redo = miniButton('Redo', 'Redo (Ctrl+Y)', redo);
@@ -525,8 +528,11 @@ const AudioDawScore = (() => {
         els.sheet = createDiv(null, 'daw-score-sheet');
         els.sheet.tabIndex = 0;   // so the staff can take keyboard focus without stealing the DAW's shortcuts
         els.sheet.addEventListener('keydown', onSheetKey);
+        els.sheet.addEventListener('dblclick', playFromNote);
         setupSheetDrop(els.sheet);
         card.appendChild(els.sheet);
+        els.transport = createDiv(null, 'daw-score-transport');
+        card.appendChild(els.transport);
         parent.appendChild(card);
     }
 
@@ -849,6 +855,8 @@ const AudioDawScore = (() => {
         }
         if (!current?.abc.trim()) {
             visual = null;
+            planTimings = null;
+            setTransportTune();
             renderStartScreen(host);
             return;
         }
@@ -869,7 +877,11 @@ const AudioDawScore = (() => {
                 clickListener: onScoreClick
             })[0];
             // Populates visual.noteTimings, which is what the DAW transport is followed against.
-            if (visual) new ABCJS.TimingCallbacks(visual, { eventCallback: () => {} });
+            if (visual) {
+                new ABCJS.TimingCallbacks(visual, { eventCallback: () => {} });
+                planTimings = visual.noteTimings;
+            }
+            setTransportTune();
             watchWidth(host);
         }
         catch (e) {
@@ -1364,56 +1376,112 @@ const AudioDawScore = (() => {
     // ===== audition =====
 
     /**
-     * Play the plan in the browser. abcjs comps the quoted chords automatically, so this is the fastest way to
-     * hear whether a reharmonisation works — seconds, against minutes for a real render.
+     * abcjs's own SynthController, which is what carries pause, click-to-seek, loop and tempo warp. Its Play
+     * button is left out (displayPlay: false) because it binds e.play at load time and swallows the rejection
+     * a missing sample set produces, which is exactly the case the local/remote fallback below exists for.
      */
-    async function playPlan() {
-        if (!visual || !ABCJS.synth.supportsAudio()) {
-            notice('This browser cannot play audio here', 'yellow');
-            return;
+    function ensureTransport() {
+        if (synthCtl || !els.transport) return synthCtl;
+        if (typeof ABCJS === 'undefined' || !ABCJS.synth.supportsAudio()) {
+            els.transport.textContent = 'This browser cannot play audio here.';
+            els.transport.className = 'daw-stems-clipinfo';
+            return null;
         }
-        stopPlan();
+        synthCtl = new ABCJS.synth.SynthController();
+        synthCtl.load(els.transport, {
+            onEvent: highlightTiming,
+            onStart: syncPlayButton,
+            onFinished: () => { clearHighlight(); syncPlayButton(); }
+        }, { displayPlay: false, displayLoop: true, displayRestart: true, displayProgress: true, displayWarp: true });
+        return synthCtl;
+    }
+
+    function synthOptions() {
+        const opts = { chordsOff: !els.chords?.checked };
+        if (soundFontUrl) opts.soundFontUrl = soundFontUrl;
+        return opts;
+    }
+
+    /**
+     * Point the transport at what is on the staff now. setTune keeps the previous tune's primed buffer and its
+     * isLoading flag, so without this reset a re-engrave would audition the old score and one failed sample
+     * fetch would wedge every later Play in the ready-poll. userAction is false: nothing is fetched until Play.
+     */
+    function setTransportTune() {
+        const ctl = ensureTransport();
+        if (!ctl) return;
+        try { ctl.destroy(); } catch (_) {}
+        ctl.isLoaded = false;
+        ctl.isLoading = false;
+        ctl.midiBuffer = null;
+        if (!visual) { ctl.disable(true); syncPlayButton(); return; }
+        ctl.setTune(visual, false, synthOptions()).catch(() => {});
+        syncPlayButton();
+    }
+
+    /** Play and pause are one button: SynthController.play() toggles, so the label follows isStarted. */
+    async function playPause() {
+        const ctl = ensureTransport();
+        if (!ctl || !visual) { notice('This browser cannot play audio here', 'yellow'); return; }
+        if (ctl.isStarted) { ctl.pause(); syncPlayButton(); return; }
         els.play.disabled = true;
         try {
-            synth = new ABCJS.synth.CreateSynth();
-            const opts = { chordsOff: !els.chords.checked };
-            try {
-                await synth.init({ visualObj: visual, options: soundFontUrl ? { ...opts, soundFontUrl } : opts });
-                await synth.prime();
-            }
-            catch (local) {
-                // A local set that cannot be read is worth one retry against the host abcjs ships with,
-                // rather than a dead Play button.
-                if (!soundFontUrl) throw local;
+            await ctl.play();
+        }
+        catch (local) {
+            // A local set that cannot be read is worth one retry against the host abcjs ships with,
+            // rather than a dead Play button.
+            if (soundFontUrl) {
                 console.warn('[AudioDawScore] Local soundfont failed, falling back to the remote host', local);
                 soundFontUrl = null;
-                synth = new ABCJS.synth.CreateSynth();
-                await synth.init({ visualObj: visual, options: opts });
-                await synth.prime();
+                setTransportTune();
+                try { await ctl.play(); }
+                catch (remote) {
+                    console.error('[AudioDawScore] Audition failed:', remote);
+                    notice('Could not play the plan — the instrument samples could not be fetched', 'yellow');
+                    setTransportTune();
+                }
             }
-            timing = new ABCJS.TimingCallbacks(visual, {
-                eventCallback: (ev) => { highlightTiming(ev); return ev ? undefined : 'continue'; }
-            });
-            synth.start();
-            timing.start();
-            els.stop.disabled = false;
-        }
-        catch (e) {
-            console.error('[AudioDawScore] Audition failed:', e);
-            notice('Could not play the plan — the instrument samples could not be fetched', 'yellow');
-            stopPlan();
+            else {
+                console.error('[AudioDawScore] Audition failed:', local);
+                notice('Could not play the plan — the instrument samples could not be fetched', 'yellow');
+                setTransportTune();
+            }
         }
         finally {
             els.play.disabled = false;
+            syncPlayButton();
         }
     }
 
+    function syncPlayButton() {
+        if (!els.play) return;
+        els.play.textContent = synthCtl?.isStarted ? 'Pause' : 'Play';
+    }
+
+    /**
+     * Double-click a note to hear the score from there. Seeking by fraction rather than seconds survives a
+     * tempo warp, which rewrites every timing but not their proportions.
+     */
+    async function playFromNote(e) {
+        const node = e.target?.closest?.('.abcjs-note, .abcjs-rest');
+        if (!node || !visual) return;
+        e.preventDefault();
+        const ctl = ensureTransport();
+        if (!ctl) return;
+        if (!ctl.isStarted) await playPause();
+        const timings = visual.noteTimings || [];
+        const end = timings[timings.length - 1]?.milliseconds || 0;
+        const hit = timings.find(t => (t.elements || []).flat()
+            .some(n => n === node || node.contains?.(n) || n?.contains?.(node)));
+        if (hit && end > 0) ctl.seek(hit.milliseconds / end);
+    }
+
+    /** Stop the audition. Kept as the DAW's way of silencing the tab; the transport's own Restart rewinds. */
     function stopPlan() {
-        try { timing?.stop(); } catch (_) {}
-        try { synth?.stop(); } catch (_) {}
-        timing = null; synth = null;
+        try { synthCtl?.pause(); } catch (_) {}
         clearHighlight();
-        if (els.stop) els.stop.disabled = true;
+        syncPlayButton();
     }
 
     function clearHighlight() {
@@ -1445,13 +1513,13 @@ const AudioDawScore = (() => {
      */
     function syncTime(seconds) {
         // The audition owns the highlight while it runs; two transports fighting over it helps nobody.
-        if (timing || !visual?.noteTimings?.length || !els.sheet?.isConnected) return;
+        if (synthCtl?.isStarted || !planTimings?.length || !els.sheet?.isConnected) return;
         const clip = selectedClip?.clip;
         if (!clip || !current?.meta || clip.meta?.score?.abc !== current.abc) return;
         const rel = seconds - (clip.startTime || 0) + (clip.offset || 0);
         if (rel < 0) { clearHighlightOnly(); return; }
         const ms = rel * 1000;
-        const timings = visual.noteTimings;
+        const timings = planTimings;
         let lo = 0, hi = timings.length - 1, found = -1;
         while (lo <= hi) {
             const mid = (lo + hi) >> 1;
@@ -2647,6 +2715,7 @@ const AudioDawScore = (() => {
         keyAccidentals, midiToAbc, voiceBars, blankScore,
         _state: () => ({ abc: current?.abc || '', selection, undoDepth: history.undo.length,
             meta: current?.meta || null, transcribing }),
-        _soundfontUrl: () => soundFontUrl
+        _soundfontUrl: () => soundFontUrl,
+        _transport: () => synthCtl
     };
 })();
