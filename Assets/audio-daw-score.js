@@ -1521,11 +1521,14 @@ const AudioDawScore = (() => {
         syncPlayButton();
     }
 
-    /** Play and pause are one button: SynthController.play() toggles, so the label follows isStarted. */
+    /**
+     * Play and pause are one button, because play() is the toggle: it flips isStarted and pauses on the way
+     * down. Calling pause() directly would stop the clocks but leave isStarted set, so the next press would
+     * pause an audition that is already silent.
+     */
     async function playPause() {
         const ctl = ensureTransport();
         if (!ctl || !visual) { notice('This browser cannot play audio here', 'yellow'); return; }
-        if (ctl.isStarted) { ctl.pause(); syncPlayButton(); return; }
         els.play.disabled = true;
         try {
             await ctl.play();
@@ -1582,7 +1585,9 @@ const AudioDawScore = (() => {
 
     /** Stop the audition. Kept as the DAW's way of silencing the tab; the transport's own Restart rewinds. */
     function stopPlan() {
+        // pause() only stops the clocks — play() owns isStarted, so it has to be cleared alongside.
         try { synthCtl?.pause(); } catch (_) {}
+        if (synthCtl) synthCtl.isStarted = false;
         clearHighlight();
         syncPlayButton();
     }
