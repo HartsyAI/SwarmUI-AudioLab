@@ -1518,6 +1518,9 @@ const AudioDawScore = (() => {
         ctl.midiBuffer = null;
         if (!visual) { ctl.disable(true); syncPlayButton(); return; }
         ctl.setTune(visual, false, synthOptions()).catch(() => {});
+        // go() is what fills the BPM readout, and that waits for the first Play — show the plan's own until then.
+        try { ctl.control?.setTempo(Math.round(visual.getBeatsPerMeasure() / visual.millisecondsPerMeasure() * 60000)); }
+        catch (_) {}
         syncPlayButton();
     }
 
