@@ -68,6 +68,7 @@ public static class AudioLabAPI
             API.RegisterAPICall(AudioLabDeleteProject, true, AudioLabPermissions.PermDawProjects);
             API.RegisterAPICall(AudioLabScoreCapabilities, false, AudioLabPermissions.PermDawProjects);
             API.RegisterAPICall(AudioLabPlanScore, false, AudioLabPermissions.PermProcessAudio);
+            API.RegisterAPICall(AudioLabTranscribeScore, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(AudioLabFetchSoundfont, true, AudioLabPermissions.PermManageBackends);
         }
         catch (Exception ex)
@@ -840,6 +841,65 @@ public static class AudioLabAPI
         {
             Logs.Error($"[AudioLab] Score planning failed: {ex}");
             return AudioLab.CreateErrorResponse(ex.Message, "plan_failed");
+        }
+    }
+
+    /// <summary>Reads the score out of a recording: melody, chords, key, meter and tempo as ABC.
+    ///
+    /// <para>Returns both renderings of the one transcription. They are not a substitution apart — a bar
+    /// carrying a chord symbol cannot fold into a multi-bar rest, and a chord change inside a held note splits
+    /// it into tied parts — so the melody form a cover renders from has to come from the model, not from
+    /// deleting quoted text. The decode is the entire cost and serializing is free, so both come back.</para>
+    ///
+    /// <para>Guarded by the audio-processing permission, like every other endpoint that loads a model and runs
+    /// the GPU.</para></summary>
+    public static async Task<JObject> AudioLabTranscribeScore(Session session, JObject input)
+    {
+        try
+        {
+            string audioData = input["audio_data"]?.ToString() ?? "";
+            if (string.IsNullOrWhiteSpace(audioData))
+            {
+                return AudioLab.CreateErrorResponse("No audio was sent to transcribe.", "no_audio");
+            }
+            if (audioData.Length > MaxArgStringLength)
+            {
+                return AudioLab.CreateErrorResponse(
+                    $"The audio is {audioData.Length / (1024 * 1024)} MB encoded, over the {MaxArgStringLength / (1024 * 1024)} MB limit. Transcribe a shorter section.",
+                    "arg_too_large");
+            }
+            string providerId = input["provider_id"]?.ToString();
+            if (string.IsNullOrWhiteSpace(providerId))
+            {
+                providerId = "sheetsage2_transcribe";
+            }
+            AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId);
+            if (provider is null)
+            {
+                return AudioLab.CreateErrorResponse($"Unknown audio provider '{providerId}'.", "no_provider");
+            }
+            Dictionary<string, object> args = new()
+            {
+                ["audio_data"] = audioData,
+            };
+            string requestedModel = input["model"]?.ToString();
+            if (!string.IsNullOrWhiteSpace(requestedModel))
+            {
+                AudioModelDefinition chosen = provider.Models
+                    .FirstOrDefault(m => m.Id.Equals(requestedModel, StringComparison.OrdinalIgnoreCase));
+                if (chosen is null)
+                {
+                    return AudioLab.CreateErrorResponse(
+                        $"'{requestedModel}' is not a model of '{provider.Id}'.", "unknown_model");
+                }
+                args["__model_id"] = chosen.Id;
+            }
+            return await AudioServerManager.Instance.TranscribeScoreAsync(provider, args);
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] Score transcription failed: {ex}");
+            return AudioLab.CreateErrorResponse(ex.Message, "transcribe_failed");
         }
     }
 

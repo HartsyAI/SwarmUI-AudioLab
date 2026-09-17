@@ -280,6 +280,19 @@ public static class AudioIo
         ["budget_seconds"] = plan.BudgetSeconds,
     };
 
+    /// <summary>Success result for transcribing music into a score. Both renderings come from one decode, and
+    /// neither is derivable from the other — stripping the chord symbols out of the full one does not spell the
+    /// melody one.</summary>
+    public static JObject ScoreTranscript(ScoreTranscriptResult score) => new()
+    {
+        ["success"] = true,
+        ["full_abc"] = score.FullAbc,
+        ["melody_abc"] = score.MelodyAbc,
+        ["duration"] = score.Duration,
+        ["window_count"] = score.WindowCount,
+        ["truncated"] = score.Truncated,
+    };
+
     /// <summary>Success result for a transcription (STT) request.</summary>
     public static JObject TranscriptionResult(string text, string language) => new()
     {

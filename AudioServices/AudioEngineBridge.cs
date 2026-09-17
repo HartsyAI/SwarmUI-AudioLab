@@ -59,6 +59,8 @@ public static class AudioEngineBridge
         ["moonshinestreaming_stt"] = new AudioEngineBinding("moonshinestreaming", AudioEngineService.Transcribe, true),
         ["kyutaistt_stt"] = new AudioEngineBinding("kyutaistt", AudioEngineService.Transcribe, true),
         ["whisperstreaming_stt"] = new AudioEngineBinding("whisperstreaming", AudioEngineService.Transcribe, true),
+        // Music, not speech: it writes a lead sheet. The transcribe service is still what runs it.
+        ["sheetsage2_transcribe"] = new AudioEngineBinding("sheetsage2", AudioEngineService.Transcribe, true),
         // Text-to-speech.
         ["vibevoice_tts"] = new AudioEngineBinding("vibevoice", AudioEngineService.Speech, true),
         ["kokoro_tts"] = new AudioEngineBinding("kokoro", AudioEngineService.Speech, true),
@@ -115,6 +117,16 @@ public static class AudioEngineBridge
         ["openvoice_clone"] = "myshell-ai/OpenVoiceV2",
         ["resemble_enhance_fx"] = "ResembleAI/resemble-enhance",
         ["yue2_music"] = "Comfy-Org/YuE2",
+        ["sheetsage2_transcribe"] = "Comfy-Org/YuE2",
+    };
+
+    /// <summary>Engine-managed providers cached outside their own AudioLab category, mapped to the Engine's
+    /// cache category and the one file whose presence answers "installed". SheetSage2 is an STT-category
+    /// provider whose weights ride inside the YuE2 repo under "music", and YuE2's own files being there says
+    /// nothing about whether the encoder was fetched.</summary>
+    private static readonly Dictionary<string, (string Category, string File)> _engineWeightFiles = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["sheetsage2_transcribe"] = ("music", "audio_encoders/sheetsage2_bf16.safetensors"),
     };
 
     /// <summary>Engine-managed providers that don't use the HuggingFace cache at all, mapped to the
@@ -254,6 +266,39 @@ public static class AudioEngineBridge
     public static async Task<JObject> ScoreBudgetAsync(string providerId, IReadOnlyDictionary<string, object> args, CancellationToken cancel)
         => await SymbolicAsync(providerId, args, cancel,
             (spec, request, ct) => Engine.Music.BudgetAsync(spec, request, ct)).ConfigureAwait(false);
+
+    /// <summary>Transcribes a recording into a score, returning both of its renderings from one decode.
+    ///
+    /// <para>The plain transcribe path returns the chord-annotated ABC as text, which is enough to read but not
+    /// to cover: the melody-only rendering is a different serialization of the same events, not the same string
+    /// with its chord symbols deleted, so it cannot be recovered client-side. The decode is the entire cost, so
+    /// the model is asked once and writes both.</para></summary>
+    public static async Task<JObject> TranscribeScoreAsync(string providerId, IReadOnlyDictionary<string, object> args, CancellationToken cancel)
+    {
+        if (!_bindings.TryGetValue(providerId ?? "", out AudioEngineBinding binding))
+        {
+            return AudioIo.Error($"Provider '{providerId}' is not supported by the in-process audio engine yet.");
+        }
+        if (binding.Service != AudioEngineService.Transcribe)
+        {
+            return AudioIo.Error($"Provider '{providerId}' does not listen to audio — only transcription models read a score off a recording.");
+        }
+        try
+        {
+            ModelSpec spec = BuildSpec(providerId, binding, args);
+            return AudioIo.ScoreTranscript(await Engine.Transcribe
+                .RunScoreAsync(spec, AudioEngineRequests.Transcribe(args), cancel).ConfigureAwait(false));
+        }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+        {
+            return AudioIo.Cancelled();
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] Score transcription for '{providerId}' failed: {ex}");
+            return AudioIo.Error(ex.Message);
+        }
+    }
 
     /// <summary>Shared path for the symbolic music calls, mirroring <see cref="ProcessAsync"/>'s error handling.
     /// A provider that does not plan a score surfaces the Engine's own NotSupportedException as a plain error.</summary>
@@ -514,6 +559,11 @@ public static class AudioEngineBridge
             {
                 Logs.Debug($"[AudioLab] No weights location known for engine-managed '{providerId}': presence cannot be determined. Add it to _engineWeightRepos/_engineWeightFolders.");
                 return [];
+            }
+            if (_engineWeightFiles.TryGetValue(providerId, out (string Category, string File) inside))
+            {
+                return [Path.Combine(AudioModelCache.GetRepoDirectory(repo, inside.Category),
+                    inside.File.Replace('/', Path.DirectorySeparatorChar))];
             }
             return [AudioModelCache.GetRepoDirectory(repo, AudioWeights.CategorySubfolder(provider.Category))];
         }

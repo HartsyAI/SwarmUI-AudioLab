@@ -38,6 +38,8 @@ const AudioLabConfig = {
         kyutaistt_stt: { category: 'audiolab_stt' },
         distilwhisper_stt: { category: 'audiolab_stt' },
         moonshine_stt: { category: 'audiolab_stt' },
+        // Music transcription, not speech, but it is an STT-category provider: an unmapped arch hides every audio param.
+        sheetsage2: { category: 'audiolab_stt', providerFlag: 'sheetsage2_params' },
         realtimestt_stt: { category: 'audiolab_stt' },
         musicgen_music: { category: 'audiolab_audiogen', extraFlags: ['audiocraft_sampling'] },
         // Keys are model-class ids. The three families core classifies itself use CORE's ids, so core grants
