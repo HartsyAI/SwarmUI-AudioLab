@@ -27,8 +27,11 @@ const AudioDawTrack = (() => {
      * @returns {Object} Clip data
      */
     function createClip(blob, opts = {}) {
+        // A restored clip keeps its id: score versions link by clip id, so a regenerated one orphans the tree.
+        const restored = /^clip-(\d+)$/.exec(opts.id || '');
+        if (restored) clipIdCounter = Math.max(clipIdCounter, parseInt(restored[1], 10));
         return {
-            id: `clip-${++clipIdCounter}`,
+            id: opts.id || `clip-${++clipIdCounter}`,
             blob,
             decodedBuffer: null,      // AudioBuffer, populated after decode
             name: opts.name || `Clip ${clipIdCounter}`,

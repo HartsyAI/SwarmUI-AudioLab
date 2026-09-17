@@ -3660,13 +3660,13 @@ const AudioDaw = (() => {
                 const stored = blobStore.get(cs.blobKey);
                 if (!stored) continue;
                 const clip = AudioDawTrack.createClip(stored.blob, {
+                    id: cs.id,
                     name: cs.name,
                     startTime: cs.startTime,
                     color: cs.color,
                     blobKey: cs.blobKey,
                     meta: cs.meta || null
                 });
-                clip.id = cs.id;
                 clip.duration = cs.duration;
                 clip.offset = cs.offset;
                 clip.trimEnd = cs.trimEnd;
@@ -4406,7 +4406,7 @@ const AudioDaw = (() => {
                 const blob = blobs.get(cs.blobKey);
                 if (!blob) continue;
                 const clip = AudioDawTrack.createClip(blob, {
-                    name: cs.name, startTime: cs.startTime, color: cs.color, blobKey: cs.blobKey,
+                    id: cs.id, name: cs.name, startTime: cs.startTime, color: cs.color, blobKey: cs.blobKey,
                     meta: cs.meta || null
                 });
                 const stored = blobStore.get(cs.blobKey);
