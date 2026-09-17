@@ -1334,7 +1334,11 @@ const AudioDaw = (() => {
     function scoreFromMetadata(metadata) {
         const abc = metadata?.sui_extra_data?.yue2_score;
         if (!abc || !String(abc).trim()) return null;
-        return { abc: String(abc), truncated: metadata.sui_extra_data.yue2_score_truncated === true };
+        return {
+            abc: String(abc),
+            truncated: metadata.sui_extra_data.yue2_score_truncated === true,
+            budgetSeconds: metadata.sui_extra_data.yue2_budget_seconds ?? null
+        };
     }
 
     /**
@@ -1351,6 +1355,7 @@ const AudioDaw = (() => {
             score: {
                 abc: found.abc,
                 truncated: found.truncated,
+                budgetSeconds: found.budgetSeconds,
                 style: style || params.text2audiostyle || '',
                 lyrics: lyrics || params.prompt || '',
                 cot: cot || params.scoreplanningmode || 'full',

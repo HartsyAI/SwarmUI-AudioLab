@@ -124,8 +124,16 @@
          ceiling is inert against an engine that clamps at 360. It also carries the budget clamp behind
          meta.budgetSeconds, which ReportTruncation reads to tell "the prompt ate the context" apart from "the
          song ran long". Verified through SwarmUI: 431 s of continuous music, and a 900 s request against a
-         large score correctly reports 718.8 s granted instead of failing. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.74" />
+         large score correctly reports 718.8 s granted instead of failing.
+
+         2.0.0-alpha.79 = REQUIRED by this extension's source: the Score tab's Draft plan calls
+         IMusicService.PlanScoreAsync/BudgetAsync, which do not exist before alpha.78. YuE2 writes its ABC score
+         in a first pass and renders it in a second, so planning alone returns the editable artifact in seconds
+         where a full render takes minutes - measured 14 s to plan a 25 s request against 13 s to render that
+         same score back. alpha.79 additionally carries the SheetSage2 symbolic layer, which nothing here calls
+         yet; pinning it rather than .78 keeps this extension on the newest published engine, which is what the
+         sibling Hartsy extensions do. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.79" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak

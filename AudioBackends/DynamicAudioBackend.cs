@@ -1815,6 +1815,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
         {
             input.ExtraMeta["yue2_score_truncated"] = true;
         }
+        // What the context actually granted this take. It rides along so the Score tab can show the same number
+        // a Draft plan promised, against the render that used it - otherwise the budget only ever reaches a log.
+        if (double.TryParse(result["meta"]?["budgetSeconds"]?.ToString(), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double budget) && budget > 0)
+        {
+            input.ExtraMeta["yue2_budget_seconds"] = budget;
+        }
     }
 
     /// <summary>The clip length a request asked for, resolved exactly as the request itself resolves it. Kept in

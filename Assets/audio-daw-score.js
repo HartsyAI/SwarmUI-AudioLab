@@ -613,6 +613,23 @@ const AudioDawScore = (() => {
 
         const actions = createDiv(null, 'daw-stems-action-row');
         els.load = button(actions, 'Load from clip', 'basic-button btn-sm', loadFromSelectedClip);
+        els.draft = button(actions, 'Draft plan', 'basic-button btn-sm', draftPlan);
+        els.draft.title = 'Ask the model for a score without rendering audio — seconds instead of minutes';
+        const durWrap = createDiv(null, 'daw-score-field');
+        const durLbl = createSpan(null, 'daw-stems-ctl-label');
+        durLbl.textContent = 'Secs';
+        els.duration = document.createElement('input');
+        els.duration.type = 'number';
+        els.duration.className = 'daw-generate-reftext';
+        els.duration.value = '30';
+        els.duration.min = '5';
+        els.duration.max = '900';
+        // The budget is computed against this, so a blank one would report the model's 6-minute default and
+        // tell every short draft it has room to spare.
+        els.duration.title = 'How long the song should be. The audio budget is measured against it.';
+        durWrap.appendChild(durLbl);
+        durWrap.appendChild(els.duration);
+        actions.appendChild(durWrap);
         button(actions, 'Paste', 'basic-button btn-sm', async () => {
             try { applyEdit(await navigator.clipboard.readText()); }
             catch (_) { notice('Could not read the clipboard — paste into the ABC box instead', 'yellow'); }
@@ -622,6 +639,9 @@ const AudioDawScore = (() => {
 
         els.modeNote = createDiv(null, 'daw-stems-desc');
         parent.appendChild(els.modeNote);
+
+        els.budget = createDiv(null, 'daw-stems-clipinfo daw-score-budget');
+        parent.appendChild(els.budget);
 
         buildLlmCard(parent);
 
@@ -688,7 +708,9 @@ const AudioDawScore = (() => {
         if (meta) {
             if (typeof meta.style === 'string') els.style.value = meta.style;
             if (typeof meta.lyrics === 'string') els.lyrics.value = meta.lyrics;
+            showBudget(meta.budgetSeconds ? { budget_seconds: meta.budgetSeconds } : null);
         }
+        else showBudget(null);
         refresh();
     }
 
@@ -1555,6 +1577,73 @@ const AudioDawScore = (() => {
         return { chords, bars, headers, notesTouched: stripped(a) !== stripped(b) };
     }
 
+    // ===== drafting =====
+
+    /** Seconds as m:ss, for a budget a musician reads rather than counts. */
+    function clockTime(seconds) {
+        const total = Math.max(0, Math.round(seconds));
+        return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+    }
+
+    function showBudget(plan) {
+        if (!els.budget) return;
+        if (!plan) { els.budget.textContent = ''; return; }
+        const asked = parseFloat(els.duration.value) || 0;
+        const room = Number(plan.budget_seconds ?? plan.budgetSeconds ?? 0);
+        const tokens = Number(plan.score_tokens ?? 0);
+        let text = `Room for <strong>${clockTime(room)}</strong> of audio`;
+        if (tokens > 0) text += ` · ${tokens.toLocaleString()} score tokens`;
+        els.budget.innerHTML = text;
+        // Below what was asked for means the prompt and score ate the context, which is otherwise
+        // indistinguishable from the model simply choosing to end early.
+        if (asked > 0 && room > 0 && room < asked - 0.5) {
+            els.budget.innerHTML = text
+                + ` — less than the ${clockTime(asked)} asked for; shorten the lyrics or the score.`;
+        }
+    }
+
+    /**
+     * Ask the model for a score and nothing else. It writes one before it renders anything, so this is the
+     * same first pass a full generation runs — seconds against minutes, and the result is editable.
+     */
+    async function draftPlan() {
+        const style = els.style.value.trim();
+        const lyrics = els.lyrics.value.trim();
+        if (!style && !lyrics) { notice('Give it a style or some lyrics to plan from', 'yellow'); return; }
+        els.draft.disabled = true;
+        const busy = cb.busy ? cb.busy('Planning a score…', 'score') : null;
+        try {
+            const plan = await AudioLabAPI.callAPI('AudioLabPlanScore', {
+                provider_id: 'yue2_music',
+                style, lyrics,
+                duration: Math.max(5, parseFloat(els.duration.value) || 30)
+            });
+            if (!plan?.abc || !plan.abc.trim()) {
+                notice('The model planned no score — check that Score Planning Mode is not off', 'yellow');
+                return;
+            }
+            loadScore(plan.abc, {
+                style, lyrics,
+                cot: modeForScore(plan.abc),
+                source: 'drafted',
+                label: style.slice(0, 24) || 'Draft',
+                budgetSeconds: plan.budget_seconds
+            });
+            showBudget(plan);
+            notice(plan.truncated
+                ? 'Score drafted, but it hit its token ceiling'
+                : 'Score drafted', plan.truncated ? 'yellow' : 'green');
+        }
+        catch (e) {
+            console.error('[AudioDawScore] Draft failed:', e);
+            notice('Could not plan a score: ' + e.message, 'red');
+        }
+        finally {
+            busy?.done();
+            els.draft.disabled = false;
+        }
+    }
+
     function stripAllChords() {
         if (!current?.abc.trim()) return;
         if (!hasChords(current.abc)) { notice('This score has no chord symbols', 'yellow'); return; }
@@ -1645,7 +1734,7 @@ const AudioDawScore = (() => {
     }
 
     return {
-        render, onSelection, loadScore, undo, redo, syncTime, stopPlan,
+        render, onSelection, loadScore, undo, redo, syncTime, stopPlan, draftPlan,
         // exported for the DAW, for tests, and for later phases
         validate, hasChords, stripChords, modeForScore, prepareForEngraving, toOriginal,
         parseHeader, scanBody, countBars, chunkBlocks,

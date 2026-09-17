@@ -240,6 +240,50 @@ public static class AudioEngineBridge
         }
     }
 
+    /// <summary>Plans a provider's symbolic score without rendering it.
+    ///
+    /// <para>YuE2 composes in two passes — an autoregressive model writes an ABC score, then a second pass turns
+    /// that score into sound — and the score is the only editable artifact it exposes. Planning alone takes
+    /// seconds where the full render takes minutes, so the Score tab asks for one, lets the user edit it, and
+    /// feeds it back through <c>yue2_abc</c>.</para></summary>
+    public static async Task<JObject> PlanScoreAsync(string providerId, IReadOnlyDictionary<string, object> args, CancellationToken cancel)
+        => await SymbolicAsync(providerId, args, cancel,
+            (spec, request, ct) => Engine.Music.PlanScoreAsync(spec, request, ct)).ConfigureAwait(false);
+
+    /// <summary>Reports what the context leaves for audio behind a prompt and score, without running the planner.</summary>
+    public static async Task<JObject> ScoreBudgetAsync(string providerId, IReadOnlyDictionary<string, object> args, CancellationToken cancel)
+        => await SymbolicAsync(providerId, args, cancel,
+            (spec, request, ct) => Engine.Music.BudgetAsync(spec, request, ct)).ConfigureAwait(false);
+
+    /// <summary>Shared path for the symbolic music calls, mirroring <see cref="ProcessAsync"/>'s error handling.
+    /// A provider that does not plan a score surfaces the Engine's own NotSupportedException as a plain error.</summary>
+    private static async Task<JObject> SymbolicAsync(string providerId, IReadOnlyDictionary<string, object> args,
+        CancellationToken cancel, Func<ModelSpec, MusicRequest, CancellationToken, Task<ScorePlanResult>> run)
+    {
+        if (!_bindings.TryGetValue(providerId ?? "", out AudioEngineBinding binding))
+        {
+            return AudioIo.Error($"Provider '{providerId}' is not supported by the in-process audio engine yet.");
+        }
+        if (binding.Service != AudioEngineService.Music)
+        {
+            return AudioIo.Error($"Provider '{providerId}' does not write a score — only music models plan one.");
+        }
+        try
+        {
+            ModelSpec spec = BuildSpec(providerId, binding, args);
+            return AudioIo.ScorePlan(await run(spec, AudioEngineRequests.Music(args), cancel).ConfigureAwait(false));
+        }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+        {
+            return AudioIo.Cancelled();
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] Score planning for '{providerId}' failed: {ex}");
+            return AudioIo.Error(ex.Message);
+        }
+    }
+
     /// <summary>Shapes an Engine audio result into AudioLab's success JObject. The Engine already returns encoded
     /// container bytes, so this is just base64.</summary>
     private static JObject Audio(AudioResult result)

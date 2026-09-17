@@ -67,6 +67,7 @@ public static class AudioLabAPI
             API.RegisterAPICall(AudioLabListProjects, false, AudioLabPermissions.PermDawProjects);
             API.RegisterAPICall(AudioLabDeleteProject, true, AudioLabPermissions.PermDawProjects);
             API.RegisterAPICall(AudioLabScoreCapabilities, false, AudioLabPermissions.PermDawProjects);
+            API.RegisterAPICall(AudioLabPlanScore, false, AudioLabPermissions.PermProcessAudio);
         }
         catch (Exception ex)
         {
@@ -766,6 +767,78 @@ public static class AudioLabAPI
         catch (Exception ex)
         {
             return AudioLab.CreateErrorResponse("Failed to check installation status", "status_error", ex);
+        }
+    }
+
+    /// <summary>Plans a YuE2 score without rendering it, or reports what the context leaves for audio.
+    ///
+    /// <para>The model composes in two passes and the score is the only editable artifact it exposes, so
+    /// planning alone turns the edit loop from minutes into seconds. Arguments here are ENGINE names, not the
+    /// T2I parameter names the Generate path uses: <c>genre</c> carries the style, <c>prompt</c> the lyrics.</para>
+    ///
+    /// <para>Guarded by the audio-processing permission rather than the DAW-project one: this loads the model
+    /// and runs it on the GPU, which is exactly what that permission is for.</para></summary>
+    public static async Task<JObject> AudioLabPlanScore(Session session, JObject input)
+    {
+        try
+        {
+            string providerId = input["provider_id"]?.ToString();
+            if (string.IsNullOrWhiteSpace(providerId))
+            {
+                providerId = "yue2_music";
+            }
+            AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId);
+            if (provider is null)
+            {
+                return AudioLab.CreateErrorResponse($"Unknown audio provider '{providerId}'.", "no_provider");
+            }
+            string style = input["style"]?.ToString() ?? "";
+            string lyrics = input["lyrics"]?.ToString() ?? "";
+            if (string.IsNullOrWhiteSpace(style) && string.IsNullOrWhiteSpace(lyrics))
+            {
+                return AudioLab.CreateErrorResponse(
+                    "A style or some lyrics are needed before a score can be planned.", "no_prompt");
+            }
+            bool budgetOnly = input["budget_only"]?.Value<bool>() == true;
+            Dictionary<string, object> args = new()
+            {
+                ["genre"] = style,
+                ["prompt"] = lyrics,
+                ["duration"] = input["duration"]?.Value<double>() ?? 30d,
+            };
+            if (input["seed"]?.Value<long>() is long seed && seed >= 0)
+            {
+                args["seed"] = seed;
+            }
+            string cot = input["cot"]?.ToString();
+            if (!string.IsNullOrWhiteSpace(cot))
+            {
+                args["yue2_cot"] = cot;
+            }
+            // Only the budget question carries a score; asking the planner for one while handing it the answer
+            // would skip the planning pass and return the score it was given.
+            if (budgetOnly && input["abc"]?.ToString() is string abc && !string.IsNullOrWhiteSpace(abc))
+            {
+                args["yue2_abc"] = abc;
+            }
+            string requestedModel = input["model"]?.ToString();
+            if (!string.IsNullOrWhiteSpace(requestedModel))
+            {
+                AudioModelDefinition chosen = provider.Models
+                    .FirstOrDefault(m => m.Id.Equals(requestedModel, StringComparison.OrdinalIgnoreCase));
+                if (chosen is null)
+                {
+                    return AudioLab.CreateErrorResponse(
+                        $"'{requestedModel}' is not a model of '{provider.Id}'.", "unknown_model");
+                }
+                args["__model_id"] = chosen.Id;
+            }
+            return await AudioServerManager.Instance.PlanScoreAsync(provider, args, budgetOnly);
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] Score planning failed: {ex}");
+            return AudioLab.CreateErrorResponse(ex.Message, "plan_failed");
         }
     }
 
