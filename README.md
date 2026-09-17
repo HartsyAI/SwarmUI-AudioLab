@@ -326,6 +326,9 @@ instead. Dropping works too: a clip dragged off the timeline onto the sheet load
 read one off it; an `.abc` or `.txt` file opens as a score; a `.wav`, `.mp3` or `.flac` lands as a track and offers to
 transcribe it.
 
+A YuE2 generation made on the Generate tab carries its score too: **Open score** under the result opens the Audio
+Lab with that plan already loaded, rather than leaving it as text in the metadata panel.
+
 Select a clip a YuE2 generation produced and press **Load from clip**; the plan it performed appears as two staves,
 `Vocal` and `Ins`, with its chord symbols. **Draft plan** asks the model for a score without rendering audio, which
 is seconds rather than minutes. **Paste** takes one from anywhere.
@@ -336,8 +339,10 @@ cover is rendered from, and **Full**, which keeps the harmony. They are not a su
 switches between the model's own two scores rather than deleting quoted text from one of them. **Cover this clip**
 runs the whole loop: transcribe, keep the melody, render it in your Style. Separate a song in the **Stems** tab
 first and **Transcribe vocal stem** reads the vocal alone, which is a cleaner melody than the mix. A long dense
-clip can fill the decoder's context, and it says so and asks for a shorter section. SheetSage2's weights are
-CC BY-NC 4.0, non-commercial only.
+clip can fill the decoder's context, and it says so and asks for a shorter section. SheetSage2 is about 1.4 GB
+and stays loaded afterwards; **Free audio models after** drops it when the transcription finishes, which releases
+every resident audio model rather than only this one — the engine has no per-model unload. SheetSage2's weights
+are CC BY-NC 4.0, non-commercial only.
 
 Everything is a text edit on the ABC, so there is one code path and one undo stack:
 
@@ -348,13 +353,19 @@ Everything is a text edit on the ABC, so there is one code path and one undo sta
 - **Melody by degree** takes `1155665 / 4433221` and writes the bars.
 - **Edit with an LLM** rewrites the score to an instruction, with a scope and an invariant to hold fixed. It needs
   the [LLMAssistant](https://github.com/HartsyAI/SwarmUI-LLMAssistant) extension; without it the card says so.
+- **Align bars** pads the source so the `Vocal` and `Ins` lines of a passage show the same bar in the same
+  column, which makes a voice drifting out of step visible before the validator says so. It only ever adds
+  spaces before a barline, so the score still says exactly what it did.
 - Every edit is validated against YuE2's dialect first: two voices under the right ids, matching bar counts per
-  chunk, every bar summing to the meter. Render stays disabled while an error stands.
+  chunk, every bar summing to the meter. Render stays disabled while an error stands. A bar whose durations do
+  not add up is marked on the staff as well as listed, so it does not have to be hunted for.
 
 **Play** auditions the plan in the browser — chords comped, notes highlighted as they sound — so a reharmonisation
-can be judged in seconds instead of a render. **Download samples** fetches the piano samples once so that works
-without the internet; until then they come from the host abcjs ships with. **MIDI** exports the plan, **Save**
-writes a `.abc` file.
+can be judged in seconds instead of a render. It pauses and resumes where it stood, the progress bar under the
+staff seeks on click, and the loop and tempo boxes repeat the plan or stretch it without editing the score, so
+two harmonies can be compared against each other rather than each from bar one. Double-click a note to hear the
+score from there. **Download samples** fetches the piano samples once so that works without the internet; until
+then they come from the host abcjs ships with. **MIDI** exports the plan, **Save** writes a `.abc` file.
 
 **Render** sends the score back with your Style and Lyrics and lands the result as a new track. The planning mode is
 derived from the score, not chosen: chord symbols present means `full`, none means `melody`, which is the setting
