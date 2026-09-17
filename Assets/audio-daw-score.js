@@ -1564,7 +1564,10 @@ const AudioDawScore = (() => {
 
     function syncPlayButton() {
         if (!els.play) return;
-        els.play.textContent = synthCtl?.isStarted ? 'Pause' : 'Play';
+        const label = synthCtl?.isStarted ? 'Pause' : 'Play';
+        els.play.textContent = label;
+        // miniButton names the button once, but this one's label changes, so its name has to follow.
+        els.play.setAttribute('aria-label', `${label} — ${els.play.title}`);
     }
 
     /**
