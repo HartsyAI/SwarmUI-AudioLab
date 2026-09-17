@@ -1666,6 +1666,9 @@ const AudioDawScore = (() => {
         }
         else {
             els.clipInfo.innerHTML = `<strong>${escapeHtml(selectedClip.clip.name)}</strong> has a planned score${score.truncated ? ' (cut short by the token budget)' : ''}.`;
+            // What the context granted the take that produced this clip, so a draft's promise can be read back
+            // against the render that used it.
+            if (score.budgetSeconds) showBudget({ budget_seconds: score.budgetSeconds });
         }
     }
 
