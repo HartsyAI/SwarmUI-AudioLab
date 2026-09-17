@@ -1537,8 +1537,9 @@ const AudioDawScore = (() => {
             await ctl.play();
         }
         catch (local) {
-            // A local set that cannot be read is worth one retry against the host abcjs ships with,
-            // rather than a dead Play button.
+            // One retry against the host abcjs ships with. It cannot rescue this attempt — abcjs caches a
+            // sample by note name, not by where it came from, so the notes that just failed stay failed
+            // until the page is reloaded — but it does stop the tab pointing at a set it cannot read.
             if (soundFontUrl) {
                 console.warn('[AudioDawScore] Local soundfont failed, falling back to the remote host', local);
                 soundFontUrl = null;
