@@ -400,6 +400,70 @@ function audioLabInstallGenerateHooks(attemptsLeft = 600) {
 }
 audioLabInstallGenerateHooks();
 
+/**
+ * A YuE2 generation carries the score it was planned from in its metadata, where the Generate tab can only
+ * print it. Core has no hook for the buttons under the current image (includeButton is a closure inside
+ * the handler), so the row is watched and appended to — the same class of thing as the generate hook above.
+ */
+function audioLabOfferScoreButton() {
+    try {
+        const row = document.querySelector('#current_image .current-image-buttons');
+        if (!row || row.querySelector('.audiolab-score-btn')) {
+            return;
+        }
+        const img = document.getElementById('current_image_img');
+        const meta = JSON.parse(img?.dataset?.metadata || '{}');
+        const abc = meta?.sui_extra_data?.yue2_score;
+        if (!abc || !String(abc).trim()) {
+            return;
+        }
+        const btn = document.createElement('button');
+        btn.className = 'basic-button audiolab-score-btn';
+        btn.textContent = 'Open score';
+        btn.title = 'Open the score this was planned from, in the Audio Lab Score tab';
+        btn.addEventListener('click', () => audioLabOpenScore(String(abc), meta, img.dataset.src));
+        row.appendChild(btn);
+    }
+    catch (e) {
+        // Metadata we cannot read is not a reason to break the Generate tab.
+    }
+}
+
+async function audioLabOpenScore(abc, meta, src) {
+    if (typeof AudioDaw === 'undefined' || typeof AudioDawScore === 'undefined') {
+        return;
+    }
+    try {
+        await AudioDaw.open(src);
+        const extra = meta.sui_extra_data || {}, params = meta.sui_image_params || {};
+        AudioDawScore.loadScore(abc, {
+            source: 'planned',
+            label: 'From the Generate tab',
+            style: params.text2audiostyle || '',
+            lyrics: params.prompt || '',
+            truncated: extra.yue2_score_truncated === true,
+            budgetSeconds: extra.yue2_budget_seconds ?? null
+        });
+        document.querySelector('#daw_bbar_tabs .nav-link[data-tab="score"]')?.click();
+    }
+    catch (e) {
+        console.error('[audiolab] Could not open the planned score', e);
+    }
+}
+
+function audioLabWatchCurrentImage(attemptsLeft = 600) {
+    const host = document.getElementById('current_image');
+    if (!host) {
+        if (attemptsLeft > 0) {
+            requestAnimationFrame(() => audioLabWatchCurrentImage(attemptsLeft - 1));
+        }
+        return;
+    }
+    new MutationObserver(audioLabOfferScoreButton).observe(host, { childList: true, subtree: true });
+    audioLabOfferScoreButton();
+}
+audioLabWatchCurrentImage();
+
 // Run the first pass once the param list exists, rather than at a guessed moment after load.
 function audioLabInitialParamPass(attemptsLeft = 600) {
     if (typeof gen_param_types == 'undefined' || !gen_param_types) {
