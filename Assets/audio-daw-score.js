@@ -759,12 +759,16 @@ const AudioDawScore = (() => {
         els.tempo.value = bpm === null ? '' : String(bpm);
 
         els.sections.innerHTML = '';
+        // Only a score that came off a clip has somewhere to seek to; a drafted one just gets its menu.
+        const seekable = sourceOrigin() !== null;
         sectionSpans(abc).forEach((s, i) => {
             const chip = createDiv(null, 'daw-fx-pick daw-score-chip');
             const name = createSpan(null, 'daw-fx-pick-name');
             name.textContent = s.label || '(unnamed)';
             chip.appendChild(name);
-            chip.title = 'Click to jump the playhead here · right-click to rename, duplicate, reorder or delete';
+            chip.title = seekable
+                ? 'Click to jump the playhead here · right-click to rename, duplicate, reorder or delete'
+                : 'Rename, duplicate, reorder or delete this section';
             chip.addEventListener('click', (e) => seekToSection(e, s, i));
             chip.addEventListener('contextmenu', (e) => { e.preventDefault(); openSectionMenu(e, i); });
             els.sections.appendChild(chip);
