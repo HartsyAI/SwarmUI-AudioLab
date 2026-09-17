@@ -1507,6 +1507,9 @@ const AudioDawScore = (() => {
      * fetch would wedge every later Play in the ready-poll. userAction is false: nothing is fetched until Play.
      */
     function setTransportTune() {
+        // An empty tab has nothing to play, and building the control here would open an AudioContext before
+        // anyone asked for sound.
+        if (!visual && !synthCtl) return;
         const ctl = ensureTransport();
         if (!ctl) return;
         try { ctl.destroy(); } catch (_) {}
