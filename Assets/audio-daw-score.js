@@ -881,6 +881,7 @@ const AudioDawScore = (() => {
                 new ABCJS.TimingCallbacks(visual, { eventCallback: () => {} });
                 planTimings = visual.noteTimings;
             }
+            markBadBars();
             setTransportTune();
             watchWidth(host);
         }
@@ -1482,6 +1483,50 @@ const AudioDawScore = (() => {
         try { synthCtl?.pause(); } catch (_) {}
         clearHighlight();
         syncPlayButton();
+    }
+
+    /**
+     * Mark the bars whose durations do not add up on the staff itself. Measured off the engraved tune rather
+     * than the source, so what is marked and what is drawn can never be two different texts.
+     */
+    function markBadBars() {
+        if (!visual || !prep) return;
+        const barWhole = meterFraction(parseHeader(prep.text).M);
+        if (!barWhole) return;
+        for (const line of visual.lines || []) {
+            for (const staff of line.staff || []) {
+                for (const voice of staff.voices || []) {
+                    let sum = 0, skip = false, run = [];
+                    for (const el of voice) {
+                        if (el.el_type === 'bar') {
+                            if (!skip && sum > 0 && Math.abs(sum - barWhole) > 1e-6) {
+                                markBar(run.concat(el), `This bar holds ${(sum / barWhole * 100).toFixed(0)}% of a full bar.`);
+                            }
+                            sum = 0; skip = false; run = [];
+                            continue;
+                        }
+                        if (el.rest && el.rest.type === 'multimeasure') { skip = true; continue; }
+                        if (typeof el.duration === 'number') sum += el.duration;
+                        run.push(el);
+                    }
+                }
+            }
+        }
+    }
+
+    function markBar(elements, why) {
+        let titled = false;
+        for (const el of elements) {
+            for (const node of el.abselem?.elemset || []) {
+                if (!node?.classList) continue;
+                node.classList.add('daw-score-badbar');
+                if (titled) continue;
+                const t = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+                t.textContent = why;
+                node.appendChild(t);
+                titled = true;
+            }
+        }
     }
 
     function clearHighlight() {

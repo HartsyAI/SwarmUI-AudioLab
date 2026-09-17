@@ -2335,6 +2335,8 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
     color: var(--text);
 }
 .daw-score-sheet svg { max-width: 100%; }
+/* Before the playing rule on purpose: what is sounding wins over what does not add up. */
+.daw-score-sheet .daw-score-badbar, .daw-score-sheet .daw-score-badbar path { fill: var(--yellow); }
 .daw-score-sheet .abcjs-note_selected path, .daw-score-sheet .playing-note path { fill: var(--emphasis); }
 /* The transport is abcjs's own SynthController; abcjs-audio.css is not vendored, so its job is done here. */
 .daw-score-transport { margin-top: 0.35rem; }
