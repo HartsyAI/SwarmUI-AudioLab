@@ -776,7 +776,10 @@ const AudioDaw = (() => {
             importClip: async (file) => {
                 pushUndo();
                 const track = addTrack({ name: file.name.replace(/\.[^.]+$/, '') });
-                const clip = await addClipToTrack(track, file, { name: file.name });
+                let clip;
+                // A file the browser cannot decode must not leave its track behind to surface on the next render.
+                try { clip = await addClipToTrack(track, file, { name: file.name }); }
+                catch (e) { removeTrack(track.id); renderAllTracks(); throw e; }
                 updateTotalDuration();
                 renderAllTracks();
                 updateBottomPanel();

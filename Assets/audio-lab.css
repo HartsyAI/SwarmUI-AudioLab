@@ -2341,7 +2341,7 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
 .daw-score-field input { width: 5.5rem; }
 .daw-score-chip { padding: 0.2rem 0.5rem; cursor: pointer; }
 .daw-score-start { display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 0.3rem 0.1rem; }
-.daw-score-start button { flex: 1 1 11rem; font: inherit; }
+.daw-score-start button { flex: 1 1 11rem; font: inherit; border-color: var(--shadow); }
 .daw-score-start button:disabled { opacity: 0.55; cursor: default; }
 .daw-score-start button:disabled:hover { border-color: var(--shadow); background: var(--background-soft); }
 .daw-score-sheet.daw-drop-target, .daw-score-chip.daw-drop-target {

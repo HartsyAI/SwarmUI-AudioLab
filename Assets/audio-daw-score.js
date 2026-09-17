@@ -979,7 +979,9 @@ const AudioDawScore = (() => {
         }
         if (!AUDIO_FILE.test(file.name)) { notice(`The score sheet has no use for ${file.name}`, 'yellow'); return; }
         if (!cb.importClip) return;
-        const added = await cb.importClip(file);
+        let added = null;
+        try { added = await cb.importClip(file); }
+        catch (e) { notice(`Could not read ${file.name} as audio`, 'yellow'); return; }
         if (added?.clip) offerTranscribe(added.clip, at);
     }
 

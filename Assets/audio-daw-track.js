@@ -537,6 +537,7 @@ const AudioDawTrack = (() => {
                         && callbacks.onClipDropOutside(clip, track, ue.clientX, ue.clientY)) {
                         clip.startTime = dragStartTime;
                         applyClipLayout(clipEl, clip);
+                        if (callbacks.onClipMove) callbacks.onClipMove(clip, track);
                         return;
                     }
                     // Check for cross-track move
