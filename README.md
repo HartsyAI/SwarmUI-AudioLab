@@ -319,6 +319,8 @@ YuE2 cannot edit audio — it has no audio input at all. What it does have is th
 renders anything, and that score is editable. The Score tab is where you read it back, change it, and render the
 change.
 
+![The Score tab before anything is loaded](Assets/readme/daw-score-start.png)
+
 An empty tab shows what it can start from rather than a sentence about it. **New blank score** writes eight empty
 bars in the project's own meter and tempo and hands you the staff to click notes into — nothing is generated and no
 model is needed. **Load from the clip** and **Transcribe a recording** name the selected clip, or say what to select
@@ -343,6 +345,8 @@ clip can fill the decoder's context, and it says so and asks for a shorter secti
 and stays loaded afterwards; **Free audio models after** drops it when the transcription finishes, which releases
 every resident audio model rather than only this one — the engine has no per-model unload. SheetSage2's weights
 are CC BY-NC 4.0, non-commercial only.
+
+![A transcribed score, with its chord symbols and sections](Assets/readme/daw-score.png)
 
 Everything is a text edit on the ABC, so there is one code path and one undo stack:
 
@@ -377,6 +381,9 @@ them through the mixer's own solo.
 
 **Apply to project** sets the project tempo and time signature to what the score is written in, and a section chip
 jumps the playhead to that section in the clip the score came from — right-click still opens the section's menu.
+
+Every field and control is named for a screen reader, the staff takes focus and shows it, and the validation
+list announces itself when it changes, so the tab is usable without a mouse.
 
 The score is a plan the model performs, not a recording of it. Do not read exact note realisation out of it.
 
