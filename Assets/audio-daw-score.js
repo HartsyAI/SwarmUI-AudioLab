@@ -2077,7 +2077,7 @@ const AudioDawScore = (() => {
         if (!current?.abc.trim()) return;
         // A transcription's melody rendering is the model's own, and stripping quoted text does not reproduce
         // it: a bar carrying a chord cannot fold back into a multi-bar rest, and rests are spelled differently.
-        if (current.meta?.melodyAbc) { showRendering('melody'); return; }
+        if (current.meta?.melodyAbc && onCanonical()) { showRendering('melody'); return; }
         if (!hasChords(current.abc)) { notice('This score has no chord symbols', 'yellow'); return; }
         edit(stripChords(current.abc));
         notice('Chords stripped — this score now renders in Melody mode', 'green');
@@ -2126,8 +2126,16 @@ const AudioDawScore = (() => {
         const meta = current?.meta;
         const next = which === 'melody' ? meta?.melodyAbc : meta?.fullAbc;
         if (!next) { notice('Transcribe a recording first — both renderings come from the model', 'yellow'); return; }
-        if (next !== current.abc) edit(next);
-        else syncRenderingButtons();
+        if (next === current.abc) { syncRenderingButtons(); return; }
+        const edited = !onCanonical();
+        edit(next);
+        if (edited) notice('Switched renderings — your edits are one undo away', 'yellow');
+    }
+
+    /** True while the editor still holds one of the model's own renderings, untouched. */
+    function onCanonical() {
+        const meta = current?.meta;
+        return !!meta && (current.abc === meta.fullAbc || current.abc === meta.melodyAbc);
     }
 
     function syncRenderingButtons() {
