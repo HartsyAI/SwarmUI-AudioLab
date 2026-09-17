@@ -16,7 +16,6 @@ const AudioDawScore = (() => {
     const VOICE_IDS = ['Vocal', 'Ins'];
     // Unit counts one notehead can draw (largest first). Anything else must be written as tied parts.
     const ENGRAVABLE = [48, 32, 24, 16, 12, 8, 6, 4, 3, 2, 1];
-    const EMPTY_HINT = 'No score loaded. Generate a song with YuE2 and press Load from clip, or paste a score below.';
 
     // What SheetSage2 consumes. A 3-minute stereo 44.1 kHz WAV is ~42 MB base64 and over the request body
     // limit; mono at this rate is ~8.6 MB and is exactly what the model hears anyway.
@@ -602,7 +601,7 @@ const AudioDawScore = (() => {
         els.src.className = 'daw-generate-text daw-score-src';
         els.src.rows = 8;
         els.src.spellcheck = false;
-        els.src.placeholder = EMPTY_HINT;
+        els.src.placeholder = 'Paste an ABC score here';
         // Typing is one history entry per editing session, not per keystroke — the textarea keeps its own
         // native undo for character-level work.
         let typingSnapshot = false;
@@ -815,7 +814,8 @@ const AudioDawScore = (() => {
             return;
         }
         if (!current?.abc.trim()) {
-            host.innerHTML = `<span class="daw-stems-clipinfo">${escapeHtml(EMPTY_HINT)}</span>`;
+            visual = null;
+            renderStartScreen(host);
             return;
         }
         prep = prepareForEngraving(current.abc);
@@ -856,6 +856,56 @@ const AudioDawScore = (() => {
             renderSheet();
         });
         widthWatcher.observe(host);
+    }
+
+    // ===== first run =====
+
+    /** An empty score offers what can be done about it, rather than a sentence sending the reader elsewhere. */
+    function renderStartScreen(host) {
+        host.innerHTML = '';
+        const row = createDiv(null, 'daw-score-start');
+        const clip = selectedClip?.clip;
+        const score = clip?.meta?.score;
+        const tr = cb.getTransport ? cb.getTransport() : {};
+        const meter = Array.isArray(tr.timeSignature) ? tr.timeSignature.join('/') : '4/4';
+        startAction(row, 'New blank score',
+            `Eight empty bars in ${meter} at ${Math.round(tr.bpm || 120)} BPM. Click the notes in.`,
+            null, () => {
+                loadScore(blankScore(), { source: 'blank', label: 'New score' });
+                notice('Blank score ready — click a note to edit it', 'green');
+            });
+        startAction(row, 'Load from the clip',
+            score ? `Open the plan ${clip.name} was rendered from.` : '',
+            score ? null : clip ? `${clip.name} carries no score — only YuE2 generations plan one.`
+                : 'Select a generated clip on the timeline first.',
+            loadFromSelectedClip);
+        startAction(row, 'Transcribe a recording',
+            clip?.blob ? `Read the melody, chords, key and tempo out of ${clip.name}.` : '',
+            transcribing ? 'Reading a recording now…' : clip?.blob ? null
+                : 'Select a clip with audio on the timeline first.',
+            () => transcribeSelection('clip'));
+        host.appendChild(row);
+    }
+
+    /** Disabled says why in the card itself: a title on a disabled button is unreadable in some browsers. */
+    function startAction(parent, name, desc, blocked, onClick) {
+        const b = document.createElement('button');
+        b.className = 'daw-fx-pick';
+        const n = createSpan(null, 'daw-fx-pick-name');
+        n.textContent = name;
+        const d = createSpan(null, 'daw-fx-pick-desc');
+        d.textContent = blocked || desc;
+        b.appendChild(n);
+        b.appendChild(d);
+        b.disabled = !!blocked;
+        b.addEventListener('click', onClick);
+        parent.appendChild(b);
+        return b;
+    }
+
+    /** The start screen names the live selection, so it is redrawn whenever that can have moved. */
+    function refreshStartScreen() {
+        if (els.sheet && !current?.abc.trim()) renderStartScreen(els.sheet);
     }
 
     /**
@@ -2193,6 +2243,7 @@ const AudioDawScore = (() => {
                 ? 'Transcribe this clip and render its melody in the style above'
                 : 'Select a clip to cover';
         }
+        refreshStartScreen();
     }
 
     /** Mono 24 kHz 16-bit, which is what the model consumes. decodeAudioData resamples to the context's rate,
