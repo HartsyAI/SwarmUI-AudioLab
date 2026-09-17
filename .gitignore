@@ -44,3 +44,6 @@ nuget.config
 NuGet.config
 Nuget.config
 Directory.Build.props
+
+# Score-tab piano samples: fetched on demand, redistributable under their own upstream licence.
+/Assets/soundfont/

@@ -33,6 +33,8 @@ const AudioDawScore = (() => {
     let visual = null;      // the rendered tune; carries noteTimings for highlighting
     let synth = null, timing = null;
     let highlighted = [], lastSystemTop = null, lastTimingIndex = -1;
+    // null = abcjs's own remote host. Set once the local samples are all present.
+    let soundFontUrl = null;
 
     // ===== ABC reading =====
 
@@ -643,15 +645,15 @@ const AudioDawScore = (() => {
         els.budget = createDiv(null, 'daw-stems-clipinfo daw-score-budget');
         parent.appendChild(els.budget);
 
+        buildSoundfontRow(parent);
         buildVariantsCard(parent);
         buildLlmCard(parent);
         buildVersionsCard(parent);
 
         const help = createDiv(null, 'daw-stems-desc');
         help.textContent = 'Click a chord symbol to reharmonise, a note to edit it, or drag a note up and down '
-            + 'to change its pitch. Play auditions the plan in the browser — instrument samples are fetched '
-            + 'from the internet the first time and cached by it. The score is a plan the model performs, '
-            + 'not a recording of it.';
+            + 'to change its pitch. Play auditions the plan in the browser. The score is a plan the model '
+            + 'performs, not a recording of it.';
         parent.appendChild(help);
     }
 
@@ -1201,8 +1203,21 @@ const AudioDawScore = (() => {
         els.play.disabled = true;
         try {
             synth = new ABCJS.synth.CreateSynth();
-            await synth.init({ visualObj: visual, options: { chordsOff: !els.chords.checked } });
-            await synth.prime();
+            const opts = { chordsOff: !els.chords.checked };
+            try {
+                await synth.init({ visualObj: visual, options: soundFontUrl ? { ...opts, soundFontUrl } : opts });
+                await synth.prime();
+            }
+            catch (local) {
+                // A local set that cannot be read is worth one retry against the host abcjs ships with,
+                // rather than a dead Play button.
+                if (!soundFontUrl) throw local;
+                console.warn('[AudioDawScore] Local soundfont failed, falling back to the remote host', local);
+                soundFontUrl = null;
+                synth = new ABCJS.synth.CreateSynth();
+                await synth.init({ visualObj: visual, options: opts });
+                await synth.prime();
+            }
             timing = new ABCJS.TimingCallbacks(visual, {
                 eventCallback: (ev) => { highlightTiming(ev); return ev ? undefined : 'continue'; }
             });
@@ -1352,6 +1367,7 @@ const AudioDawScore = (() => {
         try {
             const r = await AudioLabAPI.callAPI('AudioLabScoreCapabilities', {});
             available = !!r?.llm_available;
+            showSoundfont(r);
         }
         catch (_) { available = false; }
         if (!available) {
@@ -1577,6 +1593,69 @@ const AudioDawScore = (() => {
         const ha = parseHeader(a), hb = parseHeader(b);
         const headers = ['M', 'L', 'K', 'Q'].filter(k => ha[k] !== hb[k]).map(k => `${k}:`);
         return { chords, bars, headers, notesTouched: stripped(a) !== stripped(b) };
+    }
+
+    // ===== offline audition =====
+
+    // Derived from this file's own URL: core serves extension files under the extension CLASS name, not
+    // the folder name, so a written-out path is one rename away from 404ing every sample.
+    const SOUNDFONT_URL = (document.querySelector('script[src*="audio-daw-score.js"]')?.src || '')
+        .replace(/audio-daw-score\.js.*$/, 'soundfont/');
+
+    function buildSoundfontRow(parent) {
+        const row = createDiv(null, 'daw-stems-action-row');
+        els.soundfont = createDiv(null, 'daw-stems-clipinfo');
+        row.appendChild(els.soundfont);
+        els.soundfontGo = button(row, 'Download samples', 'basic-button btn-sm', fetchSoundfont);
+        els.soundfontGo.title = 'Fetch the piano samples once so auditioning works without the internet';
+        parent.appendChild(row);
+    }
+
+    /** Only a complete set goes local: a missing note would 404 mid-audition instead of playing. */
+    function showSoundfont(caps) {
+        if (!els.soundfont) return;
+        const have = Number(caps?.soundfont_notes ?? 0);
+        const total = Number(caps?.soundfont_total ?? 0);
+        const complete = total > 0 && have >= total;
+        soundFontUrl = complete ? SOUNDFONT_URL : null;
+        els.soundfont.textContent = complete
+            ? `Instrument samples are installed (${have} notes) — audition works offline.`
+            : `Instrument samples come from the internet on first play (${have} of ${total || '88'} installed).`;
+        els.soundfontGo.disabled = complete;
+        return complete;
+    }
+
+    async function fetchSoundfont() {
+        els.soundfontGo.disabled = true;
+        const busy = cb.busy ? cb.busy('Fetching instrument samples…', 'score') : null;
+        // The server answers once, at the end; the capabilities count is what makes the wait legible.
+        const poll = setInterval(async () => {
+            try {
+                const caps = await AudioLabAPI.callAPI('AudioLabScoreCapabilities', {});
+                const have = Number(caps?.soundfont_notes ?? 0), total = Number(caps?.soundfont_total ?? 88);
+                els.soundfont.textContent = `Fetching instrument samples — ${have} of ${total}…`;
+                busy?.setProgress(have / total);
+            }
+            catch (_) {}
+        }, 900);
+        try {
+            const r = await AudioLabAPI.callAPI('AudioLabFetchSoundfont', {});
+            clearInterval(poll);
+            const complete = showSoundfont({ soundfont_notes: r?.installed, soundfont_total: r?.total });
+            notice(complete
+                ? 'Instrument samples installed — auditioning no longer needs the internet'
+                : `Only ${r?.installed ?? 0} of ${r?.total ?? 88} samples arrived — audition still uses the remote host`,
+                complete ? 'green' : 'yellow');
+        }
+        catch (e) {
+            clearInterval(poll);
+            console.error('[AudioDawScore] Soundfont download failed:', e);
+            notice('Could not download the samples: ' + e.message, 'yellow');
+            els.soundfontGo.disabled = false;
+        }
+        finally {
+            busy?.done();
+        }
     }
 
     // ===== versions =====
@@ -1944,6 +2023,7 @@ const AudioDawScore = (() => {
         parseHeader, scanBody, countBars, chunkBlocks,
         splitElement, transposeToken, pitchIndex, pitchToken, tokenText,
         unitsPerBar, barBounds, barTokens, sectionSpans, numbersToAbc,
-        _state: () => ({ abc: current?.abc || '', selection, undoDepth: history.undo.length })
+        _state: () => ({ abc: current?.abc || '', selection, undoDepth: history.undo.length }),
+        _soundfontUrl: () => soundFontUrl
     };
 })();

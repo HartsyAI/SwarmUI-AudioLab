@@ -79,6 +79,12 @@ public class AudioLab : Extension
             ScriptFiles.Add("Assets/audio-integration.js");
             ScriptFiles.Add("Assets/audio-wakeword.js");
             StyleSheetFiles.Add("Assets/audio-lab.css");
+            // Registered whether or not the files exist yet: the getters read on request, so a soundfont
+            // fetched later in the session is served without a restart.
+            foreach (string note in ScoreSoundfont.AssetPaths)
+            {
+                OtherAssets.Add(note);
+            }
         }
         catch (Exception ex)
         {

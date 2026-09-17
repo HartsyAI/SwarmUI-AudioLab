@@ -68,6 +68,7 @@ public static class AudioLabAPI
             API.RegisterAPICall(AudioLabDeleteProject, true, AudioLabPermissions.PermDawProjects);
             API.RegisterAPICall(AudioLabScoreCapabilities, false, AudioLabPermissions.PermDawProjects);
             API.RegisterAPICall(AudioLabPlanScore, false, AudioLabPermissions.PermProcessAudio);
+            API.RegisterAPICall(AudioLabFetchSoundfont, true, AudioLabPermissions.PermManageBackends);
         }
         catch (Exception ex)
         {
@@ -856,8 +857,38 @@ public static class AudioLabAPI
         return new JObject
         {
             ["success"] = true,
-            ["llm_available"] = API.APIHandlers.ContainsKey("llmassistanttestinstruction")
+            ["llm_available"] = API.APIHandlers.ContainsKey("llmassistanttestinstruction"),
+            ["soundfont_notes"] = ScoreSoundfont.InstalledCount(),
+            ["soundfont_total"] = ScoreSoundfont.NoteNames.Length
         };
+    }
+
+    /// <summary>Downloads the piano samples the Score tab auditions with, so it stops reaching out to a GitHub
+    /// Pages host on every machine that has not cached them.
+    ///
+    /// <para>Polling <see cref="AudioLabScoreCapabilities"/> while this runs is how the tab shows progress:
+    /// each note becomes readable as it lands, and the count is the truth about what is installed.</para></summary>
+    public static async Task<JObject> AudioLabFetchSoundfont(Session session, JObject input)
+    {
+        try
+        {
+            (int fetched, List<string> failed) = await ScoreSoundfont.FetchAsync();
+            int installed = ScoreSoundfont.InstalledCount();
+            Logs.Info($"[AudioLab] Score soundfont: {installed}/{ScoreSoundfont.NoteNames.Length} notes installed ({fetched} fetched).");
+            return new JObject
+            {
+                ["success"] = true,
+                ["installed"] = installed,
+                ["total"] = ScoreSoundfont.NoteNames.Length,
+                ["fetched"] = fetched,
+                ["failed"] = new JArray(failed.Cast<object>().ToArray())
+            };
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] Score soundfont download failed: {ex}");
+            return AudioLab.CreateErrorResponse(ex.Message, "soundfont_failed");
+        }
     }
 
     #endregion
