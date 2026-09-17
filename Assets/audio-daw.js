@@ -1427,7 +1427,7 @@ const AudioDaw = (() => {
                 abc: found.abc,
                 truncated: found.truncated,
                 budgetSeconds: found.budgetSeconds,
-                style: style || params.text2audiostyle || '',
+                style: style || params.textaudiostyle || '',
                 lyrics: lyrics || params.prompt || '',
                 cot: cot || params.scoreplanningmode || 'full',
                 seed: params.seed ?? null,

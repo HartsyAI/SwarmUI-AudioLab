@@ -439,7 +439,7 @@ async function audioLabOpenScore(abc, meta, src) {
         AudioDawScore.loadScore(abc, {
             source: 'planned',
             label: 'From the Generate tab',
-            style: params.text2audiostyle || '',
+            style: params.textaudiostyle || '',
             lyrics: params.prompt || '',
             truncated: extra.yue2_score_truncated === true,
             budgetSeconds: extra.yue2_budget_seconds ?? null
