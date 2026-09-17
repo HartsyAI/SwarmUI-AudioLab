@@ -1131,6 +1131,8 @@ const AudioDawScore = (() => {
             openChordMenu(ev, abcelem);
             return;
         }
+        // The second click of a double-click means "play from here", which the sheet's dblclick handler takes.
+        if (ev?.detail >= 2) return;
         if (parts.token) openNoteMenu(ev);
     }
 
@@ -1209,7 +1211,9 @@ const AudioDawScore = (() => {
             }
             if (t.count * 1.5 % 1 === 0) items.push({ label: 'Length: dotted', action: () => setDuration(t.count * 1.5) });
         }
-        if (cb.showMenu) cb.showMenu(ev, items);
+        // Offset off the cursor so the note stays clickable under it — otherwise the menu eats the second
+        // click of a double-click and the note never hears it.
+        if (cb.showMenu) cb.showMenu({ clientX: (ev?.clientX || 0) + 12, clientY: (ev?.clientY || 0) + 12 }, items);
     }
 
     function setAccidental(acc) {
@@ -1562,6 +1566,7 @@ const AudioDawScore = (() => {
         const node = e.target?.closest?.('.abcjs-note, .abcjs-rest');
         if (!node || !visual) return;
         e.preventDefault();
+        document.querySelector('.daw-context-menu')?.remove();
         const ctl = ensureTransport();
         if (!ctl) return;
         if (!ctl.isStarted) await playPause();
