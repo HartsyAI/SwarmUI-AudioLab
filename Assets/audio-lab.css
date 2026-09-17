@@ -2344,6 +2344,10 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
 .daw-score-start button { flex: 1 1 11rem; font: inherit; }
 .daw-score-start button:disabled { opacity: 0.55; cursor: default; }
 .daw-score-start button:disabled:hover { border-color: var(--shadow); background: var(--background-soft); }
+.daw-score-chip.daw-drop-target {
+    border-color: var(--emphasis);
+    background: color-mix(in srgb, var(--emphasis) 12%, var(--background-soft));
+}
 .daw-score-issues { display: flex; flex-direction: column; gap: 0.15rem; }
 .daw-score-err, .daw-score-warn { font-size: 0.78rem; line-height: 1.35; cursor: pointer; }
 .daw-score-err { color: var(--red); }

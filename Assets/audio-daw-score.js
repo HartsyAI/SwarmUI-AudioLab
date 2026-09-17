@@ -38,6 +38,9 @@ const AudioDawScore = (() => {
     let highlighted = [], lastSystemTop = null, lastTimingIndex = -1;
     // null = abcjs's own remote host. Set once the local samples are all present.
     let soundFontUrl = null;
+    let dragSection = null; // index of the section chip being dragged
+
+    const SECTION_MIME = 'application/x-audiolab-section';
 
     // ===== ABC reading =====
 
@@ -770,6 +773,7 @@ const AudioDawScore = (() => {
                 : 'Rename, duplicate, reorder or delete this section';
             chip.addEventListener('click', (e) => seekToSection(e, s, i));
             chip.addEventListener('contextmenu', (e) => { e.preventDefault(); openSectionMenu(e, i); });
+            setupChipDrag(chip, i);
             els.sections.appendChild(chip);
         });
 
@@ -779,6 +783,32 @@ const AudioDawScore = (() => {
             : mode === 'full'
                 ? 'This score carries chord symbols, so it renders in Full planning mode.'
                 : 'This score has no chord symbols, so it renders in Melody mode — the cover setting.';
+    }
+
+    /** Dragging one chip onto another is the menu's Move earlier/later, without the counting. */
+    function setupChipDrag(chip, index) {
+        chip.draggable = true;
+        chip.addEventListener('dragstart', (e) => {
+            dragSection = index;
+            // Firefox refuses to start a drag that carries nothing.
+            e.dataTransfer.setData(SECTION_MIME, String(index));
+            e.dataTransfer.effectAllowed = 'move';
+        });
+        chip.addEventListener('dragover', (e) => {
+            if (dragSection === null || dragSection === index) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            chip.classList.add('daw-drop-target');
+        });
+        chip.addEventListener('dragleave', () => chip.classList.remove('daw-drop-target'));
+        chip.addEventListener('drop', (e) => {
+            e.preventDefault();
+            chip.classList.remove('daw-drop-target');
+            const from = dragSection;
+            dragSection = null;
+            if (from !== null && from !== index) moveSection(from, index);
+        });
+        chip.addEventListener('dragend', () => { dragSection = null; chip.classList.remove('daw-drop-target'); });
     }
 
     function showIssues(issues) {
@@ -1167,6 +1197,18 @@ const AudioDawScore = (() => {
         return out === null ? null : out.join('\n');
     }
 
+    /** Lift a whole section out and put it back at another chip's place. */
+    function moveSection(from, to) {
+        if (from === to) return;
+        edit(withSections(current?.abc || '', (lines, sp) => {
+            const s = sp[from], t = sp[to];
+            const block = lines.splice(s.line, s.endLine - s.line + 1);
+            // Moving later, the target's own lines have already shifted up by what was lifted out.
+            lines.splice(to < from ? t.line : t.endLine + 1 - block.length, 0, ...block);
+            return lines;
+        }));
+    }
+
     function openSectionMenu(ev, index) {
         const spans = sectionSpans(current?.abc || '');
         const s = spans[index];
@@ -1187,20 +1229,8 @@ const AudioDawScore = (() => {
                 return lines;
             })) }
         ];
-        if (index > 0) items.push({ label: 'Move earlier', action: () => edit(withSections(current.abc, (lines, sp) => {
-            const prev = sp[index - 1];
-            const block = lines.slice(s.line, s.endLine + 1);
-            lines.splice(s.line, block.length);
-            lines.splice(prev.line, 0, ...block);
-            return lines;
-        })) });
-        if (index < spans.length - 1) items.push({ label: 'Move later', action: () => edit(withSections(current.abc, (lines, sp) => {
-            const next = sp[index + 1];
-            const block = lines.slice(s.line, s.endLine + 1);
-            const nextBlock = lines.slice(next.line, next.endLine + 1);
-            lines.splice(s.line, block.length + nextBlock.length, ...nextBlock, ...block);
-            return lines;
-        })) });
+        if (index > 0) items.push({ label: 'Move earlier', action: () => moveSection(index, index - 1) });
+        if (index < spans.length - 1) items.push({ label: 'Move later', action: () => moveSection(index, index + 1) });
         if (spans.length > 1) items.push({ label: 'Delete section', action: () => edit(withSections(current.abc, (lines) => {
             lines.splice(s.line, s.endLine - s.line + 1);
             return lines;
@@ -2528,7 +2558,7 @@ const AudioDawScore = (() => {
         transcribeSelection, coverClip, showRendering, applyToProject,
         // exported for the DAW, for tests, and for later phases
         // the instrument contract: write into the score, and the grid and key to quantize against
-        insertNotes, getKey, getGrid, barAtTime,
+        insertNotes, getKey, getGrid, barAtTime, moveSection,
         validate, hasChords, stripChords, modeForScore, prepareForEngraving, toOriginal,
         parseHeader, scanBody, countBars, chunkBlocks,
         splitElement, transposeToken, pitchIndex, pitchToken, tokenText,
