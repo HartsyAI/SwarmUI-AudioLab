@@ -734,6 +734,21 @@ const AudioDaw = (() => {
                 renderAllTracks();
                 updateBottomPanel();
             },
+            /** Mono 24 kHz for the transcriber: one encoder, so the DAW's export and the model hear the same bytes. */
+            encodeWav: (buffer) => audioBufferToWav(buffer),
+            /** The Vocals track the Stems tab made from this clip — a cleaner melody to transcribe than the mix. */
+            findVocalStem: (clipId) => {
+                const source = findClipById(clipId);
+                if (!source) return null;
+                const want = `Vocals: ${source.clip.name}`;
+                for (const track of state.tracks) {
+                    if (track.name !== want) continue;
+                    const clip = track.clips.find(c => Math.abs((c.startTime || 0) - (source.clip.startTime || 0)) < 0.05)
+                        || track.clips[0];
+                    if (clip?.blob) return { clip, track };
+                }
+                return null;
+            },
             selectClip: (clipId) => {
                 const found = findClipById(clipId);
                 if (!found) return;

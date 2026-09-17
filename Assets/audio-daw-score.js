@@ -18,6 +18,10 @@ const AudioDawScore = (() => {
     const ENGRAVABLE = [48, 32, 24, 16, 12, 8, 6, 4, 3, 2, 1];
     const EMPTY_HINT = 'No score loaded. Generate a song with YuE2 and press Load from clip, or paste a score below.';
 
+    // What SheetSage2 consumes. A 3-minute stereo 44.1 kHz WAV is ~42 MB base64 and over the request body
+    // limit; mono at this rate is ~8.6 MB and is exactly what the model hears anyway.
+    const TRANSCRIBE_RATE = 24000;
+
     // Scale degrees for numbered-melody entry, as semitones above the tonic.
     const MAJOR_STEPS = [0, 2, 4, 5, 7, 9, 11];
     const LETTERS = 'CDEFGAB';
@@ -645,6 +649,7 @@ const AudioDawScore = (() => {
         els.budget = createDiv(null, 'daw-stems-clipinfo daw-score-budget');
         parent.appendChild(els.budget);
 
+        buildTranscribeCard(parent);
         buildSoundfontRow(parent);
         buildVariantsCard(parent);
         buildLlmCard(parent);
@@ -715,6 +720,7 @@ const AudioDawScore = (() => {
             showBudget(meta.budgetSeconds ? { budget_seconds: meta.budgetSeconds } : null);
         }
         else showBudget(null);
+        showTranscriptInfo(meta);
         refresh();
     }
 
@@ -761,6 +767,7 @@ const AudioDawScore = (() => {
             els.sections.appendChild(chip);
         });
 
+        syncRenderingButtons();
         const mode = abc.trim() ? modeForScore(abc) : null;
         els.modeNote.textContent = mode === null ? ''
             : mode === 'full'
@@ -2067,9 +2074,200 @@ const AudioDawScore = (() => {
 
     function stripAllChords() {
         if (!current?.abc.trim()) return;
+        // A transcription's melody rendering is the model's own, and stripping quoted text does not reproduce
+        // it: a bar carrying a chord cannot fold back into a multi-bar rest, and rests are spelled differently.
+        if (current.meta?.melodyAbc) { showRendering('melody'); return; }
         if (!hasChords(current.abc)) { notice('This score has no chord symbols', 'yellow'); return; }
         edit(stripChords(current.abc));
         notice('Chords stripped — this score now renders in Melody mode', 'green');
+    }
+
+    // ===== transcription =====
+
+    // A transcription lands as its own root: both renderings in hand, pinned to the clip they were read off.
+    let transcribing = false;
+
+    function buildTranscribeCard(parent) {
+        const card = createDiv(null, 'daw-fx-card');
+        const head = createDiv(null, 'daw-fx-card-head');
+        const title = createSpan(null, 'daw-fx-card-title');
+        title.textContent = 'From a recording';
+        head.appendChild(title);
+        const btns = createDiv(null, 'daw-fx-card-btns');
+        els.melodyView = miniButton('Melody', 'Show the melody-only rendering — what a cover is rendered from', () => showRendering('melody'));
+        els.fullView = miniButton('Full', 'Show the rendering with chord symbols', () => showRendering('full'));
+        btns.appendChild(els.melodyView);
+        btns.appendChild(els.fullView);
+        head.appendChild(btns);
+        card.appendChild(head);
+
+        const row = createDiv(null, 'daw-stems-action-row');
+        els.transcribe = button(row, 'Transcribe clip', 'basic-button btn-sm', () => transcribeSelection('clip'));
+        els.transcribeStem = button(row, 'Transcribe vocal stem', 'basic-button btn-sm', () => transcribeSelection('stem'));
+        els.cover = button(row, 'Cover this clip', 'basic-button btn-sm btn-primary', coverClip);
+        card.appendChild(row);
+
+        els.transcribeInfo = createDiv(null, 'daw-stems-clipinfo');
+        card.appendChild(els.transcribeInfo);
+
+        const desc = createDiv(null, 'daw-stems-desc');
+        desc.textContent = 'SheetSage2 reads the score behind a recording — melody, chords, key, meter and tempo. '
+            + 'It comes back in two renderings from one listen: Melody is what a cover is rendered from, Full '
+            + 'keeps the harmony. Cover transcribes the clip and renders its melody in the style above. '
+            + 'Weights are CC BY-NC 4.0 — non-commercial use only.';
+        card.appendChild(desc);
+        parent.appendChild(card);
+    }
+
+    /** Switch between the two canonical renderings. Neither is derived from the other: the melody form folds
+     *  idle bars into multi-bar rests and spells rests differently, so deleting quoted text cannot produce it. */
+    function showRendering(which) {
+        const meta = current?.meta;
+        const next = which === 'melody' ? meta?.melodyAbc : meta?.fullAbc;
+        if (!next) { notice('Transcribe a recording first — both renderings come from the model', 'yellow'); return; }
+        if (next !== current.abc) edit(next);
+        else syncRenderingButtons();
+    }
+
+    function syncRenderingButtons() {
+        const meta = current?.meta;
+        const both = !!(meta?.melodyAbc && meta?.fullAbc);
+        for (const [btn, key] of [[els.melodyView, 'melodyAbc'], [els.fullView, 'fullAbc']]) {
+            if (!btn) continue;
+            btn.disabled = !both;
+            btn.classList.toggle('active', both && meta[key] === current.abc);
+        }
+    }
+
+    function showTranscriptInfo(meta) {
+        if (!els.transcribeInfo) return;
+        if (!meta?.fullAbc) { els.transcribeInfo.textContent = ''; return; }
+        const bits = [`${clockTime(meta.duration || 0)} transcribed`];
+        if (meta.windowCount > 1) bits.push(`${meta.windowCount} windows stitched`);
+        if (meta.sourceName) bits.push(escapeHtml(meta.sourceName));
+        els.transcribeInfo.innerHTML = bits.join(' · ') + (meta.truncated
+            ? ' — <strong>cut short</strong>: the decoder hit its token ceiling, so the score stops before the '
+                + 'audio does. Transcribe the rest as a second section.'
+            : '');
+    }
+
+    /** What a transcribe button acts on: the selected clip, or the vocal stem the Stems tab made from it. */
+    function transcribeTarget(which) {
+        const clip = selectedClip?.clip;
+        if (!clip?.blob) return null;
+        if (which !== 'stem') return { clip, stem: false };
+        const found = cb.findVocalStem ? cb.findVocalStem(clip.id) : null;
+        return found?.clip?.blob ? { clip: found.clip, stem: true, of: clip.name } : null;
+    }
+
+    function syncTranscribeButtons() {
+        const clip = selectedClip?.clip;
+        const stem = clip?.blob && cb.findVocalStem ? cb.findVocalStem(clip.id) : null;
+        if (els.transcribe) {
+            els.transcribe.disabled = transcribing || !clip?.blob;
+            els.transcribe.title = clip?.blob
+                ? `Read the score off ${clip.name}` : 'Select a clip to read the score off';
+        }
+        if (els.transcribeStem) {
+            els.transcribeStem.disabled = transcribing || !stem?.clip?.blob;
+            els.transcribeStem.title = stem?.clip?.blob
+                ? `Transcribe the vocal stem of ${clip.name} — a cleaner melody than the mix`
+                : 'Separate the clip in the Stems tab first, then the vocal alone can be transcribed';
+        }
+        if (els.cover) {
+            els.cover.disabled = transcribing || !clip?.blob;
+            els.cover.title = clip?.blob
+                ? 'Transcribe this clip and render its melody in the style above'
+                : 'Select a clip to cover';
+        }
+    }
+
+    /** Mono 24 kHz 16-bit, which is what the model consumes. decodeAudioData resamples to the context's rate,
+     *  so a clip already at 24 kHz passes through untouched rather than being resampled twice. */
+    async function toModelWav(blob) {
+        if (!cb.encodeWav) throw new Error('The DAW did not hand over an audio encoder');
+        const ctx = new OfflineAudioContext(1, 1, TRANSCRIBE_RATE);
+        const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
+        let mono = decoded;
+        if (decoded.numberOfChannels > 1) {
+            mono = ctx.createBuffer(1, decoded.length, decoded.sampleRate);
+            const dst = mono.getChannelData(0);
+            for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
+                const src = decoded.getChannelData(ch);
+                for (let i = 0; i < dst.length; i++) dst[i] += src[i] / decoded.numberOfChannels;
+            }
+        }
+        return cb.encodeWav(mono);
+    }
+
+    /**
+     * Read the score off a recording. One decode returns both renderings, so the Melody/Full toggle costs
+     * nothing after this; the decode itself is roughly as long as the audio.
+     */
+    async function runTranscribe(target, show) {
+        if (!target) { notice('Select a clip to transcribe', 'yellow'); return null; }
+        transcribing = true;
+        syncTranscribeButtons();
+        const busy = cb.busy ? cb.busy(`Transcribing ${target.clip.name}…`, 'score') : null;
+        try {
+            const wav = await toModelWav(target.clip.blob);
+            const result = await AudioLabAPI.callAPI('AudioLabTranscribeScore', {
+                audio_data: await AudioLabCore.readAsBase64(wav)
+            });
+            if (!result?.success) throw new Error(result?.error || 'The transcription came back empty');
+            const meta = {
+                fullAbc: result.full_abc,
+                melodyAbc: result.melody_abc,
+                duration: result.duration,
+                windowCount: result.window_count,
+                truncated: result.truncated,
+                clipId: target.clip.id,
+                sourceName: target.stem ? `vocal stem of ${target.of}` : target.clip.name,
+                source: 'transcribed',
+                parent: null,
+                label: (target.stem ? `Vocal of ${target.of}` : target.clip.name).slice(0, 32),
+                // Keep what is typed above: a transcription says nothing about style or words.
+                style: els.style.value, lyrics: els.lyrics.value
+            };
+            loadScore(show === 'melody' ? meta.melodyAbc : meta.fullAbc, meta);
+            notice(result.truncated ? 'Transcribed, but the score stops short of the audio' : 'Score transcribed',
+                result.truncated ? 'yellow' : 'green');
+            return meta;
+        }
+        catch (e) {
+            console.error('[AudioDawScore] Transcription failed:', e);
+            // The overlap-budget refusal names the limit and what to do about it, so it is shown rather
+            // than summarised — it means "transcribe a shorter section", not "something broke".
+            const message = String(e?.message || e).replace(/^API AudioLabTranscribeScore:\s*/, '');
+            if (els.transcribeInfo) els.transcribeInfo.textContent = message;
+            notice(message, 'red');
+            return null;
+        }
+        finally {
+            busy?.done();
+            transcribing = false;
+            syncTranscribeButtons();
+        }
+    }
+
+    function transcribeSelection(which) {
+        return runTranscribe(transcribeTarget(which), 'full');
+    }
+
+    /** A cover is the transcribed melody in a new style. Render derives the mode from the chord content, so
+     *  the melody rendering takes the melody path without being told. */
+    async function coverClip() {
+        const style = els.style.value.trim();
+        if (!style) { notice('Describe the style to cover it in first', 'yellow'); return; }
+        const target = transcribeTarget('clip');
+        if (!target) { notice('Select a clip to cover', 'yellow'); return; }
+        const meta = await runTranscribe(target, 'melody');
+        if (!meta) return;
+        if (validate(current.abc).some(i => i.severity === 'error')) {
+            notice('The transcribed score did not validate — fix it before rendering', 'yellow');
+            return;
+        }
+        return runRenders([{ style, label: `Cover: ${style.slice(0, 18)}` }]);
     }
 
     // ===== actions =====
@@ -2081,6 +2279,7 @@ const AudioDawScore = (() => {
         renderVersions();
         const score = selectedClip?.clip?.meta?.score;
         els.load.disabled = !score;
+        syncTranscribeButtons();
         if (!selectedClip) {
             els.clipInfo.innerHTML = '<strong>No clip selected.</strong> Select a generated clip to load the score it came from.';
         }
@@ -2206,6 +2405,7 @@ const AudioDawScore = (() => {
 
     return {
         render, onSelection, loadScore, undo, redo, syncTime, stopPlan, draftPlan,
+        transcribeSelection, coverClip, showRendering,
         // exported for the DAW, for tests, and for later phases
         // the instrument contract: write into the score, and the grid and key to quantize against
         insertNotes, getKey, getGrid, barAtTime,
@@ -2214,7 +2414,8 @@ const AudioDawScore = (() => {
         splitElement, transposeToken, pitchIndex, pitchToken, tokenText,
         unitsPerBar, barBounds, barTokens, sectionSpans, numbersToAbc,
         keyAccidentals, midiToAbc, voiceBars, blankScore,
-        _state: () => ({ abc: current?.abc || '', selection, undoDepth: history.undo.length }),
+        _state: () => ({ abc: current?.abc || '', selection, undoDepth: history.undo.length,
+            meta: current?.meta || null, transcribing }),
         _soundfontUrl: () => soundFontUrl
     };
 })();
