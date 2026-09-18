@@ -440,29 +440,36 @@ const AudioDawScore = (() => {
         const out = [];
         const err = (message, line) => out.push({ severity: 'error', message, line });
         const warn = (message, line) => out.push({ severity: 'warning', message, line });
-        if (!abc || !abc.trim()) { err('The score is empty.', 0); return out; }
+        if (!abc || !abc.trim()) { err(translate('The score is empty.'), 0); return out; }
 
         const h = parseHeader(abc);
-        if (!h.M) err('The header has no M: (meter).', 0);
-        if (!h.L) err('The header has no L: (unit note length).', 0);
-        if (!h.K) err('The header has no K: (key).', 0);
+        if (!h.M) err(translate('The header has no M: (meter).'), 0);
+        if (!h.L) err(translate('The header has no L: (unit note length).'), 0);
+        if (!h.K) err(translate('The header has no K: (key).'), 0);
+        // The voice ids themselves are ABC data — only the sentence around them is translated.
         for (const id of VOICE_IDS) {
-            if (!h.voices.includes(id)) err(`The header does not declare "V: ${id}". YuE2 reads exactly two voices, ${VOICE_IDS.join(' and ')}.`, 0);
+            if (!h.voices.includes(id)) {
+                err(`${translate('The header does not declare a required voice:')} V: ${id}. `
+                    + `${translate('YuE2 reads exactly two voices:')} ${VOICE_IDS.join(', ')}.`, 0);
+            }
         }
         for (const id of h.voices) {
-            if (!VOICE_IDS.includes(id)) err(`Unknown voice "${id}" — YuE2 only understands ${VOICE_IDS.join(' and ')}.`, 0);
+            if (!VOICE_IDS.includes(id)) {
+                err(`${translate('Unknown voice:')} "${id}" — ${translate('YuE2 only understands:')} ${VOICE_IDS.join(', ')}.`, 0);
+            }
         }
 
         const { blocks } = scanBody(abc);
-        if (!blocks.length) { err('There is no music after the header.', 0); return out; }
+        if (!blocks.length) { err(translate('There is no music after the header.'), 0); return out; }
         for (const chunk of chunkBlocks(blocks)) {
             if (chunk.length < 2) {
-                warn(`Only ${chunk[0].voice} is written here — both voices have to cover every bar (pad the other with Z).`, chunk[0].line);
+                warn(`${translate('Only one voice is written here — both voices have to cover every bar (pad the other with Z).')} (${chunk[0].voice})`, chunk[0].line);
                 continue;
             }
             const counts = chunk.map(b => b.bars);
             if (counts.some(c => c !== counts[0])) {
-                err(`The voices disagree on bar count here (${chunk.map(b => `${b.voice} ${b.bars}`).join(', ')}). Both must cover the same bars.`, chunk[0].line);
+                err(`${translate('The voices disagree on bar count here; both must cover the same bars.')} `
+                    + `(${chunk.map(b => `${b.voice} ${b.bars}`).join(', ')})`, chunk[0].line);
             }
         }
         checkInlineKeys(abc, out);
@@ -495,7 +502,7 @@ const AudioDawScore = (() => {
         if (a.length !== b.length || a.some((v, i) => v !== b[i])) {
             out.push({
                 severity: 'warning',
-                message: 'Inline key changes ([K:…]) are not at the same bars in both voices.',
+                message: translate('Inline key changes ([K:…]) are not at the same bars in both voices.'),
                 line: 0
             });
         }
@@ -506,8 +513,9 @@ const AudioDawScore = (() => {
         if (typeof ABCJS === 'undefined') return;
         let tune = null;
         try { tune = ABCJS.parseOnly(abc)[0]; }
-        catch (e) { err(`The notation library could not parse this score: ${e.message}`, 0); return; }
-        if (!tune) { err('The notation library produced no tune from this score.', 0); return; }
+        catch (e) { err(`${translate('The notation library could not parse this score:')} ${e.message}`, 0); return; }
+        if (!tune) { err(translate('The notation library produced no tune from this score.'), 0); return; }
+        // abcjs's own warning text is the library's, in whatever wording it ships — passed through untouched.
         for (const w of tune.warnings || []) warn(String(w).replace(/<[^>]*>/g, ''), 0);
 
         const barWhole = meterFraction(h.M);
@@ -519,7 +527,7 @@ const AudioDawScore = (() => {
                     for (const el of voice) {
                         if (el.el_type === 'bar') {
                             if (!skip && sum > 0 && Math.abs(sum - barWhole) > 1e-6) {
-                                warn(`A bar holds ${(sum / barWhole * 100).toFixed(0)}% of ${h.M}.`, 0);
+                                warn(`${translate('A bar does not hold a full measure.')} (${(sum / barWhole * 100).toFixed(0)}% ${h.M})`, 0);
                             }
                             sum = 0; skip = false; continue;
                         }
@@ -555,13 +563,15 @@ const AudioDawScore = (() => {
         const card = createDiv(null, 'daw-fx-card');
         const head = createDiv(null, 'daw-fx-card-head');
         const title = createSpan(null, 'daw-fx-card-title');
-        title.textContent = 'Score';
+        title.textContent = translate('Score');
         head.appendChild(title);
         const btns = createDiv(null, 'daw-fx-card-btns');
-        els.play = miniButton('Play', 'Hear the plan in the browser before spending a render on it', playPause);
+        // Play's label flips to Pause, so it is translated at every assignment (see syncPlayButton) and never
+        // carries class="translate" — a later sweep would restore the stale cached English.
+        els.play = miniButton(translate('Play'), translate('Hear the plan in the browser before spending a render on it'), playPause);
         const chordsLabel = document.createElement('label');
         chordsLabel.className = 'daw-score-toggle';
-        chordsLabel.title = 'Play the chord symbols as accompaniment';
+        chordsLabel.title = translate('Play the chord symbols as accompaniment');
         chordsLabel.htmlFor = 'daw_score_chords';
         els.chords = document.createElement('input');
         els.chords.type = 'checkbox';
@@ -569,23 +579,23 @@ const AudioDawScore = (() => {
         els.chords.checked = true;
         els.chords.addEventListener('change', setTransportTune);
         chordsLabel.appendChild(els.chords);
-        chordsLabel.appendChild(document.createTextNode(' Chords'));
+        chordsLabel.appendChild(document.createTextNode(' ' + translate('Chords')));
         btns.appendChild(els.play);
         btns.appendChild(chordsLabel);
-        els.undo = miniButton('Undo', 'Undo the last score edit (Ctrl+Z while the score has focus)', undo);
-        els.redo = miniButton('Redo', 'Redo (Ctrl+Y)', redo);
+        els.undo = miniButton(translate('Undo'), translate('Undo the last score edit (Ctrl+Z while the score has focus)'), undo);
+        els.redo = miniButton(translate('Redo'), translate('Redo (Ctrl+Y)'), redo);
         btns.appendChild(els.undo);
         btns.appendChild(els.redo);
-        btns.appendChild(miniButton('No chords', 'Strip every chord symbol — the melody-only form used for covers', stripAllChords));
-        btns.appendChild(miniButton('Align bars', 'Pad the source so both voices\u2019 barlines line up column-wise', applyAlignBars));
-        btns.appendChild(miniButton('Copy', 'Copy the ABC score to the clipboard', () => {
+        btns.appendChild(miniButton(translate('No chords'), translate('Strip every chord symbol — the melody-only form used for covers'), stripAllChords));
+        btns.appendChild(miniButton(translate('Align bars'), translate('Pad the source so both voices\u2019 barlines line up column-wise'), applyAlignBars));
+        btns.appendChild(miniButton(translate('Copy'), translate('Copy the ABC score to the clipboard'), () => {
             if (!current?.abc) return;
             navigator.clipboard?.writeText(current.abc)
                 .then(() => notice('Score copied', 'green'))
                 .catch(() => notice('Could not copy to the clipboard', 'yellow'));
         }));
-        btns.appendChild(miniButton('Save', 'Download the ABC score as a .abc file', downloadScore));
-        btns.appendChild(miniButton('MIDI', 'Download the plan as a MIDI file', exportMidi));
+        btns.appendChild(miniButton(translate('Save'), translate('Download the ABC score as a .abc file'), downloadScore));
+        btns.appendChild(miniButton(translate('MIDI'), translate('Download the plan as a MIDI file'), exportMidi));
         head.appendChild(btns);
         card.appendChild(head);
 
@@ -613,7 +623,7 @@ const AudioDawScore = (() => {
 
     function buildControls(parent) {
         const header = createDiv(null, 'daw-stems-header');
-        header.textContent = 'Plan';
+        header.textContent = translate('Plan');
         parent.appendChild(header);
 
         els.clipInfo = createDiv(null, 'daw-stems-clipinfo');
@@ -621,65 +631,69 @@ const AudioDawScore = (() => {
 
         // Header fields — each edit rewrites the ABC header, so the text stays the single source of truth.
         const hdrRow = createDiv(null, 'daw-stems-action-row');
-        els.key = labelledInput(hdrRow, 'Key', 'daw-generate-reftext', v => applyEdit(setHeaderField(current.abc, 'K', v)), 'daw_score_key');
-        els.meter = labelledInput(hdrRow, 'Meter', 'daw-generate-reftext', v => applyEdit(setHeaderField(current.abc, 'M', v)), 'daw_score_meter');
-        els.tempo = labelledInput(hdrRow, 'Tempo', 'daw-generate-reftext', v => {
+        // Only the labels are translated: the field codes ('K', 'M', 'Q', 'L') and the values typed into these
+        // boxes are ABC header data.
+        els.key = labelledInput(hdrRow, translate('Key'), 'daw-generate-reftext', v => applyEdit(setHeaderField(current.abc, 'K', v)), 'daw_score_key');
+        els.meter = labelledInput(hdrRow, translate('Meter'), 'daw-generate-reftext', v => applyEdit(setHeaderField(current.abc, 'M', v)), 'daw_score_meter');
+        els.tempo = labelledInput(hdrRow, translate('Tempo'), 'daw-generate-reftext', v => {
             const bpm = parseFloat(v);
             if (!isFinite(bpm) || bpm <= 0) { syncControls(); return; }
             applyEdit(setHeaderField(current.abc, 'Q', `1/4=${Math.round(bpm)}`));
         }, 'daw_score_tempo');
-        els.unit = labelledInput(hdrRow, 'Unit', 'daw-generate-reftext', null, 'daw_score_unit');
+        els.unit = labelledInput(hdrRow, translate('Unit'), 'daw-generate-reftext', null, 'daw_score_unit');
         els.unit.readOnly = true;
-        els.unit.title = 'Unit note length (L:). The grid every duration is measured in.';
-        button(hdrRow, 'Apply to project', 'basic-button btn-sm', applyToProject)
-            .title = 'Set the project tempo and time signature to what this score is written in';
+        els.unit.title = translate('Unit note length (L:). The grid every duration is measured in.');
+        button(hdrRow, translate('Apply to project'), 'basic-button btn-sm', applyToProject)
+            .title = translate('Set the project tempo and time signature to what this score is written in');
         parent.appendChild(hdrRow);
 
         els.sections = createDiv(null, 'daw-fx-browser');
         parent.appendChild(els.sections);
 
-        parent.appendChild(fieldLabel('Style', 'daw_score_style_label'));
+        parent.appendChild(fieldLabel(translate('Style'), 'daw_score_style_label'));
         els.style = labelField(document.createElement('textarea'), 'daw_score_style_label');
         els.style.className = 'daw-generate-text';
         els.style.rows = 2;
-        els.style.placeholder = 'Genre, instruments, mood — what the recording should sound like.';
+        els.style.placeholder = translate('Genre, instruments, mood — what the recording should sound like.');
         parent.appendChild(els.style);
 
-        parent.appendChild(fieldLabel('Lyrics', 'daw_score_lyrics_label'));
+        parent.appendChild(fieldLabel(translate('Lyrics'), 'daw_score_lyrics_label'));
         els.lyrics = labelField(document.createElement('textarea'), 'daw_score_lyrics_label');
         els.lyrics.className = 'daw-generate-text';
         els.lyrics.rows = 3;
-        els.lyrics.placeholder = '[Verse]\nThe words to sing. Leave empty for an instrumental.';
+        // [Verse] is a structure tag YuE2 reads out of the lyrics, so it stays verbatim; only the hint moves.
+        els.lyrics.placeholder = '[Verse]\n' + translate('The words to sing. Leave empty for an instrumental.');
         parent.appendChild(els.lyrics);
 
         // Numbered notation: how the YuE2 researchers dictated a melody correction ("1155665 / 4433221").
-        parent.appendChild(fieldLabel('Melody by degree', 'daw_score_degree_label'));
+        parent.appendChild(fieldLabel(translate('Melody by degree'), 'daw_score_degree_label'));
         const numRow = createDiv(null, 'daw-stems-action-row');
         els.numbers = labelField(document.createElement('input'), 'daw_score_degree_label');
         els.numbers.type = 'text';
         els.numbers.className = 'daw-generate-reftext';
+        // The placeholder is the notation itself (degrees, not words) — it stays as written.
         els.numbers.placeholder = '1155665 / 4433221';
-        els.numbers.title = 'Scale degrees in the current key. Spaces or / start a new bar, 0 is a rest.';
+        els.numbers.title = translate('Scale degrees in the current key. Spaces or / start a new bar, 0 is a rest.');
         numRow.appendChild(els.numbers);
         els.numberOctave = document.createElement('select');
         els.numberOctave.className = 'daw-fx-select';
-        els.numberOctave.setAttribute('aria-label', 'Octave the degrees are written in');
+        els.numberOctave.setAttribute('aria-label', translate('Octave the degrees are written in'));
         for (const [v, l] of [['0', 'Low'], ['1', 'Mid'], ['2', 'High']]) {
             const o = document.createElement('option');
-            o.value = v; o.textContent = l;
+            o.value = v; o.textContent = translate(l);
             els.numberOctave.appendChild(o);
         }
         els.numberOctave.value = '1';
         numRow.appendChild(els.numberOctave);
-        button(numRow, 'Write bars', 'basic-button btn-sm', insertNumbered);
+        button(numRow, translate('Write bars'), 'basic-button btn-sm', insertNumbered);
         parent.appendChild(numRow);
 
-        parent.appendChild(fieldLabel('ABC score', 'daw_score_src_label'));
+        parent.appendChild(fieldLabel(translate('ABC score'), 'daw_score_src_label'));
         els.src = labelField(document.createElement('textarea'), 'daw_score_src_label');
         els.src.className = 'daw-generate-text daw-score-src';
         els.src.rows = 8;
         els.src.spellcheck = false;
-        els.src.placeholder = 'Paste an ABC score here';
+        els.src.placeholder = translate('Paste an ABC score here');
         // Typing is one history entry per editing session, not per keystroke — the textarea keeps its own
         // native undo for character-level work.
         let typingSnapshot = false;
@@ -699,12 +713,12 @@ const AudioDawScore = (() => {
         parent.appendChild(els.issues);
 
         const actions = createDiv(null, 'daw-stems-action-row');
-        els.load = button(actions, 'Load from clip', 'basic-button btn-sm', loadFromSelectedClip);
-        els.draft = button(actions, 'Draft plan', 'basic-button btn-sm', draftPlan);
-        els.draft.title = 'Ask the model for a score without rendering audio — seconds instead of minutes';
+        els.load = button(actions, translate('Load from clip'), 'basic-button btn-sm', loadFromSelectedClip);
+        els.draft = button(actions, translate('Draft plan'), 'basic-button btn-sm', draftPlan);
+        els.draft.title = translate('Ask the model for a score without rendering audio — seconds instead of minutes');
         const durWrap = createDiv(null, 'daw-score-field');
         const durLbl = createSpan(null, 'daw-stems-ctl-label');
-        durLbl.textContent = 'Secs';
+        durLbl.textContent = translate('Secs');
         els.duration = document.createElement('input');
         els.duration.type = 'number';
         els.duration.className = 'daw-generate-reftext';
@@ -713,15 +727,15 @@ const AudioDawScore = (() => {
         els.duration.max = '900';
         // The budget is computed against this, so a blank one would report the model's 6-minute default and
         // tell every short draft it has room to spare.
-        els.duration.title = 'How long the song should be. The audio budget is measured against it.';
+        els.duration.title = translate('How long the song should be. The audio budget is measured against it.');
         durWrap.appendChild(durLbl);
         durWrap.appendChild(els.duration);
         actions.appendChild(durWrap);
-        button(actions, 'Paste', 'basic-button btn-sm', async () => {
+        button(actions, translate('Paste'), 'basic-button btn-sm', async () => {
             try { applyEdit(await navigator.clipboard.readText()); }
             catch (_) { notice('Could not read the clipboard — paste into the ABC box instead', 'yellow'); }
         });
-        els.go = button(actions, 'Render', 'basic-button btn-sm btn-primary daw-stems-go', renderScore);
+        els.go = button(actions, translate('Render'), 'basic-button btn-sm btn-primary daw-stems-go', renderScore);
         parent.appendChild(actions);
 
         els.modeNote = createDiv(null, 'daw-stems-desc');
@@ -737,9 +751,9 @@ const AudioDawScore = (() => {
         buildVersionsCard(parent);
 
         const help = createDiv(null, 'daw-stems-desc');
-        help.textContent = 'Click a chord symbol to reharmonise, a note to edit it, or drag a note up and down '
+        help.textContent = translate('Click a chord symbol to reharmonise, a note to edit it, or drag a note up and down '
             + 'to change its pitch. Play auditions the plan in the browser. The score is a plan the model '
-            + 'performs, not a recording of it.';
+            + 'performs, not a recording of it.');
         parent.appendChild(help);
     }
 
@@ -853,11 +867,12 @@ const AudioDawScore = (() => {
         sectionSpans(abc).forEach((s, i) => {
             const chip = createDiv(null, 'daw-fx-pick daw-score-chip');
             const name = createSpan(null, 'daw-fx-pick-name');
-            name.textContent = s.label || '(unnamed)';
+            // s.label is the % section name out of the score — notation data, so only the fallback is UI text.
+            name.textContent = s.label || translate('(unnamed)');
             chip.appendChild(name);
             chip.title = seekable
-                ? 'Click to jump the playhead here · right-click to rename, duplicate, reorder or delete'
-                : 'Rename, duplicate, reorder or delete this section';
+                ? translate('Click to jump the playhead here · right-click to rename, duplicate, reorder or delete')
+                : translate('Rename, duplicate, reorder or delete this section');
             chip.addEventListener('click', (e) => seekToSection(e, s, i));
             chip.addEventListener('contextmenu', (e) => { e.preventDefault(); openSectionMenu(e, i); });
             setupChipDrag(chip, i);
@@ -866,10 +881,11 @@ const AudioDawScore = (() => {
 
         syncRenderingButtons();
         const mode = abc.trim() ? modeForScore(abc) : null;
+        // Rewritten on every refresh, so it is translated here rather than swept.
         els.modeNote.textContent = mode === null ? ''
             : mode === 'full'
-                ? 'This score carries chord symbols, so it renders in Full planning mode.'
-                : 'This score has no chord symbols, so it renders in Melody mode — the cover setting.';
+                ? translate('This score carries chord symbols, so it renders in Full planning mode.')
+                : translate('This score has no chord symbols, so it renders in Melody mode — the cover setting.');
     }
 
     /** Dragging one chip onto another is the menu's Move earlier/later, without the counting. */
@@ -904,14 +920,14 @@ const AudioDawScore = (() => {
             const row = createDiv(null, i.severity === 'error' ? 'daw-score-err' : 'daw-score-warn');
             row.textContent = i.message;
             if (i.line > 0) {
-                row.title = `Line ${i.line + 1} — click to jump there`;
+                row.title = `${translate('Line')} ${i.line + 1} — ${translate('click to jump there')}`;
                 row.addEventListener('click', () => selectLine(i.line));
             }
             els.issues.appendChild(row);
         }
         const blocked = issues.some(i => i.severity === 'error');
         els.go.disabled = blocked || !current?.abc.trim();
-        els.go.title = blocked ? 'Fix the errors above first' : 'Render this score into a new clip';
+        els.go.title = blocked ? translate('Fix the errors above first') : translate('Render this score into a new clip');
     }
 
     function selectLine(lineIndex) {
@@ -927,7 +943,7 @@ const AudioDawScore = (() => {
         const host = els.sheet;
         if (!host) return;
         if (typeof ABCJS === 'undefined') {
-            host.innerHTML = '<span class="daw-stems-clipinfo">The notation library did not load.</span>';
+            host.innerHTML = `<span class="daw-stems-clipinfo">${translate('The notation library did not load.')}</span>`;
             return;
         }
         if (!current?.abc.trim()) {
@@ -964,7 +980,7 @@ const AudioDawScore = (() => {
         }
         catch (e) {
             console.error('[AudioDawScore] Engraving failed:', e);
-            host.innerHTML = `<span class="daw-score-err">Could not draw this score: ${escapeHtml(e.message)}</span>`;
+            host.innerHTML = `<span class="daw-score-err">${translate('Could not draw this score:')} ${escapeHtml(e.message)}</span>`;
         }
     }
 
@@ -992,25 +1008,26 @@ const AudioDawScore = (() => {
         const score = clip?.meta?.score;
         const tr = cb.getTransport ? cb.getTransport() : {};
         const meter = Array.isArray(tr.timeSignature) ? tr.timeSignature.join('/') : '4/4';
-        startAction(row, 'New blank score',
-            `Eight empty bars in ${meter} at ${Math.round(tr.bpm || 120)} BPM. Click the notes in.`,
+        startAction(row, translate('New blank score'),
+            `${meter} · ${Math.round(tr.bpm || 120)} BPM — ${translate('eight empty bars. Click the notes in.')}`,
             null, () => {
+                // The stored label is project data, not UI chrome, so it stays English on disk.
                 loadScore(blankScore(), { source: 'blank', label: 'New score' });
                 notice('Blank score ready — click a note to edit it', 'green');
             });
-        startAction(row, 'Load from the clip',
-            score ? `Open the plan ${clip.name} was rendered from.` : '',
-            score ? null : clip ? `${clip.name} carries no score — only YuE2 generations plan one.`
-                : 'Select a generated clip on the timeline first.',
+        startAction(row, translate('Load from the clip'),
+            score ? `${translate('Open the plan this clip was rendered from.')} (${clip.name})` : '',
+            score ? null : clip ? `${clip.name} — ${translate('carries no score; only YuE2 generations plan one.')}`
+                : translate('Select a generated clip on the timeline first.'),
             loadFromSelectedClip);
-        startAction(row, 'Transcribe a recording',
-            clip?.blob ? `Read the melody, chords, key and tempo out of ${clip.name}.` : '',
-            transcribing ? 'Reading a recording now…' : clip?.blob ? null
-                : 'Select a clip with audio on the timeline first.',
+        startAction(row, translate('Transcribe a recording'),
+            clip?.blob ? `${translate('Read the melody, chords, key and tempo out of')} ${clip.name}.` : '',
+            transcribing ? translate('Reading a recording now…') : clip?.blob ? null
+                : translate('Select a clip with audio on the timeline first.'),
             () => transcribeSelection('clip'));
         host.appendChild(row);
         const hint = createDiv(null, 'daw-stems-desc');
-        hint.textContent = 'Or drop a clip, an .abc file or a recording onto this sheet.';
+        hint.textContent = translate('Or drop a clip, an .abc file or a recording onto this sheet.');
         host.appendChild(hint);
     }
 
@@ -1062,16 +1079,16 @@ const AudioDawScore = (() => {
         if (SCORE_FILE.test(file.name)) {
             const text = await file.text();
             // The same gate the paste path relies on: no K: and abcjs has nothing to engrave.
-            if (!/^\s*K:/m.test(text)) { notice(`${file.name} does not read as an ABC score`, 'yellow'); return; }
+            if (!/^\s*K:/m.test(text)) { notice(`${translate('This file does not read as an ABC score:')} ${file.name}`, 'yellow'); return; }
             loadScore(text, { source: 'file', label: file.name.replace(/\.[^.]+$/, '').slice(0, 32) });
-            notice(`${file.name} loaded`, 'green');
+            notice(`${translate('Score loaded from')} ${file.name}`, 'green');
             return;
         }
-        if (!AUDIO_FILE.test(file.name)) { notice(`The score sheet has no use for ${file.name}`, 'yellow'); return; }
+        if (!AUDIO_FILE.test(file.name)) { notice(`${translate('The score sheet has no use for this file:')} ${file.name}`, 'yellow'); return; }
         if (!cb.importClip) return;
         let added = null;
         try { added = await cb.importClip(file); }
-        catch (e) { notice(`Could not read ${file.name} as audio`, 'yellow'); return; }
+        catch (e) { notice(`${translate('Could not read this file as audio:')} ${file.name}`, 'yellow'); return; }
         if (added?.clip) offerTranscribe(added.clip, at);
     }
 
@@ -1080,8 +1097,8 @@ const AudioDawScore = (() => {
         if (cb.selectClip) cb.selectClip(clip.id);
         if (!cb.showMenu) return;
         cb.showMenu(at, [
-            { label: `Transcribe ${clip.name}`, action: () => runTranscribe({ clip, stem: false }, 'full', 'clip') },
-            { label: 'Leave it on the timeline', action: () => {} }
+            { label: `${translate('Transcribe')} ${clip.name}`, action: () => runTranscribe({ clip, stem: false }, 'full', 'clip') },
+            { label: translate('Leave it on the timeline'), action: () => {} }
         ]);
     }
 
@@ -1100,10 +1117,10 @@ const AudioDawScore = (() => {
         const score = clip?.meta?.score;
         if (score) {
             loadScore(score.abc, { ...score, clipId: clip.id });
-            notice(`Score loaded from ${clip.name}`, 'green');
+            notice(`${translate('Score loaded from')} ${clip.name}`, 'green');
         }
         else if (clip?.blob) offerTranscribe(clip, { clientX: x, clientY: y });
-        else notice(`${clip?.name || 'That clip'} has neither a score nor audio`, 'yellow');
+        else notice(translate('That clip has neither a score nor audio.') + (clip?.name ? ` (${clip.name})` : ''), 'yellow');
         return true;
     }
 
@@ -1153,15 +1170,16 @@ const AudioDawScore = (() => {
         const rootMatch = /^([A-G][#b]?)(.*)$/.exec(existing);
         const root = rootMatch ? rootMatch[1] : 'C';
         const bass = /\/[A-G][#b]?$/.exec(existing)?.[0] || '';
+        // Every one of these labels IS the chord symbol that gets written into the score — never translated.
         const items = CHORD_QUALITIES.map(q => ({
             label: `${root}${q}${bass}` + (`${root}${q}${bass}` === existing ? '  •' : ''),
             action: () => setChord(`${root}${q}${bass}`)
         }));
-        items.push({ label: 'Custom…', action: () => {
-            const v = prompt('Chord symbol:', existing);
+        items.push({ label: translate('Custom…'), action: () => {
+            const v = prompt(translate('Chord symbol:'), existing);
             if (v !== null) setChord(v.trim());
         } });
-        if (existing) items.push({ label: 'Remove chord', action: () => setChord('') });
+        if (existing) items.push({ label: translate('Remove chord'), action: () => setChord('') });
         if (cb.showMenu) cb.showMenu(ev, items);
     }
 
@@ -1185,31 +1203,32 @@ const AudioDawScore = (() => {
         if (!t) return;
         const items = [];
         if (!t.isRest) {
-            items.push({ label: 'Up a step', action: () => applyTranspose(1) });
-            items.push({ label: 'Down a step', action: () => applyTranspose(-1) });
-            items.push({ label: 'Up an octave', action: () => applyTranspose(7) });
-            items.push({ label: 'Down an octave', action: () => applyTranspose(-7) });
-            items.push({ label: 'Sharp', action: () => setAccidental('^') });
-            items.push({ label: 'Flat', action: () => setAccidental('_') });
-            items.push({ label: 'Natural', action: () => setAccidental('=') });
-            if (t.accidental) items.push({ label: 'Clear accidental', action: () => setAccidental('') });
-            items.push({ label: t.tie ? 'Untie from next' : 'Tie to next', action: toggleTie });
-            items.push({ label: 'Turn into a rest', action: () => setRest(true) });
+            // These are menu commands, not notation: the ABC that each one writes ('^', '_', '=') stays put.
+            items.push({ label: translate('Up a step'), action: () => applyTranspose(1) });
+            items.push({ label: translate('Down a step'), action: () => applyTranspose(-1) });
+            items.push({ label: translate('Up an octave'), action: () => applyTranspose(7) });
+            items.push({ label: translate('Down an octave'), action: () => applyTranspose(-7) });
+            items.push({ label: translate('Sharp'), action: () => setAccidental('^') });
+            items.push({ label: translate('Flat'), action: () => setAccidental('_') });
+            items.push({ label: translate('Natural'), action: () => setAccidental('=') });
+            if (t.accidental) items.push({ label: translate('Clear accidental'), action: () => setAccidental('') });
+            items.push({ label: t.tie ? translate('Untie from next') : translate('Tie to next'), action: toggleTie });
+            items.push({ label: translate('Turn into a rest'), action: () => setRest(true) });
         }
         else if (t.letter !== 'Z') {
-            items.push({ label: 'Turn into a note', action: () => setRest(false) });
+            items.push({ label: translate('Turn into a note'), action: () => setRest(false) });
         }
-        if (t.count >= 2) items.push({ label: 'Split in two', action: splitNote });
-        items.push({ label: 'Merge with next', action: mergeWithNext });
+        if (t.count >= 2) items.push({ label: translate('Split in two'), action: splitNote });
+        items.push({ label: translate('Merge with next'), action: mergeWithNext });
         const per = unitsPerBar(parseHeader(current.abc));
         if (per) {
             for (const [label, frac] of [['Whole', 1], ['Half', 2], ['Quarter', 4], ['Eighth', 8], ['Sixteenth', 16]]) {
                 const units = Math.round(per / frac);
                 if (units >= 1 && units !== t.count) {
-                    items.push({ label: `Length: ${label}`, action: () => setDuration(units) });
+                    items.push({ label: `${translate('Length')}: ${translate(label)}`, action: () => setDuration(units) });
                 }
             }
-            if (t.count * 1.5 % 1 === 0) items.push({ label: 'Length: dotted', action: () => setDuration(t.count * 1.5) });
+            if (t.count * 1.5 % 1 === 0) items.push({ label: `${translate('Length')}: ${translate('dotted')}`, action: () => setDuration(t.count * 1.5) });
         }
         // Offset off the cursor so the note stays clickable under it — otherwise the menu eats the second
         // click of a double-click and the note never hears it.
@@ -1333,7 +1352,7 @@ const AudioDawScore = (() => {
                     ? { start: r.start, end: r.end, text: '' }
                     : { start: r.start, end: r.end, text: tokenText(r, { count: r.count - take, forceCount: true }) });
             }
-            if (excess > 0) { notice(`This bar has no rest to shorten — it would run ${excess} units over`, 'yellow'); return; }
+            if (excess > 0) { notice(`${translate('This bar has no rest to shorten — it would run over by this many units:')} ${excess}`, 'yellow'); return; }
         }
         else if (excess < 0) {
             edits.push({ start: target.end, end: target.end, text: `z${-excess}` });
@@ -1387,24 +1406,25 @@ const AudioDawScore = (() => {
         const s = spans[index];
         if (!s) return;
         const items = [
-            { label: 'Jump to it', action: () => selectLine(s.line) },
-            { label: 'Rename…', action: () => {
-                const v = prompt('Section name:', s.label);
+            { label: translate('Jump to it'), action: () => selectLine(s.line) },
+            { label: translate('Rename…'), action: () => {
+                // s.label is the existing % comment out of the score — offered back as-is, never translated.
+                const v = prompt(translate('Section name:'), s.label);
                 if (v === null) return;
                 edit(withSections(current.abc, (lines) => {
                     lines[s.line] = `% ${v.trim()}`;
                     return lines;
                 }));
             } },
-            { label: 'Duplicate', action: () => edit(withSections(current.abc, (lines) => {
+            { label: translate('Duplicate'), action: () => edit(withSections(current.abc, (lines) => {
                 const block = lines.slice(s.line, s.endLine + 1);
                 lines.splice(s.endLine + 1, 0, ...block);
                 return lines;
             })) }
         ];
-        if (index > 0) items.push({ label: 'Move earlier', action: () => moveSection(index, index - 1) });
-        if (index < spans.length - 1) items.push({ label: 'Move later', action: () => moveSection(index, index + 1) });
-        if (spans.length > 1) items.push({ label: 'Delete section', action: () => edit(withSections(current.abc, (lines) => {
+        if (index > 0) items.push({ label: translate('Move earlier'), action: () => moveSection(index, index - 1) });
+        if (index < spans.length - 1) items.push({ label: translate('Move later'), action: () => moveSection(index, index + 1) });
+        if (spans.length > 1) items.push({ label: translate('Delete section'), action: () => edit(withSections(current.abc, (lines) => {
             lines.splice(s.line, s.endLine - s.line + 1);
             return lines;
         })) });
@@ -1469,7 +1489,7 @@ const AudioDawScore = (() => {
         if (!selection?.token) { notice('Select a bar on the staff first — the new bars replace it', 'yellow'); return; }
         const bar = barBounds(current.abc, selection.token.start);
         edit(replaceRange(current.abc, bar.start, bar.end, bars));
-        notice(`Wrote ${bars.split('|').length} bar(s) from degrees`, 'green');
+        notice(`${translate('Bars written from degrees:')} ${bars.split('|').length}`, 'green');
     }
 
     // ===== audition =====
@@ -1482,7 +1502,7 @@ const AudioDawScore = (() => {
     function ensureTransport() {
         if (synthCtl || !els.transport) return synthCtl;
         if (typeof ABCJS === 'undefined' || !ABCJS.synth.supportsAudio()) {
-            els.transport.textContent = 'This browser cannot play audio here.';
+            els.transport.textContent = translate('This browser cannot play audio here.');
             els.transport.className = 'daw-stems-clipinfo';
             return null;
         }
@@ -1565,7 +1585,7 @@ const AudioDawScore = (() => {
 
     function syncPlayButton() {
         if (!els.play) return;
-        const label = synthCtl?.isStarted ? 'Pause' : 'Play';
+        const label = synthCtl?.isStarted ? translate('Pause') : translate('Play');
         els.play.textContent = label;
         // miniButton names the button once, but this one's label changes, so its name has to follow.
         els.play.setAttribute('aria-label', `${label} — ${els.play.title}`);
@@ -1614,7 +1634,7 @@ const AudioDawScore = (() => {
                     for (const el of voice) {
                         if (el.el_type === 'bar') {
                             if (!skip && sum > 0 && Math.abs(sum - barWhole) > 1e-6) {
-                                markBar(run.concat(el), `This bar holds ${(sum / barWhole * 100).toFixed(0)}% of a full bar.`);
+                                markBar(run.concat(el), `${translate('This bar does not hold a full measure.')} (${(sum / barWhole * 100).toFixed(0)}%)`);
                             }
                             sum = 0; skip = false; run = [];
                             continue;
@@ -1733,16 +1753,17 @@ const AudioDawScore = (() => {
         const card = createDiv(null, 'daw-fx-card');
         const head = createDiv(null, 'daw-fx-card-head');
         const title = createSpan(null, 'daw-fx-card-title');
-        title.textContent = 'Edit with an LLM';
+        title.textContent = translate('Edit with an LLM');
         head.appendChild(title);
         card.appendChild(head);
         els.llmBody = createDiv(null, 'daw-score-llm');
         card.appendChild(els.llmBody);
         parent.appendChild(card);
-        renderLlmUnavailable('Checking…');
+        renderLlmUnavailable(translate('Checking…'));
         probeLlm();
     }
 
+    /** `message` arrives already translated: every caller is a UI string, and llmErrorText may pass a raw error. */
     function renderLlmUnavailable(message, link) {
         els.llmBody.innerHTML = '';
         const note = createDiv(null, 'daw-stems-desc');
@@ -1771,7 +1792,7 @@ const AudioDawScore = (() => {
         }
         catch (_) { available = false; }
         if (!available) {
-            renderLlmUnavailable(LLM_MISSING, 'https://github.com/HartsyAI/SwarmUI-LLMAssistant');
+            renderLlmUnavailable(translate(LLM_MISSING), 'https://github.com/HartsyAI/SwarmUI-LLMAssistant');
             return;
         }
         // The endpoint refuses an empty model, so the list has to be in hand before the card is usable.
@@ -1782,8 +1803,8 @@ const AudioDawScore = (() => {
         }
         catch (_) { models = []; }
         if (!models.length) {
-            renderLlmUnavailable('LLMAssistant is installed but has no LLM model available. Add a .gguf to '
-                + 'Models/llm, or configure a remote provider in its settings.');
+            renderLlmUnavailable(translate('LLMAssistant is installed but has no LLM model available. Add a .gguf to '
+                + 'Models/llm, or configure a remote provider in its settings.'));
             return;
         }
         buildLlmControls(models);
@@ -1794,10 +1815,11 @@ const AudioDawScore = (() => {
         body.innerHTML = '';
 
         const presetRow = createDiv(null, 'daw-fx-browser');
+        // The chip's name is UI; the preset body it drops into the box is model instruction text, left as written.
         for (const [label, text] of LLM_PRESETS) {
             const chip = createDiv(null, 'daw-fx-pick daw-score-chip');
             const n = createSpan(null, 'daw-fx-pick-name');
-            n.textContent = label;
+            n.textContent = translate(label);
             chip.appendChild(n);
             chip.addEventListener('click', () => { els.llmPrompt.value = text; els.llmPrompt.focus(); });
             presetRow.appendChild(chip);
@@ -1807,17 +1829,18 @@ const AudioDawScore = (() => {
         els.llmPrompt = document.createElement('textarea');
         els.llmPrompt.className = 'daw-generate-text';
         els.llmPrompt.rows = 2;
-        els.llmPrompt.placeholder = 'What should change? Pick a preset above or describe it.';
+        els.llmPrompt.placeholder = translate('What should change? Pick a preset above or describe it.');
         body.appendChild(els.llmPrompt);
 
         const row = createDiv(null, 'daw-stems-action-row');
         const scopeWrap = createDiv(null, 'daw-score-field');
         const scopeLbl = createSpan(null, 'daw-stems-ctl-label');
-        scopeLbl.textContent = 'Scope';
+        scopeLbl.textContent = translate('Scope');
         els.llmScope = document.createElement('select');
         els.llmScope.className = 'daw-fx-select';
+        // The option VALUE is the id llmInstruction() switches on; only the visible label is translated.
         for (const [v, l] of [['whole', 'Whole score'], ['chords', 'Chords only'], ['section', 'One section']]) {
-            const o = document.createElement('option'); o.value = v; o.textContent = l;
+            const o = document.createElement('option'); o.value = v; o.textContent = translate(l);
             els.llmScope.appendChild(o);
         }
         scopeWrap.appendChild(scopeLbl); scopeWrap.appendChild(els.llmScope);
@@ -1825,11 +1848,11 @@ const AudioDawScore = (() => {
 
         const keepWrap = createDiv(null, 'daw-score-field');
         const keepLbl = createSpan(null, 'daw-stems-ctl-label');
-        keepLbl.textContent = 'Keep';
+        keepLbl.textContent = translate('Keep');
         els.llmKeep = document.createElement('select');
         els.llmKeep.className = 'daw-fx-select';
         for (const [v, l] of LLM_INVARIANTS) {
-            const o = document.createElement('option'); o.value = v; o.textContent = l;
+            const o = document.createElement('option'); o.value = v; o.textContent = translate(l);
             els.llmKeep.appendChild(o);
         }
         els.llmKeep.value = 'exact';
@@ -1838,26 +1861,28 @@ const AudioDawScore = (() => {
 
         const modelWrap = createDiv(null, 'daw-score-field');
         const modelLbl = createSpan(null, 'daw-stems-ctl-label');
-        modelLbl.textContent = 'Model';
+        modelLbl.textContent = translate('Model');
         els.llmModel = document.createElement('select');
         els.llmModel.className = 'daw-fx-select';
         for (const m of models) {
             const o = document.createElement('option');
             o.value = m.id;
+            // Model names and ids come from the backend and are identifiers, not UI text.
             o.textContent = m.name || m.title || m.id;
             els.llmModel.appendChild(o);
         }
         modelWrap.appendChild(modelLbl); modelWrap.appendChild(els.llmModel);
         row.appendChild(modelWrap);
 
-        els.llmRun = button(row, 'Rewrite', 'basic-button btn-sm btn-primary daw-stems-go', runLlmEdit);
+        els.llmRun = button(row, translate('Rewrite'), 'basic-button btn-sm btn-primary daw-stems-go', runLlmEdit);
         body.appendChild(row);
 
         els.llmStatus = createDiv(null, 'daw-stems-desc daw-score-llm-status');
         body.appendChild(els.llmStatus);
     }
 
-    /** The dialect rules the model has to honour. No double braces anywhere — LLMAssistant substitutes those. */
+    /** The dialect rules the model has to honour. No double braces anywhere — LLMAssistant substitutes those.
+     *  This is prompt payload for the model, not UI chrome, so none of it is translated. */
     function llmInstruction(keep, scope) {
         const keepText = {
             exact: 'Do not change any pitch or rhythm in either voice.',
@@ -1891,24 +1916,24 @@ const AudioDawScore = (() => {
         const ask = els.llmPrompt.value.trim();
         if (!ask) { notice('Say what should change first', 'yellow'); return; }
         els.llmRun.disabled = true;
-        els.llmStatus.textContent = 'Asking the model…';
+        els.llmStatus.textContent = translate('Asking the model…');
         const instruction = llmInstruction(els.llmKeep.value, els.llmScope.value);
         try {
             let reply = await askLlm(instruction, buildLlmInput(ask));
             let candidate = extractAbc(reply);
-            let issues = candidate ? validate(candidate).filter(i => i.severity === 'error') : [{ message: 'No ```abc block came back.' }];
+            let issues = candidate ? validate(candidate).filter(i => i.severity === 'error') : [{ message: translate('No ```abc block came back.') }];
             if (issues.length) {
                 // One correction pass: hand back exactly what failed rather than guessing.
-                els.llmStatus.textContent = 'The first attempt was not valid; asking again with the errors…';
+                els.llmStatus.textContent = translate('The first attempt was not valid; asking again with the errors…');
                 reply = await askLlm(instruction, buildLlmInput(ask)
                     + '\n\nA previous attempt was rejected for these reasons. Fix them:\n'
                     + issues.map(i => `- ${i.message}`).join('\n')
                     + (candidate ? `\n\nThat attempt was:\n${candidate}` : ''));
                 candidate = extractAbc(reply);
-                issues = candidate ? validate(candidate).filter(i => i.severity === 'error') : [{ message: 'No ```abc block came back.' }];
+                issues = candidate ? validate(candidate).filter(i => i.severity === 'error') : [{ message: translate('No ```abc block came back.') }];
             }
             if (!candidate || issues.length) {
-                els.llmStatus.textContent = 'The model could not produce a valid score: '
+                els.llmStatus.textContent = translate('The model could not produce a valid score:') + ' '
                     + issues.map(i => i.message).join(' ');
                 return;
             }
@@ -1934,22 +1959,23 @@ const AudioDawScore = (() => {
         return new Promise((resolve, reject) => {
             genericRequest('LLMAssistantTestInstruction', { instructionText, sampleInput, model: els.llmModel.value },
                 (data) => {
-                    if (data?.success === false) reject(new Error(data.error || 'The LLM refused the request'));
+                    // data.error is the backend's own wording and is passed through untouched.
+                    if (data?.success === false) reject(new Error(data.error || translate('The LLM refused the request')));
                     else resolve(data?.response || '');
                 },
                 0,
-                (err) => reject(new Error(String(err || 'The LLM request failed'))));
+                (err) => reject(new Error(String(err || translate('The LLM request failed')))));
         });
     }
 
     /** Three different reasons this can fail, and they need three different answers. */
     function llmErrorText(e) {
         const msg = String(e?.message || e);
-        if (/bad_route|Unknown API route/i.test(msg)) return LLM_MISSING;
+        if (/bad_route|Unknown API route/i.test(msg)) return translate(LLM_MISSING);
         if (/bad_permissions|lack permissions/i.test(msg)) {
-            return 'Your account does not have the llm_chat permission, which LLMAssistant requires.';
+            return translate('Your account does not have the llm_chat permission, which LLMAssistant requires.');
         }
-        return msg;
+        return msg;   // the raw exception text — shown as it came, never translated
     }
 
     function extractAbc(reply) {
@@ -1964,17 +1990,18 @@ const AudioDawScore = (() => {
         const d = diffScores(current.abc, candidate);
         els.llmStatus.innerHTML = '';
         const summary = createDiv(null, 'daw-stems-clipinfo');
-        summary.innerHTML = `<strong>${d.chords} chord${d.chords === 1 ? '' : 's'}</strong> and `
-            + `<strong>${d.bars} bar${d.bars === 1 ? '' : 's'}</strong> changed`
-            + (d.headers.length ? `, plus ${escapeHtml(d.headers.join(', '))}` : '')
-            + `. ${d.notesTouched ? 'Notes were edited.' : 'No note was moved.'}`;
+        // d.headers are ABC field codes (M:, L:, K:, Q:) — reported as data, never run through translate().
+        summary.innerHTML = `<strong>${d.chords}</strong> ${translate('chord symbols changed')} · `
+            + `<strong>${d.bars}</strong> ${translate('bars changed')}`
+            + (d.headers.length ? ` · ${translate('header fields changed')}: ${escapeHtml(d.headers.join(', '))}` : '')
+            + `. ${d.notesTouched ? translate('Notes were edited.') : translate('No note was moved.')}`;
         els.llmStatus.appendChild(summary);
         const row = createDiv(null, 'daw-stems-action-row');
-        button(row, 'Apply', 'basic-button btn-sm btn-primary', () => {
+        button(row, translate('Apply'), 'basic-button btn-sm btn-primary', () => {
             edit(candidate);
-            els.llmStatus.textContent = 'Applied. Undo puts the previous score back.';
+            els.llmStatus.textContent = translate('Applied. Undo puts the previous score back.');
         });
-        button(row, 'Discard', 'basic-button btn-sm', () => { els.llmStatus.textContent = 'Discarded.'; });
+        button(row, translate('Discard'), 'basic-button btn-sm', () => { els.llmStatus.textContent = translate('Discarded.'); });
         els.llmStatus.appendChild(row);
     }
 
@@ -2108,11 +2135,11 @@ const AudioDawScore = (() => {
         const wanted = (Array.isArray(notes) ? notes : [])
             .map(n => ({ midi: n.midi ?? null, units: Math.max(0, Math.round(n.units) || 0) }))
             .filter(n => n.units > 0);
-        if (!wanted.length) return fail('No notes to write.');
+        if (!wanted.length) return fail(translate('No notes to write.'));
         if (!current?.abc.trim()) loadScore(blankScore(), { source: 'instrument', label: 'New score' });
         const h = parseHeader(current.abc);
         const per = unitsPerBar(h);
-        if (!per) return fail('The score needs M: and L: before notes can be written.');
+        if (!per) return fail(translate('The score needs M: and L: before notes can be written.'));
         const key = keyAccidentals(h.K);
 
         const total = wanted.reduce((s, n) => s + n.units, 0);
@@ -2136,15 +2163,15 @@ const AudioDawScore = (() => {
         let at = 0;
         for (const b of voiceBars(abc).filter(x => x.voice === voice)) { spans[at] = b; at += b.bars; }
         if (lastBar >= at) {
-            return fail(`Voice ${voice} has ${at} bar${at === 1 ? '' : 's'}; this take needs ${lastBar + 1}. `
-                + 'Insert bars first — adding them here would desync the two voices.');
+            return fail(translate('This take needs more bars than the voice has. Insert bars first — adding them '
+                + 'here would desync the two voices.') + ` (${voice}: ${at} → ${lastBar + 1})`);
         }
 
         const edits = [];
         let noteAt = 0, consumed = 0, posAbs = startAbs;
         for (let bar = firstBar; bar <= lastBar; bar++) {
             const span = spans[bar];
-            if (!span) return fail(`Voice ${voice} has no bar ${bar + 1} of its own to write into.`);
+            if (!span) return fail(`${translate('The voice has no bar of its own to write into.')} (${voice}: ${bar + 1})`);
             const pieces = [];
             let filled = Math.max(0, Math.min(per, startAbs - bar * per));
             if (filled > 0) pieces.push(`z${filled}`);
@@ -2190,8 +2217,8 @@ const AudioDawScore = (() => {
         const row = createDiv(null, 'daw-stems-action-row');
         els.soundfont = createDiv(null, 'daw-stems-clipinfo');
         row.appendChild(els.soundfont);
-        els.soundfontGo = button(row, 'Download samples', 'basic-button btn-sm', fetchSoundfont);
-        els.soundfontGo.title = 'Fetch the piano samples once so auditioning works without the internet';
+        els.soundfontGo = button(row, translate('Download samples'), 'basic-button btn-sm', fetchSoundfont);
+        els.soundfontGo.title = translate('Fetch the piano samples once so auditioning works without the internet');
         parent.appendChild(row);
     }
 
@@ -2202,22 +2229,23 @@ const AudioDawScore = (() => {
         const total = Number(caps?.soundfont_total ?? 0);
         const complete = total > 0 && have >= total;
         soundFontUrl = complete ? SOUNDFONT_URL : null;
+        // Rewritten by fetchSoundfont's poll as well, so it is translated at every assignment.
         els.soundfont.textContent = complete
-            ? `Instrument samples are installed (${have} notes) — audition works offline.`
-            : `Instrument samples come from the internet on first play (${have} of ${total || '88'} installed).`;
+            ? `${translate('Instrument samples are installed — audition works offline.')} (${have})`
+            : `${translate('Instrument samples come from the internet on first play.')} (${have}/${total || '88'})`;
         els.soundfontGo.disabled = complete;
         return complete;
     }
 
     async function fetchSoundfont() {
         els.soundfontGo.disabled = true;
-        const busy = cb.busy ? cb.busy('Fetching instrument samples…', 'score') : null;
+        const busy = cb.busy ? cb.busy(translate('Fetching instrument samples…'), 'score') : null;
         // The server answers once, at the end; the capabilities count is what makes the wait legible.
         const poll = setInterval(async () => {
             try {
                 const caps = await AudioLabAPI.callAPI('AudioLabScoreCapabilities', {});
                 const have = Number(caps?.soundfont_notes ?? 0), total = Number(caps?.soundfont_total ?? 88);
-                els.soundfont.textContent = `Fetching instrument samples — ${have} of ${total}…`;
+                els.soundfont.textContent = `${translate('Fetching instrument samples…')} ${have}/${total}`;
                 busy?.setProgress(have / total);
             }
             catch (_) {}
@@ -2226,15 +2254,18 @@ const AudioDawScore = (() => {
             const r = await AudioLabAPI.callAPI('AudioLabFetchSoundfont', {});
             clearInterval(poll);
             const complete = showSoundfont({ soundfont_notes: r?.installed, soundfont_total: r?.total });
+            // The plain branch is left for doNoticePopover to translate; only the branch with counts in it
+            // needs its static half wrapped here.
             notice(complete
                 ? 'Instrument samples installed — auditioning no longer needs the internet'
-                : `Only ${r?.installed ?? 0} of ${r?.total ?? 88} samples arrived — audition still uses the remote host`,
+                : `${translate('Some samples did not arrive — audition still uses the remote host.')} `
+                    + `(${r?.installed ?? 0}/${r?.total ?? 88})`,
                 complete ? 'green' : 'yellow');
         }
         catch (e) {
             clearInterval(poll);
             console.error('[AudioDawScore] Soundfont download failed:', e);
-            notice('Could not download the samples: ' + e.message, 'yellow');
+            notice(translate('Could not download the samples:') + ' ' + e.message, 'yellow');
             els.soundfontGo.disabled = false;
         }
         finally {
@@ -2251,19 +2282,19 @@ const AudioDawScore = (() => {
         const card = createDiv(null, 'daw-fx-card');
         const head = createDiv(null, 'daw-fx-card-head');
         const title = createSpan(null, 'daw-fx-card-title');
-        title.textContent = 'Variants';
+        title.textContent = translate('Variants');
         head.appendChild(title);
         card.appendChild(head);
         els.variantStyles = document.createElement('textarea');
         els.variantStyles.className = 'daw-generate-text';
         els.variantStyles.rows = 3;
-        els.variantStyles.placeholder = 'One style per line — each renders this same score into its own track.\n'
-            + 'Leave empty to vary only the seed.';
+        els.variantStyles.placeholder = translate('One style per line — each renders this same score into its own track.\n'
+            + 'Leave empty to vary only the seed.');
         card.appendChild(els.variantStyles);
         const row = createDiv(null, 'daw-stems-action-row');
         const wrap = createDiv(null, 'daw-score-field');
         const lbl = createSpan(null, 'daw-stems-ctl-label');
-        lbl.textContent = 'Seeds';
+        lbl.textContent = translate('Seeds');
         els.variantCount = document.createElement('select');
         els.variantCount.className = 'daw-fx-select';
         for (const n of [2, 3, 4]) {
@@ -2272,11 +2303,11 @@ const AudioDawScore = (() => {
             els.variantCount.appendChild(o);
         }
         els.variantCount.value = '3';
-        els.variantCount.title = 'How many takes to render when no style lines are given';
+        els.variantCount.title = translate('How many takes to render when no style lines are given');
         wrap.appendChild(lbl);
         wrap.appendChild(els.variantCount);
         row.appendChild(wrap);
-        els.variantGo = button(row, 'Render variants', 'basic-button btn-sm daw-stems-go', renderVariants);
+        els.variantGo = button(row, translate('Render variants'), 'basic-button btn-sm daw-stems-go', renderVariants);
         card.appendChild(row);
         parent.appendChild(card);
     }
@@ -2285,10 +2316,10 @@ const AudioDawScore = (() => {
         const card = createDiv(null, 'daw-fx-card');
         const head = createDiv(null, 'daw-fx-card-head');
         const title = createSpan(null, 'daw-fx-card-title');
-        title.textContent = 'Versions';
+        title.textContent = translate('Versions');
         head.appendChild(title);
         const btns = createDiv(null, 'daw-fx-card-btns');
-        btns.appendChild(miniButton('Unsolo', 'Hear every track again', () => { cb.soloOnly?.(null); }));
+        btns.appendChild(miniButton(translate('Unsolo'), translate('Hear every track again'), () => { cb.soloOnly?.(null); }));
         head.appendChild(btns);
         card.appendChild(head);
         els.versions = createDiv(null, 'daw-fx-browser');
@@ -2330,7 +2361,7 @@ const AudioDawScore = (() => {
         els.versions.innerHTML = '';
         if (!entries.length) {
             const empty = createDiv(null, 'daw-stems-clipinfo');
-            empty.textContent = 'No scored clips yet. Render a score and every take lands here as a version.';
+            empty.textContent = translate('No scored clips yet. Render a score and every take lands here as a version.');
             els.versions.appendChild(empty);
         }
         for (const { entry, depth } of versionTree(entries)) {
@@ -2339,15 +2370,16 @@ const AudioDawScore = (() => {
             const pick = createDiv(null, 'daw-fx-pick daw-score-ver' + (picks.includes(clip.id) ? ' selected' : ''));
             pick.style.marginLeft = `${depth * 0.9}rem`;
             const name = createSpan(null, 'daw-fx-pick-name');
-            name.textContent = score.label || clip.name || 'Version';
+            // Stored labels, clip and track names and the style the user typed are content, not UI chrome.
+            name.textContent = score.label || clip.name || translate('Version');
             pick.appendChild(name);
             const meta = createDiv(null, 'daw-clip-card-meta');
             const bits = [score.source || 'rendered', track.name];
-            if (score.seed !== null && score.seed !== undefined) bits.push(`seed ${score.seed}`);
+            if (score.seed !== null && score.seed !== undefined) bits.push(`${translate('seed')} ${score.seed}`);
             if (score.style) bits.push(score.style.slice(0, 40));
             meta.textContent = bits.join(' · ');
             pick.appendChild(meta);
-            pick.title = 'Click to pick for comparison — two picks show the diff and let you A/B them';
+            pick.title = translate('Click to pick for comparison — two picks show the diff and let you A/B them');
             pick.addEventListener('click', () => togglePick(clip.id));
             els.versions.appendChild(pick);
         }
@@ -2371,24 +2403,25 @@ const AudioDawScore = (() => {
         const chosen = picks.map(id => entries.find(e => e.clip.id === id)).filter(Boolean);
         if (chosen.length !== 2) {
             if (chosen.length === 1) {
-                button(els.versionActions, 'Load', 'basic-button btn-sm', () => loadVersion(chosen[0]));
-                button(els.versionActions, 'Solo', 'basic-button btn-sm', () => cb.soloOnly?.(chosen[0].track.id));
+                button(els.versionActions, translate('Load'), 'basic-button btn-sm', () => loadVersion(chosen[0]));
+                button(els.versionActions, translate('Solo'), 'basic-button btn-sm', () => cb.soloOnly?.(chosen[0].track.id));
             }
             return;
         }
         const [a, b] = chosen;
         const d = diffScores(a.clip.meta.score.abc, b.clip.meta.score.abc);
         const parts = [];
-        parts.push(d.chords ? `${d.chords} chord symbol${d.chords === 1 ? '' : 's'} differ` : 'same chord symbols');
-        parts.push(d.bars ? `${d.bars} bar${d.bars === 1 ? '' : 's'} added or removed` : 'same bar count');
-        parts.push(d.notesTouched ? 'the notes moved' : 'every note is identical');
-        if (d.headers.length) parts.push(`${d.headers.join(' ')} changed`);
-        els.versionDiff.innerHTML = `<strong>${escapeHtml(a.clip.meta.score.label || a.clip.name)}</strong> vs `
+        parts.push(d.chords ? `${d.chords} ${translate('chord symbols differ')}` : translate('same chord symbols'));
+        parts.push(d.bars ? `${d.bars} ${translate('bars added or removed')}` : translate('same bar count'));
+        parts.push(d.notesTouched ? translate('the notes moved') : translate('every note is identical'));
+        // d.headers are ABC field codes, so they are reported verbatim beside the translated phrase.
+        if (d.headers.length) parts.push(`${translate('header fields changed')}: ${d.headers.join(' ')}`);
+        els.versionDiff.innerHTML = `<strong>${escapeHtml(a.clip.meta.score.label || a.clip.name)}</strong> ${translate('vs')} `
             + `<strong>${escapeHtml(b.clip.meta.score.label || b.clip.name)}</strong>: ${escapeHtml(parts.join(' · '))}.`;
-        button(els.versionActions, 'Solo A', 'basic-button btn-sm', () => cb.soloOnly?.(a.track.id));
-        button(els.versionActions, 'Solo B', 'basic-button btn-sm', () => cb.soloOnly?.(b.track.id));
-        button(els.versionActions, 'Load A', 'basic-button btn-sm', () => loadVersion(a));
-        button(els.versionActions, 'Load B', 'basic-button btn-sm', () => loadVersion(b));
+        button(els.versionActions, translate('Solo A'), 'basic-button btn-sm', () => cb.soloOnly?.(a.track.id));
+        button(els.versionActions, translate('Solo B'), 'basic-button btn-sm', () => cb.soloOnly?.(b.track.id));
+        button(els.versionActions, translate('Load A'), 'basic-button btn-sm', () => loadVersion(a));
+        button(els.versionActions, translate('Load B'), 'basic-button btn-sm', () => loadVersion(b));
     }
 
     function loadVersion(entry) {
@@ -2410,14 +2443,14 @@ const AudioDawScore = (() => {
         const asked = parseFloat(els.duration.value) || 0;
         const room = Number(plan.budget_seconds ?? plan.budgetSeconds ?? 0);
         const tokens = Number(plan.score_tokens ?? 0);
-        let text = `Room for <strong>${clockTime(room)}</strong> of audio`;
-        if (tokens > 0) text += ` · ${tokens.toLocaleString()} score tokens`;
+        let text = `${translate('Room for audio:')} <strong>${clockTime(room)}</strong>`;
+        if (tokens > 0) text += ` · ${tokens.toLocaleString()} ${translate('score tokens')}`;
         els.budget.innerHTML = text;
         // Below what was asked for means the prompt and score ate the context, which is otherwise
         // indistinguishable from the model simply choosing to end early.
         if (asked > 0 && room > 0 && room < asked - 0.5) {
             els.budget.innerHTML = text
-                + ` — less than the ${clockTime(asked)} asked for; shorten the lyrics or the score.`;
+                + ` — ${clockTime(asked)} ${translate('was asked for; shorten the lyrics or the score.')}`;
         }
     }
 
@@ -2430,7 +2463,7 @@ const AudioDawScore = (() => {
         const lyrics = els.lyrics.value.trim();
         if (!style && !lyrics) { notice('Give it a style or some lyrics to plan from', 'yellow'); return; }
         els.draft.disabled = true;
-        const busy = cb.busy ? cb.busy('Planning a score…', 'score') : null;
+        const busy = cb.busy ? cb.busy(translate('Planning a score…'), 'score') : null;
         try {
             const plan = await AudioLabAPI.callAPI('AudioLabPlanScore', {
                 provider_id: 'yue2_music',
@@ -2455,7 +2488,7 @@ const AudioDawScore = (() => {
         }
         catch (e) {
             console.error('[AudioDawScore] Draft failed:', e);
-            notice('Could not plan a score: ' + e.message, 'red');
+            notice(translate('Could not plan a score:') + ' ' + e.message, 'red');
         }
         finally {
             busy?.done();
@@ -2482,29 +2515,29 @@ const AudioDawScore = (() => {
         const card = createDiv(null, 'daw-fx-card');
         const head = createDiv(null, 'daw-fx-card-head');
         const title = createSpan(null, 'daw-fx-card-title');
-        title.textContent = 'From a recording';
+        title.textContent = translate('From a recording');
         head.appendChild(title);
         const btns = createDiv(null, 'daw-fx-card-btns');
-        els.melodyView = miniButton('Melody', 'Show the melody-only rendering — what a cover is rendered from', () => showRendering('melody'));
-        els.fullView = miniButton('Full', 'Show the rendering with chord symbols', () => showRendering('full'));
+        els.melodyView = miniButton(translate('Melody'), translate('Show the melody-only rendering — what a cover is rendered from'), () => showRendering('melody'));
+        els.fullView = miniButton(translate('Full'), translate('Show the rendering with chord symbols'), () => showRendering('full'));
         btns.appendChild(els.melodyView);
         btns.appendChild(els.fullView);
         head.appendChild(btns);
         card.appendChild(head);
 
         const row = createDiv(null, 'daw-stems-action-row');
-        els.transcribe = button(row, 'Transcribe clip', 'basic-button btn-sm', () => transcribeSelection('clip'));
-        els.transcribeStem = button(row, 'Transcribe vocal stem', 'basic-button btn-sm', () => transcribeSelection('stem'));
-        els.cover = button(row, 'Cover this clip', 'basic-button btn-sm btn-primary', coverClip);
+        els.transcribe = button(row, translate('Transcribe clip'), 'basic-button btn-sm', () => transcribeSelection('clip'));
+        els.transcribeStem = button(row, translate('Transcribe vocal stem'), 'basic-button btn-sm', () => transcribeSelection('stem'));
+        els.cover = button(row, translate('Cover this clip'), 'basic-button btn-sm btn-primary', coverClip);
         const freeLabel = document.createElement('label');
         freeLabel.className = 'daw-score-toggle';
         freeLabel.htmlFor = 'daw_score_unload';
-        freeLabel.title = 'Releases every resident audio model, not only SheetSage2 — the engine has no per-model unload';
+        freeLabel.title = translate('Releases every resident audio model, not only SheetSage2 — the engine has no per-model unload');
         els.unloadAfter = document.createElement('input');
         els.unloadAfter.type = 'checkbox';
         els.unloadAfter.id = 'daw_score_unload';
         freeLabel.appendChild(els.unloadAfter);
-        freeLabel.appendChild(document.createTextNode(' Free audio models after'));
+        freeLabel.appendChild(document.createTextNode(' ' + translate('Free audio models after')));
         row.appendChild(freeLabel);
         card.appendChild(row);
 
@@ -2512,12 +2545,12 @@ const AudioDawScore = (() => {
         card.appendChild(els.transcribeInfo);
 
         const desc = createDiv(null, 'daw-stems-desc');
-        desc.textContent = 'SheetSage2 reads the score behind a recording — melody, chords, key, meter and tempo. '
+        desc.textContent = translate('SheetSage2 reads the score behind a recording — melody, chords, key, meter and tempo. '
             + 'It comes back in two renderings from one listen: Melody is what a cover is rendered from, Full '
             + 'keeps the harmony. Cover transcribes the clip and renders its melody in the style above. '
             + 'It is about 1.4 GB and stays resident afterwards unless Free audio models after is ticked, '
             + 'which releases every loaded audio model rather than just this one. '
-            + 'Weights are CC BY-NC 4.0 — non-commercial use only.';
+            + 'Weights are CC BY-NC 4.0 — non-commercial use only.');
         card.appendChild(desc);
         parent.appendChild(card);
     }
@@ -2627,7 +2660,7 @@ const AudioDawScore = (() => {
         }
         transcribing = true;
         syncTranscribeButtons();
-        const busy = cb.busy ? cb.busy(`Transcribing ${target.clip.name}…`, 'score') : null;
+        const busy = cb.busy ? cb.busy(`${translate('Transcribing')} ${target.clip.name}…`, 'score') : null;
         try {
             const wav = await toModelWav(target.clip.blob);
             const result = await AudioLabAPI.callAPI('AudioLabTranscribeScore', {
@@ -2705,7 +2738,7 @@ const AudioDawScore = (() => {
         if (!bpm && !meter) { notice('This score says nothing about tempo or meter', 'yellow'); return; }
         if (!cb.setTransport) return;
         cb.setTransport({ bpm: bpm || 0, timeSignature: meter });
-        notice(`Project set to ${[bpm ? `${Math.round(bpm)} BPM` : null, meter?.join('/')].filter(Boolean).join(' · ')}`, 'green');
+        notice(`${translate('Project set to')} ${[bpm ? `${Math.round(bpm)} BPM` : null, meter?.join('/')].filter(Boolean).join(' · ')}`, 'green');
     }
 
     /** Timeline time the score's first bar sits at — the clip it was read off, played from its own start. */
@@ -2841,10 +2874,10 @@ const AudioDawScore = (() => {
                 added++;
             }
             const failed = takes.length - added;
-            if (!added) notice('Render failed: ' + (takes[0]?.error?.message || 'no audio came back'), 'red');
+            if (!added) notice(translate('Render failed:') + ' ' + (takes[0]?.error?.message || translate('no audio came back')), 'red');
             else notice(failed
-                ? `${added} of ${takes.length} rendered — ${failed} failed`
-                : added > 1 ? `${added} variants rendered into their own tracks` : 'Score rendered into a new track',
+                ? `${added} ${translate('of')} ${takes.length} ${translate('rendered —')} ${failed} ${translate('failed')}`
+                : added > 1 ? `${added} ${translate('variants rendered into their own tracks')}` : translate('Score rendered into a new track'),
                 failed ? 'yellow' : 'green');
         }
         finally {

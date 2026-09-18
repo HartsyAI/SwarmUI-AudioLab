@@ -116,7 +116,7 @@ const AudioDawTrack = (() => {
         header.dataset.trackId = track.id;
         header.style.height = track.height + 'px';
         header.style.borderLeft = `3px solid ${track.color}`;
-        header.title = 'Right-click to change track color';
+        header.title = translate('Right-click to change track color');
 
         // Top row: name + remove button. Track color shows via the header's left
         // border; right-click the header to recolor.
@@ -131,7 +131,9 @@ const AudioDawTrack = (() => {
         const nameEl = document.createElement('span');
         nameEl.className = 'daw-track-name';
         nameEl.textContent = track.name;
-        nameEl.title = 'Double-click to rename';
+        // Direct translate(), never class="translate": the text is the user's own track name and is
+        // reassigned on every rename, so a later sweep would overwrite it from a stale cache.
+        nameEl.title = translate('Double-click to rename');
         nameEl.addEventListener('dblclick', () => {
             nameEl.contentEditable = 'true';
             nameEl.focus();
@@ -155,7 +157,7 @@ const AudioDawTrack = (() => {
         const removeBtn = document.createElement('button');
         removeBtn.className = 'daw-track-remove';
         removeBtn.innerHTML = '&#x2715;';
-        removeBtn.title = 'Remove track';
+        removeBtn.title = translate('Remove track');
         removeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             if (callbacks.onRemove) callbacks.onRemove(track);
@@ -171,8 +173,8 @@ const AudioDawTrack = (() => {
         const muteBtn = document.createElement('button');
         muteBtn.className = 'daw-track-btn' + (track.muted ? ' active-mute' : '');
         muteBtn.dataset.role = 'mute';
-        muteBtn.textContent = 'M';
-        muteBtn.title = 'Mute';
+        muteBtn.textContent = translate('M');
+        muteBtn.title = translate('Mute');
         muteBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             track.muted = !track.muted;
@@ -185,8 +187,8 @@ const AudioDawTrack = (() => {
         const soloBtn = document.createElement('button');
         soloBtn.className = 'daw-track-btn' + (track.soloed ? ' active-solo' : '');
         soloBtn.dataset.role = 'solo';
-        soloBtn.textContent = 'S';
-        soloBtn.title = 'Solo';
+        soloBtn.textContent = translate('S');
+        soloBtn.title = translate('Solo');
         soloBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             track.soloed = !track.soloed;
@@ -205,7 +207,8 @@ const AudioDawTrack = (() => {
         volSlider.max = '1';
         volSlider.step = '0.005';
         volSlider.value = hasTaper ? AudioDawMixer.gainToFaderPos(track.volume) : track.volume;
-        const volTitle = (v) => `Volume: ${v <= 0 ? '-∞' : (20 * Math.log10(v)).toFixed(1)} dB`;
+        // Live readout: re-assigned on every drag, so it translates itself here and must stay off class="translate".
+        const volTitle = (v) => `${translate('Volume')}: ${v <= 0 ? '-∞' : (20 * Math.log10(v)).toFixed(1)} dB`;
         volSlider.title = volTitle(track.volume);
         volSlider.addEventListener('input', (e) => {
             const p = parseFloat(e.target.value);
@@ -224,8 +227,8 @@ const AudioDawTrack = (() => {
         // Arm (record)
         const armBtn = document.createElement('button');
         armBtn.className = 'daw-track-btn daw-track-arm' + (track.armed ? ' active-arm' : '');
-        armBtn.textContent = 'R';
-        armBtn.title = 'Arm for recording';
+        armBtn.textContent = translate('R');
+        armBtn.title = translate('Arm for recording');
         armBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             track.armed = !track.armed;
@@ -238,7 +241,7 @@ const AudioDawTrack = (() => {
         if (typeof AudioDawMixer !== 'undefined' && AudioDawMixer.createKnob) {
             const knob = AudioDawMixer.createKnob({
                 value: track.pan || 0, min: -1, max: 1, defaultValue: 0,
-                title: 'Pan (drag up/down, double-click to center)',
+                title: translate('Pan (drag up/down, double-click to center)'),
                 onChange: (v) => {
                     track.pan = Math.round(v * 20) / 20;
                     if (callbacks.onPan) callbacks.onPan(track);
@@ -252,8 +255,8 @@ const AudioDawTrack = (() => {
         const autoBtn = document.createElement('button');
         autoBtn.className = 'daw-track-btn' + (track.automationVisible ? ' active-solo' : '');
         autoBtn.dataset.role = 'automation';
-        autoBtn.textContent = 'A';
-        autoBtn.title = 'Show/hide automation lane';
+        autoBtn.textContent = translate('A');
+        autoBtn.title = translate('Show/hide automation lane');
         autoBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             if (callbacks.onAutomationToggle) callbacks.onAutomationToggle(track);
@@ -359,9 +362,9 @@ const AudioDawTrack = (() => {
 
                 // Trim handles (left = offset, right = trimEnd)
                 const trimL = createDiv(null, 'daw-clip-trim daw-clip-trim-left');
-                trimL.title = 'Drag to trim clip start';
+                trimL.title = translate('Drag to trim clip start');
                 const trimR = createDiv(null, 'daw-clip-trim daw-clip-trim-right');
-                trimR.title = 'Drag to trim clip end';
+                trimR.title = translate('Drag to trim clip end');
                 clipEl.appendChild(trimL);
                 clipEl.appendChild(trimR);
                 setupTrimDrag(trimL, 'left', clipEl, clip, track, callbacks);
