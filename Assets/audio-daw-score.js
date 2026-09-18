@@ -2526,18 +2526,18 @@ const AudioDawScore = (() => {
         card.appendChild(head);
 
         const row = createDiv(null, 'daw-stems-action-row');
-        els.transcribe = button(row, 'Transcribe clip', 'basic-button btn-sm', () => transcribeSelection('clip'));
-        els.transcribeStem = button(row, 'Transcribe vocal stem', 'basic-button btn-sm', () => transcribeSelection('stem'));
-        els.cover = button(row, 'Cover this clip', 'basic-button btn-sm btn-primary', coverClip);
+        els.transcribe = button(row, translate('Transcribe clip'), 'basic-button btn-sm', () => transcribeSelection('clip'));
+        els.transcribeStem = button(row, translate('Transcribe vocal stem'), 'basic-button btn-sm', () => transcribeSelection('stem'));
+        els.cover = button(row, translate('Cover this clip'), 'basic-button btn-sm btn-primary', coverClip);
         const freeLabel = document.createElement('label');
         freeLabel.className = 'daw-score-toggle';
         freeLabel.htmlFor = 'daw_score_unload';
-        freeLabel.title = 'Releases every resident audio model, not only SheetSage2 — the engine has no per-model unload';
+        freeLabel.title = translate('Releases every resident audio model, not only SheetSage2 — the engine has no per-model unload');
         els.unloadAfter = document.createElement('input');
         els.unloadAfter.type = 'checkbox';
         els.unloadAfter.id = 'daw_score_unload';
         freeLabel.appendChild(els.unloadAfter);
-        freeLabel.appendChild(document.createTextNode(' Free audio models after'));
+        freeLabel.appendChild(document.createTextNode(' ' + translate('Free audio models after')));
         row.appendChild(freeLabel);
         card.appendChild(row);
 
@@ -2545,12 +2545,12 @@ const AudioDawScore = (() => {
         card.appendChild(els.transcribeInfo);
 
         const desc = createDiv(null, 'daw-stems-desc');
-        desc.textContent = 'SheetSage2 reads the score behind a recording — melody, chords, key, meter and tempo. '
+        desc.textContent = translate('SheetSage2 reads the score behind a recording — melody, chords, key, meter and tempo. '
             + 'It comes back in two renderings from one listen: Melody is what a cover is rendered from, Full '
             + 'keeps the harmony. Cover transcribes the clip and renders its melody in the style above. '
             + 'It is about 1.4 GB and stays resident afterwards unless Free audio models after is ticked, '
             + 'which releases every loaded audio model rather than just this one. '
-            + 'Weights are CC BY-NC 4.0 — non-commercial use only.';
+            + 'Weights are CC BY-NC 4.0 — non-commercial use only.');
         card.appendChild(desc);
         parent.appendChild(card);
     }
@@ -2660,7 +2660,7 @@ const AudioDawScore = (() => {
         }
         transcribing = true;
         syncTranscribeButtons();
-        const busy = cb.busy ? cb.busy(`Transcribing ${target.clip.name}…`, 'score') : null;
+        const busy = cb.busy ? cb.busy(`${translate('Transcribing')} ${target.clip.name}…`, 'score') : null;
         try {
             const wav = await toModelWav(target.clip.blob);
             const result = await AudioLabAPI.callAPI('AudioLabTranscribeScore', {
@@ -2738,7 +2738,7 @@ const AudioDawScore = (() => {
         if (!bpm && !meter) { notice('This score says nothing about tempo or meter', 'yellow'); return; }
         if (!cb.setTransport) return;
         cb.setTransport({ bpm: bpm || 0, timeSignature: meter });
-        notice(`Project set to ${[bpm ? `${Math.round(bpm)} BPM` : null, meter?.join('/')].filter(Boolean).join(' · ')}`, 'green');
+        notice(`${translate('Project set to')} ${[bpm ? `${Math.round(bpm)} BPM` : null, meter?.join('/')].filter(Boolean).join(' · ')}`, 'green');
     }
 
     /** Timeline time the score's first bar sits at — the clip it was read off, played from its own start. */
@@ -2874,10 +2874,10 @@ const AudioDawScore = (() => {
                 added++;
             }
             const failed = takes.length - added;
-            if (!added) notice('Render failed: ' + (takes[0]?.error?.message || 'no audio came back'), 'red');
+            if (!added) notice(translate('Render failed:') + ' ' + (takes[0]?.error?.message || translate('no audio came back')), 'red');
             else notice(failed
-                ? `${added} of ${takes.length} rendered — ${failed} failed`
-                : added > 1 ? `${added} variants rendered into their own tracks` : 'Score rendered into a new track',
+                ? `${added} ${translate('of')} ${takes.length} ${translate('rendered —')} ${failed} ${translate('failed')}`
+                : added > 1 ? `${added} ${translate('variants rendered into their own tracks')}` : translate('Score rendered into a new track'),
                 failed ? 'yellow' : 'green');
         }
         finally {
