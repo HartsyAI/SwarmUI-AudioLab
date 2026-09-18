@@ -552,8 +552,9 @@ const AudioDawFx = (() => {
             };
             const presets = FX_PRESETS[fx.type];
             if (presets && callbacks.showMenu) {
+                // Preset names are display-only: nothing looks one up by string, the params ride in `vals`.
                 mk('P', 'Load a preset', (e) => callbacks.showMenu(e, Object.entries(presets).map(([name, vals]) => ({
-                    label: name,
+                    label: translate(name),
                     action: () => {
                         Object.assign(fx.params, def.defaults(), vals);
                         callbacks.onParamChange(track, fx, index);

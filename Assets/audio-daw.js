@@ -3161,7 +3161,7 @@ const AudioDaw = (() => {
         } catch (err) {
             console.error('[AudioDaw] Split failed:', err);
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Split failed: ' + err.message, 'notice-pop-red');
+                doNoticePopover(translate('Split failed:') + ' ' + err.message, 'notice-pop-red');
             }
         }
     }
@@ -3201,7 +3201,7 @@ const AudioDaw = (() => {
         } catch (err) {
             console.error('[AudioDaw] Duplicate failed:', err);
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Duplicate failed: ' + err.message, 'notice-pop-red');
+                doNoticePopover(translate('Duplicate failed:') + ' ' + err.message, 'notice-pop-red');
             }
         }
     }
@@ -3233,7 +3233,7 @@ const AudioDaw = (() => {
         } catch (err) {
             console.error('[AudioDaw] Delete failed:', err);
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Delete failed: ' + err.message, 'notice-pop-red');
+                doNoticePopover(translate('Delete failed:') + ' ' + err.message, 'notice-pop-red');
             }
         }
     }
@@ -3269,11 +3269,11 @@ const AudioDaw = (() => {
                     resolve(true);
                 }
                 else if (data.error) {
-                    if (typeof doNoticePopover === 'function') doNoticePopover('Demucs install failed: ' + data.error, 'notice-pop-red');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('Demucs install failed:') + ' ' + data.error, 'notice-pop-red');
                     resolve(false);
                 }
             }, 0, e => {
-                if (typeof doNoticePopover === 'function') doNoticePopover('Demucs install failed: ' + e, 'notice-pop-red');
+                if (typeof doNoticePopover === 'function') doNoticePopover(translate('Demucs install failed:') + ' ' + e, 'notice-pop-red');
                 resolve(false);
             });
         });
@@ -3323,7 +3323,7 @@ const AudioDaw = (() => {
         return row;
     }
 
-    function showDawLoadingOverlay(message = 'Processing...') {
+    function showDawLoadingOverlay(message = translate('Processing...')) {
         const body = document.getElementById('daw_container');
         if (!body) return null;
         const overlay = createDiv(null, 'daw-loading-overlay');
@@ -3366,7 +3366,7 @@ const AudioDaw = (() => {
         }
         stemsSeparating = true;
         // Non-blocking: progress lives in the Stems panel + a pulse on its tab
-        const busy = createBusyIndicator('Separating stems…', 'stems');
+        const busy = createBusyIndicator(translate('Separating stems…'), 'stems');
         bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="stems"]')?.appendChild(busy);
 
         try {

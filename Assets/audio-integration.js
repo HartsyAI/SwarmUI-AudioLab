@@ -419,8 +419,8 @@ function audioLabOfferScoreButton() {
         }
         const btn = document.createElement('button');
         btn.className = 'basic-button audiolab-score-btn';
-        btn.textContent = 'Open score';
-        btn.title = 'Open the score this was planned from, in the Audio Lab Score tab';
+        btn.textContent = translate('Open score');
+        btn.title = translate('Open the score this was planned from, in the Audio Lab Score tab');
         btn.addEventListener('click', () => audioLabOpenScore(String(abc), meta, img.dataset.src));
         row.appendChild(btn);
     }
@@ -437,8 +437,8 @@ async function audioLabOpenScore(abc, meta, src) {
         await AudioDaw.open(src);
         const extra = meta.sui_extra_data || {}, params = meta.sui_image_params || {};
         AudioDawScore.loadScore(abc, {
-            source: 'planned',
-            label: 'From the Generate tab',
+            source: 'planned',                      // internal id, never translated
+            label: translate('From the Generate tab'),
             style: params.textaudiostyle || '',
             lyrics: params.prompt || '',
             truncated: extra.yue2_score_truncated === true,
@@ -528,7 +528,7 @@ function audioLabLoadEngines(callback) {
 function audioLabRenderEngineManager(container, engines) {
     container.innerHTML = '';
     let header = createDiv(null, 'audiolab-engine-section-header');
-    header.innerHTML = '<b>Available Engines</b>';
+    header.innerHTML = `<b>${translate('Available Engines')}</b>`;
     container.appendChild(header);
 
     for (const cat of ENGINE_CATEGORIES) {
@@ -538,7 +538,7 @@ function audioLabRenderEngineManager(container, engines) {
         // Count only engines you can actually install, so the tally doesn't include disabled cards.
         const usable = catEngines.filter(e => e.available);
         const installedCount = usable.filter(e => e.installed).length;
-        const countLabel = usable.length > 0 ? ` (${installedCount}/${usable.length} installed)` : ` (${catEngines.length})`;
+        const countLabel = usable.length > 0 ? ` (${installedCount}/${usable.length} ${translate('installed')})` : ` (${catEngines.length})`;
         const catGroup = createDiv(null, 'audiolab-cat-group');
         const catHeader = createDiv(null, 'audiolab-cat-header');
         const arrow = document.createElement('span');
@@ -546,7 +546,8 @@ function audioLabRenderEngineManager(container, engines) {
         arrow.innerHTML = '&#x2B9F;';
         catHeader.appendChild(arrow);
         const label = document.createElement('span');
-        label.innerText = cat.label;
+        // Translated at render time, not in ENGINE_CATEGORIES, so a language switch picks it up on refresh.
+        label.innerText = translate(cat.label);
         catHeader.appendChild(label);
         const count = document.createElement('span');
         count.style.cssText = 'color:var(--text-soft);font-weight:normal;font-size:0.85em';
@@ -578,13 +579,14 @@ function audioLabBuildEngineCard(engine) {
     const status = createDiv(null, 'audiolab-engine-status-dot');
     if (!engine.available) {
         status.style.backgroundColor = 'var(--backend-disabled)';
-        status.title = engine.unavailable_note || 'Not available';
+        // Server-supplied note or our own fallback: translated here, so no class="translate" on this one.
+        status.title = engine.unavailable_note || translate('Not available');
     } else if (engine.installed) {
         status.style.backgroundColor = 'var(--backend-running)';
-        status.title = 'Installed';
+        status.title = translate('Installed');
     } else {
         status.style.backgroundColor = 'var(--backend-idle)';
-        status.title = 'Not installed';
+        status.title = translate('Not installed');
     }
     cardHeader.appendChild(status);
     const nameSpan = document.createElement('span');
