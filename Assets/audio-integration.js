@@ -438,7 +438,7 @@ async function audioLabOpenScore(abc, meta, src) {
         const extra = meta.sui_extra_data || {}, params = meta.sui_image_params || {};
         AudioDawScore.loadScore(abc, {
             source: 'planned',                      // internal id, never translated
-            label: translate('From the Generate tab'),
+            label: 'From the Generate tab',          // persisted into clip metadata and read back raw elsewhere - never translated, same as other stored labels
             style: params.textaudiostyle || '',
             lyrics: params.prompt || '',
             truncated: extra.yue2_score_truncated === true,
