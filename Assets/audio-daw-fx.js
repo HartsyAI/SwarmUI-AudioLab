@@ -421,7 +421,7 @@ const AudioDawFx = (() => {
             min: isLog ? 0 : spec.min,
             max: isLog ? 1 : spec.max,
             defaultValue: isLog ? logToNorm(FX_DEFS[fx.type].defaults()[spec.key], spec.min, spec.max) : FX_DEFS[fx.type].defaults()[spec.key],
-            title: spec.label,
+            title: translate(spec.label),
             onChange: (v) => {
                 const real = isLog ? normToLog(v, spec.min, spec.max) : v;
                 fx.params[spec.key] = real;
@@ -430,7 +430,9 @@ const AudioDawFx = (() => {
             }
         });
         const lbl = createSpan(null, 'daw-fx-knob-label');
-        lbl.textContent = spec.label;
+        lbl.textContent = translate(spec.label);
+        // val is a live numeric readout (reassigned on every knob move) — never class="translate",
+        // and its formatted number/unit is not translatable text.
         const val = createSpan(null, 'daw-fx-knob-val');
         val.textContent = spec.fmt(cur);
         col.appendChild(knob);
@@ -457,26 +459,26 @@ const AudioDawFx = (() => {
     function renderFxPanel(container, track, callbacks) {
         container.innerHTML = '';
         if (!track) {
-            container.innerHTML = '<span class="daw-stems-clipinfo">Select a track to edit its effects</span>';
+            container.innerHTML = `<span class="daw-stems-clipinfo">${translate('Select a track to edit its effects')}</span>`;
             return;
         }
 
         // Toolbar: track context + chain save/load + master limiter
         const bar = createDiv(null, 'daw-fx-toolbar');
         const barTitle = createSpan(null, 'daw-fx-toolbar-title');
-        barTitle.textContent = `FX: ${track.name}`;
+        barTitle.textContent = `${translate('FX')}: ${track.name}`;
         bar.appendChild(barTitle);
         const saveChainBtn = document.createElement('button');
         saveChainBtn.className = 'basic-button btn-sm';
-        saveChainBtn.textContent = 'Save Chain';
-        saveChainBtn.title = 'Save this track\'s whole effect chain as a reusable preset';
+        saveChainBtn.textContent = translate('Save Chain');
+        saveChainBtn.title = translate('Save this track\'s whole effect chain as a reusable preset');
         saveChainBtn.disabled = !track.fx.length;
         saveChainBtn.addEventListener('click', (e) => callbacks.onSaveChain && callbacks.onSaveChain(track, e));
         bar.appendChild(saveChainBtn);
         const loadChainBtn = document.createElement('button');
         loadChainBtn.className = 'basic-button btn-sm';
-        loadChainBtn.textContent = 'Load Chain';
-        loadChainBtn.title = 'Replace this track\'s effects with a saved chain';
+        loadChainBtn.textContent = translate('Load Chain');
+        loadChainBtn.title = translate('Replace this track\'s effects with a saved chain');
         loadChainBtn.addEventListener('click', (e) => callbacks.onLoadChain && callbacks.onLoadChain(track, e));
         bar.appendChild(loadChainBtn);
         const limWrap = createDiv(null, 'daw-fx-lim');
@@ -487,7 +489,7 @@ const AudioDawFx = (() => {
         const limLbl = document.createElement('label');
         limLbl.htmlFor = limBox.id;
         limLbl.className = 'daw-fx-knob-label';
-        limLbl.textContent = 'Master limiter';
+        limLbl.textContent = translate('Master limiter');
         limBox.addEventListener('change', () => callbacks.onMasterLimiter(limBox.checked));
         limWrap.appendChild(limBox);
         limWrap.appendChild(limLbl);
@@ -497,18 +499,21 @@ const AudioDawFx = (() => {
         // Empty chain: browse all available effects as cards — click one to add it
         if (!track.fx.length) {
             const hint = createDiv(null, 'daw-stems-desc');
-            hint.textContent = 'Click an effect to add it to this track\'s chain:';
+            hint.textContent = translate('Click an effect to add it to this track\'s chain:');
             container.appendChild(hint);
             const browser = createDiv(null, 'daw-fx-browser');
             for (const [type, def] of Object.entries(FX_DEFS)) {
                 const pick = document.createElement('button');
                 pick.className = 'daw-fx-pick';
-                pick.innerHTML = `<span class="daw-fx-pick-name">${def.label}</span>`
-                    + `<span class="daw-fx-pick-desc">${FX_DESCS[type] || ''}</span>`;
+                // Many labels at once, each written once and never reassigned: mark them and sweep the
+                // browser below. Core only sweeps at page load, so the sweep has to happen here.
+                pick.innerHTML = `<span class="daw-fx-pick-name translate">${def.label}</span>`
+                    + `<span class="daw-fx-pick-desc translate">${FX_DESCS[type] || ''}</span>`;
                 pick.addEventListener('click', () => callbacks.onAdd(track, type));
                 browser.appendChild(pick);
             }
             container.appendChild(browser);
+            applyTranslations(browser);
             return;
         }
 
@@ -524,7 +529,7 @@ const AudioDawFx = (() => {
             const enable = document.createElement('input');
             enable.type = 'checkbox';
             enable.checked = fx.enabled;
-            enable.title = 'Enable/bypass';
+            enable.title = translate('Enable/bypass');
             enable.addEventListener('change', () => {
                 fx.enabled = enable.checked;
                 card.classList.toggle('fx-disabled', !fx.enabled);
@@ -532,14 +537,15 @@ const AudioDawFx = (() => {
             });
             head.appendChild(enable);
             const title = createSpan(null, 'daw-fx-card-title');
-            title.textContent = def.label;
+            title.textContent = translate(def.label);
             head.appendChild(title);
             const controls = createDiv(null, 'daw-fx-card-btns');
             const mk = (txt, tip, fn, disabled) => {
                 const b = document.createElement('button');
                 b.className = 'daw-fx-mini-btn';
+                // txt is glyph markup (&#x25C0; etc.), so only the tooltip is translatable text.
                 b.innerHTML = txt;
-                b.title = tip;
+                b.title = translate(tip);
                 b.disabled = !!disabled;
                 b.addEventListener('click', fn);
                 controls.appendChild(b);
@@ -576,7 +582,7 @@ const AudioDawFx = (() => {
                 syncBox.checked = !!fx.params.sync;
                 const syncLbl = document.createElement('label');
                 syncLbl.htmlFor = syncBox.id;
-                syncLbl.textContent = 'Sync';
+                syncLbl.textContent = translate('Sync');
                 syncLbl.className = 'daw-fx-knob-label';
                 const divSel = document.createElement('select');
                 divSel.className = 'daw-fx-select';

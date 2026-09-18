@@ -106,6 +106,7 @@ const AudioDawMixer = (() => {
         container.appendChild(strips);
     }
 
+    /** @param {string} title - full English tooltip phrase (translated here) */
     function buildFader(gainValue, title, onGain) {
         const wrap = createDiv(null, 'daw-strip-fader-wrap');
         const lane = createDiv(null, 'daw-strip-fader-lane');
@@ -120,7 +121,7 @@ const AudioDawMixer = (() => {
         fader.max = '1';
         fader.step = '0.005';
         fader.value = gainToFaderPos(gainValue);
-        fader.title = title + ' (dB-scaled, 0 dB detent)';
+        fader.title = translate(title);
         fader.addEventListener('input', (e) => {
             const gain = detent(faderPosToGain(parseFloat(e.target.value)));
             onGain(gain);
@@ -171,21 +172,21 @@ const AudioDawMixer = (() => {
         const panWrap = createDiv(null, 'daw-strip-pan');
         panWrap.appendChild(createKnob({
             value: track.pan || 0, min: -1, max: 1, defaultValue: 0,
-            title: 'Pan (drag up/down, double-click to center)',
+            title: translate('Pan (drag up/down, double-click to center)'),
             onChange: (v) => {
                 track.pan = Math.round(v * 20) / 20;
                 if (onStateChange) onStateChange('pan', track);
             }
         }));
         const panLbl = createSpan(null, 'daw-strip-pan-label');
-        panLbl.textContent = 'PAN';
+        panLbl.textContent = translate('PAN');
         panWrap.appendChild(panLbl);
         strip.appendChild(panWrap);
 
         // Fader + meter
         const dbLabel = createDiv(null, 'daw-strip-db');
         dbLabel.textContent = volumeToDb(track.volume);
-        const { wrap, chans } = buildFader(track.volume, 'Track volume', (v) => {
+        const { wrap, chans } = buildFader(track.volume, 'Track volume (dB-scaled, 0 dB detent)', (v) => {
             track.volume = v;
             dbLabel.textContent = volumeToDb(v);
             if (onStateChange) onStateChange('volume', track);
@@ -199,7 +200,7 @@ const AudioDawMixer = (() => {
         const muteBtn = document.createElement('button');
         muteBtn.className = 'daw-mixer-btn' + (track.muted ? ' active-mute' : '');
         muteBtn.textContent = 'M';
-        muteBtn.title = 'Mute this track';
+        muteBtn.title = translate('Mute this track');
         muteBtn.addEventListener('click', () => {
             track.muted = !track.muted;
             muteBtn.classList.toggle('active-mute', track.muted);
@@ -209,7 +210,7 @@ const AudioDawMixer = (() => {
         const soloBtn = document.createElement('button');
         soloBtn.className = 'daw-mixer-btn' + (track.soloed ? ' active-solo' : '');
         soloBtn.textContent = 'S';
-        soloBtn.title = 'Solo: only play this track';
+        soloBtn.title = translate('Solo: only play this track');
         soloBtn.addEventListener('click', () => {
             track.soloed = !track.soloed;
             soloBtn.classList.toggle('active-solo', track.soloed);
@@ -227,7 +228,7 @@ const AudioDawMixer = (() => {
         cap.style.background = 'var(--emphasis)';
         strip.appendChild(cap);
         const name = createDiv(null, 'daw-strip-name');
-        name.textContent = 'Master';
+        name.textContent = translate('Master');
         strip.appendChild(name);
 
         const spacer = createDiv(null, 'daw-strip-pan');
@@ -235,7 +236,7 @@ const AudioDawMixer = (() => {
 
         const dbLabel = createDiv(null, 'daw-strip-db');
         dbLabel.textContent = volumeToDb(state.masterVolume);
-        const { wrap, chans } = buildFader(state.masterVolume, 'Master volume', (v) => {
+        const { wrap, chans } = buildFader(state.masterVolume, 'Master volume (dB-scaled, 0 dB detent)', (v) => {
             dbLabel.textContent = volumeToDb(v);
             if (onStateChange) onStateChange('masterVolume', v);
         });
@@ -249,7 +250,7 @@ const AudioDawMixer = (() => {
         lufs.textContent = '-∞ LU';
         loudRow.appendChild(lufs);
         const clipDot = createSpan(null, 'daw-master-clip');
-        clipDot.title = 'Master clip indicator, click to reset';
+        clipDot.title = translate('Master clip indicator, click to reset');
         clipDot.addEventListener('click', () => clipDot.classList.remove('lit'));
         loudRow.appendChild(clipDot);
         strip.appendChild(loudRow);

@@ -854,7 +854,7 @@ const AudioDaw = (() => {
                 nameEl.title = clip.name;
                 clipCard.appendChild(nameEl);
                 const metaEl = createDiv(null, 'daw-clip-card-meta');
-                metaEl.textContent = `${track.name} · ${durationStringifyColons2(clip.duration)}s · starts at ${durationStringifyColons2(clip.startTime)}s`;
+                metaEl.textContent = `${track.name} · ${durationStringifyColons2(clip.duration)}s · ${translate('starts at')} ${durationStringifyColons2(clip.startTime)}s`;
                 clipCard.appendChild(metaEl);
                 const waveHolder = createDiv(null, 'daw-clip-card-wave');
                 clipCard.appendChild(waveHolder);
@@ -873,8 +873,8 @@ const AudioDaw = (() => {
                 const actions = createDiv(null, 'daw-clip-editor-actions');
                 const splitBtn = document.createElement('button');
                 splitBtn.className = 'basic-button btn-sm';
-                splitBtn.textContent = 'Split at Playhead';
-                splitBtn.title = 'Split clip at current playhead position';
+                splitBtn.textContent = translate('Split at Playhead');
+                splitBtn.title = translate('Split clip at current playhead position');
                 splitBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     const sel = getClip();
@@ -883,8 +883,8 @@ const AudioDaw = (() => {
                 actions.appendChild(splitBtn);
                 const dupBtn = document.createElement('button');
                 dupBtn.className = 'basic-button btn-sm';
-                dupBtn.textContent = 'Duplicate';
-                dupBtn.title = 'Duplicate this clip';
+                dupBtn.textContent = translate('Duplicate');
+                dupBtn.title = translate('Duplicate this clip');
                 dupBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     const sel = getClip();
@@ -893,8 +893,8 @@ const AudioDaw = (() => {
                 actions.appendChild(dupBtn);
                 const delBtn = document.createElement('button');
                 delBtn.className = 'basic-button btn-sm';
-                delBtn.textContent = 'Delete';
-                delBtn.title = 'Delete this clip';
+                delBtn.textContent = translate('Delete');
+                delBtn.title = translate('Delete this clip');
                 delBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     const sel = getClip();
@@ -903,8 +903,8 @@ const AudioDaw = (() => {
                 actions.appendChild(delBtn);
                 const muteBtn = document.createElement('button');
                 muteBtn.className = 'basic-button btn-sm';
-                muteBtn.textContent = clip.muted ? 'Unmute' : 'Mute';
-                muteBtn.title = 'Toggle clip mute';
+                muteBtn.textContent = clip.muted ? translate('Unmute') : translate('Mute');
+                muteBtn.title = translate('Toggle clip mute');
                 muteBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     const sel = getClip();
@@ -921,7 +921,7 @@ const AudioDaw = (() => {
                 // Gain + fades row
                 const mixRow = createDiv(null, 'daw-clip-editor-info daw-clip-editor-mix');
                 const gainLabel = createSpan(null, 'daw-clip-mix-label');
-                gainLabel.textContent = 'Gain';
+                gainLabel.textContent = translate('Gain');
                 const gainSlider = document.createElement('input');
                 gainSlider.type = 'range';
                 gainSlider.className = 'daw-clip-gain-slider';
@@ -956,7 +956,7 @@ const AudioDaw = (() => {
                 mixRow.appendChild(gainSlider);
                 mixRow.appendChild(gainVal);
 
-                const makeFadeInput = (label, prop) => {
+                const makeFadeInput = (label, prop, titleText) => {
                     const lbl = createSpan(null, 'daw-clip-mix-label');
                     lbl.textContent = label;
                     const input = document.createElement('input');
@@ -965,7 +965,7 @@ const AudioDaw = (() => {
                     input.min = '0';
                     input.step = '0.1';
                     input.value = clip[prop] || 0;
-                    input.title = `${label} length in seconds`;
+                    input.title = titleText;
                     input.addEventListener('change', () => {
                         const sel = getClip();
                         if (!sel) return;
@@ -980,14 +980,14 @@ const AudioDaw = (() => {
                     fadeRow.appendChild(unit);
                 };
                 const fadeRow = createDiv(null, 'daw-clip-editor-info daw-clip-editor-mix');
-                makeFadeInput('Fade In', 'fadeIn');
-                makeFadeInput('Fade Out', 'fadeOut');
+                makeFadeInput(translate('Fade In'), 'fadeIn', translate('Fade in length in seconds'));
+                makeFadeInput(translate('Fade Out'), 'fadeOut', translate('Fade out length in seconds'));
                 const mixCard = createDiv(null, 'daw-fx-card daw-clip-mix-card');
                 const mixTitle = createDiv(null, 'daw-fx-card-title');
-                mixTitle.textContent = 'Clip Mix';
+                mixTitle.textContent = translate('Clip Mix');
                 mixCard.appendChild(mixTitle);
                 const mixNote = createDiv(null, 'daw-clip-card-meta');
-                mixNote.textContent = 'Level and fades for this clip only. Track volume lives in the Mixer.';
+                mixNote.textContent = translate('Level and fades for this clip only. Track volume lives in the Mixer.');
                 mixCard.appendChild(mixNote);
                 mixCard.appendChild(mixRow);
                 mixCard.appendChild(fadeRow);
@@ -999,7 +999,7 @@ const AudioDaw = (() => {
                     try { clipEditorPlayer.destroy(); } catch (_) {}
                     clipEditorPlayer = null;
                 }
-                clipEditorContent.innerHTML = '<div style="color:var(--text-soft);font-size:0.85rem;padding:0.5rem;">Select a clip to edit</div>';
+                clipEditorContent.innerHTML = `<div style="color:var(--text-soft);font-size:0.85rem;padding:0.5rem;">${translate('Select a clip to edit')}</div>`;
             }
         }
 
@@ -1078,7 +1078,7 @@ const AudioDaw = (() => {
             // Volume
             const volGroup = createDiv(null, 'daw-mixer-vol-group');
             const volLbl = createSpan(null, 'daw-mixer-vol-label');
-            volLbl.textContent = 'Vol';
+            volLbl.textContent = translate('Vol');
             const fader = document.createElement('input');
             fader.type = 'range';
             fader.className = 'daw-mixer-fader';
@@ -1106,14 +1106,14 @@ const AudioDaw = (() => {
         masterColor.style.background = 'var(--emphasis)';
         master.appendChild(masterColor);
         const masterLabel = createDiv(null, 'daw-mixer-label');
-        masterLabel.textContent = 'Master';
+        masterLabel.textContent = translate('Master');
         masterLabel.style.fontWeight = '600';
         master.appendChild(masterLabel);
         const masterBtns = createDiv(null, 'daw-mixer-btns');
         master.appendChild(masterBtns);
         const masterVolGroup = createDiv(null, 'daw-mixer-vol-group');
         const masterVolLbl = createSpan(null, 'daw-mixer-vol-label');
-        masterVolLbl.textContent = 'Vol';
+        masterVolLbl.textContent = translate('Vol');
         const masterFader = document.createElement('input');
         masterFader.type = 'range';
         masterFader.className = 'daw-mixer-fader';
@@ -1150,11 +1150,11 @@ const AudioDaw = (() => {
 
         // Output preset cards — the tab's primary choice, front and center
         const PRESET_CARDS = {
-            split: ['Full Split', 'Every stem becomes its own track'],
-            karaoke: ['Karaoke', 'Vocals + combined instrumental'],
-            acapella: ['Acapella', 'Vocals only'],
-            instrumental: ['Instrumental', 'Everything except vocals'],
-            custom: ['Custom', 'Pick exactly which stems to keep']
+            split: [translate('Full Split'), translate('Every stem becomes its own track')],
+            karaoke: [translate('Karaoke'), translate('Vocals + combined instrumental')],
+            acapella: [translate('Acapella'), translate('Vocals only')],
+            instrumental: [translate('Instrumental'), translate('Everything except vocals')],
+            custom: [translate('Custom'), translate('Pick exactly which stems to keep')]
         };
         const browser = createDiv(null, 'daw-fx-browser daw-stems-browser');
         for (const preset of STEM_PRESETS) {
@@ -1180,17 +1180,17 @@ const AudioDaw = (() => {
         section.appendChild(right);
 
         const header = createDiv(null, 'daw-stems-header');
-        header.innerHTML = '<strong>Stem Separation (Demucs)</strong>';
+        header.innerHTML = `<strong>${translate('Stem Separation (Demucs)')}</strong>`;
         left.appendChild(header);
         const desc = createDiv(null, 'daw-stems-desc');
-        desc.textContent = 'AI source separation splits a mixed clip into its component parts. Each chosen stem becomes a new track in the DAW.';
+        desc.textContent = translate('AI source separation splits a mixed clip into its component parts. Each chosen stem becomes a new track in the DAW.');
         left.appendChild(desc);
 
         // Model picker
         const modelRow = createDiv(null, 'daw-stems-model-row');
         const modelLabel = document.createElement('label');
         modelLabel.className = 'daw-stems-ctl-label';
-        modelLabel.textContent = 'Model:';
+        modelLabel.textContent = translate('Model:');
         const modelSelect = document.createElement('select');
         modelSelect.className = 'daw-stems-select';
         for (const [id, def] of Object.entries(STEM_MODELS)) {
@@ -1217,7 +1217,7 @@ const AudioDaw = (() => {
             const sel = new Set(custom ? [...customSel].filter(s => stems.includes(s)) : presetInvolved(stemsPreset, stems));
 
             const hint = createDiv(null, 'daw-stems-checks-hint');
-            hint.textContent = custom ? 'Choose which stems become tracks:' : 'Included stems:';
+            hint.textContent = custom ? translate('Choose which stems become tracks:') : translate('Included stems:');
             stemsRow.appendChild(hint);
 
             const grid = createDiv(null, 'daw-stems-check-grid');
@@ -1262,11 +1262,11 @@ const AudioDaw = (() => {
             for (const c of t.clips) allClips.push({ clip: c, track: t });
         }
         if (!allClips.length) {
-            actionRow.innerHTML = '<span class="daw-stems-clipinfo">Add or import a clip first. Stem separation splits one clip into new tracks</span>';
+            actionRow.innerHTML = `<span class="daw-stems-clipinfo">${translate('Add or import a clip first. Stem separation splits one clip into new tracks')}</span>`;
         } else {
             const srcLabel = document.createElement('label');
             srcLabel.className = 'daw-stems-ctl-label';
-            srcLabel.textContent = 'Source:';
+            srcLabel.textContent = translate('Source:');
             const srcSelect = document.createElement('select');
             srcSelect.className = 'daw-stems-select';
             for (const { clip, track } of allClips) {
@@ -1284,7 +1284,7 @@ const AudioDaw = (() => {
 
             sepBtn = document.createElement('button');
             sepBtn.className = 'basic-button btn-sm daw-stems-go';
-            sepBtn.textContent = 'Separate Stems';
+            sepBtn.textContent = translate('Separate Stems');
             sepBtn.addEventListener('click', async () => {
                 const sel = allClips.find(x => x.clip.id === srcSelect.value);
                 if (!sel) return;
@@ -1295,15 +1295,15 @@ const AudioDaw = (() => {
                 }
                 // Demucs missing? Offer to install it right here, then continue the separation.
                 if (!await checkDemucsInstalled()) {
-                    if (!confirm('Stem separation requires the Demucs engine (a one-time ~2 GB download).\n\nInstall it now? Separation will start automatically when it finishes.')) {
+                    if (!confirm(translate('Stem separation requires the Demucs engine (a one-time ~2 GB download).\n\nInstall it now? Separation will start automatically when it finishes.'))) {
                         return;
                     }
                     sepBtn.disabled = true;
                     const ok = await installDemucs((msg) => {
-                        sepBtn.textContent = 'Installing Demucs… ' + msg.slice(0, 30);
+                        sepBtn.textContent = translate('Installing Demucs…') + ' ' + msg.slice(0, 30);
                     });
                     sepBtn.disabled = false;
-                    sepBtn.textContent = 'Separate Stems';
+                    sepBtn.textContent = translate('Separate Stems');
                     if (!ok) return;
                 }
                 doSeparateStems(sel.clip, sel.track, { modelName: modelSelect.value, outputs });
@@ -1462,6 +1462,7 @@ const AudioDaw = (() => {
         { id: 'music', name: 'Music', desc: 'Songs and loops from a style prompt + lyrics' },
         { id: 'sfx', name: 'Sound FX', desc: 'One-shots and foley from a description' },
         { id: 'stt', name: 'Speech to Text', desc: 'Transcribe the selected clip' }
+        // name/desc are translated where they are rendered (translate() needs to run per language switch).
     ];
     let generateCategory = 'tts';
 
@@ -1478,12 +1479,12 @@ const AudioDaw = (() => {
         const panel = createDiv(null, 'daw-generate-panel');
         container.appendChild(panel);
         const status = createDiv(null, 'daw-stems-desc');
-        status.textContent = 'Loading engines...';
+        status.textContent = translate('Loading engines...');
         panel.appendChild(status);
         try {
             await ensureEnginesList();
         } catch (err) {
-            status.textContent = 'Failed to load engines: ' + err.message;
+            status.textContent = translate('Failed to load engines:') + ' ' + err.message;
             return;
         }
         status.remove();
@@ -1500,11 +1501,11 @@ const AudioDaw = (() => {
             pick.className = 'daw-fx-pick daw-inst-pick'
                 + (cat.id === generateCategory ? ' selected' : '')
                 + (count ? '' : ' not-ready');
-            pick.innerHTML = `<span class="daw-fx-pick-name">${cat.name}</span>`
-                + `<span class="daw-fx-pick-desc">${count ? cat.desc : 'No engine installed'}</span>`;
+            pick.innerHTML = `<span class="daw-fx-pick-name">${translate(cat.name)}</span>`
+                + `<span class="daw-fx-pick-desc">${count ? translate(cat.desc) : translate('No engine installed')}</span>`;
             pick.addEventListener('click', () => {
                 if (!count) {
-                    if (typeof doNoticePopover === 'function') doNoticePopover(`No installed ${cat.name} engine. Add one under Server -> Backends`, 'notice-pop-yellow');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate(cat.name) + ': ' + translate('No installed engine. Add one under Server -> Backends'), 'notice-pop-yellow');
                     return;
                 }
                 generateCategory = cat.id;
@@ -1517,7 +1518,7 @@ const AudioDaw = (() => {
         const engines = enginesForCategory(generateCategory);
         if (!engines.length) {
             const none = createDiv(null, 'daw-stems-desc');
-            none.textContent = 'No audio engines installed. Add one from the Audio Backend card under Server -> Backends.';
+            none.textContent = translate('No audio engines installed. Add one from the Audio Backend card under Server -> Backends.');
             panel.appendChild(none);
             return;
         }
@@ -1533,7 +1534,7 @@ const AudioDaw = (() => {
         const engineRow = createDiv(null, 'daw-stems-model-row');
         const engineLabel = document.createElement('label');
         engineLabel.className = 'daw-stems-ctl-label';
-        engineLabel.textContent = 'Engine:';
+        engineLabel.textContent = translate('Engine:');
         const engineSelect = document.createElement('select');
         engineSelect.className = 'daw-stems-select';
         for (const eng of engines) {
@@ -1551,7 +1552,7 @@ const AudioDaw = (() => {
         const modelRow = createDiv(null, 'daw-stems-model-row');
         const modelLabel = document.createElement('label');
         modelLabel.className = 'daw-stems-ctl-label';
-        modelLabel.textContent = 'Model:';
+        modelLabel.textContent = translate('Model:');
         const modelSelect = document.createElement('select');
         modelSelect.className = 'daw-stems-select';
         modelRow.appendChild(modelLabel);
@@ -1576,17 +1577,17 @@ const AudioDaw = (() => {
             const resultArea = document.createElement('textarea');
             resultArea.className = 'daw-generate-text';
             resultArea.rows = 4;
-            resultArea.placeholder = 'Transcription appears here…';
+            resultArea.placeholder = translate('Transcription appears here…');
             mainCol.appendChild(resultArea);
 
             const actionRow = createDiv(null, 'daw-stems-action-row');
             const hint = createSpan(null, 'daw-stems-clipinfo');
-            hint.textContent = 'Transcribes the selected clip with the chosen engine.';
+            hint.textContent = translate('Transcribes the selected clip with the chosen engine.');
             actionRow.appendChild(hint);
             sideCol.appendChild(actionRow);
             const goBtn = document.createElement('button');
             goBtn.className = 'basic-button btn-sm daw-stems-go';
-            goBtn.textContent = 'Transcribe Selected Clip';
+            goBtn.textContent = translate('Transcribe Selected Clip');
             goBtn.addEventListener('click', async () => {
                 const sel = findClipById(state.selectedClipId);
                 if (!sel) {
@@ -1594,7 +1595,7 @@ const AudioDaw = (() => {
                     return;
                 }
                 goBtn.disabled = true;
-                const busy = createBusyIndicator('Transcribing…', 'generate');
+                const busy = createBusyIndicator(translate('Transcribing…'), 'generate');
                 sideCol.appendChild(busy);
                 try {
                     const b64 = await AudioLabCore.readAsBase64(sel.clip.blob);
@@ -1603,7 +1604,7 @@ const AudioDaw = (() => {
                     resultArea.value = result.transcription.trim();
                 } catch (err) {
                     console.error('[AudioDaw] Transcription failed:', err);
-                    if (typeof doNoticePopover === 'function') doNoticePopover('Transcription failed: ' + err.message, 'notice-pop-red');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('Transcription failed:') + ' ' + err.message, 'notice-pop-red');
                 } finally {
                     busy.done();
                     goBtn.disabled = false;
@@ -1613,7 +1614,7 @@ const AudioDaw = (() => {
             const copyRow = createDiv(null, 'daw-stems-model-row');
             const copyBtn = document.createElement('button');
             copyBtn.className = 'basic-button btn-sm';
-            copyBtn.textContent = 'Copy Text';
+            copyBtn.textContent = translate('Copy Text');
             copyBtn.addEventListener('click', () => {
                 if (!resultArea.value) return;
                 navigator.clipboard?.writeText(resultArea.value);
@@ -1633,9 +1634,9 @@ const AudioDaw = (() => {
         const promptArea = document.createElement('textarea');
         promptArea.className = 'daw-generate-text';
         promptArea.rows = 2;
-        promptArea.placeholder = isTts ? 'Text to speak...'
-            : isMusicCat ? 'Describe the music (style, mood, instruments)...'
-            : 'Describe the sound: "punchy kick drum", "rain on a tin roof"...';
+        promptArea.placeholder = isTts ? translate('Text to speak...')
+            : isMusicCat ? translate('Describe the music (style, mood, instruments)...')
+            : translate('Describe the sound: "punchy kick drum", "rain on a tin roof"...');
         mainCol.appendChild(promptArea);
 
         let lyricsArea = null;
@@ -1643,7 +1644,7 @@ const AudioDaw = (() => {
             lyricsArea = document.createElement('textarea');
             lyricsArea.className = 'daw-generate-text';
             lyricsArea.rows = 3;
-            lyricsArea.placeholder = 'Lyrics (optional, leave empty for instrumental)';
+            lyricsArea.placeholder = translate('Lyrics (optional, leave empty for instrumental)');
             mainCol.appendChild(lyricsArea);
         }
 
@@ -1653,7 +1654,7 @@ const AudioDaw = (() => {
             const optsRow = createDiv(null, 'daw-stems-model-row');
             const durLabel = document.createElement('label');
             durLabel.className = 'daw-stems-ctl-label';
-            durLabel.textContent = 'Duration (s):';
+            durLabel.textContent = translate('Duration (s):');
             durationInput = document.createElement('input');
             durationInput.type = 'number';
             durationInput.className = 'daw-clip-fade-input';
@@ -1661,12 +1662,12 @@ const AudioDaw = (() => {
             durationInput.value = isMusicCat ? '20' : '3';
             const seedLabel = document.createElement('label');
             seedLabel.className = 'daw-stems-ctl-label';
-            seedLabel.textContent = 'Seed:';
+            seedLabel.textContent = translate('Seed:');
             seedInput = document.createElement('input');
             seedInput.type = 'number';
             seedInput.className = 'daw-clip-fade-input';
             seedInput.value = '-1';
-            seedInput.title = '-1 = random';
+            seedInput.title = translate('-1 = random');
             optsRow.appendChild(durLabel);
             optsRow.appendChild(durationInput);
             optsRow.appendChild(seedLabel);
@@ -1682,7 +1683,7 @@ const AudioDaw = (() => {
                 const tempoLbl = document.createElement('label');
                 tempoLbl.htmlFor = 'daw_gen_tempo_hints';
                 tempoLbl.className = 'daw-stems-ctl-label';
-                tempoLbl.textContent = `Match project tempo (${state.bpm} BPM, ${state.timeSignature.join('/')})`;
+                tempoLbl.textContent = translate('Match project tempo') + ` (${state.bpm} BPM, ${state.timeSignature.join('/')})`;
                 tempoRow.appendChild(tempoCheck);
                 tempoRow.appendChild(tempoLbl);
                 sideCol.appendChild(tempoRow);
@@ -1699,17 +1700,17 @@ const AudioDaw = (() => {
             const refLabel = document.createElement('label');
             refLabel.className = 'daw-stems-ctl-label';
             refLabel.htmlFor = 'daw_gen_voice_ref';
-            refLabel.textContent = 'Use selected clip as voice reference';
+            refLabel.textContent = translate('Use selected clip as voice reference');
             refTextInput = document.createElement('input');
             refTextInput.type = 'text';
             refTextInput.className = 'daw-generate-reftext';
-            refTextInput.placeholder = 'Reference transcript (optional)';
+            refTextInput.placeholder = translate('Reference transcript (optional)');
             // Auto-fill the transcript by running the selected clip through STT
             const sttBtn = document.createElement('button');
             sttBtn.type = 'button';
             sttBtn.className = 'basic-button btn-sm daw-reftext-stt';
-            sttBtn.textContent = 'Transcribe';
-            sttBtn.title = 'Fill the transcript automatically by running the selected clip through speech-to-text';
+            sttBtn.textContent = translate('Transcribe');
+            sttBtn.title = translate('Fill the transcript automatically by running the selected clip through speech-to-text');
             sttBtn.style.display = enginesForCategory('stt').length ? '' : 'none';
             sttBtn.addEventListener('click', async () => {
                 const sel = findClipById(state.selectedClipId);
@@ -1718,7 +1719,7 @@ const AudioDaw = (() => {
                     return;
                 }
                 sttBtn.disabled = true;
-                sttBtn.textContent = 'Transcribing…';
+                sttBtn.textContent = translate('Transcribing…');
                 try {
                     const b64 = await AudioLabCore.readAsBase64(sel.clip.blob);
                     const result = await AudioLabAPI.processSTT(b64);
@@ -1727,10 +1728,10 @@ const AudioDaw = (() => {
                     refCheck.checked = true;
                 } catch (err) {
                     console.error('[AudioDaw] Transcription failed:', err);
-                    if (typeof doNoticePopover === 'function') doNoticePopover('Transcription failed: ' + err.message, 'notice-pop-red');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('Transcription failed:') + ' ' + err.message, 'notice-pop-red');
                 } finally {
                     sttBtn.disabled = false;
-                    sttBtn.textContent = 'Transcribe';
+                    sttBtn.textContent = translate('Transcribe');
                 }
             });
             const refTextWrap = createDiv(null, 'daw-reftext-wrap');
@@ -1742,7 +1743,7 @@ const AudioDaw = (() => {
             sideCol.appendChild(refRow);
 
             refNote = createDiv(null, 'daw-stems-clipinfo');
-            refNote.textContent = 'This engine uses its built-in voice. Voice cloning is not supported.';
+            refNote.textContent = translate('This engine uses its built-in voice. Voice cloning is not supported.');
             sideCol.appendChild(refNote);
         }
 
@@ -1751,11 +1752,11 @@ const AudioDaw = (() => {
         // Action row: hint above a full-width Generate button
         const actionRow = createDiv(null, 'daw-stems-action-row');
         const hint = createSpan(null, 'daw-stems-clipinfo');
-        hint.textContent = 'Result is added as a new track at the playhead (and saved to your outputs).';
+        hint.textContent = translate('Result is added as a new track at the playhead (and saved to your outputs).');
         actionRow.appendChild(hint);
         const goBtn = document.createElement('button');
         goBtn.className = 'basic-button btn-sm daw-stems-go';
-        goBtn.textContent = 'Generate';
+        goBtn.textContent = translate('Generate');
         actionRow.appendChild(goBtn);
         sideCol.appendChild(actionRow);
 
@@ -1817,7 +1818,7 @@ const AudioDaw = (() => {
             // Non-blocking: only the Generate button locks; the rest of the DAW
             // stays usable while the engine works (progress on the tab too).
             goBtn.disabled = true;
-            const busy = createBusyIndicator(`Generating with ${eng.name}…`, 'generate');
+            const busy = createBusyIndicator(translate('Generating with') + ` ${eng.name}…`, 'generate');
             sideCol.appendChild(busy);
             try {
                 const lyricsText = isMusicCat ? (lyricsArea?.value.trim() || '') : '';
@@ -1847,7 +1848,7 @@ const AudioDaw = (() => {
                 if (typeof doNoticePopover === 'function') doNoticePopover('Generated clip added (also saved to your outputs)', 'notice-pop-green');
             } catch (err) {
                 console.error('[AudioDaw] Generate failed:', err);
-                if (typeof doNoticePopover === 'function') doNoticePopover('Generate failed: ' + err.message, 'notice-pop-red');
+                if (typeof doNoticePopover === 'function') doNoticePopover(translate('Generate failed:') + ' ' + err.message, 'notice-pop-red');
             } finally {
                 busy.done();
                 goBtn.disabled = false;
@@ -2172,7 +2173,7 @@ const AudioDaw = (() => {
                 for (const p of ['volume', 'pan']) {
                     const opt = document.createElement('option');
                     opt.value = p;
-                    opt.textContent = p === 'volume' ? 'Volume' : 'Pan';
+                    opt.textContent = p === 'volume' ? translate('Volume') : translate('Pan');
                     sel.appendChild(opt);
                 }
                 sel.value = track.automationParam || 'volume';
@@ -2188,8 +2189,8 @@ const AudioDaw = (() => {
         // "+ Add Track" affordance at the bottom of the header column
         const addBtn = document.createElement('button');
         addBtn.className = 'daw-add-track';
-        addBtn.innerHTML = '+ <span class="translate">Add Track</span>';
-        addBtn.title = 'Add an empty track';
+        addBtn.innerHTML = `+ <span>${escapeHtml(translate('Add Track'))}</span>`;
+        addBtn.title = translate('Add an empty track');
         addBtn.addEventListener('click', () => {
             pushUndo();
             const track = addTrack();
@@ -2462,7 +2463,7 @@ const AudioDaw = (() => {
             if (lufsEl) {
                 const db = loudnessEma > 1e-5 ? (20 * Math.log10(loudnessEma)).toFixed(1) : '-\u221E';
                 lufsEl.textContent = db + ' LU';
-                lufsEl.title = 'Approximate loudness (RMS). Streaming targets sit around -14.';
+                lufsEl.title = translate('Approximate loudness (RMS). Streaming targets sit around -14.');
             }
             // Clip latch: lights when the master pins, click to reset
             if (Math.max(peaks[0], peaks[1]) >= 0.985) {
