@@ -136,7 +136,7 @@ const AudioDaw = (() => {
             if (firstOpen) maybeOfferResume().then(maybeShowStartScreen);
             return;
         }
-        const overlay = showDawLoadingOverlay('Loading audio...');
+        const overlay = showDawLoadingOverlay(translate('Loading audio...'));
         try {
             const blob = await fetchAsBlob(audioSrc);
             if (!firstOpen) pushUndo(); // adding into a live session
@@ -155,7 +155,7 @@ const AudioDaw = (() => {
         } catch (err) {
             console.error('[AudioDaw] Failed to load audio:', err);
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Failed to load audio: ' + err.message, 'notice-pop-red');
+                doNoticePopover(translate('Failed to load audio:') + ' ' + err.message, 'notice-pop-red');
             }
         }
         hideDawLoadingOverlay(overlay);
@@ -179,25 +179,25 @@ const AudioDaw = (() => {
         if (existing) existing.remove();
         const dlg = createDiv(null, 'daw-shortcut-help daw-close-dialog');
         const title = createDiv(null, 'daw-shortcut-help-title');
-        title.textContent = 'Close Audio Lab?';
+        title.textContent = translate('Close Audio Lab?');
         dlg.appendChild(title);
         const msg = createDiv(null, 'daw-stems-desc');
-        msg.textContent = 'Save this session as a project, or discard it. Discarded sessions are gone for good.';
+        msg.textContent = translate('Save this session as a project, or discard it. Discarded sessions are gone for good.');
         dlg.appendChild(msg);
         const row = createDiv(null, 'daw-clip-editor-actions');
         row.style.marginTop = '0.75rem';
-        quickAppendButton(row, 'Save & Close', async () => {
-            const name = prompt('Project name:', currentProjectName || 'My Project');
+        quickAppendButton(row, translate('Save & Close'), async () => {
+            const name = prompt(translate('Project name:'), currentProjectName || 'My Project');
             if (!name || !name.trim()) return; // keep dialog open — treat as cancel
             dlg.remove();
             await saveProjectToServer(name.trim());
             finishClose();
-        }, ' basic-button btn-primary', 'Save the project to the server, then close');
-        quickAppendButton(row, 'Discard', () => {
+        }, ' basic-button btn-primary', translate('Save the project to the server, then close'));
+        quickAppendButton(row, translate('Discard'), () => {
             dlg.remove();
             finishClose();
-        }, ' basic-button', 'Throw this session away and close');
-        quickAppendButton(row, 'Cancel', () => dlg.remove(), ' basic-button', 'Keep working');
+        }, ' basic-button', translate('Throw this session away and close'));
+        quickAppendButton(row, translate('Cancel'), () => dlg.remove(), ' basic-button', translate('Keep working'));
         dlg.appendChild(row);
         (document.getElementById('daw_container') || document.body).appendChild(dlg);
     }
@@ -360,7 +360,7 @@ const AudioDaw = (() => {
         const recBtn = document.createElement('button');
         recBtn.className = 'daw-transport-btn daw-btn-rec';
         recBtn.innerHTML = DAW_ICONS.record;
-        recBtn.title = 'Record into armed track (R)';
+        recBtn.title = translate('Record into armed track (R)');
         recBtn.addEventListener('click', () => {
             if (recording) stopRecordingFlow(); else startRecordingFlow();
         });
@@ -368,27 +368,27 @@ const AudioDaw = (() => {
         const micBtn = document.createElement('button');
         micBtn.className = 'daw-transport-btn daw-btn-mic-settings';
         micBtn.innerHTML = DAW_ICONS.caretDown;
-        micBtn.title = 'Microphone settings';
+        micBtn.title = translate('Microphone settings');
         micBtn.addEventListener('click', (e) => showMicSettingsMenu(e));
         recWrap.appendChild(micBtn);
         transGroup.appendChild(recWrap);
-        quickAppendButton(transGroup, DAW_ICONS.toStart, () => seekTo(0), ' daw-transport-btn', 'Rewind to start');
+        quickAppendButton(transGroup, DAW_ICONS.toStart, () => seekTo(0), ' daw-transport-btn', translate('Rewind to start'));
         const playBtn = document.createElement('button');
         playBtn.className = 'daw-transport-btn daw-btn-play';
         playBtn.innerHTML = DAW_ICONS.play;
-        playBtn.title = 'Play / Pause (Space)';
+        playBtn.title = translate('Play / Pause (Space)');
         playBtn.addEventListener('click', togglePlayback);
         transGroup.appendChild(playBtn);
         quickAppendButton(transGroup, DAW_ICONS.stop, () => {
             if (recording) { stopRecordingFlow(); return; }
             stopPlayback();
             seekTo(0);
-        }, ' daw-transport-btn', 'Stop');
-        quickAppendButton(transGroup, DAW_ICONS.toEnd, () => seekTo(state.contentDuration), ' daw-transport-btn', 'Go to end');
+        }, ' daw-transport-btn', translate('Stop'));
+        quickAppendButton(transGroup, DAW_ICONS.toEnd, () => seekTo(state.contentDuration), ' daw-transport-btn', translate('Go to end'));
         const loopBtn = document.createElement('button');
         loopBtn.className = 'daw-transport-btn daw-btn-text daw-btn-loop' + (state.loopEnabled ? ' active' : '');
-        loopBtn.textContent = 'LOOP';
-        loopBtn.title = 'Toggle Loop (L)';
+        loopBtn.textContent = translate('LOOP');
+        loopBtn.title = translate('Toggle Loop (L)');
         loopBtn.addEventListener('click', toggleLoop);
         transGroup.appendChild(loopBtn);
 
@@ -398,7 +398,7 @@ const AudioDaw = (() => {
         timeDisplayEl.textContent = '0:00.0 / 0:00.0';
         const lcdBeats = createSpan(null, 'daw-lcd-beats');
         lcdBeats.textContent = '1.1.1';
-        lcdBeats.title = 'Position in bars.beats.sixteenths';
+        lcdBeats.title = translate('Position in bars.beats.sixteenths');
         lcd.appendChild(timeDisplayEl);
         lcd.appendChild(lcdBeats);
         transportEl.appendChild(lcd);
@@ -409,14 +409,14 @@ const AudioDaw = (() => {
         // ── Zoom ──
         const zoomGroup = mkGroup(' daw-tgroup-fields');
         const zoomLabel = createSpan(null, 'daw-transport-label');
-        zoomLabel.textContent = 'ZOOM';
+        zoomLabel.textContent = translate('ZOOM');
         const zoomSlider = document.createElement('input');
         zoomSlider.type = 'range';
         zoomSlider.className = 'daw-transport-zoom';
         zoomSlider.min = '10';
         zoomSlider.max = '500';
         zoomSlider.value = state.zoom;
-        zoomSlider.title = 'Timeline zoom (pixels per second)';
+        zoomSlider.title = translate('Timeline zoom (pixels per second)');
         zoomSlider.addEventListener('input', (e) => {
             setZoom(parseInt(e.target.value));
         });
@@ -426,7 +426,7 @@ const AudioDaw = (() => {
         // ── Tempo: BPM + time signature ──
         const tempoGroup = mkGroup(' daw-tgroup-fields');
         const bpmLabel = createSpan(null, 'daw-transport-label');
-        bpmLabel.textContent = 'BPM';
+        bpmLabel.textContent = translate('BPM');
         bpmInputEl = document.createElement('input');
         bpmInputEl.type = 'number';
         bpmInputEl.className = 'daw-transport-bpm';
@@ -446,7 +446,7 @@ const AudioDaw = (() => {
         });
         const sigSelect = document.createElement('select');
         sigSelect.className = 'daw-transport-timesig';
-        sigSelect.title = 'Time signature';
+        sigSelect.title = translate('Time signature');
         for (const sig of ['4/4', '3/4', '6/8', '2/4', '5/4']) {
             const opt = document.createElement('option');
             opt.value = sig;
@@ -480,15 +480,15 @@ const AudioDaw = (() => {
             segBtns.push([b, mode]);
             rulerGroup.appendChild(b);
         };
-        mkSeg('TIME', 'time', 'Ruler shows minutes:seconds');
-        mkSeg('BARS', 'beats', 'Ruler shows bars/beats at the project tempo');
+        mkSeg(translate('TIME'), 'time', translate('Ruler shows minutes:seconds'));
+        mkSeg(translate('BARS'), 'beats', translate('Ruler shows bars/beats at the project tempo'));
 
         // ── Workspace toggles: snap-to-grid, sound palette ──
         const togGroup = mkGroup();
         const snapBtn = document.createElement('button');
         snapBtn.className = 'daw-transport-btn daw-btn-text daw-btn-snap' + (state.snapEnabled ? ' active' : '');
-        snapBtn.textContent = 'SNAP';
-        snapBtn.title = 'Snap to grid';
+        snapBtn.textContent = translate('SNAP');
+        snapBtn.title = translate('Snap to grid');
         snapBtn.addEventListener('click', () => {
             state.snapEnabled = !state.snapEnabled;
             snapBtn.classList.toggle('active', state.snapEnabled);
@@ -496,8 +496,8 @@ const AudioDaw = (() => {
         togGroup.appendChild(snapBtn);
         const palBtn = document.createElement('button');
         palBtn.className = 'daw-transport-btn daw-btn-text daw-btn-palette';
-        palBtn.textContent = 'SOUNDS';
-        palBtn.title = 'Sound Palette: generate SFX/loops on demand (audition, then add)';
+        palBtn.textContent = translate('SOUNDS');
+        palBtn.title = translate('Sound Palette: generate SFX/loops on demand (audition, then add)');
         palBtn.addEventListener('click', () => togglePalette(palBtn));
         togGroup.appendChild(palBtn);
 
@@ -520,13 +520,13 @@ const AudioDaw = (() => {
             fileGroup.appendChild(b);
             return b;
         };
-        mkFileBtn('PROJECT', 'Save, load, or start projects', (e) => showProjectMenu(e));
-        mkFileBtn('IMPORT', 'Add audio from your outputs or your computer', (e) => showImportMenu(e));
-        mkFileBtn('EXPORT', 'Export the mixdown (WAV/MP3/OGG/FLAC/AAC or to Outputs)', (e) => showExportMenu(e));
+        mkFileBtn(translate('PROJECT'), translate('Save, load, or start projects'), (e) => showProjectMenu(e));
+        mkFileBtn(translate('IMPORT'), translate('Add audio from your outputs or your computer'), (e) => showImportMenu(e));
+        mkFileBtn(translate('EXPORT'), translate('Export the mixdown (WAV/MP3/OGG/FLAC/AAC or to Outputs)'), (e) => showExportMenu(e));
         const closeBtn = document.createElement('button');
         closeBtn.className = 'daw-transport-btn daw-btn-close';
         closeBtn.innerHTML = '&#x2715;';
-        closeBtn.title = 'Close Audio Lab';
+        closeBtn.title = translate('Close Audio Lab');
         closeBtn.addEventListener('click', close);
         transportEl.appendChild(closeBtn);
     }
@@ -536,8 +536,8 @@ const AudioDaw = (() => {
     /** Show the unified import menu: server outputs or local files. */
     function showImportMenu(e) {
         dawMenu(e, [
-            { label: 'From Outputs…', action: () => showOutputsPicker(e) },
-            { label: 'From Computer…', action: () => importAudioToTrack() }
+            { label: translate('From Outputs…'), action: () => showOutputsPicker(e) },
+            { label: translate('From Computer…'), action: () => importAudioToTrack() }
         ]);
     }
 
@@ -638,12 +638,12 @@ const AudioDaw = (() => {
                     if (typeof doNoticePopover === 'function') doNoticePopover('Add some effects first', 'notice-pop-yellow');
                     return;
                 }
-                const name = prompt('Chain name:', 'My Chain');
+                const name = prompt(translate('Chain name:'), 'My Chain');
                 if (!name || !name.trim()) return;
                 const chains = JSON.parse(localStorage.getItem('audiolab_fx_chains') || '{}');
                 chains[name.trim()] = track.fx.map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));
                 localStorage.setItem('audiolab_fx_chains', JSON.stringify(chains));
-                if (typeof doNoticePopover === 'function') doNoticePopover(`Chain "${name.trim()}" saved`, 'notice-pop-green');
+                if (typeof doNoticePopover === 'function') doNoticePopover(translate('Chain saved:') + ` "${name.trim()}"`, 'notice-pop-green');
             },
             onLoadChain: (track, e) => {
                 const chains = JSON.parse(localStorage.getItem('audiolab_fx_chains') || '{}');
