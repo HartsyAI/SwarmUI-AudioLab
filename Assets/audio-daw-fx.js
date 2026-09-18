@@ -615,10 +615,10 @@ const AudioDawFx = (() => {
         const addCard = createDiv(null, 'daw-fx-card daw-fx-add-card');
         const addBtn = document.createElement('button');
         addBtn.className = 'daw-add-track';
-        addBtn.textContent = '+ Add Effect';
+        addBtn.textContent = '+ ' + translate('Add Effect');
         addBtn.addEventListener('click', (e) => {
             const items = Object.entries(FX_DEFS).map(([type, def]) => ({
-                label: def.label,
+                label: translate(def.label),
                 action: () => callbacks.onAdd(track, type)
             }));
             if (callbacks.showMenu) callbacks.showMenu(e, items);

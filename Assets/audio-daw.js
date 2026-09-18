@@ -2948,7 +2948,7 @@ const AudioDaw = (() => {
         input.accept = 'audio/*';
         input.multiple = true;
         input.onchange = async () => {
-            const overlay = showDawLoadingOverlay('Importing audio...');
+            const overlay = showDawLoadingOverlay(translate('Importing audio...'));
             for (const file of input.files) {
                 const ext = file.name.split('.').pop().toLowerCase();
                 if (!isAudioExt('file.' + ext)) continue;
@@ -3051,7 +3051,7 @@ const AudioDaw = (() => {
             dawMenu(e, files.map(f => ({
                 label: f.split('/').pop(),
                 action: async () => {
-                    const overlay = showDawLoadingOverlay('Loading output...');
+                    const overlay = showDawLoadingOverlay(translate('Loading output...'));
                     try {
                         // ListImages paths are relative to the user's output root.
                         const prefix = typeof getImageOutPrefix === 'function' ? getImageOutPrefix() : 'Output';
@@ -3066,13 +3066,13 @@ const AudioDaw = (() => {
                         resyncPlayback();
                     } catch (err) {
                         console.error('[AudioDaw] Add from outputs failed:', err);
-                        if (typeof doNoticePopover === 'function') doNoticePopover('Failed to load output: ' + err.message, 'notice-pop-red');
+                        if (typeof doNoticePopover === 'function') doNoticePopover(translate('Failed to load output:') + ' ' + err.message, 'notice-pop-red');
                     }
                     hideDawLoadingOverlay(overlay);
                 }
             })));
         } catch (err) {
-            if (typeof doNoticePopover === 'function') doNoticePopover('Failed to list outputs: ' + err.message, 'notice-pop-red');
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Failed to list outputs:') + ' ' + err.message, 'notice-pop-red');
         }
     }
 
@@ -3080,16 +3080,16 @@ const AudioDaw = (() => {
 
     function showClipContextMenu(e, clip, track) {
         dawMenu(e, [
-            { label: 'Split at Playhead', action: () => doSplitClip(clip, track) },
-            { label: 'Duplicate', action: () => doDuplicateClip(clip, track) },
-            { label: 'Delete', action: () => doDeleteClip(clip, track) },
-            { label: clip.muted ? 'Unmute Clip' : 'Mute Clip', action: () => {
+            { label: translate('Split at Playhead'), action: () => doSplitClip(clip, track) },
+            { label: translate('Duplicate'), action: () => doDuplicateClip(clip, track) },
+            { label: translate('Delete'), action: () => doDeleteClip(clip, track) },
+            { label: clip.muted ? translate('Unmute Clip') : translate('Mute Clip'), action: () => {
                 clip.muted = !clip.muted;
                 applyClipGain(clip);
                 renderAllTracks();
             }},
-            { label: 'Separate Stems… (Demucs)', action: () => openStemsForClip(clip, track) },
-            { label: `Conform to ${state.bpm} BPM…`, action: () => conformClipToBpm(clip, track) }
+            { label: translate('Separate Stems… (Demucs)'), action: () => openStemsForClip(clip, track) },
+            { label: translate('Conform to') + ` ${state.bpm} BPM…`, action: () => conformClipToBpm(clip, track) }
         ]);
     }
 
