@@ -134,8 +134,12 @@
          into a score through ITranscribeService.RunScoreAsync, which does not exist before alpha.82. It returns
          both renderings of the score from one decode, because the decode is the whole cost and stripping the
          chord symbols out of the full rendering does NOT spell the melody rendering - a bar carrying a chord
-         cannot fold into a multi-bar rest, and a chord change inside a held note splits it into tied parts. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.82" />
+         cannot fold into a multi-bar rest, and a chord change inside a held note splits it into tied parts.
+
+         2.0.0-alpha.130 = catch-up bump, 2026-09-19 (alpha.74 -> alpha.130), merged with the Score tab's
+         alpha.79/alpha.82 prerequisites above already satisfied by the newer pin. Keeps this extension in
+         lockstep with SwarmUI-HartsyInference-Backend and SwarmUI-LLMAssistant. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.130" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
