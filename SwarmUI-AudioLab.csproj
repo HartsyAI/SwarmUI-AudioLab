@@ -124,8 +124,12 @@
          ceiling is inert against an engine that clamps at 360. It also carries the budget clamp behind
          meta.budgetSeconds, which ReportTruncation reads to tell "the prompt ate the context" apart from "the
          song ran long". Verified through SwarmUI: 431 s of continuous music, and a 900 s request against a
-         large score correctly reports 718.8 s granted instead of failing. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.74" />
+         large score correctly reports 718.8 s granted instead of failing.
+         2.0.0-alpha.130 = catch-up bump, 2026-09-19 (alpha.74 -> alpha.130). Confirmed via a full Release build
+         against this pin that nothing in this extension needed to change (AudioLab compiled clean, no source
+         edits). Keeps this extension in lockstep with SwarmUI-HartsyInference-Backend and SwarmUI-LLMAssistant
+         per the note above. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.130" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
