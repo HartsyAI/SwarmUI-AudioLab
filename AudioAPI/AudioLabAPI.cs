@@ -66,6 +66,10 @@ public static class AudioLabAPI
             API.RegisterAPICall(AudioLabLoadProject, false, AudioLabPermissions.PermDawProjects);
             API.RegisterAPICall(AudioLabListProjects, false, AudioLabPermissions.PermDawProjects);
             API.RegisterAPICall(AudioLabDeleteProject, true, AudioLabPermissions.PermDawProjects);
+            API.RegisterAPICall(AudioLabScoreCapabilities, false, AudioLabPermissions.PermDawProjects);
+            API.RegisterAPICall(AudioLabPlanScore, false, AudioLabPermissions.PermProcessAudio);
+            API.RegisterAPICall(AudioLabTranscribeScore, false, AudioLabPermissions.PermProcessAudio);
+            API.RegisterAPICall(AudioLabFetchSoundfont, true, AudioLabPermissions.PermManageBackends);
         }
         catch (Exception ex)
         {
@@ -765,6 +769,193 @@ public static class AudioLabAPI
         catch (Exception ex)
         {
             return AudioLab.CreateErrorResponse("Failed to check installation status", "status_error", ex);
+        }
+    }
+
+    /// <summary>Plans a YuE2 score without rendering it, or reports what the context leaves for audio.
+    ///
+    /// <para>The model composes in two passes and the score is the only editable artifact it exposes, so
+    /// planning alone turns the edit loop from minutes into seconds. Arguments here are ENGINE names, not the
+    /// T2I parameter names the Generate path uses: <c>genre</c> carries the style, <c>prompt</c> the lyrics.</para>
+    ///
+    /// <para>Guarded by the audio-processing permission rather than the DAW-project one: this loads the model
+    /// and runs it on the GPU, which is exactly what that permission is for.</para></summary>
+    public static async Task<JObject> AudioLabPlanScore(Session session, JObject input)
+    {
+        try
+        {
+            string providerId = input["provider_id"]?.ToString();
+            if (string.IsNullOrWhiteSpace(providerId))
+            {
+                providerId = "yue2_music";
+            }
+            AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId);
+            if (provider is null)
+            {
+                return AudioLab.CreateErrorResponse($"Unknown audio provider '{providerId}'.", "no_provider");
+            }
+            string style = input["style"]?.ToString() ?? "";
+            string lyrics = input["lyrics"]?.ToString() ?? "";
+            if (string.IsNullOrWhiteSpace(style) && string.IsNullOrWhiteSpace(lyrics))
+            {
+                return AudioLab.CreateErrorResponse(
+                    "A style or some lyrics are needed before a score can be planned.", "no_prompt");
+            }
+            bool budgetOnly = input["budget_only"]?.Value<bool>() == true;
+            Dictionary<string, object> args = new()
+            {
+                ["genre"] = style,
+                ["prompt"] = lyrics,
+                ["duration"] = input["duration"]?.Value<double>() ?? 30d,
+            };
+            if (input["seed"]?.Value<long>() is long seed && seed >= 0)
+            {
+                args["seed"] = seed;
+            }
+            string cot = input["cot"]?.ToString();
+            if (!string.IsNullOrWhiteSpace(cot))
+            {
+                args["yue2_cot"] = cot;
+            }
+            // Only the budget question carries a score; asking the planner for one while handing it the answer
+            // would skip the planning pass and return the score it was given.
+            if (budgetOnly && input["abc"]?.ToString() is string abc && !string.IsNullOrWhiteSpace(abc))
+            {
+                args["yue2_abc"] = abc;
+            }
+            string requestedModel = input["model"]?.ToString();
+            if (!string.IsNullOrWhiteSpace(requestedModel))
+            {
+                AudioModelDefinition chosen = provider.Models
+                    .FirstOrDefault(m => m.Id.Equals(requestedModel, StringComparison.OrdinalIgnoreCase));
+                if (chosen is null)
+                {
+                    return AudioLab.CreateErrorResponse(
+                        $"'{requestedModel}' is not a model of '{provider.Id}'.", "unknown_model");
+                }
+                args["__model_id"] = chosen.Id;
+            }
+            return await AudioServerManager.Instance.PlanScoreAsync(provider, args, budgetOnly);
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] Score planning failed: {ex}");
+            return AudioLab.CreateErrorResponse(ex.Message, "plan_failed");
+        }
+    }
+
+    /// <summary>Reads the score out of a recording: melody, chords, key, meter and tempo as ABC.
+    ///
+    /// <para>Returns both renderings of the one transcription. They are not a substitution apart — a bar
+    /// carrying a chord symbol cannot fold into a multi-bar rest, and a chord change inside a held note splits
+    /// it into tied parts — so the melody form a cover renders from has to come from the model, not from
+    /// deleting quoted text. The decode is the entire cost and serializing is free, so both come back.</para>
+    ///
+    /// <para>Guarded by the audio-processing permission, like every other endpoint that loads a model and runs
+    /// the GPU.</para></summary>
+    public static async Task<JObject> AudioLabTranscribeScore(Session session, JObject input)
+    {
+        try
+        {
+            string audioData = input["audio_data"]?.ToString() ?? "";
+            if (string.IsNullOrWhiteSpace(audioData))
+            {
+                return AudioLab.CreateErrorResponse("No audio was sent to transcribe.", "no_audio");
+            }
+            if (audioData.Length > MaxArgStringLength)
+            {
+                return AudioLab.CreateErrorResponse(
+                    $"The audio is {audioData.Length / (1024 * 1024)} MB encoded, over the {MaxArgStringLength / (1024 * 1024)} MB limit. Transcribe a shorter section.",
+                    "arg_too_large");
+            }
+            string providerId = input["provider_id"]?.ToString();
+            if (string.IsNullOrWhiteSpace(providerId))
+            {
+                providerId = "sheetsage2_transcribe";
+            }
+            AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId);
+            if (provider is null)
+            {
+                return AudioLab.CreateErrorResponse($"Unknown audio provider '{providerId}'.", "no_provider");
+            }
+            Dictionary<string, object> args = new()
+            {
+                ["audio_data"] = audioData,
+            };
+            string requestedModel = input["model"]?.ToString();
+            if (!string.IsNullOrWhiteSpace(requestedModel))
+            {
+                AudioModelDefinition chosen = provider.Models
+                    .FirstOrDefault(m => m.Id.Equals(requestedModel, StringComparison.OrdinalIgnoreCase));
+                if (chosen is null)
+                {
+                    return AudioLab.CreateErrorResponse(
+                        $"'{requestedModel}' is not a model of '{provider.Id}'.", "unknown_model");
+                }
+                args["__model_id"] = chosen.Id;
+            }
+            JObject result = await AudioServerManager.Instance.TranscribeScoreAsync(provider, args);
+            if (input["unload_after"]?.Value<bool>() == true)
+            {
+                // Coarser than it sounds: the engine has no per-model unload, so this releases every resident
+                // audio model. Run whatever the transcription returned — a refusal is the case most likely to
+                // have been caused by the memory this frees.
+                AudioEngineBridge.Unload(provider.Id, args.TryGetValue("__model_id", out object chosenId) ? chosenId as string : null);
+            }
+            return result;
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] Score transcription failed: {ex}");
+            return AudioLab.CreateErrorResponse(ex.Message, "transcribe_failed");
+        }
+    }
+
+    /// <summary>Reports whether LLM-assisted score editing can run, so the Score tab can offer it or explain
+    /// why it cannot.
+    ///
+    /// <para>Swarm core has no usable LLM API: <c>LLMAPI.cs</c> exists but <c>Register()</c> is never called and
+    /// both of its endpoints throw, so text generation only exists when the separate LLMAssistant extension is
+    /// installed. Asking the API registry rather than the extension list checks the exact route we intend to
+    /// call, and it is answered per request because extensions initialise in directory order — LLMAssistant may
+    /// not have registered anything yet when AudioLab starts.</para></summary>
+    public static async Task<JObject> AudioLabScoreCapabilities(Session session, JObject input)
+    {
+        await Task.CompletedTask;
+        return new JObject
+        {
+            ["success"] = true,
+            ["llm_available"] = API.APIHandlers.ContainsKey("llmassistanttestinstruction"),
+            ["soundfont_notes"] = ScoreSoundfont.InstalledCount(),
+            ["soundfont_total"] = ScoreSoundfont.NoteNames.Length
+        };
+    }
+
+    /// <summary>Downloads the piano samples the Score tab auditions with, so it stops reaching out to a GitHub
+    /// Pages host on every machine that has not cached them.
+    ///
+    /// <para>Polling <see cref="AudioLabScoreCapabilities"/> while this runs is how the tab shows progress:
+    /// each note becomes readable as it lands, and the count is the truth about what is installed.</para></summary>
+    public static async Task<JObject> AudioLabFetchSoundfont(Session session, JObject input)
+    {
+        try
+        {
+            (int fetched, List<string> failed) = await ScoreSoundfont.FetchAsync();
+            int installed = ScoreSoundfont.InstalledCount();
+            Logs.Info($"[AudioLab] Score soundfont: {installed}/{ScoreSoundfont.NoteNames.Length} notes installed ({fetched} fetched).");
+            return new JObject
+            {
+                ["success"] = true,
+                ["installed"] = installed,
+                ["total"] = ScoreSoundfont.NoteNames.Length,
+                ["fetched"] = fetched,
+                ["failed"] = new JArray(failed.Cast<object>().ToArray())
+            };
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] Score soundfont download failed: {ex}");
+            return AudioLab.CreateErrorResponse(ex.Message, "soundfont_failed");
         }
     }
 

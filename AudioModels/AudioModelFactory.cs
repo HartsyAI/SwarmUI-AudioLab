@@ -17,10 +17,7 @@ public static class AudioModelFactory
     {
         string fullName = provider.GetFullModelName(model.Id);
         string previewImage = LoadPreviewImage(provider.Id);
-        // Use model-level class override if present, otherwise fall back to provider class
-        string classId = model.ModelClassId ?? provider.ModelClassId;
-        string className = model.ModelClassName ?? provider.ModelClassName;
-        T2IModelClass modelClass = GetOrCreateModelClass(classId, className, provider.Category);
+        T2IModelClass modelClass = ResolveModelClass(model?.ModelClassId, model?.ModelClassName, provider);
         List<string> allTags = ["audiolab", provider.Category.ToString().ToLowerInvariant(), provider.EngineGroup];
         return new T2IModel(null, null, null, fullName)
         {
@@ -42,7 +39,7 @@ public static class AudioModelFactory
                 StandardHeight = 0,
                 License = string.IsNullOrEmpty(model.License) ? "Open Source" : model.License,
                 UsageHint = $"Audio processing via {provider.Name}",
-                ModelClassType = classId,
+                ModelClassType = modelClass.ID,
                 Tags = [.. allTags],
                 TimeCreated = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 TimeModified = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
@@ -85,8 +82,7 @@ public static class AudioModelFactory
             {
                 Title = titleIsFilename ? row?.Name ?? artifact.ModelId : scanned.Title,
                 Description = string.IsNullOrEmpty(scanned.Description) ? row?.Description ?? "" : scanned.Description,
-                ModelClass = scanned.ModelClass ?? GetOrCreateModelClass(row?.ModelClassId ?? provider.ModelClassId,
-                    row?.ModelClassName ?? provider.ModelClassName, provider.Category),
+                ModelClass = scanned.ModelClass ?? ResolveModelClass(row?.ModelClassId, row?.ModelClassName, provider),
                 StandardWidth = 0,
                 StandardHeight = 0,
                 IsSupportedModelType = true,
@@ -113,17 +109,60 @@ public static class AudioModelFactory
         return models;
     }
 
+    /// <summary>Class ids these providers used before they adopted core's own, mapped to what core calls them.
+    ///
+    /// <para>A stamped artifact carries its class id in <c>modelspec.architecture</c>, so weights installed before
+    /// the switch still name the old id on disk. Core resolves that through
+    /// <see cref="T2IModelClassSorter.Remaps"/> before it looks a class up, which is exactly this case — without
+    /// it an already-installed ACE-Step or YuE2 model would come back unclassified and show no audio params at
+    /// all. Re-stamping happens naturally on the next install; these entries keep the old ones working forever.</para></summary>
+    private static readonly Dictionary<string, string> LegacyClassRemaps = new()
+    {
+        ["acestep_music"] = "ace-step-1_5",
+        ["minimax_music3"] = "minimax-music-3",
+        ["yue2_music"] = "yue-2",
+    };
+
+    /// <summary>Teaches core's sorter the pre-adoption class ids. Call before the first model scan.</summary>
+    public static void RegisterLegacyClassRemaps()
+    {
+        foreach ((string old, string now) in LegacyClassRemaps)
+        {
+            T2IModelClassSorter.Remaps[old] = now;
+        }
+    }
+
     /// <summary>Gets or creates a T2IModelClass for the provider. Registers compat class with IsAudioModel = true.</summary>
     public static T2IModelClass GetOrCreateModelClass(AudioProviderDefinition provider)
         => GetOrCreateModelClass(provider.ModelClassId, provider.ModelClassName, provider.Category);
 
-    /// <summary>Gets or creates a T2IModelClass by explicit ID and name. Registers compat class with IsAudioModel = true.</summary>
-    public static T2IModelClass GetOrCreateModelClass(string id, string name, AudioCategory category)
+    /// <summary>Resolves the class for one catalog row: the provider's class, or the row's own override attached
+    /// to the provider's compat class. Keeping the override under the provider's compat is what lets a variant
+    /// (ACE-Step Turbo) gate its own params without losing the family's core compat class — and therefore
+    /// without losing the core param group core grants to that compat class.</summary>
+    private static T2IModelClass ResolveModelClass(string rowClassId, string rowClassName, AudioProviderDefinition provider)
+    {
+        T2IModelClass providerClass = GetOrCreateModelClass(provider);
+        if (string.IsNullOrEmpty(rowClassId) || rowClassId == provider.ModelClassId)
+        {
+            return providerClass;
+        }
+        return GetOrCreateModelClass(rowClassId, rowClassName ?? provider.ModelClassName, provider.Category, providerClass.CompatClass);
+    }
+
+    /// <summary>Gets or creates a T2IModelClass by explicit ID and name. Registers compat class with IsAudioModel = true.
+    ///
+    /// <para><paramref name="compatOverride"/> attaches a new model class to an EXISTING compat class rather than
+    /// minting a parallel one. That is how a per-variant class (ACE-Step Turbo) keeps its own <c>curArch</c> for
+    /// param gating while still reporting core's <c>curCompatClass</c> — the same shape
+    /// SwarmUI-HartsyInference-Backend uses for its <c>ace-step-v1</c> class.</para></summary>
+    public static T2IModelClass GetOrCreateModelClass(string id, string name, AudioCategory category, T2IModelCompatClass compatOverride = null)
     {
         if (!_modelClasses.TryGetValue(id, out T2IModelClass modelClass))
         {
-            // Both sorter registries are Dictionary.Add and throw on a duplicate id. Core owns audio classes
-            // of its own (ace-step-1_5, minimax-music-3), so adopt an existing class instead of colliding.
+            // Both sorter registries are Dictionary.Add and throw on a duplicate id. Core owns the audio classes
+            // we care about (ace-step-1_5, minimax-music-3, yue-2), so adopt an existing class instead of
+            // colliding — that is the path every family core knows about now takes.
             string key = id.ToLowerInvariant();
             if (T2IModelClassSorter.ModelClasses.TryGetValue(key, out T2IModelClass existing))
             {
@@ -131,7 +170,8 @@ public static class AudioModelFactory
                 Logs.Debug($"[AudioModelFactory] Reusing already-registered model class: {id}");
                 return existing;
             }
-            if (!T2IModelClassSorter.CompatClasses.TryGetValue(key, out T2IModelCompatClass compat))
+            T2IModelCompatClass compat = compatOverride;
+            if (compat is null && !T2IModelClassSorter.CompatClasses.TryGetValue(key, out compat))
             {
                 compat = T2IModelClassSorter.RegisterCompat(new()
                 {

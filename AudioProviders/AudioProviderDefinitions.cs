@@ -37,6 +37,7 @@ public static class AudioProviderDefinitions
         MoonshineProvider.Instance,
         MoonshineStreamingProvider.Instance,
         DistilWhisperProvider.Instance,
+        SheetSage2Provider.Instance,
         // Local audio generation providers
         AceStepProvider.Instance,
         StableAudioProvider.Instance,

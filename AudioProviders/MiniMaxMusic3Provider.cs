@@ -18,7 +18,7 @@ public sealed class MiniMaxMusic3Provider : IAudioProviderSource
         .WithName("MiniMax Music 3")
         .WithCategory(AudioCategory.AudioGeneration)
         .WithModelPrefix("MiniMaxMusic3")
-        .WithModelClass("minimax_music3", "MiniMax Music 3")
+        .WithModelClass("minimax-music-3", "MiniMax Music 3")
         .AddFeatureFlag("audiolab_audiogen")
         .AddFeatureFlag("minimax_music3_params")
         .AddModels(Models)

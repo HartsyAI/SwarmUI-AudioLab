@@ -38,13 +38,17 @@ const AudioLabConfig = {
         kyutaistt_stt: { category: 'audiolab_stt' },
         distilwhisper_stt: { category: 'audiolab_stt' },
         moonshine_stt: { category: 'audiolab_stt' },
+        // Music transcription, not speech, but it is an STT-category provider: an unmapped arch hides every audio param.
+        sheetsage2: { category: 'audiolab_stt', providerFlag: 'sheetsage2_params' },
         realtimestt_stt: { category: 'audiolab_stt' },
         musicgen_music: { category: 'audiolab_audiogen', extraFlags: ['audiocraft_sampling'] },
-        // `text2audio` unlocks core's Text2Audio group (duration/BPM/key/time-sig/language/style), which
-        // BuildEngineArgs already prefers over AudioLab's bespoke equivalents. Only ACE-Step gets it —
-        // every param in that group is meaningful here, which isn't true of the other music providers.
-        acestep_music: { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params', extraFlags: ['acestep_cfg_params', 'acestep_lm_params', 'acestep_task_params', 'music_instrumental_param', 'text2audio'] },
-        acestep_music_turbo: { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params', extraFlags: ['acestep_lm_params', 'acestep_task_params', 'music_instrumental_param', 'text2audio'] },
+        // Keys are model-class ids. The three families core classifies itself use CORE's ids, so core grants
+        // `text2audio` (and `audio_ace_inputs` for ACE-Step) on its own — listing those here would be pointless
+        // anyway, since core pushes them into removeMe for every class it doesn't recognise and removes win.
+        // 'acestep_music_turbo' is ours, registered under core's ace-step-1_5 compat, so it keeps its own
+        // gating while still reporting core's compat class.
+        'ace-step-1_5': { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params', extraFlags: ['acestep_cfg_params', 'acestep_lm_params', 'acestep_task_params', 'music_instrumental_param'] },
+        acestep_music_turbo: { category: 'audiolab_audiogen', providerFlag: 'acestep_music_params', extraFlags: ['acestep_lm_params', 'acestep_task_params', 'music_instrumental_param'] },
         openvoice_clone: { category: 'audiolab_clone' },
         rvc_clone: { category: 'audiolab_clone', providerFlag: 'rvc_clone_params' },
         gptsovits_clone: { category: 'audiolab_clone', providerFlag: 'gptsovits_clone_params' },
@@ -52,9 +56,9 @@ const AudioLabConfig = {
         resemble_enhance_fx: { category: 'audiolab_audioproc', providerFlag: 'resemble_enhance_fx_params' },
         audiogen_sfx: { category: 'audiolab_audiogen', extraFlags: ['audiocraft_sampling'] },
         yue_music: { category: 'audiolab_audiogen', providerFlag: 'yue_music_params' },
-        yue2_music: { category: 'audiolab_audiogen', providerFlag: 'yue2_music_params' },
+        'yue-2': { category: 'audiolab_audiogen', providerFlag: 'yue2_music_params' },
         heartlib_music: { category: 'audiolab_audiogen', providerFlag: 'heartlib_music_params' },
-        minimax_music3: { category: 'audiolab_audiogen', providerFlag: 'minimax_music3_params' },
+        'minimax-music-3': { category: 'audiolab_audiogen', providerFlag: 'minimax_music3_params' },
         stableaudio_music: { category: 'audiolab_audiogen', providerFlag: 'stableaudio_music_params' },
         // API TTS providers
         elevenlabs_tts: { category: 'audiolab_tts', providerFlag: 'elevenlabs_tts_params' },
@@ -84,15 +88,25 @@ const AudioLabConfig = {
         dolby_audioproc: { category: 'audiolab_audioproc', providerFlag: 'dolby_audioproc_params' }
     },
 
-    categoryFlags: ['audiolab_tts', 'audiolab_stt', 'audiolab_audiogen', 'audiolab_clone', 'audiolab_audioproc'],
+    // `audiolab_output` belongs here: the backend advertises it for every non-STT provider, so without it in
+    // the remove list the Audio Output Format params render on image models too.
+    categoryFlags: ['audiolab_tts', 'audiolab_stt', 'audiolab_audiogen', 'audiolab_clone', 'audiolab_audioproc', 'audiolab_output', 'audiolab_duration'],
+
+    /** Flags core owns and grants itself. Never add or remove these — core's own grant wins either way. */
+    coreOwnedFlags: ['text2audio', 'audio_ace_inputs'],
+
+    /** Class ids whose compat class core grants `text2audio` to, so core's Text2Audio Duration renders for them
+     *  and AudioLab's own Max Duration must not. 'acestep_music_turbo' is ours but sits under core's
+     *  ace-step-1_5 compat, and core grants by COMPAT class, so it belongs here too. */
+    coreDurationArchs: ['ace-step-1_5', 'acestep_music_turbo', 'minimax-music-3', 'yue-2'],
 
     /** Core image params to hide when an audio model is selected. */
     coreParamsToHide: [
         'steps', 'cfgscale', 'width', 'height', 'sidelength', 'aspectratio',
         'batchsize', 'initimage', 'initimagecreativity', 'initimageresettonorm',
         'initimagenoise', 'maskimage', 'maskblur', 'maskgrow', 'maskshrinkgrow',
-        'useinpaintingencode', 'initimagerecompositemask', 'unsamplepprompt', 'zeronegative',
-        'seamlesstileable', 'cascadelatentcompression', 'sd3textencs',
+        'useinpaintingencode', 'initimagerecompositemask', 'unsamplerprompt', 'zeronegative',
+        'seamlesstileable', 'cascadelatentcompression', 'sdtextencs',
         'fluxguidancescale', 'fluxdisableguidance', 'clipstopatlayer',
         'vaetilesize', 'vaetileoverlap', 'removebackground', 'automaticvae',
         'modelspecificenhancements'
@@ -129,6 +143,16 @@ const AudioLabConfig = {
         'freeu', 'teacache', 'text2video', 'yolov8', 'aitemplate', 'sdcpp'
     ],
 
+    /** True when this param sits in, or under, a group that is meaningless for audio models. */
+    inHiddenGroup(param) {
+        for (let group = param.group; group; group = group.parent) {
+            if (this.coreGroupsToHide.includes(group.id)) {
+                return true;
+            }
+        }
+        return false;
+    },
+
     /** Check if the given architecture is an AudioLab model. */
     isAudioModel(arch) {
         return arch in this.archToCategory;
@@ -159,44 +183,10 @@ featureSetChangers.push(() => {
     const curArch = currentModelHelper.curArch;
     const isAudioModel = AudioLabConfig.isAudioModel(curArch);
 
-    for (const param of gen_param_types) {
-        if (AudioLabConfig.coreParamsToHide.includes(param.id)) {
-            if (isAudioModel) {
-                if (!param.hasOwnProperty('original_feature_flag_audiolab')) {
-                    param.original_feature_flag_audiolab = param.feature_flag;
-                }
-                param.feature_flag = '__audiolab_incompatible__';
-            } else if (param.hasOwnProperty('original_feature_flag_audiolab')) {
-                param.feature_flag = param.original_feature_flag_audiolab;
-                delete param.original_feature_flag_audiolab;
-            }
-        }
-        let inHiddenGroup = false;
-        let currentGroup = param.group;
-        while (currentGroup) {
-            if (AudioLabConfig.coreGroupsToHide.includes(currentGroup.id)) {
-                inHiddenGroup = true;
-                break;
-            }
-            currentGroup = currentGroup.parent;
-        }
-        if (inHiddenGroup) {
-            if (isAudioModel) {
-                if (!param.hasOwnProperty('original_feature_flag_audiolab_group')) {
-                    param.original_feature_flag_audiolab_group = param.feature_flag;
-                }
-                param.feature_flag = '__audiolab_incompatible__';
-            } else if (param.hasOwnProperty('original_feature_flag_audiolab_group')) {
-                param.feature_flag = param.original_feature_flag_audiolab_group;
-                delete param.original_feature_flag_audiolab_group;
-            }
-        }
-    }
-
     if (!isAudioModel) {
-        // `text2audio` is a CORE flag that core itself grants to native ace-step-1_5 models. Removes are
-        // applied after adds, so listing it here would undo core's own grant — leave it to core.
-        return [[], AudioLabConfig.allAudioFlags.filter(f => f != 'text2audio')];
+        // Only ever add/remove flags AudioLab owns. Removes are applied after adds, so returning a core flag
+        // here would undo core's own grant of it.
+        return [[], AudioLabConfig.allAudioFlags.filter(f => !AudioLabConfig.coreOwnedFlags.includes(f))];
     }
 
     const config = AudioLabConfig.archToCategory[curArch];
@@ -205,11 +195,73 @@ featureSetChangers.push(() => {
     if (config.providerFlag) {
         activeSet.add(config.providerFlag);
     }
+    // Mirrors DynamicAudioBackend: every non-STT provider advertises the output-format flag.
+    if (config.category != 'audiolab_stt') {
+        activeSet.add('audiolab_output');
+    }
+    // Our Max Duration only for families core does not already give a duration to.
+    if (config.category == 'audiolab_audiogen' && !AudioLabConfig.coreDurationArchs.includes(curArch)) {
+        activeSet.add('audiolab_duration');
+    }
     const otherAudioFlags = AudioLabConfig.allAudioFlags.filter(f => !activeSet.has(f));
     const removeFlags = [...AudioLabConfig.incompatibleFlags, ...otherAudioFlags];
     const addFlags = ['prompt', ...activeSet];
 
     return [addFlags, removeFlags];
+});
+
+/**
+ * Hides core's image-only params when an audio model is selected.
+ *
+ * This is core's own seam for "extra logic for showing/hiding specific params", and it runs after core has
+ * already decided visibility from the real feature flags. Setting `dataset.disabled` is what actually matters:
+ * `isParamEnabled` reads it, so a param hidden here is also left out of the generation request.
+ *
+ * It replaces an older approach that overwrote `param.feature_flag` on the shared `gen_param_types` objects and
+ * stashed the original alongside. That state is global — API-Backends and the HartsyInference backend patch the
+ * same field — and a param caught by BOTH lists below had its second stash capture the first's sentinel, so
+ * switching back to an image model restored the sentinel and hid Width/Height and the whole Init Image group
+ * until the page was reloaded. Nothing is stashed here, so there is nothing to restore and nothing to collide.
+ */
+hideParamCallbacks.push((groups) => {
+    if (typeof gen_param_types == 'undefined' || !gen_param_types) {
+        return;
+    }
+    if (!AudioLabConfig.isAudioModel(currentModelHelper.curArch)) {
+        return;
+    }
+    for (const param of gen_param_types) {
+        if (!AudioLabConfig.coreParamsToHide.includes(param.id) && !AudioLabConfig.inHiddenGroup(param)) {
+            continue;
+        }
+        const elem = document.getElementById(`input_${param.id}`);
+        const box = elem ? findParentOfClass(elem, 'auto-input') : null;
+        if (!box) {
+            continue;
+        }
+        const wasVisible = box.style.display != 'none';
+        if (!box.dataset.visible_controlled) {
+            box.style.display = 'none';
+        }
+        box.dataset.disabled = 'true';
+        if (!wasVisible) {
+            continue;
+        }
+        // Core counted this param toward its groups before calling us; take it back out, or the group header
+        // stays open around nothing and its altered-count badge overstates.
+        const toggler = document.getElementById(`input_${param.id}_toggle`);
+        const wasAltered = toggler ? toggler.checked : `${getInputVal(elem)}` != `${param.default}`;
+        for (let group = param.group; group; group = group.parent) {
+            const groupData = groups[group.id];
+            if (!groupData) {
+                continue;
+            }
+            groupData.visible = Math.max(0, groupData.visible - 1);
+            if (wasAltered) {
+                groupData.altered = Math.max(0, groupData.altered - 1);
+            }
+        }
+    }
 });
 
 /** Auto-play queue for streaming TTS chunks. Uses the Web Audio API (AudioContext + decodeAudioData +
@@ -291,11 +343,24 @@ const AudioStreamPlayer = {
 };
 
 /** Hook into doGenerate + internalHandleData for streaming audio playback. */
-setTimeout(() => {
+/**
+ * Wraps the generate handler so streamed TTS chunks play as they arrive.
+ *
+ * Core exposes no hook for this (there is no equivalent of hideParamCallbacks or backendsRevisedCallbacks on
+ * the generate handler), so the two methods are wrapped in place. Waiting for the handler by polling a frame at
+ * a time rather than guessing a delay: a fixed timeout either fired before the page was ready on a slow load,
+ * silently installing nothing, or made everyone else wait for the slowest case.
+ */
+function audioLabInstallGenerateHooks(attemptsLeft = 600) {
     const handler = typeof mainGenHandler !== 'undefined' ? mainGenHandler
                   : typeof genHandler !== 'undefined' ? genHandler : null;
     if (!handler) {
-        console.warn('[audiolab] No generate handler found, streaming hooks not installed');
+        if (attemptsLeft > 0) {
+            requestAnimationFrame(() => audioLabInstallGenerateHooks(attemptsLeft - 1));
+        }
+        else {
+            console.warn('[audiolab] No generate handler found, streaming hooks not installed');
+        }
         return;
     }
 
@@ -332,12 +397,85 @@ setTimeout(() => {
     };
 
     console.log('[audiolab] Streaming audio hooks installed');
-}, 600);
+}
+audioLabInstallGenerateHooks();
 
-setTimeout(() => {
+/**
+ * A YuE2 generation carries the score it was planned from in its metadata, where the Generate tab can only
+ * print it. Core has no hook for the buttons under the current image (includeButton is a closure inside
+ * the handler), so the row is watched and appended to — the same class of thing as the generate hook above.
+ */
+function audioLabOfferScoreButton() {
+    try {
+        const row = document.querySelector('#current_image .current-image-buttons');
+        if (!row || row.querySelector('.audiolab-score-btn')) {
+            return;
+        }
+        const img = document.getElementById('current_image_img');
+        const meta = JSON.parse(img?.dataset?.metadata || '{}');
+        const abc = meta?.sui_extra_data?.yue2_score;
+        if (!abc || !String(abc).trim()) {
+            return;
+        }
+        const btn = document.createElement('button');
+        btn.className = 'basic-button audiolab-score-btn';
+        btn.textContent = translate('Open score');
+        btn.title = translate('Open the score this was planned from, in the Audio Lab Score tab');
+        btn.addEventListener('click', () => audioLabOpenScore(String(abc), meta, img.dataset.src));
+        row.appendChild(btn);
+    }
+    catch (e) {
+        // Metadata we cannot read is not a reason to break the Generate tab.
+    }
+}
+
+async function audioLabOpenScore(abc, meta, src) {
+    if (typeof AudioDaw === 'undefined' || typeof AudioDawScore === 'undefined') {
+        return;
+    }
+    try {
+        await AudioDaw.open(src);
+        const extra = meta.sui_extra_data || {}, params = meta.sui_image_params || {};
+        AudioDawScore.loadScore(abc, {
+            source: 'planned',                      // internal id, never translated
+            label: 'From the Generate tab',          // persisted into clip metadata and read back raw elsewhere - never translated, same as other stored labels
+            style: params.textaudiostyle || '',
+            lyrics: params.prompt || '',
+            truncated: extra.yue2_score_truncated === true,
+            budgetSeconds: extra.yue2_budget_seconds ?? null
+        });
+        document.querySelector('#daw_bbar_tabs .nav-link[data-tab="score"]')?.click();
+    }
+    catch (e) {
+        console.error('[audiolab] Could not open the planned score', e);
+    }
+}
+
+function audioLabWatchCurrentImage(attemptsLeft = 600) {
+    const host = document.getElementById('current_image');
+    if (!host) {
+        if (attemptsLeft > 0) {
+            requestAnimationFrame(() => audioLabWatchCurrentImage(attemptsLeft - 1));
+        }
+        return;
+    }
+    new MutationObserver(audioLabOfferScoreButton).observe(host, { childList: true, subtree: true });
+    audioLabOfferScoreButton();
+}
+audioLabWatchCurrentImage();
+
+// Run the first pass once the param list exists, rather than at a guessed moment after load.
+function audioLabInitialParamPass(attemptsLeft = 600) {
+    if (typeof gen_param_types == 'undefined' || !gen_param_types) {
+        if (attemptsLeft > 0) {
+            requestAnimationFrame(() => audioLabInitialParamPass(attemptsLeft - 1));
+        }
+        return;
+    }
     reviseBackendFeatureSet();
     hideUnsupportableParams();
-}, 500);
+}
+audioLabInitialParamPass();
 
 /** Category display order and labels for the engine manager UI. */
 const ENGINE_CATEGORIES = [
@@ -390,7 +528,7 @@ function audioLabLoadEngines(callback) {
 function audioLabRenderEngineManager(container, engines) {
     container.innerHTML = '';
     let header = createDiv(null, 'audiolab-engine-section-header');
-    header.innerHTML = '<b>Available Engines</b>';
+    header.innerHTML = `<b>${translate('Available Engines')}</b>`;
     container.appendChild(header);
 
     for (const cat of ENGINE_CATEGORIES) {
@@ -400,7 +538,7 @@ function audioLabRenderEngineManager(container, engines) {
         // Count only engines you can actually install, so the tally doesn't include disabled cards.
         const usable = catEngines.filter(e => e.available);
         const installedCount = usable.filter(e => e.installed).length;
-        const countLabel = usable.length > 0 ? ` (${installedCount}/${usable.length} installed)` : ` (${catEngines.length})`;
+        const countLabel = usable.length > 0 ? ` (${installedCount}/${usable.length} ${translate('installed')})` : ` (${catEngines.length})`;
         const catGroup = createDiv(null, 'audiolab-cat-group');
         const catHeader = createDiv(null, 'audiolab-cat-header');
         const arrow = document.createElement('span');
@@ -408,7 +546,8 @@ function audioLabRenderEngineManager(container, engines) {
         arrow.innerHTML = '&#x2B9F;';
         catHeader.appendChild(arrow);
         const label = document.createElement('span');
-        label.innerText = cat.label;
+        // Translated at render time, not in ENGINE_CATEGORIES, so a language switch picks it up on refresh.
+        label.innerText = translate(cat.label);
         catHeader.appendChild(label);
         const count = document.createElement('span');
         count.style.cssText = 'color:var(--text-soft);font-weight:normal;font-size:0.85em';
@@ -440,13 +579,14 @@ function audioLabBuildEngineCard(engine) {
     const status = createDiv(null, 'audiolab-engine-status-dot');
     if (!engine.available) {
         status.style.backgroundColor = 'var(--backend-disabled)';
-        status.title = engine.unavailable_note || 'Not available';
+        // Server-supplied note or our own fallback: translated here, so no class="translate" on this one.
+        status.title = engine.unavailable_note || translate('Not available');
     } else if (engine.installed) {
         status.style.backgroundColor = 'var(--backend-running)';
-        status.title = 'Installed';
+        status.title = translate('Installed');
     } else {
         status.style.backgroundColor = 'var(--backend-idle)';
-        status.title = 'Not installed';
+        status.title = translate('Not installed');
     }
     cardHeader.appendChild(status);
     const nameSpan = document.createElement('span');
@@ -456,8 +596,8 @@ function audioLabBuildEngineCard(engine) {
     if (engine.is_api_provider) {
         const apiBadge = document.createElement('span');
         apiBadge.className = 'audiolab-api-badge';
-        apiBadge.innerText = 'API';
-        apiBadge.title = 'Cloud API engine. Untested, so it is disabled for now.';
+        apiBadge.innerText = 'API';   // acronym, not prose
+        apiBadge.title = translate('Cloud API engine. Untested, so it is disabled for now.');
         cardHeader.appendChild(apiBadge);
     }
     card.appendChild(cardHeader);
@@ -483,35 +623,39 @@ function audioLabBuildEngineCard(engine) {
     if (!engine.available) {
         const note = document.createElement('span');
         note.style.cssText = 'color:var(--text-soft);font-size:0.8em;margin-right:auto';
-        note.innerText = engine.unavailable_note || 'Not available yet';
+        note.innerText = engine.unavailable_note || translate('Not available yet');
         footer.appendChild(note);
     } else if (engine.installed) {
 
         // Checkpoint engines can hold several variants, so let the user add or remove individual models.
+        // These footer buttons carry class="translate" and are swept once below: each is written here and
+        // never reassigned, so there is no direct assignment for a later sweep to clobber.
         const perModel = !engine.self_managed && (engine.models || []).length > 1;
         if (perModel) {
             const manageBtn = document.createElement('button');
-            manageBtn.className = 'basic-button btn-primary';
+            manageBtn.className = 'basic-button btn-primary translate';
             manageBtn.innerText = 'Manage';
             manageBtn.title = 'Install or remove individual models';
             manageBtn.addEventListener('click', (e) => { e.stopPropagation(); audioLabShowInstallModal(engine); });
             footer.appendChild(manageBtn);
         }
         const btn = document.createElement('button');
-        btn.className = 'basic-button';
+        btn.className = 'basic-button translate';
         btn.innerText = 'Remove';
         btn.title = 'Remove the whole engine and all its models';
         btn.addEventListener('click', (e) => { e.stopPropagation(); audioLabConfirmUninstall(engine); });
         footer.appendChild(btn);
     } else {
         const btn = document.createElement('button');
-        btn.className = 'basic-button btn-primary';
+        btn.className = 'basic-button btn-primary translate';
         btn.innerText = 'Install';
         btn.addEventListener('click', (e) => { e.stopPropagation(); audioLabShowInstallModal(engine); });
         footer.appendChild(btn);
     }
     card.appendChild(footer);
 
+    // Core's own sweep only runs at page load; this card is built lazily, so sweep it here.
+    applyTranslations(card);
     return card;
 }
 
@@ -522,7 +666,8 @@ function audioLabShowInstallModal(engine) {
     // Disabled engines have no install path; the card shouldn't offer one, but guard anyway so a stale
     // render can't open a modal whose buttons the server would refuse.
     if (!engine.available) {
-        doNoticePopover(`${engine.name} is not available yet: ${engine.unavailable_note || ''}`.trim(), 'notice-pop-yellow');
+        // Only the static wrapper is translated; the engine name and the server's note are passed through.
+        doNoticePopover(`${engine.name}: ${translate('not available yet.')} ${engine.unavailable_note || ''}`.trim(), 'notice-pop-yellow');
         return;
     }
     const existingModal = document.getElementById('audiolab_install_modal');
@@ -533,8 +678,8 @@ function audioLabShowInstallModal(engine) {
     // Per-model install only applies where the extension actually downloads discrete checkpoints.
     const perModel = !engine.self_managed && models.length > 0;
     const runtimeNoteHtml = engine.self_managed
-        ? `<p style="color:var(--text-soft);margin-top:0.5em">⚙ Runs on the HartsyInference C# engine. These models download automatically on first use, no install needed.</p>`
-        : `<p style="color:var(--text-soft);margin-top:0.5em">⚙ Runs on the HartsyInference C# engine. Each model you install downloads its weights to disk.</p>`;
+        ? `<p style="color:var(--text-soft);margin-top:0.5em">⚙ ${translate('Runs on the HartsyInference C# engine. These models download automatically on first use, no install needed.')}</p>`
+        : `<p style="color:var(--text-soft);margin-top:0.5em">⚙ ${translate('Runs on the HartsyInference C# engine. Each model you install downloads its weights to disk.')}</p>`;
 
     let modelsListHtml = '';
     if (models.length > 0) {
@@ -560,8 +705,8 @@ function audioLabShowInstallModal(engine) {
     }
 
     const heading = perModel
-        ? `<b>Models (${models.length})</b>, install only what you need:`
-        : `<b>Models to download (${models.length}):</b>`;
+        ? `<b>${translate('Models')} (${models.length})</b> &mdash; ${translate('install only what you need:')}`
+        : `<b>${translate('Models to download')} (${models.length}):</b>`;
     const bodyHtml = `
         <div class="modal-body">
             <p><b>${escapeHtml(engine.name)}</b></p>
@@ -570,22 +715,26 @@ function audioLabShowInstallModal(engine) {
             ${modelsListHtml}
             ${runtimeNoteHtml}
             <div id="audiolab_install_progress" style="display:none;margin-top:1em">
-                <p style="color:var(--text-soft)"><b>Progress:</b></p>
+                <p style="color:var(--text-soft)"><b>${translate('Progress:')}</b></p>
                 <div id="audiolab_install_progress_text" style="font-family:monospace;font-size:0.85em;max-height:150px;overflow-y:auto;padding:0.5em;border:1px solid var(--border-color);border-radius:4px"></div>
             </div>
         </div>`;
 
     const footerHtml = perModel
         ? `<div class="modal-footer">
-            <button class="btn btn-primary basic-button" id="audiolab_install_downloadall_btn">Download All</button>
-            <button class="btn btn-secondary basic-button" id="audiolab_install_cancel_btn">Close</button>
+            <button class="btn btn-primary basic-button" id="audiolab_install_downloadall_btn">${translate('Download All')}</button>
+            <button class="btn btn-secondary basic-button" id="audiolab_install_cancel_btn">${translate('Close')}</button>
         </div>`
         : `<div class="modal-footer">
-            <button class="btn btn-primary basic-button" id="audiolab_install_confirm_btn">Install</button>
-            <button class="btn btn-secondary basic-button" id="audiolab_install_cancel_btn">Cancel</button>
+            <button class="btn btn-primary basic-button" id="audiolab_install_confirm_btn">${translate('Install')}</button>
+            <button class="btn btn-secondary basic-button" id="audiolab_install_cancel_btn">${translate('Cancel')}</button>
         </div>`;
 
-    const title = perModel && engine.installed ? `Manage ${escapeHtml(engine.name)}` : `Install ${escapeHtml(engine.name)}`;
+    // The Download All / Install button's label is rewritten later (audioLabUpdateManageFooter, audioLabDoInstall),
+    // so it is translated inline here and at every reassignment — never via class="translate".
+    const title = perModel && engine.installed
+        ? `${translate('Manage')} ${escapeHtml(engine.name)}`
+        : `${translate('Install')} ${escapeHtml(engine.name)}`;
     const html = modalHeader('audiolab_install_modal', title) + bodyHtml + footerHtml + modalFooter();
 
     const wrapper = document.createElement('div');
@@ -632,19 +781,19 @@ function audioLabRenderModelRow(engine, model, row) {
     if (model.installed) {
         const badge = document.createElement('span');
         badge.className = 'audiolab-model-installed';
-        badge.innerText = '✓ Installed';
+        badge.innerText = '✓ ' + translate('Installed');
         statusCell.appendChild(badge);
         const removeBtn = document.createElement('button');
         removeBtn.className = 'basic-button audiolab-model-btn';
-        removeBtn.innerText = 'Remove';
-        removeBtn.title = 'Delete this model\'s weights from disk';
+        removeBtn.innerText = translate('Remove');
+        removeBtn.title = translate('Delete this model\'s weights from disk');
         removeBtn.addEventListener('click', () => audioLabRemoveModel(engine, model, row));
         actionCell.appendChild(removeBtn);
     }
     else {
         const installBtn = document.createElement('button');
         installBtn.className = 'basic-button btn-primary audiolab-model-btn';
-        installBtn.innerText = 'Install';
+        installBtn.innerText = translate('Install');
         // Refresh the footer after a single install so it flips to Remove All once the last model lands.
         installBtn.addEventListener('click', async () => { await audioLabInstallModel(engine, model, row); audioLabUpdateManageFooter(engine); });
         actionCell.appendChild(installBtn);
@@ -666,8 +815,8 @@ function audioLabInstallModel(engine, model, row) {
     const actionCell = row.querySelector('[data-model-action]');
     const statusCell = row.querySelector('[data-model-status]');
     if (actionCell) actionCell.innerHTML = '';
-    if (statusCell) statusCell.innerHTML = '<span class="audiolab-model-installing">Installing…</span>';
-    const progressText = audioLabShowProgress(`Installing ${model.name}…`);
+    if (statusCell) statusCell.innerHTML = `<span class="audiolab-model-installing">${translate('Installing…')}</span>`;
+    const progressText = audioLabShowProgress(`${translate('Installing')} ${model.name}…`);
 
     return new Promise(resolve => {
         makeWSRequest('AudioLabInstallEngine', { provider_id: engine.id, model_id: model.id }, data => {
@@ -675,22 +824,23 @@ function audioLabInstallModel(engine, model, row) {
                 if (progressText) { progressText.innerText += data.info + '\n'; progressText.scrollTop = progressText.scrollHeight; }
             }
             else if (data.success) {
-                if (progressText) { progressText.innerText += `${model.name} installed.\n`; progressText.scrollTop = progressText.scrollHeight; }
+                if (progressText) { progressText.innerText += `${model.name}: ${translate('installed.')}\n`; progressText.scrollTop = progressText.scrollHeight; }
                 model.installed = true;
                 audioLabRenderModelRow(engine, model, row);
                 audioLabRefreshEngineManager();
                 resolve(true);
             }
             else if (data.error) {
-                if (progressText) { progressText.innerText += `Error: ${data.error}\n`; progressText.scrollTop = progressText.scrollHeight; }
+                // Raw server error text is never translated — only the label in front of it.
+                if (progressText) { progressText.innerText += `${translate('Error:')} ${data.error}\n`; progressText.scrollTop = progressText.scrollHeight; }
                 audioLabRenderModelRow(engine, model, row);
-                showError(`Failed to install ${model.name}: ${data.error}`);
+                showError(`${translate('Failed to install')} ${model.name}: ${data.error}`);
                 resolve(false);
             }
         }, 0, e => {
-            if (progressText) { progressText.innerText += `Connection error: ${e}\n`; }
+            if (progressText) { progressText.innerText += `${translate('Connection error:')} ${e}\n`; }
             audioLabRenderModelRow(engine, model, row);
-            showError(`Failed to install ${model.name}: ${e}`);
+            showError(`${translate('Failed to install')} ${model.name}: ${e}`);
             resolve(false);
         });
     });
@@ -706,20 +856,21 @@ function audioLabDoRemoveModel(engine, model, row) {
                 if (row) audioLabRenderModelRow(engine, model, row);
                 resolve(true);
             } else {
-                showError(`Failed to remove ${model.name}: ${data.error || 'Unknown error'}`);
+                showError(`${translate('Failed to remove')} ${model.name}: ${data.error || translate('Unknown error')}`);
                 resolve(false);
             }
-        }, 0, e => { showError(`Failed to remove ${model.name}: ${e}`); resolve(false); });
+        }, 0, e => { showError(`${translate('Failed to remove')} ${model.name}: ${e}`); resolve(false); });
     });
 }
 
 /** Deletes one model's weights from disk, leaving the engine installed. */
 async function audioLabRemoveModel(engine, model, row) {
-    if (!confirm(`Delete ${model.name}'s weights from disk?\n\nThe model stays listed and re-downloads if you use it again.`)) {
+    if (!confirm(`${translate('Delete this model\'s weights from disk?')} (${model.name})`
+        + `\n\n${translate('The model stays listed and re-downloads if you use it again.')}`)) {
         return;
     }
     if (await audioLabDoRemoveModel(engine, model, row)) {
-        doNoticePopover(`${model.name} weights removed.`, 'notice-pop-green');
+        doNoticePopover(`${model.name}: ${translate('weights removed.')}`, 'notice-pop-green');
         audioLabUpdateManageFooter(engine);
         audioLabRefreshEngineManager();
     }
@@ -730,7 +881,7 @@ async function audioLabRemoveModel(engine, model, row) {
 function audioLabDownloadAll(engine, modal, button) {
     const pending = (engine.models || []).filter(m => !m.installed);
     if (pending.length === 0) {
-        doNoticePopover(`All ${engine.name} models are already installed.`, 'notice-pop-green');
+        doNoticePopover(`${engine.name}: ${translate('all models are already installed.')}`, 'notice-pop-green');
         return;
     }
     // Mark every pending row as installing up front (the server installs them in sequence).
@@ -739,11 +890,12 @@ function audioLabDownloadAll(engine, modal, button) {
         const statusCell = row && row.querySelector('[data-model-status]');
         const actionCell = row && row.querySelector('[data-model-action]');
         if (actionCell) actionCell.innerHTML = '';
-        if (statusCell) statusCell.innerHTML = '<span class="audiolab-model-installing">Installing…</span>';
+        if (statusCell) statusCell.innerHTML = `<span class="audiolab-model-installing">${translate('Installing…')}</span>`;
     }
     button.disabled = true;
-    button.innerText = 'Downloading…';
-    const progressText = audioLabShowProgress(`Installing all ${engine.name} models…`);
+    // This button's label flips between several states, so every assignment translates itself.
+    button.innerText = translate('Downloading…');
+    const progressText = audioLabShowProgress(`${engine.name}: ${translate('installing all models…')}`);
     const flipRow = (modelId, installed) => {
         const model = (engine.models || []).find(m => m.id === modelId);
         const row = modal.querySelector(`tr[data-model-id="${cssEscape(modelId)}"]`);
@@ -758,15 +910,16 @@ function audioLabDownloadAll(engine, modal, button) {
         }
         else if (data.success) {
             button.disabled = false;
-            button.innerText = 'Download All';
-            doNoticePopover(data.message || `Installed ${engine.name} models.`, data.installed === data.total ? 'notice-pop-green' : 'notice-pop-red');
+            button.innerText = translate('Download All');
+            // data.message is server-authored text; only our own fallback is translated.
+            doNoticePopover(data.message || `${engine.name}: ${translate('models installed.')}`, data.installed === data.total ? 'notice-pop-green' : 'notice-pop-red');
             audioLabUpdateManageFooter(engine);
             audioLabRefreshEngineManager();
         }
         else if (data.error) {
             button.disabled = false;
-            button.innerText = 'Download All';
-            if (progressText) { progressText.innerText += `Error: ${data.error}\n`; }
+            button.innerText = translate('Download All');
+            if (progressText) { progressText.innerText += `${translate('Error:')} ${data.error}\n`; }
             showError(data.error);
             // Re-render rows to whatever their real state is now.
             for (const m of pending) { const row = modal.querySelector(`tr[data-model-id="${cssEscape(m.id)}"]`); if (row) audioLabRenderModelRow(engine, m, row); }
@@ -774,8 +927,8 @@ function audioLabDownloadAll(engine, modal, button) {
         }
     }, 0, e => {
         button.disabled = false;
-        button.innerText = 'Download All';
-        showError(`Install-all failed: ${e}`);
+        button.innerText = translate('Download All');
+        showError(`${translate('Install-all failed:')} ${e}`);
         for (const m of pending) { const row = modal.querySelector(`tr[data-model-id="${cssEscape(m.id)}"]`); if (row) audioLabRenderModelRow(engine, m, row); }
         audioLabUpdateManageFooter(engine);
     });
@@ -786,14 +939,15 @@ function audioLabDownloadAll(engine, modal, button) {
 function audioLabRemoveAll(engine, modal, button) {
     const models = (engine.models || []).filter(m => m.installed);
     if (models.length === 0) {
-        doNoticePopover(`No ${engine.name} models are installed.`, 'notice-pop-green');
+        doNoticePopover(`${engine.name}: ${translate('no models are installed.')}`, 'notice-pop-green');
         return;
     }
-    if (!confirm(`Remove all ${models.length} installed ${engine.name} model(s)?\n\nTheir weights are deleted from disk; they re-download if used again.`)) {
+    if (!confirm(`${translate('Remove every installed model?')} (${engine.name}, ${models.length})`
+        + `\n\n${translate('Their weights are deleted from disk; they re-download if used again.')}`)) {
         return;
     }
     button.disabled = true;
-    button.innerText = 'Removing…';
+    button.innerText = translate('Removing…');
     genericRequest('AudioLabRemoveAllModels', { provider_id: engine.id }, data => {
         button.disabled = false;
         if (data.success) {
@@ -803,15 +957,15 @@ function audioLabRemoveAll(engine, modal, button) {
                 if (model) model.installed = false;
                 if (model && row) audioLabRenderModelRow(engine, model, row);
             }
-            doNoticePopover(data.message || `Removed ${engine.name} models.`, data.removed === data.total ? 'notice-pop-green' : 'notice-pop-red');
+            doNoticePopover(data.message || `${engine.name}: ${translate('models removed.')}`, data.removed === data.total ? 'notice-pop-green' : 'notice-pop-red');
         } else {
-            showError(data.error || 'Remove all failed');
+            showError(data.error || translate('Remove all failed'));
         }
         audioLabUpdateManageFooter(engine);
         audioLabRefreshEngineManager();
     }, 0, e => {
         button.disabled = false;
-        showError(`Remove all failed: ${e}`);
+        showError(`${translate('Remove all failed:')} ${e}`);
         audioLabUpdateManageFooter(engine);
     });
 }
@@ -829,14 +983,15 @@ function audioLabUpdateManageFooter(engine) {
     const btn = oldBtn.cloneNode(false);
     btn.id = 'audiolab_install_downloadall_btn';
     oldBtn.parentNode.replaceChild(btn, oldBtn);
+    // Same element, relabelled every time this runs: translate at each assignment, never class="translate".
     if (allInstalled) {
         btn.className = 'btn btn-danger basic-button';
-        btn.innerText = 'Remove All';
-        btn.title = 'Delete every installed model\'s weights from disk';
+        btn.innerText = translate('Remove All');
+        btn.title = translate('Delete every installed model\'s weights from disk');
         btn.addEventListener('click', () => audioLabRemoveAll(engine, modal, btn));
     } else {
         btn.className = 'btn btn-primary basic-button';
-        btn.innerText = 'Download All';
+        btn.innerText = translate('Download All');
         btn.title = '';
         btn.addEventListener('click', () => audioLabDownloadAll(engine, modal, btn));
     }
@@ -850,10 +1005,10 @@ function audioLabDoInstall(engine, modal) {
     const progressText = document.getElementById('audiolab_install_progress_text');
 
     confirmBtn.disabled = true;
-    confirmBtn.innerText = 'Installing...';
+    confirmBtn.innerText = translate('Installing...');
     cancelBtn.disabled = true;
     progressArea.style.display = 'block';
-    progressText.innerText = 'Starting installation...\n';
+    progressText.innerText = translate('Starting installation...') + '\n';
 
     makeWSRequest('AudioLabInstallEngine', { provider_id: engine.id }, data => {
         if (data.info) {
@@ -861,47 +1016,48 @@ function audioLabDoInstall(engine, modal) {
             progressText.scrollTop = progressText.scrollHeight;
         }
         else if (data.success) {
-            progressText.innerText += 'Installation complete!\n';
+            progressText.innerText += translate('Installation complete!') + '\n';
             setTimeout(() => {
                 $(modal).modal('hide');
                 setTimeout(() => modal.remove(), 300);
-                doNoticePopover(`${engine.name} installed!`, 'notice-pop-green');
+                doNoticePopover(`${engine.name}: ${translate('installed!')}`, 'notice-pop-green');
                 audioLabRefreshEngineManager();
             }, 1000);
         }
         else if (data.error) {
-            progressText.innerText += `Error: ${data.error}\n`;
+            progressText.innerText += `${translate('Error:')} ${data.error}\n`;
             confirmBtn.disabled = false;
-            confirmBtn.innerText = 'Retry';
+            confirmBtn.innerText = translate('Retry');
             cancelBtn.disabled = false;
-            showError(`Failed to install ${engine.name}: ${data.error}`);
+            showError(`${translate('Failed to install')} ${engine.name}: ${data.error}`);
         }
     }, 0, e => {
-        progressText.innerText += `Connection error: ${e}\n`;
+        progressText.innerText += `${translate('Connection error:')} ${e}\n`;
         confirmBtn.disabled = false;
-        confirmBtn.innerText = 'Retry';
+        confirmBtn.innerText = translate('Retry');
         cancelBtn.disabled = false;
-        showError(`Failed to install ${engine.name}: ${e}`);
+        showError(`${translate('Failed to install')} ${engine.name}: ${e}`);
     });
 }
 
 /** Confirms and uninstalls an engine, optionally deleting its downloaded weights from disk. */
 function audioLabConfirmUninstall(engine) {
-    if (!confirm(`Remove ${engine.name}? Its models will be unregistered from the model browser.`)) {
+    if (!confirm(`${translate('Remove this engine?')} (${engine.name})`
+        + `\n\n${translate('Its models will be unregistered from the model browser.')}`)) {
         return;
     }
     // Second prompt: keep or delete the downloaded files. Engine-private weights are removed; shared
     // side-model caches (used by other installed engines) are retained automatically by the backend.
     const deleteWeights = confirm(
-        `Also DELETE ${engine.name}'s downloaded weights from disk to free space?\n\n`
-        + `OK = delete the files (you'll re-download to use it again).\n`
-        + `Cancel = keep the files on disk.`);
+        `${translate('Also DELETE its downloaded weights from disk to free space?')} (${engine.name})\n\n`
+        + `${translate('OK = delete the files (you\'ll re-download to use it again).')}\n`
+        + `${translate('Cancel = keep the files on disk.')}`);
     genericRequest('AudioLabUninstallEngine', { provider_id: engine.id, delete_weights: deleteWeights }, data => {
         if (data.success) {
-            doNoticePopover(`${engine.name} removed${data.deleted_weights ? ' (weights deleted)' : ''}.`, 'notice-pop-green');
+            doNoticePopover(`${engine.name}: ${data.deleted_weights ? translate('removed (weights deleted).') : translate('removed.')}`, 'notice-pop-green');
             audioLabRefreshEngineManager();
         } else {
-            showError(`Failed to remove ${engine.name}: ${data.error || 'Unknown error'}`);
+            showError(`${translate('Failed to remove')} ${engine.name}: ${data.error || translate('Unknown error')}`);
         }
     });
 }
@@ -916,7 +1072,8 @@ function audioLabRefreshEngineManager() {
     });
 }
 
-registerMediaButton('Audio Lab', (src) => AudioLab.open(src), 'Open Audio Lab for editing, voice cloning setup, and export', ['audio'], true);
+// 'Audio Lab' is the extension's own name, so it is left as-is; the tooltip beside it is prose.
+registerMediaButton('Audio Lab', (src) => AudioLab.open(src), translate('Open Audio Lab for editing, voice cloning setup, and export'), ['audio'], true);
 
 /** Injects engine manager UI into Audio Backend cards via backendsRevisedCallbacks. */
 backendsRevisedCallbacks.push(() => {
@@ -939,7 +1096,7 @@ backendsRevisedCallbacks.push(() => {
         cardBody.appendChild(separator);
 
         const container = createDiv(`audiolab_engine_manager_${id}`, 'audiolab-engine-manager');
-        container.innerHTML = '<em style="color:var(--text-soft)">Loading engines...</em>';
+        container.innerHTML = `<em style="color:var(--text-soft)">${translate('Loading engines...')}</em>`;
         cardBody.appendChild(container);
 
         audioLabLoadEngines(engines => {

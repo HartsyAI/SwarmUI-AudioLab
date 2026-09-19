@@ -109,17 +109,17 @@ const AudioLabPlayer = (() => {
 
     function buildControlsHTML(opts) {
         const parts = [];
-        parts.push('<button class="alp-btn alp-play" title="Play/Pause"><span>&#x25B6;</span></button>');
-        parts.push('<button class="alp-btn alp-stop" title="Stop"><span>&#x25A0;</span></button>');
+        parts.push(`<button class="alp-btn alp-play" title="${translate('Play/Pause')}"><span>&#x25B6;</span></button>`);
+        parts.push(`<button class="alp-btn alp-stop" title="${translate('Stop')}"><span>&#x25A0;</span></button>`);
         parts.push('<span class="alp-time"><span class="alp-current">0:00</span> / <span class="alp-duration">0:00</span></span>');
         if (opts.showVolume) {
             parts.push('<div class="alp-volume-group">');
-            parts.push('<button class="alp-btn alp-mute" title="Mute"><span>&#x266B;</span></button>');
+            parts.push(`<button class="alp-btn alp-mute" title="${translate('Mute')}"><span>&#x266B;</span></button>`);
             parts.push('<input type="range" class="alp-volume" min="0" max="1" step="0.05" value="0.8">');
             parts.push('</div>');
         }
         if (opts.showSpeed) {
-            parts.push('<select class="alp-speed" title="Playback speed">');
+            parts.push(`<select class="alp-speed" title="${translate('Playback speed')}">`);
             parts.push('<option value="0.5">0.5x</option>');
             parts.push('<option value="0.75">0.75x</option>');
             parts.push('<option value="1" selected>1x</option>');
@@ -130,12 +130,12 @@ const AudioLabPlayer = (() => {
         }
         if (opts.enableRegions && !opts.editorMode) {
             parts.push('<span class="alp-separator"></span>');
-            parts.push('<button class="alp-btn alp-select-region" title="Select region for trim"><span>&#x2194;</span></button>');
-            parts.push('<button class="alp-btn alp-trim" title="Trim to selection" disabled><span>&#x2702;</span></button>');
-            parts.push('<button class="alp-btn alp-split" title="Split at cursor"><span>&#x2502;&#x2502;</span></button>');
+            parts.push(`<button class="alp-btn alp-select-region" title="${translate('Select region for trim')}"><span>&#x2194;</span></button>`);
+            parts.push(`<button class="alp-btn alp-trim" title="${translate('Trim to selection')}" disabled><span>&#x2702;</span></button>`);
+            parts.push(`<button class="alp-btn alp-split" title="${translate('Split at cursor')}"><span>&#x2502;&#x2502;</span></button>`);
         }
         if (opts.showDownload) {
-            parts.push('<button class="alp-btn alp-download" title="Download"><span>&#x2913;</span></button>');
+            parts.push(`<button class="alp-btn alp-download" title="${translate('Download')}"><span>&#x2913;</span></button>`);
         }
         return parts.join('');
     }
@@ -246,17 +246,17 @@ const AudioLabPlayer = (() => {
         });
         ws.on('timeupdate', (currentTime) => {
             const currentEl = el?.querySelector('.alp-current');
-            if (currentEl) currentEl.textContent = formatTime(currentTime);
+            if (currentEl) currentEl.textContent = durationStringifyColons(currentTime);
             fire(state, 'timeupdate', currentTime);
         });
         ws.on('decode', (duration) => {
             const durationEl = el?.querySelector('.alp-duration');
-            if (durationEl) durationEl.textContent = formatTime(duration);
+            if (durationEl) durationEl.textContent = durationStringifyColons(duration);
             fire(state, 'decode', duration);
         });
         ws.on('ready', (duration) => {
             const durationEl = el?.querySelector('.alp-duration');
-            if (durationEl) durationEl.textContent = formatTime(duration);
+            if (durationEl) durationEl.textContent = durationStringifyColons(duration);
             fire(state, 'ready', duration);
         });
     }
@@ -266,12 +266,6 @@ const AudioLabPlayer = (() => {
         if (cbs) cbs.forEach(cb => cb(...args));
     }
 
-    function formatTime(seconds) {
-        if (!seconds || !isFinite(seconds)) return '0:00';
-        const m = Math.floor(seconds / 60);
-        const s = Math.floor(seconds % 60);
-        return `${m}:${s.toString().padStart(2, '0')}`;
-    }
 
     /**
      * Build the public API object for a player instance.
@@ -564,7 +558,6 @@ const AudioLabPlayer = (() => {
         createMini,
         createRecorder,
         getById,
-        destroyAll,
-        formatTime
+        destroyAll
     };
 })();

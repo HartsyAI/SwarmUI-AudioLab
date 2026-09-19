@@ -11,6 +11,9 @@
 const AudioDaw = (() => {
     'use strict';
 
+    /** MM:SS with one decimal, via core's shared formatter (which also rolls over past an hour). */
+    const durationStringifyColons2 = (seconds) => durationStringifyColons(seconds, 1);
+
     const MAX_UNDO = 30;
 
     // ===== DAW STATE =====
@@ -133,7 +136,7 @@ const AudioDaw = (() => {
             if (firstOpen) maybeOfferResume().then(maybeShowStartScreen);
             return;
         }
-        const overlay = showDawLoadingOverlay('Loading audio...');
+        const overlay = showDawLoadingOverlay(translate('Loading audio...'));
         try {
             const blob = await fetchAsBlob(audioSrc);
             if (!firstOpen) pushUndo(); // adding into a live session
@@ -152,7 +155,7 @@ const AudioDaw = (() => {
         } catch (err) {
             console.error('[AudioDaw] Failed to load audio:', err);
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Failed to load audio: ' + err.message, 'notice-pop-red');
+                doNoticePopover(translate('Failed to load audio:') + ' ' + err.message, 'notice-pop-red');
             }
         }
         hideDawLoadingOverlay(overlay);
@@ -176,25 +179,25 @@ const AudioDaw = (() => {
         if (existing) existing.remove();
         const dlg = createDiv(null, 'daw-shortcut-help daw-close-dialog');
         const title = createDiv(null, 'daw-shortcut-help-title');
-        title.textContent = 'Close Audio Lab?';
+        title.textContent = translate('Close Audio Lab?');
         dlg.appendChild(title);
         const msg = createDiv(null, 'daw-stems-desc');
-        msg.textContent = 'Save this session as a project, or discard it. Discarded sessions are gone for good.';
+        msg.textContent = translate('Save this session as a project, or discard it. Discarded sessions are gone for good.');
         dlg.appendChild(msg);
         const row = createDiv(null, 'daw-clip-editor-actions');
         row.style.marginTop = '0.75rem';
-        quickAppendButton(row, 'Save & Close', async () => {
-            const name = prompt('Project name:', currentProjectName || 'My Project');
+        quickAppendButton(row, translate('Save & Close'), async () => {
+            const name = prompt(translate('Project name:'), currentProjectName || 'My Project');
             if (!name || !name.trim()) return; // keep dialog open — treat as cancel
             dlg.remove();
             await saveProjectToServer(name.trim());
             finishClose();
-        }, ' basic-button btn-primary', 'Save the project to the server, then close');
-        quickAppendButton(row, 'Discard', () => {
+        }, ' basic-button btn-primary', translate('Save the project to the server, then close'));
+        quickAppendButton(row, translate('Discard'), () => {
             dlg.remove();
             finishClose();
-        }, ' basic-button', 'Throw this session away and close');
-        quickAppendButton(row, 'Cancel', () => dlg.remove(), ' basic-button', 'Keep working');
+        }, ' basic-button', translate('Throw this session away and close'));
+        quickAppendButton(row, translate('Cancel'), () => dlg.remove(), ' basic-button', translate('Keep working'));
         dlg.appendChild(row);
         (document.getElementById('daw_container') || document.body).appendChild(dlg);
     }
@@ -222,6 +225,14 @@ const AudioDaw = (() => {
         initTimeline();
         buildBottomPanel();
         updateLaneGrid();
+        // The bottom tab strip is static markup (Audio Lab.html) carrying class="translate";
+        // its labels are never reassigned, so one sweep here is safe and covers the case where
+        // the tab pane is injected after core's one-time page-load sweep has already run.
+        // Everything this file builds in JS bakes translate() in directly instead.
+        if (typeof applyTranslations === 'function') {
+            const tabs = document.getElementById('daw_bbar_tabs');
+            if (tabs) applyTranslations(tabs);
+        }
         // Splitters + scroll sync bind document/element listeners — the tab DOM is
         // static across sessions, so bind exactly once or handlers stack up every open.
         if (!listenersInitialized) {
@@ -357,7 +368,7 @@ const AudioDaw = (() => {
         const recBtn = document.createElement('button');
         recBtn.className = 'daw-transport-btn daw-btn-rec';
         recBtn.innerHTML = DAW_ICONS.record;
-        recBtn.title = 'Record into armed track (R)';
+        recBtn.title = translate('Record into armed track (R)');
         recBtn.addEventListener('click', () => {
             if (recording) stopRecordingFlow(); else startRecordingFlow();
         });
@@ -365,27 +376,27 @@ const AudioDaw = (() => {
         const micBtn = document.createElement('button');
         micBtn.className = 'daw-transport-btn daw-btn-mic-settings';
         micBtn.innerHTML = DAW_ICONS.caretDown;
-        micBtn.title = 'Microphone settings';
+        micBtn.title = translate('Microphone settings');
         micBtn.addEventListener('click', (e) => showMicSettingsMenu(e));
         recWrap.appendChild(micBtn);
         transGroup.appendChild(recWrap);
-        quickAppendButton(transGroup, DAW_ICONS.toStart, () => seekTo(0), ' daw-transport-btn', 'Rewind to start');
+        quickAppendButton(transGroup, DAW_ICONS.toStart, () => seekTo(0), ' daw-transport-btn', translate('Rewind to start'));
         const playBtn = document.createElement('button');
         playBtn.className = 'daw-transport-btn daw-btn-play';
         playBtn.innerHTML = DAW_ICONS.play;
-        playBtn.title = 'Play / Pause (Space)';
+        playBtn.title = translate('Play / Pause (Space)');
         playBtn.addEventListener('click', togglePlayback);
         transGroup.appendChild(playBtn);
         quickAppendButton(transGroup, DAW_ICONS.stop, () => {
             if (recording) { stopRecordingFlow(); return; }
             stopPlayback();
             seekTo(0);
-        }, ' daw-transport-btn', 'Stop');
-        quickAppendButton(transGroup, DAW_ICONS.toEnd, () => seekTo(state.contentDuration), ' daw-transport-btn', 'Go to end');
+        }, ' daw-transport-btn', translate('Stop'));
+        quickAppendButton(transGroup, DAW_ICONS.toEnd, () => seekTo(state.contentDuration), ' daw-transport-btn', translate('Go to end'));
         const loopBtn = document.createElement('button');
         loopBtn.className = 'daw-transport-btn daw-btn-text daw-btn-loop' + (state.loopEnabled ? ' active' : '');
-        loopBtn.textContent = 'LOOP';
-        loopBtn.title = 'Toggle Loop (L)';
+        loopBtn.textContent = translate('LOOP');
+        loopBtn.title = translate('Toggle Loop (L)');
         loopBtn.addEventListener('click', toggleLoop);
         transGroup.appendChild(loopBtn);
 
@@ -395,7 +406,7 @@ const AudioDaw = (() => {
         timeDisplayEl.textContent = '0:00.0 / 0:00.0';
         const lcdBeats = createSpan(null, 'daw-lcd-beats');
         lcdBeats.textContent = '1.1.1';
-        lcdBeats.title = 'Position in bars.beats.sixteenths';
+        lcdBeats.title = translate('Position in bars.beats.sixteenths');
         lcd.appendChild(timeDisplayEl);
         lcd.appendChild(lcdBeats);
         transportEl.appendChild(lcd);
@@ -406,14 +417,14 @@ const AudioDaw = (() => {
         // ── Zoom ──
         const zoomGroup = mkGroup(' daw-tgroup-fields');
         const zoomLabel = createSpan(null, 'daw-transport-label');
-        zoomLabel.textContent = 'ZOOM';
+        zoomLabel.textContent = translate('ZOOM');
         const zoomSlider = document.createElement('input');
         zoomSlider.type = 'range';
         zoomSlider.className = 'daw-transport-zoom';
         zoomSlider.min = '10';
         zoomSlider.max = '500';
         zoomSlider.value = state.zoom;
-        zoomSlider.title = 'Timeline zoom (pixels per second)';
+        zoomSlider.title = translate('Timeline zoom (pixels per second)');
         zoomSlider.addEventListener('input', (e) => {
             setZoom(parseInt(e.target.value));
         });
@@ -423,7 +434,7 @@ const AudioDaw = (() => {
         // ── Tempo: BPM + time signature ──
         const tempoGroup = mkGroup(' daw-tgroup-fields');
         const bpmLabel = createSpan(null, 'daw-transport-label');
-        bpmLabel.textContent = 'BPM';
+        bpmLabel.textContent = translate('BPM');
         bpmInputEl = document.createElement('input');
         bpmInputEl.type = 'number';
         bpmInputEl.className = 'daw-transport-bpm';
@@ -443,7 +454,7 @@ const AudioDaw = (() => {
         });
         const sigSelect = document.createElement('select');
         sigSelect.className = 'daw-transport-timesig';
-        sigSelect.title = 'Time signature';
+        sigSelect.title = translate('Time signature');
         for (const sig of ['4/4', '3/4', '6/8', '2/4', '5/4']) {
             const opt = document.createElement('option');
             opt.value = sig;
@@ -477,15 +488,15 @@ const AudioDaw = (() => {
             segBtns.push([b, mode]);
             rulerGroup.appendChild(b);
         };
-        mkSeg('TIME', 'time', 'Ruler shows minutes:seconds');
-        mkSeg('BARS', 'beats', 'Ruler shows bars/beats at the project tempo');
+        mkSeg(translate('TIME'), 'time', translate('Ruler shows minutes:seconds'));
+        mkSeg(translate('BARS'), 'beats', translate('Ruler shows bars/beats at the project tempo'));
 
         // ── Workspace toggles: snap-to-grid, sound palette ──
         const togGroup = mkGroup();
         const snapBtn = document.createElement('button');
         snapBtn.className = 'daw-transport-btn daw-btn-text daw-btn-snap' + (state.snapEnabled ? ' active' : '');
-        snapBtn.textContent = 'SNAP';
-        snapBtn.title = 'Snap to grid';
+        snapBtn.textContent = translate('SNAP');
+        snapBtn.title = translate('Snap to grid');
         snapBtn.addEventListener('click', () => {
             state.snapEnabled = !state.snapEnabled;
             snapBtn.classList.toggle('active', state.snapEnabled);
@@ -493,8 +504,8 @@ const AudioDaw = (() => {
         togGroup.appendChild(snapBtn);
         const palBtn = document.createElement('button');
         palBtn.className = 'daw-transport-btn daw-btn-text daw-btn-palette';
-        palBtn.textContent = 'SOUNDS';
-        palBtn.title = 'Sound Palette: generate SFX/loops on demand (audition, then add)';
+        palBtn.textContent = translate('SOUNDS');
+        palBtn.title = translate('Sound Palette: generate SFX/loops on demand (audition, then add)');
         palBtn.addEventListener('click', () => togglePalette(palBtn));
         togGroup.appendChild(palBtn);
 
@@ -517,13 +528,13 @@ const AudioDaw = (() => {
             fileGroup.appendChild(b);
             return b;
         };
-        mkFileBtn('PROJECT', 'Save, load, or start projects', (e) => showProjectMenu(e));
-        mkFileBtn('IMPORT', 'Add audio from your outputs or your computer', (e) => showImportMenu(e));
-        mkFileBtn('EXPORT', 'Export the mixdown (WAV/MP3/OGG/FLAC/AAC or to Outputs)', (e) => showExportMenu(e));
+        mkFileBtn(translate('PROJECT'), translate('Save, load, or start projects'), (e) => showProjectMenu(e));
+        mkFileBtn(translate('IMPORT'), translate('Add audio from your outputs or your computer'), (e) => showImportMenu(e));
+        mkFileBtn(translate('EXPORT'), translate('Export the mixdown (WAV/MP3/OGG/FLAC/AAC or to Outputs)'), (e) => showExportMenu(e));
         const closeBtn = document.createElement('button');
         closeBtn.className = 'daw-transport-btn daw-btn-close';
         closeBtn.innerHTML = '&#x2715;';
-        closeBtn.title = 'Close Audio Lab';
+        closeBtn.title = translate('Close Audio Lab');
         closeBtn.addEventListener('click', close);
         transportEl.appendChild(closeBtn);
     }
@@ -533,8 +544,8 @@ const AudioDaw = (() => {
     /** Show the unified import menu: server outputs or local files. */
     function showImportMenu(e) {
         dawMenu(e, [
-            { label: 'From Outputs…', action: () => showOutputsPicker(e) },
-            { label: 'From Computer…', action: () => importAudioToTrack() }
+            { label: translate('From Outputs…'), action: () => showOutputsPicker(e) },
+            { label: translate('From Computer…'), action: () => importAudioToTrack() }
         ]);
     }
 
@@ -609,10 +620,11 @@ const AudioDaw = (() => {
     function buildBottomPanel() {
         if (!bottomPanelEl) return;
         const pane = (id) => bottomPanelEl.querySelector(`.daw-bottom-tab-content[data-tab="${id}"]`);
-        // Beats + Generate are built ONCE per session (not in updateBottomPanel) so
-        // typed prompts and pattern edits survive selection-driven panel refreshes
+        // Beats + Generate + Score are built ONCE per session (not in updateBottomPanel) so
+        // typed prompts, pattern edits and a half-edited score survive selection-driven panel refreshes
         renderBeatsPanel(pane('beats'));
         renderGeneratePanel(pane('generate'));
+        if (typeof AudioDawScore !== 'undefined') AudioDawScore.render(pane('score'), scoreCallbacks());
         updateBottomPanel();
     }
 
@@ -634,12 +646,12 @@ const AudioDaw = (() => {
                     if (typeof doNoticePopover === 'function') doNoticePopover('Add some effects first', 'notice-pop-yellow');
                     return;
                 }
-                const name = prompt('Chain name:', 'My Chain');
+                const name = prompt(translate('Chain name:'), 'My Chain');
                 if (!name || !name.trim()) return;
                 const chains = JSON.parse(localStorage.getItem('audiolab_fx_chains') || '{}');
                 chains[name.trim()] = track.fx.map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));
                 localStorage.setItem('audiolab_fx_chains', JSON.stringify(chains));
-                if (typeof doNoticePopover === 'function') doNoticePopover(`Chain "${name.trim()}" saved`, 'notice-pop-green');
+                if (typeof doNoticePopover === 'function') doNoticePopover(translate('Chain saved:') + ` "${name.trim()}"`, 'notice-pop-green');
             },
             onLoadChain: (track, e) => {
                 const chains = JSON.parse(localStorage.getItem('audiolab_fx_chains') || '{}');
@@ -708,6 +720,111 @@ const AudioDaw = (() => {
         };
     }
 
+    /** What the Score tab is allowed to reach. The DAW IIFE exports only { open, close }, so a sibling module
+     *  gets an explicit surface rather than the closure. */
+    function scoreCallbacks() {
+        return {
+            modelFor: (engineId) => dawSwarmModelFor(engineId),
+            generate: (opts) => dawSwarmGenerate(opts),
+            busy: (label, tabId) => {
+                const busy = createBusyIndicator(label, tabId);
+                bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="score"]')?.appendChild(busy);
+                return busy;
+            },
+            showMenu: (e, items) => dawMenu(e, items),
+            getTransport: () => ({ bpm: state.bpm, timeSignature: state.timeSignature, currentTime: state.currentTime }),
+            /** Every clip carrying a score, which is what the version tree is drawn from. */
+            listScoreClips: () => state.tracks.flatMap(t => t.clips.filter(c => c.meta?.score).map(c => ({ clip: c, track: t }))),
+            /** A/B rides the mixer's own solo, so the comparison is the one the ears already trust. */
+            soloOnly: (trackId) => {
+                for (const t of state.tracks) t.soloed = !!trackId && t.id === trackId;
+                updatePlaybackGains();
+                renderAllTracks();
+                updateBottomPanel();
+            },
+            findClip: (clipId) => findClipById(clipId),
+            seek: (seconds) => seekTo(seconds),
+            /** Mono 24 kHz for the transcriber: one encoder, so the DAW's export and the model hear the same bytes. */
+            encodeWav: (buffer) => audioBufferToWav(buffer),
+            /** The Vocals track the Stems tab made from this clip — a cleaner melody to transcribe than the mix. */
+            findVocalStem: (clipId) => {
+                const source = findClipById(clipId);
+                if (!source) return null;
+                const want = `Vocals: ${source.clip.name}`;
+                for (const track of state.tracks) {
+                    if (track.name !== want) continue;
+                    const clip = track.clips.find(c => Math.abs((c.startTime || 0) - (source.clip.startTime || 0)) < 0.05)
+                        || track.clips[0];
+                    if (clip?.blob) return { clip, track };
+                }
+                return null;
+            },
+            /** Point the project's grid at what a score says. The transport controls display state, so both move. */
+            setTransport: ({ bpm, timeSignature }) => {
+                pushUndo();
+                if (bpm > 0) state.bpm = Math.round(bpm);
+                if (Array.isArray(timeSignature) && timeSignature.length === 2) state.timeSignature = timeSignature;
+                if (bpmInputEl) bpmInputEl.value = state.bpm;
+                const sig = transportEl?.querySelector('.daw-transport-timesig');
+                if (sig) {
+                    const want = state.timeSignature.join('/');
+                    // A meter the transport does not offer (7/8 off a score) still has to be selectable.
+                    if (![...sig.options].some(o => o.value === want)) {
+                        const opt = document.createElement('option');
+                        opt.value = want;
+                        opt.textContent = want;
+                        sig.appendChild(opt);
+                    }
+                    sig.value = want;
+                }
+                if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
+                updateLaneGrid();
+            },
+            /** A recording dropped on the Score sheet lands as a track like any other import. */
+            importClip: async (file) => {
+                pushUndo();
+                const track = addTrack({ name: file.name.replace(/\.[^.]+$/, '') });
+                let clip;
+                // A file the browser cannot decode must not leave its track behind to surface on the next render.
+                try { clip = await addClipToTrack(track, file, { name: file.name }); }
+                catch (e) { removeTrack(track.id); renderAllTracks(); throw e; }
+                updateTotalDuration();
+                renderAllTracks();
+                updateBottomPanel();
+                resyncPlayback();
+                return { clip, track };
+            },
+            selectClip: (clipId) => {
+                const found = findClipById(clipId);
+                if (!found) return;
+                state.selectedTrackId = found.track.id;
+                state.selectedClipId = clipId;
+                updateTrackSelection();
+                renderAllTracks();
+                updateBottomPanel();
+            },
+            /** Land a rendered score as its own track, carrying the score that produced it.
+             *  snapshot:false lets a batch of variants be one undo step rather than one per clip. */
+            addRenderedScore: async ({ blob, metadata, label, score, snapshot = true }) => {
+                if (snapshot) pushUndo();
+                const track = addTrack({ name: label || 'Score' });
+                // The engine re-plans nothing when a score is supplied, so the authoritative ABC is the one we
+                // sent; metadata only fills in what the request did not pin (seed, resolved style).
+                const planned = buildClipScoreMeta(metadata, { label }) || { score: {} };
+                const clip = await addClipToTrack(track, blob, {
+                    name: label || 'Score',
+                    startTime: snapTime(state.currentTime),
+                    meta: { score: { ...planned.score, ...score, label, created: Date.now() } }
+                });
+                updateTotalDuration();
+                renderAllTracks();
+                updateBottomPanel();
+                resyncPlayback();
+                return clip;
+            }
+        };
+    }
+
     function updateBottomPanel() {
         if (!bottomPanelEl) return;
 
@@ -745,7 +862,7 @@ const AudioDaw = (() => {
                 nameEl.title = clip.name;
                 clipCard.appendChild(nameEl);
                 const metaEl = createDiv(null, 'daw-clip-card-meta');
-                metaEl.textContent = `${track.name} · ${formatTimePrecise(clip.duration)}s · starts at ${formatTimePrecise(clip.startTime)}s`;
+                metaEl.textContent = `${track.name} · ${durationStringifyColons2(clip.duration)}s · ${translate('starts at')} ${durationStringifyColons2(clip.startTime)}s`;
                 clipCard.appendChild(metaEl);
                 const waveHolder = createDiv(null, 'daw-clip-card-wave');
                 clipCard.appendChild(waveHolder);
@@ -764,8 +881,8 @@ const AudioDaw = (() => {
                 const actions = createDiv(null, 'daw-clip-editor-actions');
                 const splitBtn = document.createElement('button');
                 splitBtn.className = 'basic-button btn-sm';
-                splitBtn.textContent = 'Split at Playhead';
-                splitBtn.title = 'Split clip at current playhead position';
+                splitBtn.textContent = translate('Split at Playhead');
+                splitBtn.title = translate('Split clip at current playhead position');
                 splitBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     const sel = getClip();
@@ -774,8 +891,8 @@ const AudioDaw = (() => {
                 actions.appendChild(splitBtn);
                 const dupBtn = document.createElement('button');
                 dupBtn.className = 'basic-button btn-sm';
-                dupBtn.textContent = 'Duplicate';
-                dupBtn.title = 'Duplicate this clip';
+                dupBtn.textContent = translate('Duplicate');
+                dupBtn.title = translate('Duplicate this clip');
                 dupBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     const sel = getClip();
@@ -784,8 +901,8 @@ const AudioDaw = (() => {
                 actions.appendChild(dupBtn);
                 const delBtn = document.createElement('button');
                 delBtn.className = 'basic-button btn-sm';
-                delBtn.textContent = 'Delete';
-                delBtn.title = 'Delete this clip';
+                delBtn.textContent = translate('Delete');
+                delBtn.title = translate('Delete this clip');
                 delBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     const sel = getClip();
@@ -794,8 +911,8 @@ const AudioDaw = (() => {
                 actions.appendChild(delBtn);
                 const muteBtn = document.createElement('button');
                 muteBtn.className = 'basic-button btn-sm';
-                muteBtn.textContent = clip.muted ? 'Unmute' : 'Mute';
-                muteBtn.title = 'Toggle clip mute';
+                muteBtn.textContent = clip.muted ? translate('Unmute') : translate('Mute');
+                muteBtn.title = translate('Toggle clip mute');
                 muteBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     const sel = getClip();
@@ -812,7 +929,7 @@ const AudioDaw = (() => {
                 // Gain + fades row
                 const mixRow = createDiv(null, 'daw-clip-editor-info daw-clip-editor-mix');
                 const gainLabel = createSpan(null, 'daw-clip-mix-label');
-                gainLabel.textContent = 'Gain';
+                gainLabel.textContent = translate('Gain');
                 const gainSlider = document.createElement('input');
                 gainSlider.type = 'range';
                 gainSlider.className = 'daw-clip-gain-slider';
@@ -847,7 +964,7 @@ const AudioDaw = (() => {
                 mixRow.appendChild(gainSlider);
                 mixRow.appendChild(gainVal);
 
-                const makeFadeInput = (label, prop) => {
+                const makeFadeInput = (label, prop, titleText) => {
                     const lbl = createSpan(null, 'daw-clip-mix-label');
                     lbl.textContent = label;
                     const input = document.createElement('input');
@@ -856,7 +973,7 @@ const AudioDaw = (() => {
                     input.min = '0';
                     input.step = '0.1';
                     input.value = clip[prop] || 0;
-                    input.title = `${label} length in seconds`;
+                    input.title = titleText;
                     input.addEventListener('change', () => {
                         const sel = getClip();
                         if (!sel) return;
@@ -871,14 +988,14 @@ const AudioDaw = (() => {
                     fadeRow.appendChild(unit);
                 };
                 const fadeRow = createDiv(null, 'daw-clip-editor-info daw-clip-editor-mix');
-                makeFadeInput('Fade In', 'fadeIn');
-                makeFadeInput('Fade Out', 'fadeOut');
+                makeFadeInput(translate('Fade In'), 'fadeIn', translate('Fade in length in seconds'));
+                makeFadeInput(translate('Fade Out'), 'fadeOut', translate('Fade out length in seconds'));
                 const mixCard = createDiv(null, 'daw-fx-card daw-clip-mix-card');
                 const mixTitle = createDiv(null, 'daw-fx-card-title');
-                mixTitle.textContent = 'Clip Mix';
+                mixTitle.textContent = translate('Clip Mix');
                 mixCard.appendChild(mixTitle);
                 const mixNote = createDiv(null, 'daw-clip-card-meta');
-                mixNote.textContent = 'Level and fades for this clip only. Track volume lives in the Mixer.';
+                mixNote.textContent = translate('Level and fades for this clip only. Track volume lives in the Mixer.');
                 mixCard.appendChild(mixNote);
                 mixCard.appendChild(mixRow);
                 mixCard.appendChild(fadeRow);
@@ -890,7 +1007,7 @@ const AudioDaw = (() => {
                     try { clipEditorPlayer.destroy(); } catch (_) {}
                     clipEditorPlayer = null;
                 }
-                clipEditorContent.innerHTML = '<div style="color:var(--text-soft);font-size:0.85rem;padding:0.5rem;">Select a clip to edit</div>';
+                clipEditorContent.innerHTML = `<div style="color:var(--text-soft);font-size:0.85rem;padding:0.5rem;">${translate('Select a clip to edit')}</div>`;
             }
         }
 
@@ -925,6 +1042,8 @@ const AudioDaw = (() => {
             AudioDawFx.renderFxPanel(fxContent, getSelectedTrack(), fxPanelCallbacks());
         }
 
+        // Selection only — the Score pane itself is built once, so an in-progress edit is never wiped.
+        if (typeof AudioDawScore !== 'undefined') AudioDawScore.onSelection(findClipById(state.selectedClipId));
     }
 
     /** Simple inline mixer fallback when AudioDawMixer module isn't loaded. */
@@ -967,7 +1086,7 @@ const AudioDaw = (() => {
             // Volume
             const volGroup = createDiv(null, 'daw-mixer-vol-group');
             const volLbl = createSpan(null, 'daw-mixer-vol-label');
-            volLbl.textContent = 'Vol';
+            volLbl.textContent = translate('Vol');
             const fader = document.createElement('input');
             fader.type = 'range';
             fader.className = 'daw-mixer-fader';
@@ -995,14 +1114,14 @@ const AudioDaw = (() => {
         masterColor.style.background = 'var(--emphasis)';
         master.appendChild(masterColor);
         const masterLabel = createDiv(null, 'daw-mixer-label');
-        masterLabel.textContent = 'Master';
+        masterLabel.textContent = translate('Master');
         masterLabel.style.fontWeight = '600';
         master.appendChild(masterLabel);
         const masterBtns = createDiv(null, 'daw-mixer-btns');
         master.appendChild(masterBtns);
         const masterVolGroup = createDiv(null, 'daw-mixer-vol-group');
         const masterVolLbl = createSpan(null, 'daw-mixer-vol-label');
-        masterVolLbl.textContent = 'Vol';
+        masterVolLbl.textContent = translate('Vol');
         const masterFader = document.createElement('input');
         masterFader.type = 'range';
         masterFader.className = 'daw-mixer-fader';
@@ -1039,11 +1158,11 @@ const AudioDaw = (() => {
 
         // Output preset cards — the tab's primary choice, front and center
         const PRESET_CARDS = {
-            split: ['Full Split', 'Every stem becomes its own track'],
-            karaoke: ['Karaoke', 'Vocals + combined instrumental'],
-            acapella: ['Acapella', 'Vocals only'],
-            instrumental: ['Instrumental', 'Everything except vocals'],
-            custom: ['Custom', 'Pick exactly which stems to keep']
+            split: [translate('Full Split'), translate('Every stem becomes its own track')],
+            karaoke: [translate('Karaoke'), translate('Vocals + combined instrumental')],
+            acapella: [translate('Acapella'), translate('Vocals only')],
+            instrumental: [translate('Instrumental'), translate('Everything except vocals')],
+            custom: [translate('Custom'), translate('Pick exactly which stems to keep')]
         };
         const browser = createDiv(null, 'daw-fx-browser daw-stems-browser');
         for (const preset of STEM_PRESETS) {
@@ -1069,17 +1188,17 @@ const AudioDaw = (() => {
         section.appendChild(right);
 
         const header = createDiv(null, 'daw-stems-header');
-        header.innerHTML = '<strong>Stem Separation (Demucs)</strong>';
+        header.innerHTML = `<strong>${translate('Stem Separation (Demucs)')}</strong>`;
         left.appendChild(header);
         const desc = createDiv(null, 'daw-stems-desc');
-        desc.textContent = 'AI source separation splits a mixed clip into its component parts. Each chosen stem becomes a new track in the DAW.';
+        desc.textContent = translate('AI source separation splits a mixed clip into its component parts. Each chosen stem becomes a new track in the DAW.');
         left.appendChild(desc);
 
         // Model picker
         const modelRow = createDiv(null, 'daw-stems-model-row');
         const modelLabel = document.createElement('label');
         modelLabel.className = 'daw-stems-ctl-label';
-        modelLabel.textContent = 'Model:';
+        modelLabel.textContent = translate('Model:');
         const modelSelect = document.createElement('select');
         modelSelect.className = 'daw-stems-select';
         for (const [id, def] of Object.entries(STEM_MODELS)) {
@@ -1106,7 +1225,7 @@ const AudioDaw = (() => {
             const sel = new Set(custom ? [...customSel].filter(s => stems.includes(s)) : presetInvolved(stemsPreset, stems));
 
             const hint = createDiv(null, 'daw-stems-checks-hint');
-            hint.textContent = custom ? 'Choose which stems become tracks:' : 'Included stems:';
+            hint.textContent = custom ? translate('Choose which stems become tracks:') : translate('Included stems:');
             stemsRow.appendChild(hint);
 
             const grid = createDiv(null, 'daw-stems-check-grid');
@@ -1151,17 +1270,17 @@ const AudioDaw = (() => {
             for (const c of t.clips) allClips.push({ clip: c, track: t });
         }
         if (!allClips.length) {
-            actionRow.innerHTML = '<span class="daw-stems-clipinfo">Add or import a clip first. Stem separation splits one clip into new tracks</span>';
+            actionRow.innerHTML = `<span class="daw-stems-clipinfo">${translate('Add or import a clip first. Stem separation splits one clip into new tracks')}</span>`;
         } else {
             const srcLabel = document.createElement('label');
             srcLabel.className = 'daw-stems-ctl-label';
-            srcLabel.textContent = 'Source:';
+            srcLabel.textContent = translate('Source:');
             const srcSelect = document.createElement('select');
             srcSelect.className = 'daw-stems-select';
             for (const { clip, track } of allClips) {
                 const opt = document.createElement('option');
                 opt.value = clip.id;
-                const dur = formatTimePrecise(clip.duration - clip.offset - clip.trimEnd);
+                const dur = durationStringifyColons2(clip.duration - clip.offset - clip.trimEnd);
                 opt.textContent = `${track.name}: ${clip.name} (${dur}s)`;
                 srcSelect.appendChild(opt);
             }
@@ -1173,7 +1292,7 @@ const AudioDaw = (() => {
 
             sepBtn = document.createElement('button');
             sepBtn.className = 'basic-button btn-sm daw-stems-go';
-            sepBtn.textContent = 'Separate Stems';
+            sepBtn.textContent = translate('Separate Stems');
             sepBtn.addEventListener('click', async () => {
                 const sel = allClips.find(x => x.clip.id === srcSelect.value);
                 if (!sel) return;
@@ -1184,15 +1303,15 @@ const AudioDaw = (() => {
                 }
                 // Demucs missing? Offer to install it right here, then continue the separation.
                 if (!await checkDemucsInstalled()) {
-                    if (!confirm('Stem separation requires the Demucs engine (a one-time ~2 GB download).\n\nInstall it now? Separation will start automatically when it finishes.')) {
+                    if (!confirm(translate('Stem separation requires the Demucs engine (a one-time ~2 GB download).\n\nInstall it now? Separation will start automatically when it finishes.'))) {
                         return;
                     }
                     sepBtn.disabled = true;
                     const ok = await installDemucs((msg) => {
-                        sepBtn.textContent = 'Installing Demucs… ' + msg.slice(0, 30);
+                        sepBtn.textContent = translate('Installing Demucs…') + ' ' + msg.slice(0, 30);
                     });
                     sepBtn.disabled = false;
-                    sepBtn.textContent = 'Separate Stems';
+                    sepBtn.textContent = translate('Separate Stems');
                     if (!ok) return;
                 }
                 doSeparateStems(sel.clip, sel.track, { modelName: modelSelect.value, outputs });
@@ -1247,7 +1366,9 @@ const AudioDaw = (() => {
      * endpoint the main Generate tab uses. The output is saved to the user's
      * outputs folder + history like any generation, and progress streams back.
      * @param {Object} opts - { model: Swarm model name, prompt, params: extra T2I params, onProgress(frac) }
-     * @returns {Promise<{blob: Blob, src: string}>} the produced audio + its View URL
+     * @returns {Promise<{blob: Blob, src: string, metadata: Object|null}>} the audio, its View URL, and the
+     *   parsed generation metadata (core sends it alongside the image; a planned score rides in
+     *   metadata.sui_extra_data.yue2_score)
      */
     function dawSwarmGenerate({ model, prompt, params = {}, onProgress = null }) {
         return new Promise((resolve, reject) => {
@@ -1262,13 +1383,66 @@ const AudioDaw = (() => {
                 if (data.error) { fail(data.error); return; }
                 if (data.image) {
                     const src = typeof data.image === 'string' ? data.image : data.image.image;
+                    const metadata = parseGenMetadata(data.metadata);
                     fetch(src)
                         .then(r => { if (!r.ok) throw new Error(`Output fetch failed (${r.status})`); return r.blob(); })
-                        .then(blob => { if (!settled) { settled = true; resolve({ blob, src }); } })
+                        .then(blob => { if (!settled) { settled = true; resolve({ blob, src, metadata }); } })
                         .catch(err => fail(err.message));
                 }
             }, (err) => fail(err || 'Generation failed'));
         });
+    }
+
+    /** Parse core's generation-metadata string. Malformed metadata must never fail a generation. */
+    function parseGenMetadata(raw) {
+        if (!raw) return null;
+        try {
+            return typeof raw === 'string' ? JSON.parse(raw) : raw;
+        }
+        catch (e) {
+            console.warn('[AudioLab] Could not parse generation metadata', e);
+            return null;
+        }
+    }
+
+    /**
+     * Pull the score a planning model wrote out of a generation's metadata.
+     * YuE2 writes it to sui_extra_data.yue2_score (see DynamicAudioBackend.RecordPlannedScore).
+     * @returns {Object|null} { abc, truncated } or null when the generation planned no score
+     */
+    function scoreFromMetadata(metadata) {
+        const abc = metadata?.sui_extra_data?.yue2_score;
+        if (!abc || !String(abc).trim()) return null;
+        return {
+            abc: String(abc),
+            truncated: metadata.sui_extra_data.yue2_score_truncated === true,
+            budgetSeconds: metadata.sui_extra_data.yue2_budget_seconds ?? null
+        };
+    }
+
+    /**
+     * Build a clip's `meta` from a generation's metadata, so a rendered clip carries the score that produced it.
+     * Versions form a tree via `parent`, which is what makes "render a variation of this score" traceable.
+     * @returns {Object|null} null when the generation planned no score — clips stay metadata-free otherwise
+     */
+    function buildClipScoreMeta(metadata, { style = '', lyrics = '', model = '', engineId = '', label = '',
+            parent = null, source = 'planned', cot = null } = {}) {
+        const found = scoreFromMetadata(metadata);
+        if (!found) return null;
+        const params = metadata?.sui_image_params || {};
+        return {
+            score: {
+                abc: found.abc,
+                truncated: found.truncated,
+                budgetSeconds: found.budgetSeconds,
+                style: style || params.textaudiostyle || '',
+                lyrics: lyrics || params.prompt || '',
+                cot: cot || params.scoreplanningmode || 'full',
+                seed: params.seed ?? null,
+                model, engineId, label, parent, source,
+                created: Date.now()
+            }
+        };
     }
 
     /** Fetch + cache the engine list (shared by the Generate tab, palette, and beat pads). */
@@ -1296,6 +1470,7 @@ const AudioDaw = (() => {
         { id: 'music', name: 'Music', desc: 'Songs and loops from a style prompt + lyrics' },
         { id: 'sfx', name: 'Sound FX', desc: 'One-shots and foley from a description' },
         { id: 'stt', name: 'Speech to Text', desc: 'Transcribe the selected clip' }
+        // name/desc are translated where they are rendered (translate() needs to run per language switch).
     ];
     let generateCategory = 'tts';
 
@@ -1312,12 +1487,12 @@ const AudioDaw = (() => {
         const panel = createDiv(null, 'daw-generate-panel');
         container.appendChild(panel);
         const status = createDiv(null, 'daw-stems-desc');
-        status.textContent = 'Loading engines...';
+        status.textContent = translate('Loading engines...');
         panel.appendChild(status);
         try {
             await ensureEnginesList();
         } catch (err) {
-            status.textContent = 'Failed to load engines: ' + err.message;
+            status.textContent = translate('Failed to load engines:') + ' ' + err.message;
             return;
         }
         status.remove();
@@ -1334,11 +1509,11 @@ const AudioDaw = (() => {
             pick.className = 'daw-fx-pick daw-inst-pick'
                 + (cat.id === generateCategory ? ' selected' : '')
                 + (count ? '' : ' not-ready');
-            pick.innerHTML = `<span class="daw-fx-pick-name">${cat.name}</span>`
-                + `<span class="daw-fx-pick-desc">${count ? cat.desc : 'No engine installed'}</span>`;
+            pick.innerHTML = `<span class="daw-fx-pick-name">${translate(cat.name)}</span>`
+                + `<span class="daw-fx-pick-desc">${count ? translate(cat.desc) : translate('No engine installed')}</span>`;
             pick.addEventListener('click', () => {
                 if (!count) {
-                    if (typeof doNoticePopover === 'function') doNoticePopover(`No installed ${cat.name} engine. Add one under Server -> Backends`, 'notice-pop-yellow');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate(cat.name) + ': ' + translate('No installed engine. Add one under Server -> Backends'), 'notice-pop-yellow');
                     return;
                 }
                 generateCategory = cat.id;
@@ -1351,7 +1526,7 @@ const AudioDaw = (() => {
         const engines = enginesForCategory(generateCategory);
         if (!engines.length) {
             const none = createDiv(null, 'daw-stems-desc');
-            none.textContent = 'No audio engines installed. Add one from the Audio Backend card under Server -> Backends.';
+            none.textContent = translate('No audio engines installed. Add one from the Audio Backend card under Server -> Backends.');
             panel.appendChild(none);
             return;
         }
@@ -1367,7 +1542,7 @@ const AudioDaw = (() => {
         const engineRow = createDiv(null, 'daw-stems-model-row');
         const engineLabel = document.createElement('label');
         engineLabel.className = 'daw-stems-ctl-label';
-        engineLabel.textContent = 'Engine:';
+        engineLabel.textContent = translate('Engine:');
         const engineSelect = document.createElement('select');
         engineSelect.className = 'daw-stems-select';
         for (const eng of engines) {
@@ -1385,7 +1560,7 @@ const AudioDaw = (() => {
         const modelRow = createDiv(null, 'daw-stems-model-row');
         const modelLabel = document.createElement('label');
         modelLabel.className = 'daw-stems-ctl-label';
-        modelLabel.textContent = 'Model:';
+        modelLabel.textContent = translate('Model:');
         const modelSelect = document.createElement('select');
         modelSelect.className = 'daw-stems-select';
         modelRow.appendChild(modelLabel);
@@ -1410,17 +1585,17 @@ const AudioDaw = (() => {
             const resultArea = document.createElement('textarea');
             resultArea.className = 'daw-generate-text';
             resultArea.rows = 4;
-            resultArea.placeholder = 'Transcription appears here…';
+            resultArea.placeholder = translate('Transcription appears here…');
             mainCol.appendChild(resultArea);
 
             const actionRow = createDiv(null, 'daw-stems-action-row');
             const hint = createSpan(null, 'daw-stems-clipinfo');
-            hint.textContent = 'Transcribes the selected clip with the chosen engine.';
+            hint.textContent = translate('Transcribes the selected clip with the chosen engine.');
             actionRow.appendChild(hint);
             sideCol.appendChild(actionRow);
             const goBtn = document.createElement('button');
             goBtn.className = 'basic-button btn-sm daw-stems-go';
-            goBtn.textContent = 'Transcribe Selected Clip';
+            goBtn.textContent = translate('Transcribe Selected Clip');
             goBtn.addEventListener('click', async () => {
                 const sel = findClipById(state.selectedClipId);
                 if (!sel) {
@@ -1428,7 +1603,7 @@ const AudioDaw = (() => {
                     return;
                 }
                 goBtn.disabled = true;
-                const busy = createBusyIndicator('Transcribing…', 'generate');
+                const busy = createBusyIndicator(translate('Transcribing…'), 'generate');
                 sideCol.appendChild(busy);
                 try {
                     const b64 = await AudioLabCore.readAsBase64(sel.clip.blob);
@@ -1437,7 +1612,7 @@ const AudioDaw = (() => {
                     resultArea.value = result.transcription.trim();
                 } catch (err) {
                     console.error('[AudioDaw] Transcription failed:', err);
-                    if (typeof doNoticePopover === 'function') doNoticePopover('Transcription failed: ' + err.message, 'notice-pop-red');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('Transcription failed:') + ' ' + err.message, 'notice-pop-red');
                 } finally {
                     busy.done();
                     goBtn.disabled = false;
@@ -1447,7 +1622,7 @@ const AudioDaw = (() => {
             const copyRow = createDiv(null, 'daw-stems-model-row');
             const copyBtn = document.createElement('button');
             copyBtn.className = 'basic-button btn-sm';
-            copyBtn.textContent = 'Copy Text';
+            copyBtn.textContent = translate('Copy Text');
             copyBtn.addEventListener('click', () => {
                 if (!resultArea.value) return;
                 navigator.clipboard?.writeText(resultArea.value);
@@ -1467,9 +1642,9 @@ const AudioDaw = (() => {
         const promptArea = document.createElement('textarea');
         promptArea.className = 'daw-generate-text';
         promptArea.rows = 2;
-        promptArea.placeholder = isTts ? 'Text to speak...'
-            : isMusicCat ? 'Describe the music (style, mood, instruments)...'
-            : 'Describe the sound: "punchy kick drum", "rain on a tin roof"...';
+        promptArea.placeholder = isTts ? translate('Text to speak...')
+            : isMusicCat ? translate('Describe the music (style, mood, instruments)...')
+            : translate('Describe the sound: "punchy kick drum", "rain on a tin roof"...');
         mainCol.appendChild(promptArea);
 
         let lyricsArea = null;
@@ -1477,7 +1652,7 @@ const AudioDaw = (() => {
             lyricsArea = document.createElement('textarea');
             lyricsArea.className = 'daw-generate-text';
             lyricsArea.rows = 3;
-            lyricsArea.placeholder = 'Lyrics (optional, leave empty for instrumental)';
+            lyricsArea.placeholder = translate('Lyrics (optional, leave empty for instrumental)');
             mainCol.appendChild(lyricsArea);
         }
 
@@ -1487,7 +1662,7 @@ const AudioDaw = (() => {
             const optsRow = createDiv(null, 'daw-stems-model-row');
             const durLabel = document.createElement('label');
             durLabel.className = 'daw-stems-ctl-label';
-            durLabel.textContent = 'Duration (s):';
+            durLabel.textContent = translate('Duration (s):');
             durationInput = document.createElement('input');
             durationInput.type = 'number';
             durationInput.className = 'daw-clip-fade-input';
@@ -1495,12 +1670,12 @@ const AudioDaw = (() => {
             durationInput.value = isMusicCat ? '20' : '3';
             const seedLabel = document.createElement('label');
             seedLabel.className = 'daw-stems-ctl-label';
-            seedLabel.textContent = 'Seed:';
+            seedLabel.textContent = translate('Seed:');
             seedInput = document.createElement('input');
             seedInput.type = 'number';
             seedInput.className = 'daw-clip-fade-input';
             seedInput.value = '-1';
-            seedInput.title = '-1 = random';
+            seedInput.title = translate('-1 = random');
             optsRow.appendChild(durLabel);
             optsRow.appendChild(durationInput);
             optsRow.appendChild(seedLabel);
@@ -1516,7 +1691,7 @@ const AudioDaw = (() => {
                 const tempoLbl = document.createElement('label');
                 tempoLbl.htmlFor = 'daw_gen_tempo_hints';
                 tempoLbl.className = 'daw-stems-ctl-label';
-                tempoLbl.textContent = `Match project tempo (${state.bpm} BPM, ${state.timeSignature.join('/')})`;
+                tempoLbl.textContent = translate('Match project tempo') + ` (${state.bpm} BPM, ${state.timeSignature.join('/')})`;
                 tempoRow.appendChild(tempoCheck);
                 tempoRow.appendChild(tempoLbl);
                 sideCol.appendChild(tempoRow);
@@ -1533,17 +1708,17 @@ const AudioDaw = (() => {
             const refLabel = document.createElement('label');
             refLabel.className = 'daw-stems-ctl-label';
             refLabel.htmlFor = 'daw_gen_voice_ref';
-            refLabel.textContent = 'Use selected clip as voice reference';
+            refLabel.textContent = translate('Use selected clip as voice reference');
             refTextInput = document.createElement('input');
             refTextInput.type = 'text';
             refTextInput.className = 'daw-generate-reftext';
-            refTextInput.placeholder = 'Reference transcript (optional)';
+            refTextInput.placeholder = translate('Reference transcript (optional)');
             // Auto-fill the transcript by running the selected clip through STT
             const sttBtn = document.createElement('button');
             sttBtn.type = 'button';
             sttBtn.className = 'basic-button btn-sm daw-reftext-stt';
-            sttBtn.textContent = 'Transcribe';
-            sttBtn.title = 'Fill the transcript automatically by running the selected clip through speech-to-text';
+            sttBtn.textContent = translate('Transcribe');
+            sttBtn.title = translate('Fill the transcript automatically by running the selected clip through speech-to-text');
             sttBtn.style.display = enginesForCategory('stt').length ? '' : 'none';
             sttBtn.addEventListener('click', async () => {
                 const sel = findClipById(state.selectedClipId);
@@ -1552,7 +1727,7 @@ const AudioDaw = (() => {
                     return;
                 }
                 sttBtn.disabled = true;
-                sttBtn.textContent = 'Transcribing…';
+                sttBtn.textContent = translate('Transcribing…');
                 try {
                     const b64 = await AudioLabCore.readAsBase64(sel.clip.blob);
                     const result = await AudioLabAPI.processSTT(b64);
@@ -1561,10 +1736,10 @@ const AudioDaw = (() => {
                     refCheck.checked = true;
                 } catch (err) {
                     console.error('[AudioDaw] Transcription failed:', err);
-                    if (typeof doNoticePopover === 'function') doNoticePopover('Transcription failed: ' + err.message, 'notice-pop-red');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('Transcription failed:') + ' ' + err.message, 'notice-pop-red');
                 } finally {
                     sttBtn.disabled = false;
-                    sttBtn.textContent = 'Transcribe';
+                    sttBtn.textContent = translate('Transcribe');
                 }
             });
             const refTextWrap = createDiv(null, 'daw-reftext-wrap');
@@ -1576,7 +1751,7 @@ const AudioDaw = (() => {
             sideCol.appendChild(refRow);
 
             refNote = createDiv(null, 'daw-stems-clipinfo');
-            refNote.textContent = 'This engine uses its built-in voice. Voice cloning is not supported.';
+            refNote.textContent = translate('This engine uses its built-in voice. Voice cloning is not supported.');
             sideCol.appendChild(refNote);
         }
 
@@ -1585,11 +1760,11 @@ const AudioDaw = (() => {
         // Action row: hint above a full-width Generate button
         const actionRow = createDiv(null, 'daw-stems-action-row');
         const hint = createSpan(null, 'daw-stems-clipinfo');
-        hint.textContent = 'Result is added as a new track at the playhead (and saved to your outputs).';
+        hint.textContent = translate('Result is added as a new track at the playhead (and saved to your outputs).');
         actionRow.appendChild(hint);
         const goBtn = document.createElement('button');
         goBtn.className = 'basic-button btn-sm daw-stems-go';
-        goBtn.textContent = 'Generate';
+        goBtn.textContent = translate('Generate');
         actionRow.appendChild(goBtn);
         sideCol.appendChild(actionRow);
 
@@ -1633,7 +1808,12 @@ const AudioDaw = (() => {
                     if (refTextInput.value.trim()) params.referencetext = refTextInput.value.trim();
                 }
             } else {
-                if (lyricsArea?.value.trim()) params.lyrics = lyricsArea.value.trim();
+                // Core's convention: Prompt carries the lyrics, Text2Audio Style carries the style.
+                // The style box is the main one here, so it moves to text2audiostyle and the lyrics box
+                // becomes the prompt (see dawSwarmGenerate below, which sends promptText as the prompt).
+                if (isMusicCat) {
+                    params.text2audiostyle = promptText;
+                }
                 params.text2audioduration = Math.max(1, parseFloat(durationInput.value) || (isMusicCat ? 20 : 3));
                 const seed = parseInt(seedInput.value);
                 if (!isNaN(seed) && seed >= 0) params.seed = seed;
@@ -1646,12 +1826,13 @@ const AudioDaw = (() => {
             // Non-blocking: only the Generate button locks; the rest of the DAW
             // stays usable while the engine works (progress on the tab too).
             goBtn.disabled = true;
-            const busy = createBusyIndicator(`Generating with ${eng.name}…`, 'generate');
+            const busy = createBusyIndicator(translate('Generating with') + ` ${eng.name}…`, 'generate');
             sideCol.appendChild(busy);
             try {
-                const { blob } = await dawSwarmGenerate({
+                const lyricsText = isMusicCat ? (lyricsArea?.value.trim() || '') : '';
+                const { blob, metadata } = await dawSwarmGenerate({
                     model: modelDef.swarm_model,
-                    prompt: promptText,
+                    prompt: isMusicCat ? lyricsText : promptText,
                     params,
                     onProgress: (frac) => busy.setProgress(frac)
                 });
@@ -1659,7 +1840,14 @@ const AudioDaw = (() => {
                 const track = addTrack({ name: eng.name });
                 await addClipToTrack(track, blob, {
                     name: promptText.slice(0, 28) || eng.name,
-                    startTime: snapTime(state.currentTime)
+                    startTime: snapTime(state.currentTime),
+                    meta: buildClipScoreMeta(metadata, {
+                        style: isMusicCat ? promptText : '',
+                        lyrics: lyricsText,
+                        model: modelDef.swarm_model,
+                        engineId: eng.id,
+                        label: promptText.slice(0, 28) || eng.name
+                    })
                 });
                 updateTotalDuration();
                 renderAllTracks();
@@ -1668,7 +1856,7 @@ const AudioDaw = (() => {
                 if (typeof doNoticePopover === 'function') doNoticePopover('Generated clip added (also saved to your outputs)', 'notice-pop-green');
             } catch (err) {
                 console.error('[AudioDaw] Generate failed:', err);
-                if (typeof doNoticePopover === 'function') doNoticePopover('Generate failed: ' + err.message, 'notice-pop-red');
+                if (typeof doNoticePopover === 'function') doNoticePopover(translate('Generate failed:') + ' ' + err.message, 'notice-pop-red');
             } finally {
                 busy.done();
                 goBtn.disabled = false;
@@ -1947,6 +2135,10 @@ const AudioDaw = (() => {
             onClipContext: (e, clip, track) => {
                 showClipContextMenu(e, clip, track);
             },
+            /** The Score sheet takes a clip dropped on it; its own drag is a pointer gesture, not HTML5 dnd. */
+            onClipDragOver: (x, y) => typeof AudioDawScore !== 'undefined' && AudioDawScore.clipDragOver(x, y),
+            onClipDropOutside: (clip, track, x, y) =>
+                typeof AudioDawScore !== 'undefined' && AudioDawScore.clipDropped(clip, x, y),
             onClipCrossTrack: (clip, srcTrack, targetTrackId) => {
                 const targetTrack = state.tracks.find(t => t.id === targetTrackId);
                 if (!targetTrack) return;
@@ -1989,7 +2181,7 @@ const AudioDaw = (() => {
                 for (const p of ['volume', 'pan']) {
                     const opt = document.createElement('option');
                     opt.value = p;
-                    opt.textContent = p === 'volume' ? 'Volume' : 'Pan';
+                    opt.textContent = p === 'volume' ? translate('Volume') : translate('Pan');
                     sel.appendChild(opt);
                 }
                 sel.value = track.automationParam || 'volume';
@@ -2005,8 +2197,8 @@ const AudioDaw = (() => {
         // "+ Add Track" affordance at the bottom of the header column
         const addBtn = document.createElement('button');
         addBtn.className = 'daw-add-track';
-        addBtn.innerHTML = '+ <span class="translate">Add Track</span>';
-        addBtn.title = 'Add an empty track';
+        addBtn.innerHTML = `+ <span>${escapeHtml(translate('Add Track'))}</span>`;
+        addBtn.title = translate('Add an empty track');
         addBtn.addEventListener('click', () => {
             pushUndo();
             const track = addTrack();
@@ -2279,7 +2471,7 @@ const AudioDaw = (() => {
             if (lufsEl) {
                 const db = loudnessEma > 1e-5 ? (20 * Math.log10(loudnessEma)).toFixed(1) : '-\u221E';
                 lufsEl.textContent = db + ' LU';
-                lufsEl.title = 'Approximate loudness (RMS). Streaming targets sit around -14.';
+                lufsEl.title = translate('Approximate loudness (RMS). Streaming targets sit around -14.');
             }
             // Clip latch: lights when the master pins, click to reset
             if (Math.max(peaks[0], peaks[1]) >= 0.985) {
@@ -2662,6 +2854,8 @@ const AudioDaw = (() => {
         updatePlayheadPosition();
         updateTimeDisplay();
         updateMeters();
+        // Follow the transport on the staff, when the selected clip is the one the open score produced.
+        if (typeof AudioDawScore !== 'undefined') AudioDawScore.syncTime(state.currentTime);
         rafId = requestAnimationFrame(animatePlayhead);
     }
 
@@ -2679,8 +2873,8 @@ const AudioDaw = (() => {
 
     function updateTimeDisplay() {
         if (!timeDisplayEl) return;
-        const current = formatTimePrecise(state.currentTime);
-        const total = formatTimePrecise(state.totalDuration);
+        const current = durationStringifyColons2(state.currentTime);
+        const total = durationStringifyColons2(state.totalDuration);
         timeDisplayEl.textContent = `${current} / ${total}`;
         const beatsEl = transportEl?.querySelector('.daw-lcd-beats');
         if (beatsEl) {
@@ -2762,7 +2956,7 @@ const AudioDaw = (() => {
         input.accept = 'audio/*';
         input.multiple = true;
         input.onchange = async () => {
-            const overlay = showDawLoadingOverlay('Importing audio...');
+            const overlay = showDawLoadingOverlay(translate('Importing audio...'));
             for (const file of input.files) {
                 const ext = file.name.split('.').pop().toLowerCase();
                 if (!isAudioExt('file.' + ext)) continue;
@@ -2865,7 +3059,7 @@ const AudioDaw = (() => {
             dawMenu(e, files.map(f => ({
                 label: f.split('/').pop(),
                 action: async () => {
-                    const overlay = showDawLoadingOverlay('Loading output...');
+                    const overlay = showDawLoadingOverlay(translate('Loading output...'));
                     try {
                         // ListImages paths are relative to the user's output root.
                         const prefix = typeof getImageOutPrefix === 'function' ? getImageOutPrefix() : 'Output';
@@ -2880,13 +3074,13 @@ const AudioDaw = (() => {
                         resyncPlayback();
                     } catch (err) {
                         console.error('[AudioDaw] Add from outputs failed:', err);
-                        if (typeof doNoticePopover === 'function') doNoticePopover('Failed to load output: ' + err.message, 'notice-pop-red');
+                        if (typeof doNoticePopover === 'function') doNoticePopover(translate('Failed to load output:') + ' ' + err.message, 'notice-pop-red');
                     }
                     hideDawLoadingOverlay(overlay);
                 }
             })));
         } catch (err) {
-            if (typeof doNoticePopover === 'function') doNoticePopover('Failed to list outputs: ' + err.message, 'notice-pop-red');
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Failed to list outputs:') + ' ' + err.message, 'notice-pop-red');
         }
     }
 
@@ -2894,16 +3088,16 @@ const AudioDaw = (() => {
 
     function showClipContextMenu(e, clip, track) {
         dawMenu(e, [
-            { label: 'Split at Playhead', action: () => doSplitClip(clip, track) },
-            { label: 'Duplicate', action: () => doDuplicateClip(clip, track) },
-            { label: 'Delete', action: () => doDeleteClip(clip, track) },
-            { label: clip.muted ? 'Unmute Clip' : 'Mute Clip', action: () => {
+            { label: translate('Split at Playhead'), action: () => doSplitClip(clip, track) },
+            { label: translate('Duplicate'), action: () => doDuplicateClip(clip, track) },
+            { label: translate('Delete'), action: () => doDeleteClip(clip, track) },
+            { label: clip.muted ? translate('Unmute Clip') : translate('Mute Clip'), action: () => {
                 clip.muted = !clip.muted;
                 applyClipGain(clip);
                 renderAllTracks();
             }},
-            { label: 'Separate Stems… (Demucs)', action: () => openStemsForClip(clip, track) },
-            { label: `Conform to ${state.bpm} BPM…`, action: () => conformClipToBpm(clip, track) }
+            { label: translate('Separate Stems… (Demucs)'), action: () => openStemsForClip(clip, track) },
+            { label: translate('Conform to') + ` ${state.bpm} BPM…`, action: () => conformClipToBpm(clip, track) }
         ]);
     }
 
@@ -2975,7 +3169,7 @@ const AudioDaw = (() => {
         } catch (err) {
             console.error('[AudioDaw] Split failed:', err);
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Split failed: ' + err.message, 'notice-pop-red');
+                doNoticePopover(translate('Split failed:') + ' ' + err.message, 'notice-pop-red');
             }
         }
     }
@@ -3015,7 +3209,7 @@ const AudioDaw = (() => {
         } catch (err) {
             console.error('[AudioDaw] Duplicate failed:', err);
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Duplicate failed: ' + err.message, 'notice-pop-red');
+                doNoticePopover(translate('Duplicate failed:') + ' ' + err.message, 'notice-pop-red');
             }
         }
     }
@@ -3047,7 +3241,7 @@ const AudioDaw = (() => {
         } catch (err) {
             console.error('[AudioDaw] Delete failed:', err);
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Delete failed: ' + err.message, 'notice-pop-red');
+                doNoticePopover(translate('Delete failed:') + ' ' + err.message, 'notice-pop-red');
             }
         }
     }
@@ -3083,11 +3277,11 @@ const AudioDaw = (() => {
                     resolve(true);
                 }
                 else if (data.error) {
-                    if (typeof doNoticePopover === 'function') doNoticePopover('Demucs install failed: ' + data.error, 'notice-pop-red');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('Demucs install failed:') + ' ' + data.error, 'notice-pop-red');
                     resolve(false);
                 }
             }, 0, e => {
-                if (typeof doNoticePopover === 'function') doNoticePopover('Demucs install failed: ' + e, 'notice-pop-red');
+                if (typeof doNoticePopover === 'function') doNoticePopover(translate('Demucs install failed:') + ' ' + e, 'notice-pop-red');
                 resolve(false);
             });
         });
@@ -3137,7 +3331,7 @@ const AudioDaw = (() => {
         return row;
     }
 
-    function showDawLoadingOverlay(message = 'Processing...') {
+    function showDawLoadingOverlay(message = translate('Processing...')) {
         const body = document.getElementById('daw_container');
         if (!body) return null;
         const overlay = createDiv(null, 'daw-loading-overlay');
@@ -3180,7 +3374,7 @@ const AudioDaw = (() => {
         }
         stemsSeparating = true;
         // Non-blocking: progress lives in the Stems panel + a pulse on its tab
-        const busy = createBusyIndicator('Separating stems…', 'stems');
+        const busy = createBusyIndicator(translate('Separating stems…'), 'stems');
         bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="stems"]')?.appendChild(busy);
 
         try {
@@ -3243,12 +3437,13 @@ const AudioDaw = (() => {
             resyncPlayback();
 
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover(`Separated into ${built.length} track${built.length > 1 ? 's' : ''}`, 'notice-pop-green');
+                doNoticePopover(translate('Separated into') + ` ${built.length} `
+                    + (built.length > 1 ? translate('tracks') : translate('track')), 'notice-pop-green');
             }
         } catch (err) {
             console.error('[AudioDaw] Stem separation failed:', err);
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Stem separation failed: ' + err.message, 'notice-pop-red');
+                doNoticePopover(translate('Stem separation failed:') + ' ' + err.message, 'notice-pop-red');
             }
         } finally {
             busy.done();
@@ -3268,14 +3463,14 @@ const AudioDaw = (() => {
 
     async function showMicSettingsMenu(e) {
         const voiceItem = {
-            label: 'Voice mode (echo + noise reduction)',
+            label: translate('Voice mode (echo + noise reduction)'),
             checked: recordSettings.voiceMode,
             action: () => { recordSettings.voiceMode = !recordSettings.voiceMode; }
         };
         // mediaDevices is absent on insecure (non-HTTPS, non-localhost) origins
         if (!navigator.mediaDevices?.enumerateDevices) {
             dawMenu(e, [
-                { label: 'Microphone requires HTTPS (or localhost)', disabled: true, action: () => {} },
+                { label: translate('Microphone requires HTTPS (or localhost)'), disabled: true, action: () => {} },
                 voiceItem
             ]);
             return;
@@ -3293,12 +3488,12 @@ const AudioDaw = (() => {
         } catch (_) {} // permissions.query('microphone') is not universal (e.g. Firefox)
         const items = [];
         if (labelsHidden && permState === 'denied') {
-            items.push({ label: 'Mic blocked. Allow it in browser site settings', disabled: true, action: () => {} });
+            items.push({ label: translate('Mic blocked. Allow it in browser site settings'), disabled: true, action: () => {} });
         } else if (labelsHidden) {
             // No permission yet: show nothing but the grant action — device names
             // are meaningless placeholders until the browser unlocks them.
             items.push({
-                label: 'Allow mic access to list devices…',
+                label: translate('Allow mic access to list devices…'),
                 action: async () => {
                     try {
                         // One-shot grant: open the mic just to unlock labels, then release it
@@ -3308,16 +3503,16 @@ const AudioDaw = (() => {
                     } catch (err) {
                         console.error('[AudioDaw] Mic permission request failed:', err);
                         if (typeof doNoticePopover === 'function') {
-                            doNoticePopover('Microphone access denied: ' + err.message, 'notice-pop-red');
+                            doNoticePopover(translate('Microphone access denied:') + ' ' + err.message, 'notice-pop-red');
                         }
                     }
                 }
             });
         } else {
-            items.push({ label: 'System default microphone', checked: !recordSettings.deviceId,
+            items.push({ label: translate('System default microphone'), checked: !recordSettings.deviceId,
                 action: () => { recordSettings.deviceId = null; } });
             devices.forEach((d, i) => items.push({
-                label: d.label || `Microphone ${i + 1}`,
+                label: d.label || (translate('Microphone') + ` ${i + 1}`),
                 checked: recordSettings.deviceId === d.deviceId,
                 action: () => { recordSettings.deviceId = d.deviceId; }
             }));
@@ -3376,7 +3571,7 @@ const AudioDaw = (() => {
             placeholderEl.remove();
             console.error('[AudioDaw] Mic access failed:', err);
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Microphone access failed: ' + err.message, 'notice-pop-red');
+                doNoticePopover(translate('Microphone access failed:') + ' ' + err.message, 'notice-pop-red');
             }
             return;
         }
@@ -3423,7 +3618,7 @@ const AudioDaw = (() => {
         } catch (err) {
             console.error('[AudioDaw] Failed to add recording:', err);
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Failed to add recording: ' + err.message, 'notice-pop-red');
+                doNoticePopover(translate('Failed to add recording:') + ' ' + err.message, 'notice-pop-red');
             }
         }
     }
@@ -3550,12 +3745,13 @@ const AudioDaw = (() => {
                 const stored = blobStore.get(cs.blobKey);
                 if (!stored) continue;
                 const clip = AudioDawTrack.createClip(stored.blob, {
+                    id: cs.id,
                     name: cs.name,
                     startTime: cs.startTime,
                     color: cs.color,
-                    blobKey: cs.blobKey
+                    blobKey: cs.blobKey,
+                    meta: cs.meta || null
                 });
-                clip.id = cs.id;
                 clip.duration = cs.duration;
                 clip.offset = cs.offset;
                 clip.trimEnd = cs.trimEnd;
@@ -3614,8 +3810,9 @@ const AudioDaw = (() => {
     async function conformClipToBpm(clip, track) {
         const guess = clip.decodedBuffer ? detectBpm(clip.decodedBuffer) : null;
         const src = prompt(
-            `Source BPM of "${clip.name}"? It will be stretched to ${state.bpm} BPM (pitch preserved).` +
-            (guess ? `\n\nDetected: ~${guess} BPM` : ''),
+            translate('Source BPM of this clip? It will be stretched to the project tempo (pitch preserved).') +
+            `\n\n"${clip.name}" → ${state.bpm} BPM` +
+            (guess ? `\n\n${translate('Detected:')} ~${guess} BPM` : ''),
             guess || state.bpm);
         if (!src) return;
         const srcBpm = parseFloat(src);
@@ -3628,7 +3825,7 @@ const AudioDaw = (() => {
             if (typeof doNoticePopover === 'function') doNoticePopover('Clip is already at project tempo', 'notice-pop-green');
             return;
         }
-        const overlay = showDawLoadingOverlay(`Stretching ${srcBpm} → ${state.bpm} BPM...`);
+        const overlay = showDawLoadingOverlay(translate('Stretching') + ` ${srcBpm} → ${state.bpm} BPM...`);
         try {
             const base64 = await AudioLabCore.readAsBase64(clip.blob);
             const result = await AudioLabAPI.callAPI('AudioLabTimeStretch', { audio_data: base64, rate });
@@ -3657,7 +3854,7 @@ const AudioDaw = (() => {
             if (typeof doNoticePopover === 'function') doNoticePopover('Clip conformed to project tempo', 'notice-pop-green');
         } catch (err) {
             console.error('[AudioDaw] Conform failed:', err);
-            if (typeof doNoticePopover === 'function') doNoticePopover('Tempo conform failed: ' + err.message, 'notice-pop-red');
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Tempo conform failed:') + ' ' + err.message, 'notice-pop-red');
         }
         hideDawLoadingOverlay(overlay);
     }
@@ -3674,7 +3871,7 @@ const AudioDaw = (() => {
         try { beatAudition.disconnect(); } catch (_) {}
         beatAudition = null;
         const btn = bottomPanelEl?.querySelector('.daw-beats-audition');
-        if (btn) btn.textContent = '\u25B6 Audition';
+        if (btn) btn.textContent = '\u25B6 ' + translate('Audition');
     }
 
     async function ensurePadBuffer(lane) {
@@ -3723,7 +3920,7 @@ const AudioDaw = (() => {
             if (typeof doNoticePopover === 'function') doNoticePopover('Program some steps first', 'notice-pop-yellow');
             return;
         }
-        btn.textContent = 'Rendering…';
+        btn.textContent = translate('Rendering…');
         try {
             const buffer = await renderBeatPatternBuffer(1);
             const ctx = getAudioContext();
@@ -3736,9 +3933,9 @@ const AudioDaw = (() => {
             src.connect(ctx.destination);
             src.start();
             beatAudition = src;
-            btn.textContent = '\u25A0 Stop';
+            btn.textContent = '\u25A0 ' + translate('Stop');
         } catch (err) {
-            btn.textContent = '\u25B6 Audition';
+            btn.textContent = '\u25B6 ' + translate('Audition');
             console.error('[AudioDaw] Beat audition failed:', err);
         }
     }
@@ -3749,7 +3946,7 @@ const AudioDaw = (() => {
             return;
         }
         stopBeatAudition();
-        const overlay = showDawLoadingOverlay('Rendering beat...');
+        const overlay = showDawLoadingOverlay(translate('Rendering beat...'));
         try {
             const buffer = await renderBeatPatternBuffer(repeats);
             const blob = audioBufferToWav(buffer);
@@ -3763,7 +3960,7 @@ const AudioDaw = (() => {
             if (typeof doNoticePopover === 'function') doNoticePopover('Beat rendered to a new track', 'notice-pop-green');
         } catch (err) {
             console.error('[AudioDaw] Beat render failed:', err);
-            if (typeof doNoticePopover === 'function') doNoticePopover('Beat render failed: ' + err.message, 'notice-pop-red');
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Beat render failed:') + ' ' + err.message, 'notice-pop-red');
         }
         hideDawLoadingOverlay(overlay);
     }
@@ -3780,12 +3977,221 @@ const AudioDaw = (() => {
         scheduleAutosave();
     }
 
+    // ===== PIANO / KEYS =====
+    // Plays into the Score tab rather than rendering audio: the score is the artifact YuE2 can act on, so a
+    // captured phrase becomes part of the plan instead of another clip to mix.
+
+    let keysState = { voice: 'Vocal', octave: 4, recording: null, midiAccess: null };
+
+    /** Web MIDI needs a secure context, and this server is usually reached over a LAN IP on plain HTTP.
+     *  The on-screen keyboard is therefore the path that always works; MIDI is the bonus when it exists. */
+    function keysMidiPossible() {
+        return !!(window.isSecureContext && navigator.requestMIDIAccess);
+    }
+
+    function keysBeep(midi) {
+        const ctx = getAudioContext();
+        if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
+        const osc = ctx.createOscillator(), gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.value = 440 * Math.pow(2, (midi - 69) / 12);
+        gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(); osc.stop(ctx.currentTime + 0.4);
+    }
+
+    function keysDown(midi) {
+        keysBeep(midi);
+        const rec = keysState.recording;
+        if (rec && !rec.held.has(midi)) rec.held.set(midi, performance.now());
+    }
+
+    function keysUp(midi) {
+        const rec = keysState.recording;
+        if (!rec || !rec.held.has(midi)) return;
+        rec.events.push({ midi, start: rec.held.get(midi), end: performance.now() });
+        rec.held.delete(midi);
+    }
+
+    /** Turn what was played into a run of notes and rests on the score's own grid. */
+    function keysQuantize(events, grid) {
+        const t0 = Math.min(...events.map(e => e.start));
+        const unit = (ms) => Math.round((ms / 1000) / grid.secondsPerUnit);
+        const out = [];
+        let cursor = 0;
+        for (const e of [...events].sort((a, b) => a.start - b.start)) {
+            const start = Math.max(cursor, unit(e.start - t0));
+            const units = Math.max(1, unit(e.end - t0) - start);
+            if (start > cursor) out.push({ midi: null, units: start - cursor });
+            out.push({ midi: e.midi, units });
+            cursor = start + units;
+        }
+        return out;
+    }
+
+    function keysStopRecording(panelContainer) {
+        const rec = keysState.recording;
+        keysState.recording = null;
+        if (!rec || !rec.events.length) {
+            renderBeatsPanel(panelContainer);
+            return;
+        }
+        const grid = AudioDawScore.getGrid();
+        const result = AudioDawScore.insertNotes({
+            voice: keysState.voice,
+            barIndex: rec.bar,
+            offsetUnits: 0,
+            notes: keysQuantize(rec.events, grid)
+        });
+        if (typeof doNoticePopover === 'function') {
+            doNoticePopover(result.ok
+                ? translate('Wrote notes into the score:')
+                    + ` ${rec.events.length} → ${keysState.voice}, ${translate('bar')} ${rec.bar + 1}`
+                : (result.issues?.[0]?.message || 'Those notes would not fit the score'),
+                result.ok ? 'notice-pop-green' : 'notice-pop-yellow');
+        }
+        if (result.ok) switchBottomTab('score');
+        renderBeatsPanel(panelContainer);
+    }
+
+    function renderKeysInstrument(card, panelContainer) {
+        const head = createDiv(null, 'daw-stems-action-row');
+        const voiceWrap = createDiv(null, 'daw-score-field');
+        const voiceLbl = createSpan(null, 'daw-stems-ctl-label');
+        voiceLbl.textContent = translate('Voice');
+        const voiceSel = document.createElement('select');
+        voiceSel.className = 'daw-fx-select';
+        for (const v of ['Vocal', 'Ins']) {
+            const o = document.createElement('option');
+            o.value = v; o.textContent = v;
+            voiceSel.appendChild(o);
+        }
+        voiceSel.value = keysState.voice;
+        voiceSel.addEventListener('change', () => { keysState.voice = voiceSel.value; });
+        voiceWrap.appendChild(voiceLbl); voiceWrap.appendChild(voiceSel);
+        head.appendChild(voiceWrap);
+
+        const octWrap = createDiv(null, 'daw-score-field');
+        const octLbl = createSpan(null, 'daw-stems-ctl-label');
+        octLbl.textContent = translate('Octave');
+        const octSel = document.createElement('select');
+        octSel.className = 'daw-fx-select';
+        for (const n of [2, 3, 4, 5, 6]) {
+            const o = document.createElement('option');
+            o.value = String(n); o.textContent = 'C' + n;
+            octSel.appendChild(o);
+        }
+        octSel.value = String(keysState.octave);
+        octSel.addEventListener('change', () => { keysState.octave = parseInt(octSel.value, 10); renderBeatsPanel(panelContainer); });
+        octWrap.appendChild(octLbl); octWrap.appendChild(octSel);
+        head.appendChild(octWrap);
+
+        const recBtn = document.createElement('button');
+        recBtn.className = 'basic-button btn-sm btn-primary daw-stems-go';
+        recBtn.textContent = keysState.recording ? translate('Stop and write') : translate('Record into score');
+        recBtn.title = translate('Play the keys below; what you play lands in the score at the playhead bar');
+        recBtn.addEventListener('click', () => {
+            if (keysState.recording) { keysStopRecording(panelContainer); return; }
+            keysState.recording = { bar: AudioDawScore.barAtTime(state.currentTime), events: [], held: new Map() };
+            renderBeatsPanel(panelContainer);
+        });
+        head.appendChild(recBtn);
+        card.appendChild(head);
+
+        const grid = AudioDawScore.getGrid();
+        const key = AudioDawScore.getKey();
+        const info = createDiv(null, 'daw-stems-desc');
+        info.textContent = keysState.recording
+            ? translate('Recording. Stop and write puts it in the score.')
+                + ` (${keysState.voice}, ${translate('bar')} ${keysState.recording.bar + 1})`
+            : translate('Writes into the Score tab at the playhead bar.')
+                + ` ${key.key}${key.mode} · ${grid.unitLength} · ${Math.round(grid.bpm)} BPM`;
+        card.appendChild(info);
+
+        // Two rows: the black keys sit above the white ones, with gaps where a piano has none.
+        const BLACK = [1, 1, 0, 1, 1, 1, 0];
+        const WHITE = [0, 2, 4, 5, 7, 9, 11];
+        const base = (keysState.octave + 1) * 12;
+        const blackRow = createDiv(null, 'daw-keys-row');
+        const whiteRow = createDiv(null, 'daw-keys-row');
+        const NAMES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+        for (let o = 0; o < 2; o++) {
+            for (let i = 0; i < 7; i++) {
+                const white = base + o * 12 + WHITE[i];
+                whiteRow.appendChild(keyButton(`${NAMES[i]}${keysState.octave + o}`, white));
+                if (BLACK[i]) blackRow.appendChild(keyButton(`${NAMES[i]}♯`, white + 1));
+                else blackRow.appendChild(keySpacer());
+            }
+        }
+        whiteRow.appendChild(keyButton(`C${keysState.octave + 2}`, base + 24));
+        blackRow.appendChild(keySpacer());
+        card.appendChild(blackRow);
+        card.appendChild(whiteRow);
+
+        const midiRow = createDiv(null, 'daw-stems-desc');
+        if (!keysMidiPossible()) {
+            midiRow.textContent = translate('A MIDI keyboard needs a page served over HTTPS or from localhost; over a LAN '
+                + 'address the browser will not offer it. The keys above work either way.');
+        }
+        else if (keysState.midiAccess) {
+            const names = [...keysState.midiAccess.inputs.values()].map(i => i.name);
+            midiRow.textContent = names.length
+                ? translate('MIDI in:') + ' ' + names.join(', ')
+                : translate('MIDI is on, but no input is connected.');
+        }
+        else {
+            const btn = document.createElement('button');
+            btn.className = 'basic-button btn-sm';
+            btn.textContent = translate('Connect MIDI keyboard');
+            btn.addEventListener('click', () => connectKeysMidi(panelContainer));
+            midiRow.appendChild(btn);
+        }
+        card.appendChild(midiRow);
+    }
+
+    function keyButton(label, midi) {
+        const b = document.createElement('button');
+        b.className = 'basic-button btn-sm daw-keys-key';
+        b.textContent = label;
+        b.dataset.midi = String(midi);
+        b.addEventListener('pointerdown', (e) => { e.preventDefault(); keysDown(midi); });
+        b.addEventListener('pointerup', () => keysUp(midi));
+        b.addEventListener('pointerleave', () => keysUp(midi));
+        return b;
+    }
+
+    function keySpacer() {
+        const s = createDiv(null, 'daw-keys-key daw-keys-gap');
+        return s;
+    }
+
+    async function connectKeysMidi(panelContainer) {
+        try {
+            keysState.midiAccess = await navigator.requestMIDIAccess();
+            for (const input of keysState.midiAccess.inputs.values()) {
+                input.onmidimessage = (ev) => {
+                    const [status, note, velocity] = ev.data;
+                    const cmd = status & 0xf0;
+                    if (cmd === 0x90 && velocity > 0) keysDown(note);
+                    else if (cmd === 0x80 || (cmd === 0x90 && velocity === 0)) keysUp(note);
+                };
+            }
+            renderBeatsPanel(panelContainer);
+        }
+        catch (err) {
+            console.error('[AudioDaw] MIDI access denied:', err);
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('MIDI access was refused:') + ' ' + err.message, 'notice-pop-yellow');
+        }
+    }
+
     // Instrument browser: the drum machine ships today; the rest are planned
     // slots (clicking one explains what's coming). New instruments plug in by
     // flipping ready:true and rendering their UI in renderBeatsPanel.
     const DAW_INSTRUMENTS = [
         { id: 'drums', name: 'Drum Machine', desc: '16/32-step sample sequencer', ready: true },
-        { id: 'keys', name: 'Piano / Keys', desc: 'Piano roll, coming soon', ready: false },
+        { id: 'keys', name: 'Piano / Keys', desc: 'Play a phrase into the score', ready: true },
         { id: 'bass', name: 'Bass', desc: 'Coming soon', ready: false },
         { id: 'synth', name: 'Synth', desc: 'Coming soon', ready: false }
     ];
@@ -3806,11 +4212,11 @@ const AudioDaw = (() => {
             pick.className = 'daw-fx-pick daw-inst-pick'
                 + (inst.id === activeInstrument ? ' selected' : '')
                 + (inst.ready ? '' : ' not-ready');
-            pick.innerHTML = `<span class="daw-fx-pick-name">${inst.name}</span>`
-                + `<span class="daw-fx-pick-desc">${inst.desc}</span>`;
+            pick.innerHTML = `<span class="daw-fx-pick-name">${translate(inst.name)}</span>`
+                + `<span class="daw-fx-pick-desc">${translate(inst.desc)}</span>`;
             pick.addEventListener('click', () => {
                 if (!inst.ready) {
-                    if (typeof doNoticePopover === 'function') doNoticePopover(`${inst.name} is on the roadmap. The Drum Machine is ready today`, 'notice-pop-yellow');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate(inst.name) + ': ' + translate('on the roadmap. The Drum Machine is ready today'), 'notice-pop-yellow');
                     return;
                 }
                 activeInstrument = inst.id;
@@ -3820,9 +4226,18 @@ const AudioDaw = (() => {
         }
         panel.appendChild(browser);
 
-        // Selected instrument UI (drum machine is the only one wired so far)
         const instCard = createDiv(null, 'daw-fx-card daw-inst-card');
         panel.appendChild(instCard);
+        if (activeInstrument === 'keys') {
+            if (typeof AudioDawScore === 'undefined') {
+                const missing = createDiv(null, 'daw-stems-desc');
+                missing.textContent = translate('The Score tab did not load, so there is nothing to play into.');
+                instCard.appendChild(missing);
+                return;
+            }
+            renderKeysInstrument(instCard, container);
+            return;
+        }
 
         // Header controls
         const head = createDiv(null, 'daw-stems-model-row');
@@ -3830,7 +4245,7 @@ const AudioDaw = (() => {
         stepsSel.className = 'daw-fx-select';
         for (const n of [16, 32]) {
             const opt = document.createElement('option');
-            opt.value = n; opt.textContent = `${n} steps`;
+            opt.value = n; opt.textContent = `${n} ` + translate('steps');
             stepsSel.appendChild(opt);
         }
         stepsSel.value = p.steps;
@@ -3845,7 +4260,7 @@ const AudioDaw = (() => {
         head.appendChild(stepsSel);
 
         const swingLbl = createSpan(null, 'daw-fx-knob-label');
-        swingLbl.textContent = 'Swing';
+        swingLbl.textContent = translate('Swing');
         const swing = document.createElement('input');
         swing.type = 'range';
         swing.min = '0'; swing.max = '0.6'; swing.step = '0.05';
@@ -3857,7 +4272,7 @@ const AudioDaw = (() => {
 
         const auditionBtn = document.createElement('button');
         auditionBtn.className = 'basic-button btn-sm daw-beats-audition';
-        auditionBtn.textContent = '\u25B6 Audition';
+        auditionBtn.textContent = '\u25B6 ' + translate('Audition');
         auditionBtn.addEventListener('click', () => toggleBeatAudition(auditionBtn));
         head.appendChild(auditionBtn);
 
@@ -3869,12 +4284,12 @@ const AudioDaw = (() => {
             repeatsSel.appendChild(opt);
         }
         repeatsSel.value = '4';
-        repeatsSel.title = 'Pattern repeats to render';
+        repeatsSel.title = translate('Pattern repeats to render');
         head.appendChild(repeatsSel);
 
         const renderBtn = document.createElement('button');
         renderBtn.className = 'basic-button btn-sm btn-primary daw-stems-go';
-        renderBtn.textContent = 'Render to Track';
+        renderBtn.textContent = translate('Render to Track');
         renderBtn.addEventListener('click', () => renderBeatsToTrack(parseInt(repeatsSel.value)));
         head.appendChild(renderBtn);
         instCard.appendChild(head);
@@ -3890,7 +4305,7 @@ const AudioDaw = (() => {
             const prev = document.createElement('button');
             prev.className = 'daw-fx-mini-btn';
             prev.innerHTML = '&#x25B6;';
-            prev.title = 'Preview pad';
+            prev.title = translate('Preview pad');
             prev.addEventListener('click', async () => {
                 const buffer = await ensurePadBuffer(lane);
                 if (!buffer) return;
@@ -3907,13 +4322,13 @@ const AudioDaw = (() => {
             gainSl.min = '0'; gainSl.max = '1.5'; gainSl.step = '0.05';
             gainSl.value = lane.gain ?? 1;
             gainSl.className = 'daw-beats-lane-gain';
-            gainSl.title = 'Pad gain';
+            gainSl.title = translate('Pad gain');
             gainSl.addEventListener('input', () => { lane.gain = parseFloat(gainSl.value); });
             row.appendChild(gainSl);
             const del = document.createElement('button');
             del.className = 'daw-fx-mini-btn';
             del.innerHTML = '&#x2715;';
-            del.title = 'Remove lane';
+            del.title = translate('Remove lane');
             del.addEventListener('click', () => {
                 p.lanes.splice(li, 1);
                 renderBeatsPanel(container);
@@ -3935,7 +4350,7 @@ const AudioDaw = (() => {
         });
         if (!p.lanes.length) {
             const empty = createDiv(null, 'daw-stems-desc');
-            empty.textContent = 'No pads yet. Describe a one-shot below and hit Generate Pad, or import a sample.';
+            empty.textContent = translate('No pads yet. Describe a one-shot below and hit Generate Pad, or import a sample.');
             instCard.appendChild(empty);
         }
         instCard.appendChild(grid);
@@ -3945,11 +4360,11 @@ const AudioDaw = (() => {
         const promptInput = document.createElement('input');
         promptInput.type = 'text';
         promptInput.className = 'daw-generate-reftext';
-        promptInput.placeholder = 'Describe a one-shot: "punchy kick drum", "tight snare", "closed hi-hat"...';
+        promptInput.placeholder = translate('Describe a one-shot: "punchy kick drum", "tight snare", "closed hi-hat"...');
         addRow.appendChild(promptInput);
         const genBtn = document.createElement('button');
         genBtn.className = 'basic-button btn-sm';
-        genBtn.textContent = 'Generate Pad';
+        genBtn.textContent = translate('Generate Pad');
         genBtn.addEventListener('click', async () => {
             const prompt = promptInput.value.trim();
             if (!prompt) {
@@ -3957,7 +4372,7 @@ const AudioDaw = (() => {
                 return;
             }
             genBtn.disabled = true;
-            genBtn.textContent = 'Generating…';
+            genBtn.textContent = translate('Generating…');
             try {
                 await ensureEnginesList().catch(() => {});
                 const model = dawSwarmModelFor('audiogen_sfx');
@@ -3969,15 +4384,15 @@ const AudioDaw = (() => {
                 await addBeatPadBlob(prompt.slice(0, 18), blob, container);
             } catch (err) {
                 console.error('[AudioDaw] Pad generation failed:', err);
-                if (typeof doNoticePopover === 'function') doNoticePopover('Pad generation failed: ' + err.message, 'notice-pop-red');
+                if (typeof doNoticePopover === 'function') doNoticePopover(translate('Pad generation failed:') + ' ' + err.message, 'notice-pop-red');
                 genBtn.disabled = false;
-                genBtn.textContent = 'Generate Pad';
+                genBtn.textContent = translate('Generate Pad');
             }
         });
         addRow.appendChild(genBtn);
         const importBtn = document.createElement('button');
         importBtn.className = 'basic-button btn-sm';
-        importBtn.textContent = 'Import Pad';
+        importBtn.textContent = translate('Import Pad');
         importBtn.addEventListener('click', () => {
             const inp = document.createElement('input');
             inp.type = 'file';
@@ -3990,7 +4405,7 @@ const AudioDaw = (() => {
         addRow.appendChild(importBtn);
         const clipBtn = document.createElement('button');
         clipBtn.className = 'basic-button btn-sm';
-        clipBtn.textContent = 'From Selected Clip';
+        clipBtn.textContent = translate('From Selected Clip');
         clipBtn.addEventListener('click', () => {
             const sel = findClipById(state.selectedClipId);
             if (!sel) {
@@ -4026,12 +4441,15 @@ const AudioDaw = (() => {
     }
 
     function paletteEngineFor(type) {
-        if (type === 'sfx') return { engineId: 'audiogen_sfx', params: (dur, seed) => ({ text2audioduration: dur, seed }) };
+        if (type === 'sfx') return { engineId: 'audiogen_sfx', usesPrompt: true, params: (dur, seed) => ({ text2audioduration: dur, seed }) };
         // loops/music: ACE-Step with tempo/time-signature hints from the transport
         return {
             engineId: 'acestep_music',
-            params: (dur, seed) => ({
+            // The palette prompt describes a loop, not lyrics — so it is the STYLE. Prompt stays empty, which
+            // ACE-Step reads as instrumental, which is what a palette loop should be.
+            params: (dur, seed, prompt) => ({
                 text2audioduration: dur, seed,
+                text2audiostyle: prompt || '',
                 text2audiobpm: state.bpm,
                 text2audiotimesignature: state.timeSignature.join('/')
             })
@@ -4044,7 +4462,8 @@ const AudioDaw = (() => {
         const model = dawSwarmModelFor(eng.engineId);
         if (!model) {
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover(`No installed engine for ${type === 'sfx' ? 'SFX (AudioGen)' : 'music (ACE-Step)'}`, 'notice-pop-yellow');
+                doNoticePopover(translate('No installed engine for') + ' '
+                    + (type === 'sfx' ? 'SFX (AudioGen)' : 'music (ACE-Step)'), 'notice-pop-yellow');
             }
             return [];
         }
@@ -4052,19 +4471,22 @@ const AudioDaw = (() => {
         const jobs = [];
         for (let i = 0; i < count; i++) {
             const seed = Math.floor(Math.random() * 1e9);
-            jobs.push(dawSwarmGenerate({ model, prompt, params: eng.params(duration, seed) })
-                .then(({ blob }) => ({ blob, seed }))
+            jobs.push(dawSwarmGenerate({ model, prompt: eng.usesPrompt ? prompt : '', params: eng.params(duration, seed, prompt) })
+                .then(({ blob, metadata }) => ({ blob, seed, metadata }))
                 .catch(err => { console.error('[AudioDaw] Palette generation failed:', err); return null; }));
         }
         const done = (await Promise.all(jobs)).filter(Boolean);
-        return done.map(({ blob, seed }) => ({ blob, url: URL.createObjectURL(blob), prompt, seed, type }));
+        return done.map(({ blob, seed, metadata }) => ({
+            blob, url: URL.createObjectURL(blob), prompt, seed, type,
+            meta: buildClipScoreMeta(metadata, { style: prompt, model, engineId: eng.engineId, label: prompt.slice(0, 24) })
+        }));
     }
 
     function renderPalette() {
         if (!paletteEl) return;
         paletteEl.innerHTML = '';
         const head = createDiv(null, 'daw-palette-head');
-        head.innerHTML = '<strong>Sound Palette</strong>';
+        head.innerHTML = `<strong>${translate('Sound Palette')}</strong>`;
         const closeBtn = document.createElement('button');
         closeBtn.className = 'daw-fx-mini-btn';
         closeBtn.innerHTML = '&#x2715;';
@@ -4075,7 +4497,7 @@ const AudioDaw = (() => {
         const promptInput = document.createElement('textarea');
         promptInput.className = 'daw-generate-text';
         promptInput.rows = 2;
-        promptInput.placeholder = 'Describe a sound: "rain on a tin roof", "808 bass loop, dark trap"...';
+        promptInput.placeholder = translate('Describe a sound: "rain on a tin roof", "808 bass loop, dark trap"...');
         paletteEl.appendChild(promptInput);
 
         const optsRow = createDiv(null, 'daw-palette-opts');
@@ -4083,7 +4505,7 @@ const AudioDaw = (() => {
         typeSel.className = 'daw-fx-select';
         for (const [v, l] of [['sfx', 'SFX'], ['loop', 'Loop / Music']]) {
             const opt = document.createElement('option');
-            opt.value = v; opt.textContent = l;
+            opt.value = v; opt.textContent = translate(l);
             typeSel.appendChild(opt);
         }
         const durSel = document.createElement('select');
@@ -4104,12 +4526,12 @@ const AudioDaw = (() => {
         countSel.value = '2';
         const goBtn = document.createElement('button');
         goBtn.className = 'basic-button btn-sm btn-primary';
-        goBtn.textContent = 'Generate';
+        goBtn.textContent = translate('Generate');
         goBtn.addEventListener('click', async () => {
             const prompt = promptInput.value.trim();
             if (!prompt) return;
             goBtn.disabled = true;
-            goBtn.textContent = 'Generating…';
+            goBtn.textContent = translate('Generating…');
             try {
                 const results = await paletteGenerate(prompt, typeSel.value, parseInt(durSel.value), parseInt(countSel.value));
                 if (!results.length && typeof doNoticePopover === 'function') {
@@ -4122,7 +4544,7 @@ const AudioDaw = (() => {
                 if (pi) pi.value = prompt;
             } finally {
                 goBtn.disabled = false;
-                goBtn.textContent = 'Generate';
+                goBtn.textContent = translate('Generate');
             }
         });
         optsRow.appendChild(typeSel);
@@ -4136,7 +4558,7 @@ const AudioDaw = (() => {
             const card = createDiv(null, 'daw-palette-card');
             const label = createDiv(null, 'daw-palette-card-label');
             label.textContent = res.prompt.slice(0, 40);
-            label.title = `${res.prompt} (seed ${res.seed})`;
+            label.title = `${res.prompt} (${translate('seed')} ${res.seed})`;
             card.appendChild(label);
             const audio = document.createElement('audio');
             audio.controls = true;
@@ -4146,11 +4568,11 @@ const AudioDaw = (() => {
             const actions = createDiv(null, 'daw-palette-actions');
             const addBtn = document.createElement('button');
             addBtn.className = 'basic-button btn-sm';
-            addBtn.textContent = '+ Track';
+            addBtn.textContent = '+ ' + translate('Track');
             addBtn.addEventListener('click', async () => {
                 pushUndo();
                 const track = addTrack({ name: res.prompt.slice(0, 16) });
-                await addClipToTrack(track, res.blob, { name: res.prompt.slice(0, 24), startTime: snapTime(state.currentTime) });
+                await addClipToTrack(track, res.blob, { name: res.prompt.slice(0, 24), startTime: snapTime(state.currentTime), meta: res.meta || null });
                 updateTotalDuration();
                 renderAllTracks();
                 updateBottomPanel();
@@ -4159,8 +4581,8 @@ const AudioDaw = (() => {
             actions.appendChild(addBtn);
             const padBtn = document.createElement('button');
             padBtn.className = 'basic-button btn-sm';
-            padBtn.textContent = '+ Pad';
-            padBtn.title = 'Add as a beat sequencer pad';
+            padBtn.textContent = '+ ' + translate('Pad');
+            padBtn.title = translate('Add as a beat sequencer pad');
             padBtn.addEventListener('click', async () => {
                 const beatsTab = bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="beats"]');
                 if (beatsTab) {
@@ -4172,7 +4594,7 @@ const AudioDaw = (() => {
             const varBtn = document.createElement('button');
             varBtn.className = 'basic-button btn-sm';
             varBtn.innerHTML = DAW_ICONS.refresh;
-            varBtn.title = 'Generate a variation (same prompt, new seed)';
+            varBtn.title = translate('Generate a variation (same prompt, new seed)');
             varBtn.addEventListener('click', async () => {
                 varBtn.disabled = true;
                 const results = await paletteGenerate(res.prompt, res.type, Math.max(1, Math.round(res.blob.size / (44100 * 4 * 2))) || 4, 1);
@@ -4185,7 +4607,7 @@ const AudioDaw = (() => {
             list.appendChild(card);
         }
         if (!paletteResults.length) {
-            list.innerHTML = '<div class="daw-stems-clipinfo" style="padding:0.5rem;">Generated sounds appear here. Audition, then add to a track or beat pad.</div>';
+            list.innerHTML = `<div class="daw-stems-clipinfo" style="padding:0.5rem;">${translate('Generated sounds appear here. Audition, then add to a track or beat pad.')}</div>`;
         }
         paletteEl.appendChild(list);
     }
@@ -4202,7 +4624,9 @@ const AudioDaw = (() => {
 
     function serializeProject() {
         return {
-            version: 2,
+            // 3 added clip.meta (the Score tab's per-clip score). Version 2 projects load unchanged — a clip
+            // without meta simply has none.
+            version: 3,
             projectName: currentProjectName || null,
             bpm: state.bpm,
             masterLimiterEnabled: state.masterLimiterEnabled,
@@ -4287,7 +4711,8 @@ const AudioDaw = (() => {
                 const blob = blobs.get(cs.blobKey);
                 if (!blob) continue;
                 const clip = AudioDawTrack.createClip(blob, {
-                    name: cs.name, startTime: cs.startTime, color: cs.color, blobKey: cs.blobKey
+                    id: cs.id, name: cs.name, startTime: cs.startTime, color: cs.color, blobKey: cs.blobKey,
+                    meta: cs.meta || null
                 });
                 const stored = blobStore.get(cs.blobKey);
                 if (stored?.decodedBuffer) {
@@ -4369,21 +4794,21 @@ const AudioDaw = (() => {
 
         const card = createDiv(null, 'daw-resume-bar daw-start-screen');
         const title = createDiv(null, 'daw-resume-title');
-        title.textContent = 'Open a project';
+        title.textContent = translate('Open a project');
         card.appendChild(title);
         const detail = createDiv(null, 'daw-resume-detail');
-        detail.textContent = 'Pick up where you left off, or start fresh.';
+        detail.textContent = translate('Pick up where you left off, or start fresh.');
         card.appendChild(detail);
         const list = createDiv(null, 'daw-start-projects');
         for (const n of names.slice(0, 8)) {
             quickAppendButton(list, escapeHtml(n), () => {
                 card.remove();
                 openProjectFromServer(n);
-            }, ' basic-button', `Load project "${n}"`);
+            }, ' basic-button', translate('Load project') + ` "${n}"`);
         }
         card.appendChild(list);
         const actions = createDiv(null, 'daw-resume-actions');
-        quickAppendButton(actions, 'Start Empty', () => card.remove(), ' basic-button', 'Begin a fresh session');
+        quickAppendButton(actions, translate('Start Empty'), () => card.remove(), ' basic-button', translate('Begin a fresh session'));
         card.appendChild(actions);
         body.appendChild(card);
     }
@@ -4394,7 +4819,7 @@ const AudioDaw = (() => {
         const bar = createDiv(null, 'daw-resume-bar');
 
         const title = createDiv(null, 'daw-resume-title');
-        title.textContent = 'Resume your last session?';
+        title.textContent = translate('Resume your last session?');
         bar.appendChild(title);
 
         // Session summary from the recovered project JSON
@@ -4403,39 +4828,39 @@ const AudioDaw = (() => {
         const clipCount = tracks.reduce((n, t) => n + (t.clips?.length || 0), 0);
         const bits = [];
         if (proj.projectName) bits.push(`“${proj.projectName}”`);
-        bits.push(`${tracks.length} track${tracks.length === 1 ? '' : 's'}`);
-        bits.push(`${clipCount} clip${clipCount === 1 ? '' : 's'}`);
+        bits.push(`${tracks.length} ` + (tracks.length === 1 ? translate('track') : translate('tracks')));
+        bits.push(`${clipCount} ` + (clipCount === 1 ? translate('clip') : translate('clips')));
         if (proj.bpm) bits.push(`${proj.bpm} BPM`);
-        bits.push(`autosaved ${new Date(meta.savedAt).toLocaleString()}`);
+        bits.push(translate('autosaved') + ' ' + new Date(meta.savedAt).toLocaleString());
         const detail = createDiv(null, 'daw-resume-detail');
         detail.textContent = bits.join(' · ');
         bar.appendChild(detail);
 
         const actions = createDiv(null, 'daw-resume-actions');
-        quickAppendButton(actions, 'Resume', async () => {
+        quickAppendButton(actions, translate('Resume'), async () => {
             bar.remove();
-            const overlay = showDawLoadingOverlay('Restoring session...');
+            const overlay = showDawLoadingOverlay(translate('Restoring session...'));
             try {
                 const data = await AudioDawStore.loadProject(AUTOSAVE_SLOT);
                 if (data) await restoreProject(data.project, data.blobs);
             } catch (err) {
                 console.error('[AudioDaw] Resume failed:', err);
                 if (typeof doNoticePopover === 'function') {
-                    doNoticePopover('Resume failed: ' + err.message, 'notice-pop-red');
+                    doNoticePopover(translate('Resume failed:') + ' ' + err.message, 'notice-pop-red');
                 }
             }
             hideDawLoadingOverlay(overlay);
-        }, ' basic-button btn-primary', 'Restore the autosaved arrangement');
-        quickAppendButton(actions, 'Discard', () => {
+        }, ' basic-button btn-primary', translate('Restore the autosaved arrangement'));
+        quickAppendButton(actions, translate('Discard'), () => {
             bar.remove();
             AudioDawStore.deleteProject(AUTOSAVE_SLOT).catch(() => {});
-        }, ' basic-button', 'Delete the autosave and start fresh');
+        }, ' basic-button', translate('Delete the autosave and start fresh'));
         bar.appendChild(actions);
         body.appendChild(bar);
     }
 
     async function saveProjectToServer(name) {
-        const overlay = showDawLoadingOverlay('Saving project...');
+        const overlay = showDawLoadingOverlay(translate('Saving project...'));
         try {
             const project = serializeProject();
             const blobs = collectProjectBlobs();
@@ -4454,16 +4879,16 @@ const AudioDaw = (() => {
             });
             if (!result.success) throw new Error(result.error || 'Save failed');
             currentProjectName = name;
-            if (typeof doNoticePopover === 'function') doNoticePopover(`Project "${name}" saved`, 'notice-pop-green');
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Project saved:') + ` "${name}"`, 'notice-pop-green');
         } catch (err) {
             console.error('[AudioDaw] Save project failed:', err);
-            if (typeof doNoticePopover === 'function') doNoticePopover('Save failed: ' + err.message, 'notice-pop-red');
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Save failed:') + ' ' + err.message, 'notice-pop-red');
         }
         hideDawLoadingOverlay(overlay);
     }
 
     async function openProjectFromServer(name) {
-        const overlay = showDawLoadingOverlay('Loading project...');
+        const overlay = showDawLoadingOverlay(translate('Loading project...'));
         try {
             const result = await AudioLabAPI.callAPI('AudioLabLoadProject', { name });
             if (!result.success) throw new Error(result.error || 'Load failed');
@@ -4475,16 +4900,16 @@ const AudioDaw = (() => {
             delete project.blobs;
             await restoreProject(project, blobs);
             currentProjectName = name;
-            if (typeof doNoticePopover === 'function') doNoticePopover(`Project "${name}" loaded`, 'notice-pop-green');
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Project loaded:') + ` "${name}"`, 'notice-pop-green');
         } catch (err) {
             console.error('[AudioDaw] Load project failed:', err);
-            if (typeof doNoticePopover === 'function') doNoticePopover('Load failed: ' + err.message, 'notice-pop-red');
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Load failed:') + ' ' + err.message, 'notice-pop-red');
         }
         hideDawLoadingOverlay(overlay);
     }
 
     function promptSaveAs() {
-        const name = prompt('Project name:', currentProjectName || 'My Project');
+        const name = prompt(translate('Project name:'), currentProjectName || 'My Project');
         if (name && name.trim()) saveProjectToServer(name.trim());
     }
 
@@ -4502,12 +4927,12 @@ const AudioDaw = (() => {
 
     function showProjectMenu(e) {
         dawMenu(e, [
-            { label: currentProjectName ? `Save "${currentProjectName}"` : 'Save…', action: () => {
+            { label: currentProjectName ? translate('Save') + ` "${currentProjectName}"` : translate('Save…'), action: () => {
                 if (currentProjectName) saveProjectToServer(currentProjectName);
                 else promptSaveAs();
             }},
-            { label: 'Save As…', action: promptSaveAs },
-            { label: 'Open…', action: async () => {
+            { label: translate('Save As…'), action: promptSaveAs },
+            { label: translate('Open…'), action: async () => {
                 try {
                     const result = await AudioLabAPI.callAPI('AudioLabListProjects');
                     const names = (result.projects || []).filter(n => n !== AUTOSAVE_SLOT);
@@ -4517,11 +4942,11 @@ const AudioDaw = (() => {
                     }
                     dawMenu(e, names.map(n => ({ label: n, action: () => openProjectFromServer(n) })));
                 } catch (err) {
-                    if (typeof doNoticePopover === 'function') doNoticePopover('Failed to list projects: ' + err.message, 'notice-pop-red');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('Failed to list projects:') + ' ' + err.message, 'notice-pop-red');
                 }
             }},
-            { label: 'New Project', action: () => {
-                if (state.tracks.some(t => t.clips.length > 0) && !confirm('Start a new empty project? Unsaved changes are kept only in the autosave slot.')) {
+            { label: translate('New Project'), action: () => {
+                if (state.tracks.some(t => t.clips.length > 0) && !confirm(translate('Start a new empty project? Unsaved changes are kept only in the autosave slot.'))) {
                     return;
                 }
                 flushAutosave();
@@ -4545,7 +4970,7 @@ const AudioDaw = (() => {
             if (typeof doNoticePopover === 'function') doNoticePopover('Mixdown saved to Outputs', 'notice-pop-green');
         } catch (err) {
             console.error('[AudioDaw] Save to outputs failed:', err);
-            if (typeof doNoticePopover === 'function') doNoticePopover('Save to Outputs failed: ' + err.message, 'notice-pop-red');
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Save to Outputs failed:') + ' ' + err.message, 'notice-pop-red');
         }
     }
 
@@ -4553,12 +4978,12 @@ const AudioDaw = (() => {
 
     function showExportMenu(e) {
         dawMenu(e, [
-            { label: 'WAV (Lossless)', action: () => doExportMixdown('wav') },
-            { label: 'MP3 (192kbps)', action: () => doExportMixdown('mp3') },
-            { label: 'OGG Vorbis', action: () => doExportMixdown('ogg') },
-            { label: 'FLAC (Lossless)', action: () => doExportMixdown('flac') },
-            { label: 'AAC (192kbps)', action: () => doExportMixdown('aac') },
-            { label: 'Save WAV to Swarm Outputs', action: saveMixdownToOutputs }
+            { label: translate('WAV (Lossless)'), action: () => doExportMixdown('wav') },
+            { label: translate('MP3 (192kbps)'), action: () => doExportMixdown('mp3') },
+            { label: translate('OGG Vorbis'), action: () => doExportMixdown('ogg') },
+            { label: translate('FLAC (Lossless)'), action: () => doExportMixdown('flac') },
+            { label: translate('AAC (192kbps)'), action: () => doExportMixdown('aac') },
+            { label: translate('Save WAV to Swarm Outputs'), action: saveMixdownToOutputs }
         ]);
     }
 
@@ -4579,7 +5004,7 @@ const AudioDaw = (() => {
             } else {
                 // Convert via backend API
                 if (typeof doNoticePopover === 'function') {
-                    doNoticePopover(`Converting to ${format.toUpperCase()}...`, 'notice-pop-blue');
+                    doNoticePopover(translate('Converting to') + ` ${format.toUpperCase()}...`, 'notice-pop-blue');
                 }
                 const base64 = await AudioLabCore.readAsBase64(wavBlob);
                 const result = await AudioLabAPI.callAPI('ConvertAudioFormat', {
@@ -4590,7 +5015,7 @@ const AudioDaw = (() => {
                     const convertedBlob = AudioLabCore.base64ToBlob(result.audio_data, result.mime_type || 'audio/mpeg');
                     downloadBlob(convertedBlob, `audiolab-mixdown-${Date.now()}.${format}`);
                     if (typeof doNoticePopover === 'function') {
-                        doNoticePopover(`${format.toUpperCase()} exported`, 'notice-pop-green');
+                        doNoticePopover(`${format.toUpperCase()} ` + translate('exported'), 'notice-pop-green');
                     }
                 } else {
                     throw new Error(result.error || 'Conversion failed');
@@ -4599,7 +5024,7 @@ const AudioDaw = (() => {
         } catch (err) {
             console.error('[AudioDaw] Export failed:', err);
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Export failed: ' + err.message, 'notice-pop-red');
+                doNoticePopover(translate('Export failed:') + ' ' + err.message, 'notice-pop-red');
             }
         }
     }
@@ -4750,9 +5175,10 @@ const AudioDaw = (() => {
             ['Home / End', 'Jump to start / end'],
             ['?', 'Toggle this help']
         ];
-        overlay.innerHTML = '<div class="daw-shortcut-help-title">Keyboard Shortcuts</div>'
-            + rows.map(([k, d]) => `<div class="daw-shortcut-row"><kbd>${escapeHtml(k)}</kbd><span>${escapeHtml(d)}</span></div>`).join('')
-            + '<div class="daw-shortcut-help-hint">Click anywhere to close</div>';
+        // Key names stay as-is (they name physical keys); only the descriptions are translated.
+        overlay.innerHTML = `<div class="daw-shortcut-help-title">${escapeHtml(translate('Keyboard Shortcuts'))}</div>`
+            + rows.map(([k, d]) => `<div class="daw-shortcut-row"><kbd>${escapeHtml(k)}</kbd><span>${escapeHtml(translate(d))}</span></div>`).join('')
+            + `<div class="daw-shortcut-help-hint">${escapeHtml(translate('Click anywhere to close'))}</div>`;
         overlay.addEventListener('click', () => overlay.remove());
         const body = document.getElementById('daw_container');
         (body || document.body).appendChild(overlay);
@@ -4781,14 +5207,6 @@ const AudioDaw = (() => {
         } catch {
             return 'Audio Clip';
         }
-    }
-
-    function formatTimePrecise(seconds) {
-        if (!seconds || !isFinite(seconds) || seconds < 0) return '0:00.0';
-        const m = Math.floor(seconds / 60);
-        const s = Math.floor(seconds % 60);
-        const ms = Math.floor((seconds % 1) * 10);
-        return `${m}:${s.toString().padStart(2, '0')}.${ms}`;
     }
 
     function resetState() {

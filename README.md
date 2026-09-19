@@ -38,6 +38,7 @@ Docker, and nothing to install beyond the extension itself.
 | **Wake word listener** | Voice satellites stream microphone audio in; detections are published on a WebSocket other extensions can subscribe to |
 | **Works like any Swarm model** | Pick an audio model in the Generate tab, type a prompt, and the result lands in your output history |
 | **Streaming speech** | Chunked text to speech plays back while it is still generating |
+| **Sheet music editing** | Read back the score YuE2 plans, edit the notes and harmony, audition it in the browser, and render the change |
 
 ## Requirements
 
@@ -160,7 +161,7 @@ whether the engine downloads on first use or exposes per model installs.
 | [ZipVoice](https://huggingface.co/k2-fsa/ZipVoice) | 1 | ~2GB | Apache 2.0 | on first use |
 | [Zonos TTS](https://huggingface.co/Zyphra/Zonos-v0.1-transformer) | 2 | ~4GB | Apache 2.0 | on first use |
 
-#### Speech to Text (6 engines, 17 models)
+#### Speech to Text (7 engines, 18 models)
 
 | Engine | Models | VRAM | License | Weights |
 | --- | --- | --- | --- | --- |
@@ -168,6 +169,7 @@ whether the engine downloads on first use or exposes per model installs.
 | [Kyutai STT](https://huggingface.co/kyutai/stt-1b-en_fr-trfs) | 2 | ~3 GB, ~6 GB | CC-BY 4.0 | on first use |
 | [Moonshine Streaming STT](https://huggingface.co/UsefulSensors/moonshine-streaming-tiny) | 3 | ~1.5GB to ~2GB | MIT | on first use |
 | [Moonshine STT](https://huggingface.co/UsefulSensors/moonshine-base) | 2 | CPU only, ~1GB (or CPU) | MIT | on first use |
+| [SheetSage2 Transcription](https://huggingface.co/Comfy-Org/YuE2) | 1 | ~4GB | CC-BY-NC-4.0 | on first use |
 | [Whisper Streaming](https://huggingface.co/openai/whisper-base) | 1 | ~1GB (or CPU) | MIT | on first use |
 | [Whisper STT](https://huggingface.co/openai/whisper-tiny) | 7 | ~10GB to ~6GB | Apache 2.0 / MIT | on first use |
 
@@ -303,8 +305,87 @@ one shot, an imported sample, or the currently selected clip.
 
 ![The drum machine](Assets/readme/daw-instruments.png)
 
-Piano roll, bass and synth appear as slots in the instrument browser and are not built yet; see
-[Roadmap](#roadmap).
+**Piano / Keys** plays into the [Score](#score) tab rather than rendering audio. Pick a voice, hit `Record into
+score`, play the on-screen keyboard, and `Stop and write` quantizes what you played onto the score's grid and
+writes it in at the playhead bar, spelled for the current key. A MIDI keyboard is offered too, but only where the
+browser allows it: Web MIDI needs a secure context, so a SwarmUI reached at a LAN address over plain HTTP will not
+have it. The on-screen keys work either way.
+
+Bass and synth appear as slots in the instrument browser and are not built yet; see [Roadmap](#roadmap).
+
+### Score
+
+YuE2 cannot edit audio — it has no audio input at all. What it does have is the **ABC score** it writes before it
+renders anything, and that score is editable. The Score tab is where you read it back, change it, and render the
+change.
+
+![The Score tab before anything is loaded](Assets/readme/daw-score-start.png)
+
+An empty tab shows what it can start from rather than a sentence about it. **New blank score** writes eight empty
+bars in the project's own meter and tempo and hands you the staff to click notes into — nothing is generated and no
+model is needed. **Load from the clip** and **Transcribe a recording** name the selected clip, or say what to select
+instead. Dropping works too: a clip dragged off the timeline onto the sheet loads the score it carries, or offers to
+read one off it; an `.abc` or `.txt` file opens as a score; a `.wav`, `.mp3` or `.flac` lands as a track and offers to
+transcribe it.
+
+A YuE2 generation made on the Generate tab carries its score too: **Open score** under the result opens the Audio
+Lab with that plan already loaded, rather than leaving it as text in the metadata panel.
+
+Select a clip a YuE2 generation produced and press **Load from clip**; the plan it performed appears as two staves,
+`Vocal` and `Ins`, with its chord symbols. **Draft plan** asks the model for a score without rendering audio, which
+is seconds rather than minutes. **Paste** takes one from anywhere.
+
+**Transcribe clip** reads the score out of a recording instead: SheetSage2 listens and writes the melody, the
+chord symbols, the key, the meter and the tempo. One listen returns two renderings — **Melody**, which is what a
+cover is rendered from, and **Full**, which keeps the harmony. They are not a substitution apart, so the toggle
+switches between the model's own two scores rather than deleting quoted text from one of them. **Cover this clip**
+runs the whole loop: transcribe, keep the melody, render it in your Style. Separate a song in the **Stems** tab
+first and **Transcribe vocal stem** reads the vocal alone, which is a cleaner melody than the mix. A long dense
+clip can fill the decoder's context, and it says so and asks for a shorter section. SheetSage2 is about 1.4 GB
+and stays loaded afterwards; **Free audio models after** drops it when the transcription finishes, which releases
+every resident audio model rather than only this one — the engine has no per-model unload. SheetSage2's weights
+are CC BY-NC 4.0, non-commercial only.
+
+![A transcribed score, with its chord symbols and sections](Assets/readme/daw-score.png)
+
+Everything is a text edit on the ABC, so there is one code path and one undo stack:
+
+- Click a chord symbol to reharmonise it, click a note for its menu (length, split, merge, tie, accidental,
+  octave, note to rest), or drag a note up and down to change its pitch.
+- Sections come from the `%` comment lines. The chips rename, duplicate, reorder and delete whole sections, which
+  keeps both voices in step by construction; dragging one chip onto another reorders them directly.
+- **Melody by degree** takes `1155665 / 4433221` and writes the bars.
+- **Edit with an LLM** rewrites the score to an instruction, with a scope and an invariant to hold fixed. It needs
+  the [LLMAssistant](https://github.com/HartsyAI/SwarmUI-LLMAssistant) extension; without it the card says so.
+- **Align bars** pads the source so the `Vocal` and `Ins` lines of a passage show the same bar in the same
+  column, which makes a voice drifting out of step visible before the validator says so. It only ever adds
+  spaces before a barline, so the score still says exactly what it did.
+- Every edit is validated against YuE2's dialect first: two voices under the right ids, matching bar counts per
+  chunk, every bar summing to the meter. Render stays disabled while an error stands. A bar whose durations do
+  not add up is marked on the staff as well as listed, so it does not have to be hunted for.
+
+**Play** auditions the plan in the browser — chords comped, notes highlighted as they sound — so a reharmonisation
+can be judged in seconds instead of a render. It pauses and resumes where it stood, the progress bar under the
+staff seeks on click, and the loop and tempo boxes repeat the plan or stretch it without editing the score, so
+two harmonies can be compared against each other rather than each from bar one. Double-click a note to hear the
+score from there. **Download samples** fetches the piano samples once so that works without the internet; until
+then they come from the host abcjs ships with. **MIDI** exports the plan, **Save** writes a `.abc` file.
+
+**Render** sends the score back with your Style and Lyrics and lands the result as a new track. The planning mode is
+derived from the score, not chosen: chord symbols present means `full`, none means `melody`, which is the setting
+covers want. **Render variants** sends the same score under several style lines, or several seeds, at once.
+
+**Versions** is every clip carrying a score, drawn as the tree their `parent` links describe. Pick two and it tells
+you what actually differs — chord symbols, bar count, whether any note moved — and **Solo A** / **Solo B** compare
+them through the mixer's own solo.
+
+**Apply to project** sets the project tempo and time signature to what the score is written in, and a section chip
+jumps the playhead to that section in the clip the score came from — right-click still opens the section's menu.
+
+Every field and control is named for a screen reader, the staff takes focus and shows it, and the validation
+list announces itself when it changes, so the tab is usable without a mouse.
+
+The score is a plan the model performs, not a recording of it. Do not read exact note realisation out of it.
 
 ### Generate
 
@@ -424,6 +505,8 @@ usual `ProcessTTS` fields.
 | --- | --- | --- | --- |
 | `ProcessTTS` | POST | `audio_process` | `provider_id`, `text`, `voice`, `language`, `volume`, `options`, `reference_audio`, `ref_text` |
 | `ProcessSTT` | POST | `audio_process` | `provider_id`, `audio_data`, `language`, `options` |
+| `AudioLabTranscribeScore` | POST | `audio_process` | `audio_data` (mono 24 kHz WAV), `provider_id`, `model` |
+| `AudioLabPlanScore` | POST | `audio_process` | `style`, `lyrics`, `duration`, `seed`, `cot`, `abc`, `budget_only` |
 | `ProcessAudio` | POST | `audio_process` | `provider_id`, `args` |
 | `ProcessWorkflow` | POST | `audio_process` | workflow steps |
 | `ConvertAudioFormat` | POST | `audio_process` | `audio_data`, `format` |
@@ -486,6 +569,7 @@ Per SwarmUI's extension standards, here is every outbound connection AudioLab ma
 | **huggingface.co** | Downloading model weights, on install or on first use | Yes, do not install engines. Nothing is fetched in the background otherwise |
 | **Meta's public CDN** | Demucs stem separation weights, on first use | Yes, do not use stem separation |
 | **Webhook URLs you configure** | One JSON POST per wake detection | Yes, leave the webhook list empty, which is the default |
+| **paulrosen.github.io** | Piano samples for the Score tab's browser audition, one small mp3 per pitch | Yes, press `Download samples` once and they are served locally from then on |
 | **Cloud provider APIs** | Not currently used at all, since every API engine is disabled | Not applicable |
 
 No telemetry, no analytics, no update pings, no ads.
@@ -494,8 +578,11 @@ No telemetry, no analytics, no update pings, no ads.
 
 Known and planned, so you can tell missing from broken:
 
-- **More DAW instruments.** The drum machine ships today. Piano roll, bass and synth are visible slots in the
-  instrument browser and are not implemented; selecting one says so rather than failing silently.
+- **More DAW instruments.** The drum machine and Piano / Keys ship today. Bass and synth are visible slots in the
+  instrument browser and are not implemented; selecting one says so rather than failing silently. The piano roll
+  itself is still to come — keys currently capture as a played phrase, not an editable grid.
+- **Section markers on the timeline.** The Score tab knows a song's sections; the ruler still only draws the
+  playhead and the loop region.
 - **Cloud API engines.** All 20 provider definitions exist but none are tested, so all are disabled. They get
   re-enabled per provider as each is verified.
 - **RealtimeSTT** needs a C# engine implementation.
@@ -532,3 +619,12 @@ by mcmonkey, and the [HartsyInference](https://www.nuget.org/packages/HartsyInfe
 
 Each model carries its own upstream license, shown on its card in the engine manager and in the tables above.
 Several are non commercial (F5-TTS, Fish Speech); check before shipping anything built with them.
+
+The Score tab engraves with [abcjs](https://github.com/paulrosen/abcjs) (MIT), vendored in `Assets/lib/`.
+
+Its browser audition plays samples from [paulrosen/midi-js-soundfonts](https://github.com/paulrosen/midi-js-soundfonts),
+the set abcjs points at by default. Those are pre-rendered General MIDI soundfonts from the
+[MIDI.js](https://github.com/gleitz/MIDI.js) project, whose sets are released under Creative Commons Attribution
+(FluidR3_GM) and Attribution-ShareAlike (MusyngKite, FatBoy) licenses; that repository's `abcjs/` set carries no
+license file of its own. None of it is redistributed here — `Download samples` fetches it to a gitignored folder on
+your own machine, and the licence that comes with it is upstream's, not AudioLab's.

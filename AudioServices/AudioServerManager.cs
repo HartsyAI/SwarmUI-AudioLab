@@ -52,6 +52,44 @@ public class AudioServerManager
         return CreateErrorResponse(AudioUnsupportedReasons.Message(provider.Id, provider.Name));
     }
 
+    /// <summary>Plans a provider's symbolic score without rendering audio, or reports the context budget
+    /// behind a score it is given.
+    ///
+    /// <para>Local engine only: planning a score is a model pass, and no cloud provider exposes one.</para></summary>
+    public async Task<JObject> PlanScoreAsync(AudioProviderDefinition provider, Dictionary<string, object> args,
+        bool budgetOnly = false, CancellationToken cancelToken = default)
+    {
+        if (provider.IsApiProvider || !AudioEngineBridge.IsProviderSupported(provider.Id))
+        {
+            return CreateErrorResponse($"{provider.Name} cannot write a score — only local music models plan one.");
+        }
+        if (!AudioEngineBridge.EngineReady())
+        {
+            return CreateErrorResponse($"{provider.Name} needs a compute backend, but none could be initialized. Check the SwarmUI logs for the audio engine startup error.");
+        }
+        return budgetOnly
+            ? await AudioEngineBridge.ScoreBudgetAsync(provider.Id, args, cancelToken)
+            : await AudioEngineBridge.PlanScoreAsync(provider.Id, args, cancelToken);
+    }
+
+    /// <summary>Transcribes a recording into a score, returning both of its renderings.
+    ///
+    /// <para>Local engine only, for the same reason planning is: no cloud transcription API writes a lead
+    /// sheet.</para></summary>
+    public async Task<JObject> TranscribeScoreAsync(AudioProviderDefinition provider, Dictionary<string, object> args,
+        CancellationToken cancelToken = default)
+    {
+        if (provider.IsApiProvider || !AudioEngineBridge.IsProviderSupported(provider.Id))
+        {
+            return CreateErrorResponse($"{provider.Name} cannot read a score off a recording — only local transcription models do.");
+        }
+        if (!AudioEngineBridge.EngineReady())
+        {
+            return CreateErrorResponse($"{provider.Name} needs a compute backend, but none could be initialized. Check the SwarmUI logs for the audio engine startup error.");
+        }
+        return await AudioEngineBridge.TranscribeScoreAsync(provider.Id, args, cancelToken);
+    }
+
     /// <summary>Routes an API provider request to its C# handler.</summary>
     private async Task<JObject> ProcessViaApiAsync(AudioProviderDefinition provider, Dictionary<string, object> args, User user, CancellationToken cancelToken)
     {

@@ -225,8 +225,16 @@ public class DynamicAudioBackend : AbstractT2IBackend
         public override string[] Names => _options.Value.Names;
     }
 
+    /// <summary>Feature flag carrying the audio output-format params. Every non-STT provider advertises it.</summary>
+    public const string OutputFlag = "audiolab_output";
+
+    /// <summary>Feature flag carrying AudioLab's own Max Duration. Audio-generation providers advertise it, but
+    /// the JS withholds it from the families core gives its own Text2Audio Duration to, so only one duration
+    /// control is ever on screen.</summary>
+    public const string DurationFlag = "audiolab_duration";
+
     /// <summary>Maps AudioCategory enum to category-level feature flag names.</summary>
-    private static readonly Dictionary<AudioCategory, string> CategoryFlags = new()
+    public static readonly Dictionary<AudioCategory, string> CategoryFlags = new()
     {
         [AudioCategory.TTS] = "audiolab_tts",
         [AudioCategory.STT] = "audiolab_stt",
@@ -408,7 +416,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 }
                 if (definition.Category != AudioCategory.STT)
                 {
-                    _supportedFeatureSet.TryAdd("audiolab_output", 0);
+                    _supportedFeatureSet.TryAdd(OutputFlag, 0);
+                }
+                if (definition.Category == AudioCategory.AudioGeneration)
+                {
+                    _supportedFeatureSet.TryAdd(DurationFlag, 0);
                 }
                 foreach (string flag in definition.FeatureFlags)
                 {
@@ -453,7 +465,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
     #region Model Registration
 
     /// <summary>Registers models for a specific provider into MainSDModels.
-    /// Mirrors DynamicAPIBackend.RegisterModelsForProvider().</summary>
+    /// Mirrors DynamicAPIBackend.RegisterModelsForProvider().
+    ///
+    /// <para>Writing into core's own model dictionary looks like something <see cref="ModelsAPI.ExtraModelProviders"/>
+    /// (which this backend also registers) should cover, and for the model LIST it does. It cannot cover
+    /// generation: <c>T2IParamSet</c>'s model resolution reads <c>Program.T2IModelSets[subtype]</c> and nothing
+    /// else, so a model absent from there resolves to null and the request fails before reaching any backend.
+    /// Until core can resolve a param model through the extra providers too, the entry has to exist here.</para></summary>
     private void RegisterModelsForProvider(AudioProviderDefinition provider)
     {
         Dictionary<string, T2IModel> models = provider.FileBacked
@@ -730,6 +748,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                         _ => MediaType.AudioWav,
                     };
                     ReportTruncation(result, takeOutput, user_input, provider.Id);
+                    RecordPlannedScore(result, user_input);
                     AudioFile audio = new(audioBytes, mediaType);
                     takeOutput(audio);
                 }
@@ -1640,7 +1659,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
             }
             if (meta.Definition.Category != AudioCategory.STT)
             {
-                _supportedFeatureSet.TryAdd("audiolab_output", 0);
+                _supportedFeatureSet.TryAdd(OutputFlag, 0);
+            }
+            if (meta.Definition.Category == AudioCategory.AudioGeneration)
+            {
+                _supportedFeatureSet.TryAdd(DurationFlag, 0);
             }
             foreach (string flag in meta.Definition.FeatureFlags)
             {
@@ -1766,6 +1789,39 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
         Logs.Info($"[AudioLab] {message}");
         takeOutput(new JObject { ["gen_progress"] = new JObject { ["current_status"] = message } });
+    }
+
+    /// <summary>Carries the score a planning model wrote back to the caller, as generation metadata.
+    ///
+    /// <para>YuE2 plans an ABC score before it renders any audio, and that score is the only editable artifact
+    /// the model exposes — every "edit this song" workflow is edit-the-score-and-re-render. The engine already
+    /// returns it in <c>meta.abc</c>, but nothing read it, so the score was discarded on arrival and the Song
+    /// Score (ABC) param's own instruction to "read the score back out of the result metadata" was a promise the
+    /// extension never kept.</para>
+    ///
+    /// <para>It goes in <see cref="T2IParamInput.ExtraMeta"/> rather than back onto the Song Score param on
+    /// purpose. Metadata is built at save time, so a write here still lands; and core's "Reuse Parameters"
+    /// restores only <c>sui_image_params</c>, so a score echoed into the param would silently re-render the OLD
+    /// score on any reuse that changed the lyrics.</para></summary>
+    private static void RecordPlannedScore(JObject result, T2IParamInput input)
+    {
+        string score = result["meta"]?["abc"]?.ToString();
+        if (string.IsNullOrWhiteSpace(score))
+        {
+            return;
+        }
+        input.ExtraMeta["yue2_score"] = score;
+        if (result["meta"]?["abcTruncated"]?.ToString() == "true")
+        {
+            input.ExtraMeta["yue2_score_truncated"] = true;
+        }
+        // What the context actually granted this take. It rides along so the Score tab can show the same number
+        // a Draft plan promised, against the render that used it - otherwise the budget only ever reaches a log.
+        if (double.TryParse(result["meta"]?["budgetSeconds"]?.ToString(), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double budget) && budget > 0)
+        {
+            input.ExtraMeta["yue2_budget_seconds"] = budget;
+        }
     }
 
     /// <summary>The clip length a request asked for, resolved exactly as the request itself resolves it. Kept in
@@ -1902,7 +1958,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
         // 1b. Output format args (shared across all audio-producing categories)
         if (provider.Category != AudioCategory.STT)
         {
-            args["output_format"] = input.TryGet(AudioLabParams.AudioOutputFormat, out string fmt) ? fmt : "wav_16";
+            // Core gained its own Audio Format param (mp3/wav/flac/ogg). Prefer it when the user set it — it is
+            // toggleable and advanced, so it is absent unless they did. Ours stays because it reaches every
+            // category, not just text2audio models, and carries a bit depth core's four values cannot express.
+            args["output_format"] = input.TryGet(T2IParamTypes.AudioFormat, out string coreFmt) && !string.IsNullOrEmpty(coreFmt)
+                ? (coreFmt == "wav" ? "wav_16" : coreFmt)
+                : input.TryGet(AudioLabParams.AudioOutputFormat, out string fmt) ? fmt : "wav_16";
             args["output_quality"] = input.TryGet(AudioLabParams.AudioQuality, out string qual) ? qual : "high";
         }
 
@@ -2167,11 +2228,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "acestep_music":
-                // ACE-Step semantics: the main Prompt is the style/genre, the dedicated Lyrics param is the lyrics.
-                // The engine's music handler maps genre→style and prompt→lyrics, so route them accordingly here
-                // (overriding the category-level args["prompt"] = main prompt set above).
-                args["genre"] = input.Get(T2IParamTypes.Prompt, "");
-                args["prompt"] = input.TryGet(AudioLabParams.Lyrics, out string ly) ? ly : "[Instrumental]";
+                // Core's convention, which the engine already speaks: the main Prompt carries the LYRICS and
+                // Text2Audio Style carries the style/genre. MusicRequest calls those Prompt and Genre, so the
+                // mapping is direct. (This overrides the category-level args["prompt"] set above.)
+                args["genre"] = input.Get(T2IParamTypes.Text2AudioStyle, "");
+                string aceLyrics = input.Get(T2IParamTypes.Prompt, "");
+                args["prompt"] = string.IsNullOrWhiteSpace(aceLyrics) ? "[Instrumental]" : aceLyrics;
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long aceSeed) ? aceSeed : -1L;
                 args["infer_step"] = input.TryGet(AudioLabParams.InferStep, out int infStep) ? infStep : 0;   // 0 = model default
                 // turbo* variants are distilled for no-CFG sampling, so the 7.0 default actively degrades them.
@@ -2180,19 +2242,20 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     || modelDef?.Id?.StartsWith("xl-turbo", StringComparison.OrdinalIgnoreCase) == true;
                 args["guidance_scale"] = input.TryGet(AudioLabParams.ACEGuidanceScale, out double aceGuide) ? aceGuide : (aceIsTurbo ? 1.0 : 7.0);
                 args["instrumental"] = input.TryGet(AudioLabParams.Instrumental, out string aceInst) ? aceInst : "false";
-                // Prefer the CORE Swarm audio params (what Swarm users expect + the HartsyInference ACE-Step path
-                // reads); fall back to AudioLab's own params for existing AudioLab-UI workflows.
-                int aceBpmVal = input.TryGet(T2IParamTypes.Text2AudioBPM, out long coreBpm) ? (int)coreBpm
-                    : input.TryGet(AudioLabParams.BPM, out int aceBpm) ? aceBpm : 0;
-                // 0 = omit so the LM auto-detects, matching upstream's default of none.
-                if (aceBpmVal > 0) args["bpm"] = aceBpmVal;
-                string keyScale = input.TryGet(T2IParamTypes.Text2AudioKeyScale, out string coreKey) && !string.IsNullOrEmpty(coreKey) ? coreKey
-                    : input.TryGet(AudioLabParams.KeyScale, out string aceKey) ? aceKey : null;
-                if (!string.IsNullOrEmpty(keyScale)) args["key_scale"] = keyScale;
-                args["time_signature"] = input.TryGet(T2IParamTypes.Text2AudioTimeSignature, out string coreTs) && !string.IsNullOrEmpty(coreTs) ? coreTs
-                    : input.TryGet(AudioLabParams.TimeSignature, out string aceTs) ? aceTs : "4";
-                args["vocal_language"] = input.TryGet(T2IParamTypes.Text2AudioLanguage, out string coreLang) && !string.IsNullOrEmpty(coreLang) ? coreLang
-                    : input.TryGet(AudioLabParams.VocalLanguage, out string aceVl) ? aceVl : "unknown";
+                // Core owns these four outright now (flag "text2audio,audio_ace_inputs", granted to the
+                // ace-step-1_5 compat class this provider reports). They are toggleable, so an untouched panel
+                // leaves them absent and the engine keeps its own defaults.
+                if (input.TryGet(T2IParamTypes.Text2AudioBPM, out long coreBpm) && coreBpm > 0)
+                {
+                    // 0 = omit so the LM auto-detects, matching upstream's default of none.
+                    args["bpm"] = (int)coreBpm;
+                }
+                if (input.TryGet(T2IParamTypes.Text2AudioKeyScale, out string coreKey) && !string.IsNullOrEmpty(coreKey))
+                {
+                    args["key_scale"] = coreKey;
+                }
+                args["time_signature"] = input.TryGet(T2IParamTypes.Text2AudioTimeSignature, out string coreTs) && !string.IsNullOrEmpty(coreTs) ? coreTs : "4";
+                args["vocal_language"] = input.TryGet(T2IParamTypes.Text2AudioLanguage, out string coreLang) && !string.IsNullOrEmpty(coreLang) ? coreLang : "unknown";
                 // 0 = let the model decide; the shift1/shift3 checkpoints are trained at those exact values,
                 // so name them explicitly rather than relying on the engine to infer from the checkpoint.
                 double aceShiftDefault = modelDef?.Id switch
@@ -2249,11 +2312,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "yue2_music":
-                // Same split as v1 and ACE-Step: the main Prompt is style/genre tags, the dedicated Lyrics param
-                // is the lyrics. Every knob below is written only when the user actually set it, so an untouched
-                // panel leaves the engine on its own release defaults rather than on this file's guesses.
-                args["genre"] = input.Get(T2IParamTypes.Prompt, "");
-                args["prompt"] = input.TryGet(AudioLabParams.Yue2Lyrics, out string y2Lyrics) ? y2Lyrics : "";
+                // Core's convention: the main Prompt carries the lyrics, Text2Audio Style carries the style tags.
+                // Every knob below is written only when the user actually set it, so an untouched panel leaves the
+                // engine on its own release defaults rather than on this file's guesses.
+                args["genre"] = input.Get(T2IParamTypes.Text2AudioStyle, "");
+                args["prompt"] = input.Get(T2IParamTypes.Prompt, "");
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long y2Seed) ? y2Seed : -1L;
                 if (input.TryGet(AudioLabParams.Yue2PlanningMode, out string y2Cot) && !string.IsNullOrWhiteSpace(y2Cot))
                     args["yue2_cot"] = y2Cot;
@@ -2292,11 +2355,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "minimax_music3":
-                // Same split ACE-Step and HeartMuLa use, and the one the engine's MusicRequest already speaks:
-                // the main Prompt carries the music description (genre), the dedicated Lyrics param carries the
-                // words (prompt).
-                args["genre"] = input.Get(T2IParamTypes.Prompt, "");
-                args["prompt"] = input.TryGet(AudioLabParams.MiniMaxMusic3Lyrics, out string mmLy) ? mmLy : "";
+                // Core's convention, and the one the engine's MusicRequest already speaks: the main Prompt
+                // carries the words (prompt), Text2Audio Style carries the music description (genre).
+                args["genre"] = input.Get(T2IParamTypes.Text2AudioStyle, "");
+                args["prompt"] = input.Get(T2IParamTypes.Prompt, "");
                 args["cfg_scale"] = input.TryGet(AudioLabParams.MiniMaxMusic3CFGScale, out double mmCfg) ? mmCfg : 1.7;
                 args["infer_step"] = input.TryGet(AudioLabParams.MiniMaxMusic3Steps, out int mmSteps) ? mmSteps : 30;
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long mmSeed) ? mmSeed : -1L;

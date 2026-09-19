@@ -20,7 +20,7 @@ public sealed class YuE2Provider : IAudioProviderSource
         .WithCategory(AudioCategory.AudioGeneration)
         // The trailing slash in the selector prefix is what keeps these rows out of v1's "YuE" namespace.
         .WithModelPrefix("YuE2")
-        .WithModelClass("yue2_music", "YuE2 Music")
+        .WithModelClass("yue-2", "YuE2")
         .AddFeatureFlag("audiolab_audiogen")
         .AddFeatureFlag("yue2_music_params")
         .AddModels(Models)

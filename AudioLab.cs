@@ -18,16 +18,29 @@ namespace Hartsy.Extensions.AudioLab;
 public class AudioLab : Extension
 {
     /// <summary>Current extension version.</summary>
-    public static new readonly string Version = "4.0.0";
+    public const string ExtensionVersion = "4.0.0";
+
+    /// <summary>Fills in the fields core shows on the Extensions tab. Called once, after OnFirstInit.</summary>
+    public override void PopulateMetadata()
+    {
+        Version = ExtensionVersion;
+        ExtensionAuthor = "Hartsy AI";
+        Description = "Audio generation, transcription, voice conversion and a multi-track DAW, running on the "
+            + "in-process HartsyInference engine.";
+        License = "MIT";
+        ReadmeURL = "https://github.com/HartsyAI/SwarmUI-AudioLab";
+        Tags = ["audio", "tts", "stt", "music"];
+    }
 
     /// <summary>Pre-initialization — registers providers and web assets before SwarmUI core is ready.</summary>
     public override void OnPreInit()
     {
         try
         {
-            // Set extension directory for Python path resolution
-            string projectRoot = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", ".."));
-            AudioConfiguration.ExtensionDirectory = Path.GetFullPath(Path.Combine(projectRoot, "Extensions", "SwarmUI-AudioLab"));
+            // Core sets FilePath while loading the extension, before this hook. Deriving it from the assembly
+            // location instead used to hardcode the checkout folder name, so renaming the directory silently
+            // broke every provider preview image.
+            AudioConfiguration.ExtensionDirectory = Path.GetFullPath(FilePath);
             Logs.Info($"[AudioLab] Extension directory: {AudioConfiguration.ExtensionDirectory}");
 
             // Settings load well before extension pre-init, so the server's model root is known here.
@@ -49,6 +62,9 @@ public class AudioLab : Extension
             ScriptFiles.Add("Assets/lib/wavesurfer-timeline.min.js");
             ScriptFiles.Add("Assets/lib/wavesurfer-minimap.min.js");
             ScriptFiles.Add("Assets/lib/crunker.min.js");
+            // abcjs (MIT) engraves the ABC scores YuE2 plans. Vendored rather than CDN-loaded so the Score tab
+            // works on an offline install, like every other lib here.
+            ScriptFiles.Add("Assets/lib/abcjs-basic-min.min.js");
             ScriptFiles.Add("Assets/audio-player.js");
             ScriptFiles.Add("Assets/audio-api.js");
             ScriptFiles.Add("Assets/audio-core.js");
@@ -57,11 +73,18 @@ public class AudioLab : Extension
             ScriptFiles.Add("Assets/audio-daw-mixer.js");
             ScriptFiles.Add("Assets/audio-daw-fx.js");
             ScriptFiles.Add("Assets/audio-daw-store.js");
+            ScriptFiles.Add("Assets/audio-daw-score.js");
             ScriptFiles.Add("Assets/audio-daw.js");
             ScriptFiles.Add("Assets/audio-editor.js");
             ScriptFiles.Add("Assets/audio-integration.js");
             ScriptFiles.Add("Assets/audio-wakeword.js");
             StyleSheetFiles.Add("Assets/audio-lab.css");
+            // Registered whether or not the files exist yet: the getters read on request, so a soundfont
+            // fetched later in the session is served without a restart.
+            foreach (string note in ScoreSoundfont.AssetPaths)
+            {
+                OtherAssets.Add(note);
+            }
         }
         catch (Exception ex)
         {
@@ -78,6 +101,9 @@ public class AudioLab : Extension
         {
             // Before core's first RefreshAllModelSets, so Models/audio is in the very first scan.
             AudioModelTypeRegistration.Register();
+
+            // Before anything reads a sidecar, so artifacts stamped under our old class ids still classify.
+            AudioModelFactory.RegisterLegacyClassRemaps();
 
             // Register T2I parameters for audio workflows (TTS, STT, Music, Clone, FX, SFX)
             AudioLabParams.RegisterAll();
@@ -161,28 +187,56 @@ public class AudioLab : Extension
         }
     }
 
-    /// <summary>Registers all feature flags that should be disregarded for audio backends.
-    /// Mirrors the pattern from SwarmUI-API-Backends RegisterFeatureFlags().</summary>
+    /// <summary>Marks AudioLab's own feature flags as UI-visibility-only, so they never gate backend selection.
+    ///
+    /// <para>Only flags this extension owns belong here. <see cref="T2IEngine.DisregardedFeatureFlags"/> is
+    /// process-global and core consults it to decide whether a backend may be filtered out for lacking a feature
+    /// a request needs — so adding a CORE flag here disables that check for every generation in the process,
+    /// image ones included. This used to also add the image-only list ("controlnet", "refiners", "freeu",
+    /// "ipadapter", ...), which meant a ControlNet request would happily route to a backend that cannot do
+    /// ControlNet. Hiding image params on an audio model is the JS layer's job (see audio-integration.js), not
+    /// this set's.</para></summary>
     private static void RegisterFeatureFlags()
     {
-        // Category-level flags (one per AudioCategory)
-        string[] categoryFlags = ["audiolab_tts", "audiolab_stt", "audiolab_audiogen", "audiolab_clone", "audiolab_audioproc"];
+        // Category-level flags (one per AudioCategory), plus the output-format flag the backend advertises.
+        string[] categoryFlags = [.. DynamicAudioBackend.CategoryFlags.Values, DynamicAudioBackend.OutputFlag, DynamicAudioBackend.DurationFlag];
 
         // Per-provider flags from each provider's FeatureFlags list
         string[] providerFlags = AudioProviderRegistry.All
             .SelectMany(p => p.FeatureFlags).Distinct().ToArray();
 
-        // Image-only features incompatible with audio models
-        string[] incompatibleFlags = [
-            "sampling", "zero_negative", "refiners", "controlnet", "variation_seed",
-            "video", "autowebui", "comfyui", "frameinterps", "ipadapter", "sdxl",
-            "dynamic_thresholding", "cascade", "sd3", "flux-dev", "seamless",
-            "freeu", "teacache", "text2video", "yolov8", "aitemplate", "sdcpp"
-        ];
-
         foreach (string flag in categoryFlags) T2IEngine.DisregardedFeatureFlags.Add(flag);
         foreach (string flag in providerFlags) T2IEngine.DisregardedFeatureFlags.Add(flag);
-        foreach (string flag in incompatibleFlags) T2IEngine.DisregardedFeatureFlags.Add(flag);
+        WarnOnUndeclaredFeatureFlags([.. categoryFlags, .. providerFlags]);
+    }
+
+    /// <summary>Complains at startup about any param of ours carrying a flag nothing grants.
+    ///
+    /// <para>The failure it catches is silent by construction: <see cref="T2IEngine"/> drops a backend whose
+    /// features don't cover a job's required flags and names neither the param nor the flag, so a param with a
+    /// typo'd or never-registered flag just makes every generation touching it refuse. Flags in
+    /// <c>DisregardedFeatureFlags</c> never gate a backend, so they are fine; core's own flags are core's to
+    /// grant. Anything else that starts "audiolab_" or ends "_params" is ours and has to be accounted for.
+    /// Mirrors SwarmUIHartsyInference.WarnOnUndeclaredFeatureFlags.</para></summary>
+    private static void WarnOnUndeclaredFeatureFlags(HashSet<string> declared)
+    {
+        foreach (T2IParamType type in T2IParamTypes.Types.Values)
+        {
+            if (string.IsNullOrEmpty(type.FeatureFlag))
+            {
+                continue;
+            }
+            foreach (string flag in type.FeatureFlag.Split(','))
+            {
+                bool isOurs = flag.StartsWith("audiolab_", StringComparison.Ordinal) || flag.EndsWith("_params", StringComparison.Ordinal);
+                if (isOurs && !declared.Contains(flag) && !T2IEngine.DisregardedFeatureFlags.Contains(flag))
+                {
+                    Logs.Error($"[AudioLab] Param '{type.Name}' requires feature flag '{flag}', which nothing "
+                        + "registers — every generation using that param will be refused with no explanation. "
+                        + "Add it to a provider's FeatureFlags, or drop the flag.");
+                }
+            }
+        }
     }
 
     /// <summary>Creates a standardized error response for API endpoints.</summary>

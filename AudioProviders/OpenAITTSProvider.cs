@@ -16,6 +16,8 @@ public sealed class OpenAITTSProvider : IAudioProviderSource
         .WithModelClass("openai_tts", "OpenAI TTS")
         .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("openai_tts_params")
+        // Carried by the gpt-4o-mini row only, but declared here for the same reason as above.
+        .AddFeatureFlag("openai_tts_instructions_params")
         .WithApiProvider("openai_api")
         .AddModels(Models)
         .WithEngineGroup("api")
