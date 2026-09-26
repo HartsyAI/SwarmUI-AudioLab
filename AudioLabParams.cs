@@ -1197,7 +1197,7 @@ public static class AudioLabParams
 
         #region TTS — Pocket TTS
         PocketTTSVoice = T2IParamTypes.Register<string>(new("Pocket TTS Voice",
-            "Built-in voice embedding. All 26 voices published in the model repo are listed.",
+            "Built-in voice embedding. All 27 voices published in the model repo are listed.",
             "alba",
             GetValues: _ => [
                 "alba///Alba",
@@ -1207,6 +1207,7 @@ public static class AudioLabParams
                 "caro_davy///Caro Davy",
                 "charles///Charles",
                 "cosette///Cosette",
+                "daan///Daan",
                 "eponine///Eponine",
                 "estelle///Estelle",
                 "eve///Eve",
