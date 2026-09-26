@@ -194,6 +194,7 @@ public static class AudioEngineRequests
             Nfe = Integer(args, "nfe"),
             Solver = AudioIo.Str(args, "solver", ""),
             Seed = Seed(args),
+            DenoiseOnly = args.TryGetValue("denoise_only", out object denoiseOnly) && denoiseOnly is true,
         };
     }
 

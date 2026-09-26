@@ -1191,13 +1191,15 @@ public static class AudioLabParams
                 "日语男///Japanese Male", "粤语女///Cantonese Female",
                 "韩语女///Korean Female"
             ],
-            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "cosyvoice_tts_params"));
+            // Hidden: nothing AudioLab ships reads it, and showing it invited users to skip the reference clip
+            // CosyVoice 2 requires. Still registered so saved workflows that set it keep loading.
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "cosyvoice_tts_params", VisibleNormally: false));
 
         #endregion
 
         #region TTS — Pocket TTS
         PocketTTSVoice = T2IParamTypes.Register<string>(new("Pocket TTS Voice",
-            "Built-in voice embedding. All 26 voices published in the model repo are listed.",
+            "Built-in voice embedding. All 27 voices published in the model repo are listed.",
             "alba",
             GetValues: _ => [
                 "alba///Alba",
@@ -1207,6 +1209,7 @@ public static class AudioLabParams
                 "caro_davy///Caro Davy",
                 "charles///Charles",
                 "cosette///Cosette",
+                "daan///Daan",
                 "eponine///Eponine",
                 "estelle///Estelle",
                 "eve///Eve",

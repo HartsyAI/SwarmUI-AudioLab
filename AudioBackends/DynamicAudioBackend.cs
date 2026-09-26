@@ -753,6 +753,18 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     takeOutput(audio);
                 }
 
+                // Separation returns named stems instead of one clip. Only the DAW's own API read them, so a Demucs
+                // generation from the Generate tab computed every stem and then reported that nothing was generated.
+                if (result["stems"] is JObject stems && stems.Count > 0)
+                {
+                    // Set before the outputs: each output's metadata is captured as it is taken.
+                    user_input.ExtraMeta["stems"] = string.Join(", ", stems.Properties().Select(p => p.Name));
+                    foreach (JProperty stem in stems.Properties())
+                    {
+                        takeOutput(new AudioFile(Convert.FromBase64String(stem.Value.ToString()), MediaType.AudioWav));
+                    }
+                }
+
                 // For STT, output the transcription text and a placeholder audio
                 if (provider.Category == AudioCategory.STT)
                 {
@@ -1616,6 +1628,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
         try
         {
+        // A converted checkpoint stands in for the upstream files a family is checked by, but only once the
+        // engine has linked it into place; without this a provider whose weights are all Hartsy artifacts is
+        // judged empty and uninstalled before the engine ever runs.
+        HartsyInference.Audio.Cache.AudioStandIns.EnsureSynced(AudioConfiguration.ModelRoot);
         foreach (string providerId in InstalledEnginesSnapshot())
         {
             AudioProviderDefinition def = AudioProviderRegistry.GetById(providerId);
@@ -1898,8 +1914,19 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 string sharedRef = GetBase64Audio(input, AudioLabParams.ReferenceAudio);
                 if (!string.IsNullOrEmpty(sharedRef))
                     args["reference_audio"] = sharedRef;
+                else if (provider.Id is "cosyvoice_tts" or "styletts2_tts" or "zonos_tts")
+                {
+                    // These clone a voice and have none of their own; say which parameter takes the clip.
+                    throw new SwarmReadableErrorException($"[AudioLab] {provider.Name} speaks in the voice of a clip you provide. "
+                        + "Add a 3-10 second recording in 'Reference Audio', and its transcript in 'Reference Text'.");
+                }
                 if (input.TryGet(AudioLabParams.ReferenceText, out string sharedRefText) && !string.IsNullOrEmpty(sharedRefText))
                     args["ref_text"] = sharedRefText;
+                if (provider.Id == "cosyvoice_tts" && !args.ContainsKey("ref_text"))
+                {
+                    // CosyVoice 2 aligns the clip against its transcript and fails without it, after loading the model.
+                    throw new SwarmReadableErrorException("[AudioLab] CosyVoice needs the transcript of the Reference Audio clip in 'Reference Text'.");
+                }
                 // Seed for reproducibility (pipelines that accept one). SwarmUI resolves -1 to a concrete value upstream.
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long ttsSeed) ? ttsSeed : -1L;
                 break;
@@ -2300,10 +2327,19 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
 
             case "yue_music":
-                // YuE semantics (mirror ACE-Step): main Prompt = genre/style tags → genre; the dedicated
-                // Lyrics param = lyrics → prompt. EncodeStage1Prompt(genre, prompt) consumes them in that order.
-                args["genre"] = input.Get(T2IParamTypes.Prompt, "");
-                args["prompt"] = input.TryGet(AudioLabParams.YuELyrics, out string yueLy) ? yueLy : "";
+                // Core's convention (Prompt = lyrics, Text2Audio Style = genre), as for HeartLib; a workflow that sets
+                // YuE Lyrics keeps the old meaning, Prompt as genre. EncodeStage1Prompt(genre, prompt) consumes them.
+                if (input.TryGet(AudioLabParams.YuELyrics, out string yueLy) && !string.IsNullOrWhiteSpace(yueLy))
+                {
+                    args["prompt"] = yueLy;
+                    string yueStyle = input.Get(T2IParamTypes.Text2AudioStyle, "");
+                    args["genre"] = string.IsNullOrWhiteSpace(yueStyle) ? input.Get(T2IParamTypes.Prompt, "") : yueStyle;
+                }
+                else
+                {
+                    args["prompt"] = input.Get(T2IParamTypes.Prompt, "");
+                    args["genre"] = input.Get(T2IParamTypes.Text2AudioStyle, "");
+                }
                 args["max_new_tokens"] = input.TryGet(AudioLabParams.YuEMaxTokens, out int yueTokens) ? yueTokens : 3000;
                 args["quantization"] = input.TryGet(AudioLabParams.YuEQuantization, out string yueQuant) ? yueQuant : "fp16";
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long yueSeed) ? yueSeed : -1L;
@@ -2347,10 +2383,21 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "heartlib_music":
-                // HeartMuLa semantics (mirror ACE-Step): main Prompt = vocal-style tags → genre; the dedicated
-                // Lyrics param = lyrics → prompt. MusicHandler maps genre→HeartMulaTags, prompt→HeartMulaLyrics.
-                args["genre"] = input.Get(T2IParamTypes.Prompt, "");
-                args["prompt"] = input.TryGet(AudioLabParams.HeartLibLyrics, out string hlLy) ? hlLy : "";
+                // Core's convention, as for every other music model: Prompt = lyrics, Text2Audio Style = tags. HeartLib
+                // used to read tags from the Prompt and lyrics only from HeartLib Lyrics, so a request written the
+                // core way sang nothing (and the RL model produced no audio at all). A workflow that still sets
+                // HeartLib Lyrics keeps the old meaning, Prompt as tags.
+                if (input.TryGet(AudioLabParams.HeartLibLyrics, out string hlLy) && !string.IsNullOrWhiteSpace(hlLy))
+                {
+                    args["prompt"] = hlLy;
+                    string style = input.Get(T2IParamTypes.Text2AudioStyle, "");
+                    args["genre"] = string.IsNullOrWhiteSpace(style) ? input.Get(T2IParamTypes.Prompt, "") : style;
+                }
+                else
+                {
+                    args["prompt"] = input.Get(T2IParamTypes.Prompt, "");
+                    args["genre"] = input.Get(T2IParamTypes.Text2AudioStyle, "");
+                }
                 args["cfg_scale"] = input.TryGet(AudioLabParams.HeartLibCFGScale, out double hlCfg) ? hlCfg : 1.5;
                 args["temperature"] = input.TryGet(AudioLabParams.HeartLibTemperature, out double hlTemp) ? hlTemp : 1.0;
                 args["topk"] = input.TryGet(AudioLabParams.HeartLibTopK, out int hlTopK) ? hlTopK : 50;
@@ -2383,6 +2430,18 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "gptsovits_clone":
+            {
+                // GPT-SoVITS is filed under voice conversion, whose clip arrives as target_voice, but the engine runs
+                // it as speech and reads reference_audio. Nothing set that key, so it failed whatever was supplied.
+                string gptVoice = args.GetValueOrDefault("target_voice") as string;
+                if (string.IsNullOrEmpty(gptVoice))
+                    gptVoice = GetBase64Audio(input, AudioLabParams.ReferenceAudio);
+                if (string.IsNullOrEmpty(gptVoice))
+                {
+                    throw new SwarmReadableErrorException("[AudioLab] GPT-SoVITS speaks in the voice of the clip in 'Target Voice'. "
+                        + "Add a 3-10 second recording there, and its transcript in 'Clone Prompt Text'.");
+                }
+                args["reference_audio"] = gptVoice;
                 args["text"] = input.Get(T2IParamTypes.Prompt, "");
                 // Must be ref_text: that is the key SpeechRequest reads into RefText, which GptSoVitsModel
                 // aligns the reference clip against. As "prompt_text" it was silently dropped.
@@ -2390,6 +2449,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     args["ref_text"] = gpt;
                 args["language"] = input.TryGet(AudioLabParams.CloneLanguage, out string gl) ? gl : "en";
                 break;
+            }
 
             case "demucs_fx":
                 args["overlap"] = input.TryGet(AudioLabParams.Overlap, out double overlap) ? overlap : 0.25;
@@ -2399,6 +2459,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "resemble_enhance_fx":
+                // The Denoise row runs only the denoiser; without this it ran the full enhancer, same as Enhance.
+                args["denoise_only"] = modelDef?.Id == "denoise";
                 args["nfe"] = input.TryGet(AudioLabParams.EnhanceNFE, out int nfe) ? nfe : 64;
                 args["solver"] = input.TryGet(AudioLabParams.EnhanceSolver, out string solver) ? solver : "midpoint";
                 args["lambd"] = input.TryGet(AudioLabParams.EnhanceLambda, out double lambd) ? lambd : 0.1;
