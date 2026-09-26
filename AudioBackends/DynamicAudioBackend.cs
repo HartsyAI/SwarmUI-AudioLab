@@ -1616,6 +1616,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
         try
         {
+        // A converted checkpoint stands in for the upstream files a family is checked by, but only once the
+        // engine has linked it into place; without this a provider whose weights are all Hartsy artifacts is
+        // judged empty and uninstalled before the engine ever runs.
+        HartsyInference.Audio.Cache.AudioStandIns.EnsureSynced(AudioConfiguration.ModelRoot);
         foreach (string providerId in InstalledEnginesSnapshot())
         {
             AudioProviderDefinition def = AudioProviderRegistry.GetById(providerId);
