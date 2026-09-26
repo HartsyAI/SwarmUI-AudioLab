@@ -753,6 +753,19 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     takeOutput(audio);
                 }
 
+                // Separation returns named stems instead of one clip. Only the DAW's own API read them, so a Demucs
+                // generation from the Generate tab computed every stem and then reported that nothing was generated.
+                if (result["stems"] is JObject stems && stems.Count > 0)
+                {
+                    List<string> stemOrder = [];
+                    foreach (JProperty stem in stems.Properties())
+                    {
+                        takeOutput(new AudioFile(Convert.FromBase64String(stem.Value.ToString()), MediaType.AudioWav));
+                        stemOrder.Add(stem.Name);
+                    }
+                    user_input.ExtraMeta["stems"] = string.Join(", ", stemOrder);
+                }
+
                 // For STT, output the transcription text and a placeholder audio
                 if (provider.Category == AudioCategory.STT)
                 {
