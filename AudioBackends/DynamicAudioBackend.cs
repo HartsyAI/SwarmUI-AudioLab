@@ -2370,10 +2370,21 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "heartlib_music":
-                // HeartMuLa semantics (mirror ACE-Step): main Prompt = vocal-style tags → genre; the dedicated
-                // Lyrics param = lyrics → prompt. MusicHandler maps genre→HeartMulaTags, prompt→HeartMulaLyrics.
-                args["genre"] = input.Get(T2IParamTypes.Prompt, "");
-                args["prompt"] = input.TryGet(AudioLabParams.HeartLibLyrics, out string hlLy) ? hlLy : "";
+                // Core's convention, as for every other music model: Prompt = lyrics, Text2Audio Style = tags. HeartLib
+                // used to read tags from the Prompt and lyrics only from HeartLib Lyrics, so a request written the
+                // core way sang nothing (and the RL model produced no audio at all). A workflow that still sets
+                // HeartLib Lyrics keeps the old meaning, Prompt as tags.
+                if (input.TryGet(AudioLabParams.HeartLibLyrics, out string hlLy) && !string.IsNullOrWhiteSpace(hlLy))
+                {
+                    args["prompt"] = hlLy;
+                    string style = input.Get(T2IParamTypes.Text2AudioStyle, "");
+                    args["genre"] = string.IsNullOrWhiteSpace(style) ? input.Get(T2IParamTypes.Prompt, "") : style;
+                }
+                else
+                {
+                    args["prompt"] = input.Get(T2IParamTypes.Prompt, "");
+                    args["genre"] = input.Get(T2IParamTypes.Text2AudioStyle, "");
+                }
                 args["cfg_scale"] = input.TryGet(AudioLabParams.HeartLibCFGScale, out double hlCfg) ? hlCfg : 1.5;
                 args["temperature"] = input.TryGet(AudioLabParams.HeartLibTemperature, out double hlTemp) ? hlTemp : 1.0;
                 args["topk"] = input.TryGet(AudioLabParams.HeartLibTopK, out int hlTopK) ? hlTopK : 50;
