@@ -2323,10 +2323,19 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
 
             case "yue_music":
-                // YuE semantics (mirror ACE-Step): main Prompt = genre/style tags → genre; the dedicated
-                // Lyrics param = lyrics → prompt. EncodeStage1Prompt(genre, prompt) consumes them in that order.
-                args["genre"] = input.Get(T2IParamTypes.Prompt, "");
-                args["prompt"] = input.TryGet(AudioLabParams.YuELyrics, out string yueLy) ? yueLy : "";
+                // Core's convention (Prompt = lyrics, Text2Audio Style = genre), as for HeartLib; a workflow that sets
+                // YuE Lyrics keeps the old meaning, Prompt as genre. EncodeStage1Prompt(genre, prompt) consumes them.
+                if (input.TryGet(AudioLabParams.YuELyrics, out string yueLy) && !string.IsNullOrWhiteSpace(yueLy))
+                {
+                    args["prompt"] = yueLy;
+                    string yueStyle = input.Get(T2IParamTypes.Text2AudioStyle, "");
+                    args["genre"] = string.IsNullOrWhiteSpace(yueStyle) ? input.Get(T2IParamTypes.Prompt, "") : yueStyle;
+                }
+                else
+                {
+                    args["prompt"] = input.Get(T2IParamTypes.Prompt, "");
+                    args["genre"] = input.Get(T2IParamTypes.Text2AudioStyle, "");
+                }
                 args["max_new_tokens"] = input.TryGet(AudioLabParams.YuEMaxTokens, out int yueTokens) ? yueTokens : 3000;
                 args["quantization"] = input.TryGet(AudioLabParams.YuEQuantization, out string yueQuant) ? yueQuant : "fp16";
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long yueSeed) ? yueSeed : -1L;
