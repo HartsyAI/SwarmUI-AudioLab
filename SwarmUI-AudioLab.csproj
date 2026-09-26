@@ -146,7 +146,7 @@
          cache readers took the file's order verbatim, so every projection was transposed and the GEMV's M came
          out 0. Existing cache files stay valid. Nothing between alpha.130 and alpha.160 needed a code change
          here: a full Release build from the nuget.org packages (UseLocalHartsy=false) succeeds as-is. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.160" />
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.183" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak

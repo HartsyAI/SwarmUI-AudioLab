@@ -1922,6 +1922,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 }
                 if (input.TryGet(AudioLabParams.ReferenceText, out string sharedRefText) && !string.IsNullOrEmpty(sharedRefText))
                     args["ref_text"] = sharedRefText;
+                if (provider.Id == "cosyvoice_tts" && !args.ContainsKey("ref_text"))
+                {
+                    // CosyVoice 2 aligns the clip against its transcript and fails without it, after loading the model.
+                    throw new SwarmReadableErrorException("[AudioLab] CosyVoice needs the transcript of the Reference Audio clip in 'Reference Text'.");
+                }
                 // Seed for reproducibility (pipelines that accept one). SwarmUI resolves -1 to a concrete value upstream.
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long ttsSeed) ? ttsSeed : -1L;
                 break;
