@@ -757,13 +757,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 // generation from the Generate tab computed every stem and then reported that nothing was generated.
                 if (result["stems"] is JObject stems && stems.Count > 0)
                 {
-                    List<string> stemOrder = [];
+                    // Set before the outputs: each output's metadata is captured as it is taken.
+                    user_input.ExtraMeta["stems"] = string.Join(", ", stems.Properties().Select(p => p.Name));
                     foreach (JProperty stem in stems.Properties())
                     {
                         takeOutput(new AudioFile(Convert.FromBase64String(stem.Value.ToString()), MediaType.AudioWav));
-                        stemOrder.Add(stem.Name);
                     }
-                    user_input.ExtraMeta["stems"] = string.Join(", ", stemOrder);
                 }
 
                 // For STT, output the transcription text and a placeholder audio
