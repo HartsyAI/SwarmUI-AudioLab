@@ -1902,7 +1902,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 string sharedRef = GetBase64Audio(input, AudioLabParams.ReferenceAudio);
                 if (!string.IsNullOrEmpty(sharedRef))
                     args["reference_audio"] = sharedRef;
-                else if (provider.Id is "cosyvoice_tts" or "styletts2_tts")
+                else if (provider.Id is "cosyvoice_tts" or "styletts2_tts" or "zonos_tts")
                 {
                     // These clone a voice and have none of their own; say which parameter takes the clip.
                     throw new SwarmReadableErrorException($"[AudioLab] {provider.Name} speaks in the voice of a clip you provide. "
