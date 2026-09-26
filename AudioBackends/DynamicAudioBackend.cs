@@ -2455,6 +2455,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "resemble_enhance_fx":
+                // The Denoise row runs only the denoiser; without this it ran the full enhancer, same as Enhance.
+                args["denoise_only"] = modelDef?.Id == "denoise";
                 args["nfe"] = input.TryGet(AudioLabParams.EnhanceNFE, out int nfe) ? nfe : 64;
                 args["solver"] = input.TryGet(AudioLabParams.EnhanceSolver, out string solver) ? solver : "midpoint";
                 args["lambd"] = input.TryGet(AudioLabParams.EnhanceLambda, out double lambd) ? lambd : 0.1;
