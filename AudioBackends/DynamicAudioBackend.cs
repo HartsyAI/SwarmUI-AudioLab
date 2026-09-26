@@ -758,6 +758,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 {
                     string transcription = result["text"]?.ToString() ?? "";
                     Logs.Info($"[AudioLab] STT transcription via {provider.Name}: {transcription}");
+                    // The status line is transient and the saved output is a silent placeholder, so the text
+                    // is written into the output's metadata, the one place that persists and reaches API callers.
+                    user_input.ExtraMeta["transcription"] = transcription;
                     takeOutput(new JObject
                     {
                         ["gen_progress"] = new JObject
