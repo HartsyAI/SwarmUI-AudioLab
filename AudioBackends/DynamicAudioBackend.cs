@@ -2393,11 +2393,18 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "gptsovits_clone":
-                if (string.IsNullOrEmpty(args.GetValueOrDefault("target_voice") as string))
+            {
+                // GPT-SoVITS is filed under voice conversion, whose clip arrives as target_voice, but the engine runs
+                // it as speech and reads reference_audio. Nothing set that key, so it failed whatever was supplied.
+                string gptVoice = args.GetValueOrDefault("target_voice") as string;
+                if (string.IsNullOrEmpty(gptVoice))
+                    gptVoice = GetBase64Audio(input, AudioLabParams.ReferenceAudio);
+                if (string.IsNullOrEmpty(gptVoice))
                 {
                     throw new SwarmReadableErrorException("[AudioLab] GPT-SoVITS speaks in the voice of the clip in 'Target Voice'. "
                         + "Add a 3-10 second recording there, and its transcript in 'Clone Prompt Text'.");
                 }
+                args["reference_audio"] = gptVoice;
                 args["text"] = input.Get(T2IParamTypes.Prompt, "");
                 // Must be ref_text: that is the key SpeechRequest reads into RefText, which GptSoVitsModel
                 // aligns the reference clip against. As "prompt_text" it was silently dropped.
@@ -2405,6 +2412,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     args["ref_text"] = gpt;
                 args["language"] = input.TryGet(AudioLabParams.CloneLanguage, out string gl) ? gl : "en";
                 break;
+            }
 
             case "demucs_fx":
                 args["overlap"] = input.TryGet(AudioLabParams.Overlap, out double overlap) ? overlap : 0.25;
