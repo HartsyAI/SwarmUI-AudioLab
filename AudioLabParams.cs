@@ -1191,7 +1191,9 @@ public static class AudioLabParams
                 "日语男///Japanese Male", "粤语女///Cantonese Female",
                 "韩语女///Korean Female"
             ],
-            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "cosyvoice_tts_params"));
+            // Hidden: nothing AudioLab ships reads it, and showing it invited users to skip the reference clip
+            // CosyVoice 2 requires. Still registered so saved workflows that set it keep loading.
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "cosyvoice_tts_params", VisibleNormally: false));
 
         #endregion
 

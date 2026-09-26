@@ -1902,6 +1902,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 string sharedRef = GetBase64Audio(input, AudioLabParams.ReferenceAudio);
                 if (!string.IsNullOrEmpty(sharedRef))
                     args["reference_audio"] = sharedRef;
+                else if (provider.Id is "cosyvoice_tts" or "styletts2_tts")
+                {
+                    // These clone a voice and have none of their own; say which parameter takes the clip.
+                    throw new SwarmReadableErrorException($"[AudioLab] {provider.Name} speaks in the voice of a clip you provide. "
+                        + "Add a 3-10 second recording in 'Reference Audio', and its transcript in 'Reference Text'.");
+                }
                 if (input.TryGet(AudioLabParams.ReferenceText, out string sharedRefText) && !string.IsNullOrEmpty(sharedRefText))
                     args["ref_text"] = sharedRefText;
                 // Seed for reproducibility (pipelines that accept one). SwarmUI resolves -1 to a concrete value upstream.
