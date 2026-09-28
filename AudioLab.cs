@@ -106,11 +106,13 @@ public class AudioLab : Extension
             AudioModelFactory.RegisterLegacyClassRemaps();
 
             // Register T2I parameters for audio workflows (TTS, STT, Music, Clone, FX, SFX)
+            HashSet<string> foreignParamIds = [.. T2IParamTypes.Types.Keys];
             AudioLabParams.RegisterAll();
+            T2IParamType[] ownParams = [.. T2IParamTypes.Types.Values.Where(t => !foreignParamIds.Contains(t.ID))];
             Logs.Info("[AudioLab] Registered audio T2I parameters");
 
             // Register feature flags so SwarmUI knows these are extension-managed
-            RegisterFeatureFlags();
+            RegisterFeatureFlags(ownParams);
             Logs.Info("[AudioLab] Registered feature flags");
 
             // Register ONE unified backend
@@ -196,7 +198,7 @@ public class AudioLab : Extension
     /// "ipadapter", ...), which meant a ControlNet request would happily route to a backend that cannot do
     /// ControlNet. Hiding image params on an audio model is the JS layer's job (see audio-integration.js), not
     /// this set's.</para></summary>
-    private static void RegisterFeatureFlags()
+    private static void RegisterFeatureFlags(IEnumerable<T2IParamType> ownParams)
     {
         // Category-level flags (one per AudioCategory), plus the output-format flag the backend advertises.
         string[] categoryFlags = [.. DynamicAudioBackend.CategoryFlags.Values, DynamicAudioBackend.OutputFlag, DynamicAudioBackend.DurationFlag];
@@ -207,7 +209,7 @@ public class AudioLab : Extension
 
         foreach (string flag in categoryFlags) T2IEngine.DisregardedFeatureFlags.Add(flag);
         foreach (string flag in providerFlags) T2IEngine.DisregardedFeatureFlags.Add(flag);
-        WarnOnUndeclaredFeatureFlags([.. categoryFlags, .. providerFlags]);
+        WarnOnUndeclaredFeatureFlags(ownParams, [.. categoryFlags, .. providerFlags]);
     }
 
     /// <summary>Complains at startup about any param of ours carrying a flag nothing grants.
@@ -216,11 +218,12 @@ public class AudioLab : Extension
     /// features don't cover a job's required flags and names neither the param nor the flag, so a param with a
     /// typo'd or never-registered flag just makes every generation touching it refuse. Flags in
     /// <c>DisregardedFeatureFlags</c> never gate a backend, so they are fine; core's own flags are core's to
-    /// grant. Anything else that starts "audiolab_" or ends "_params" is ours and has to be accounted for.
-    /// Mirrors SwarmUIHartsyInference.WarnOnUndeclaredFeatureFlags.</para></summary>
-    private static void WarnOnUndeclaredFeatureFlags(HashSet<string> declared)
+    /// grant. Only params this extension registered are checked: other extensions use the same "_params" naming
+    /// (API-Backends' "openai_sora_params" is granted by its own backends) and guessing ownership from the name
+    /// reported their flags as broken. Mirrors SwarmUIHartsyInference.WarnOnUndeclaredFeatureFlags.</para></summary>
+    private static void WarnOnUndeclaredFeatureFlags(IEnumerable<T2IParamType> ownParams, HashSet<string> declared)
     {
-        foreach (T2IParamType type in T2IParamTypes.Types.Values)
+        foreach (T2IParamType type in ownParams)
         {
             if (string.IsNullOrEmpty(type.FeatureFlag))
             {
