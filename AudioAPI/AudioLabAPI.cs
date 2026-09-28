@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net.WebSockets;
 using System.Runtime.InteropServices;
+using FreneticUtilities.FreneticExtensions;
 using Hartsy.Extensions.AudioLab.AudioBackends;
 using Hartsy.Extensions.AudioLab.AudioModels;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
@@ -163,18 +164,82 @@ public static class AudioLabAPI
 
     #region DAW Projects
 
-    /// <summary>Per-user data store namespace for DAW projects.</summary>
+    /// <summary>Legacy per-user generic-data namespace DAW projects were stored under before moving to files.</summary>
     private const string DawProjectDataName = "audiolab_daw";
 
     /// <summary>Max serialized project size accepted (base64 audio inflates ~1.33x).</summary>
     private const int MaxProjectBytes = 64 * 1024 * 1024;
+
+    /// <summary>Per-user legacy-project migration, run once and awaited by every project call so none races it.</summary>
+    private static readonly ConcurrentDictionary<string, Lazy<Task>> ProjectMigrations = new();
+
+    /// <summary>Per-user DAW project folder. Kept out of Data/Audio, which core serves to any logged-in user.</summary>
+    private static string ProjectDir(User user)
+    {
+        string dir = Path.Combine(Utilities.CombinePathWithAbsolute(Environment.CurrentDirectory, Program.DataDir, "AudioLabProjects"), user.UserID);
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
+    /// <summary>Cleans a project name into its file stem (lowercased like the old generic-data keys), or null if nothing usable remains.</summary>
+    private static string ProjectStem(string name)
+    {
+        string stem = Utilities.StrictFilenameClean(name.ToLowerFast()).Replace('/', '_');
+        return string.IsNullOrWhiteSpace(stem) ? null : stem;
+    }
+
+    /// <summary>Full path of a project file for the given stem.</summary>
+    private static string ProjectPath(User user, string stem) => Path.Combine(ProjectDir(user), $"{stem}.json");
+
+    /// <summary>Writes a project file via temp-then-rename so a crash never leaves a half-written project.</summary>
+    private static async Task WriteProjectFile(string path, string json)
+    {
+        string tmp = $"{path}.{Guid.NewGuid():N}.tmp";
+        await File.WriteAllTextAsync(tmp, json);
+        File.Move(tmp, path, true);
+    }
+
+    /// <summary>Waits for the one-time move of a user's legacy DB-stored projects out to files. A failed run is retried next call.</summary>
+    private static async Task MigrateLegacyProjects(User user)
+    {
+        Lazy<Task> migration = ProjectMigrations.GetOrAdd(user.UserID, _ => new(() => RunLegacyProjectMigration(user)));
+        try
+        {
+            await migration.Value;
+        }
+        catch (Exception ex)
+        {
+            ProjectMigrations.TryRemove(new KeyValuePair<string, Lazy<Task>>(user.UserID, migration));
+            Logs.Error($"[AudioLab] Migrating legacy DAW projects for user '{user.UserID}' failed: {ex.ReadableString()}");
+        }
+    }
+
+    /// <summary>Moves each legacy DB-stored project (embedded audio) to a file, then drops its DB row.</summary>
+    private static async Task RunLegacyProjectMigration(User user)
+    {
+        foreach (SessionHandler.GenericDataStore entry in user.GetAllGenericData(DawProjectDataName))
+        {
+            string name = entry.ID.After("///").After("///");
+            string stem = ProjectStem(name);
+            if (stem is null || string.IsNullOrEmpty(entry.Data))
+            {
+                continue;
+            }
+            string path = ProjectPath(user, stem);
+            for (int i = 2; File.Exists(path); i++)
+            {
+                path = ProjectPath(user, $"{stem}_{i}");
+            }
+            await WriteProjectFile(path, entry.Data);
+            user.DeleteGenericData(DawProjectDataName, name);
+        }
+    }
 
     /// <summary>Save a DAW project (arrangement JSON with embedded base64 clip audio) under the user's account.</summary>
     public static async Task<JObject> AudioLabSaveProject(Session session, JObject input)
     {
         try
         {
-            await Task.CompletedTask;
             string name = input["name"]?.ToString()?.Trim();
             string json = input["project_json"]?.ToString();
             if (string.IsNullOrWhiteSpace(name))
@@ -189,7 +254,13 @@ public static class AudioLabAPI
             {
                 return AudioLab.CreateErrorResponse($"Project too large ({json.Length / (1024 * 1024)}MB, max {MaxProjectBytes / (1024 * 1024)}MB)", "project_too_large");
             }
-            session.User.SaveGenericData(DawProjectDataName, name, json);
+            string stem = ProjectStem(name);
+            if (stem is null)
+            {
+                return AudioLab.CreateErrorResponse("Project name has no usable characters", "invalid_name");
+            }
+            await MigrateLegacyProjects(session.User);
+            await WriteProjectFile(ProjectPath(session.User, stem), json);
             return AudioLab.CreateSuccessResponse(new JObject() { ["name"] = name, ["size"] = json.Length });
         }
         catch (Exception ex)
@@ -204,17 +275,19 @@ public static class AudioLabAPI
     {
         try
         {
-            await Task.CompletedTask;
             string name = input["name"]?.ToString()?.Trim();
             if (string.IsNullOrWhiteSpace(name))
             {
                 return AudioLab.CreateErrorResponse("Missing 'name' parameter", "missing_name");
             }
-            string json = session.User.GetGenericData(DawProjectDataName, name);
-            if (json is null)
+            await MigrateLegacyProjects(session.User);
+            string stem = ProjectStem(name);
+            string path = stem is null ? null : ProjectPath(session.User, stem);
+            if (path is null || !File.Exists(path))
             {
                 return AudioLab.CreateErrorResponse($"No project named '{name}'", "not_found");
             }
+            string json = await File.ReadAllTextAsync(path);
             return AudioLab.CreateSuccessResponse(new JObject() { ["name"] = name, ["project_json"] = json });
         }
         catch (Exception ex)
@@ -229,9 +302,9 @@ public static class AudioLabAPI
     {
         try
         {
-            await Task.CompletedTask;
-            List<string> names = session.User.ListAllGenericData(DawProjectDataName);
-            return AudioLab.CreateSuccessResponse(new JObject() { ["projects"] = JArray.FromObject(names ?? []) });
+            await MigrateLegacyProjects(session.User);
+            List<string> names = [.. Directory.EnumerateFiles(ProjectDir(session.User), "*.json").Select(Path.GetFileNameWithoutExtension).Order()];
+            return AudioLab.CreateSuccessResponse(new JObject() { ["projects"] = JArray.FromObject(names) });
         }
         catch (Exception ex)
         {
@@ -245,13 +318,17 @@ public static class AudioLabAPI
     {
         try
         {
-            await Task.CompletedTask;
             string name = input["name"]?.ToString()?.Trim();
             if (string.IsNullOrWhiteSpace(name))
             {
                 return AudioLab.CreateErrorResponse("Missing 'name' parameter", "missing_name");
             }
-            session.User.DeleteGenericData(DawProjectDataName, name);
+            await MigrateLegacyProjects(session.User);
+            string stem = ProjectStem(name);
+            if (stem is not null)
+            {
+                File.Delete(ProjectPath(session.User, stem));
+            }
             return AudioLab.CreateSuccessResponse(new JObject() { ["name"] = name });
         }
         catch (Exception ex)
