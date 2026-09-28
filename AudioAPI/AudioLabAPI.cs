@@ -170,8 +170,8 @@ public static class AudioLabAPI
     /// <summary>Max serialized project size accepted (base64 audio inflates ~1.33x).</summary>
     private const int MaxProjectBytes = 64 * 1024 * 1024;
 
-    /// <summary>User IDs whose legacy DB-stored projects were already moved to files this run.</summary>
-    private static readonly ConcurrentDictionary<string, bool> MigratedProjectUsers = new();
+    /// <summary>Per-user legacy-project migration, run once and awaited by every project call so none races it.</summary>
+    private static readonly ConcurrentDictionary<string, Lazy<Task>> ProjectMigrations = new();
 
     /// <summary>Per-user DAW project folder. Kept out of Data/Audio, which core serves to any logged-in user.</summary>
     private static string ProjectDir(User user)
@@ -199,36 +199,39 @@ public static class AudioLabAPI
         File.Move(tmp, path, true);
     }
 
-    /// <summary>One-time move of a user's legacy DB-stored projects (embedded audio) out to files.</summary>
+    /// <summary>Waits for the one-time move of a user's legacy DB-stored projects out to files. A failed run is retried next call.</summary>
     private static async Task MigrateLegacyProjects(User user)
     {
-        if (!MigratedProjectUsers.TryAdd(user.UserID, true))
-        {
-            return;
-        }
+        Lazy<Task> migration = ProjectMigrations.GetOrAdd(user.UserID, _ => new(() => RunLegacyProjectMigration(user)));
         try
         {
-            foreach (SessionHandler.GenericDataStore entry in user.GetAllGenericData(DawProjectDataName))
-            {
-                string name = entry.ID.After("///").After("///");
-                string stem = ProjectStem(name);
-                if (stem is null || string.IsNullOrEmpty(entry.Data))
-                {
-                    continue;
-                }
-                string path = ProjectPath(user, stem);
-                for (int i = 2; File.Exists(path); i++)
-                {
-                    path = ProjectPath(user, $"{stem}_{i}");
-                }
-                await WriteProjectFile(path, entry.Data);
-                user.DeleteGenericData(DawProjectDataName, name);
-            }
+            await migration.Value;
         }
         catch (Exception ex)
         {
-            MigratedProjectUsers.TryRemove(user.UserID, out _);
+            ProjectMigrations.TryRemove(new KeyValuePair<string, Lazy<Task>>(user.UserID, migration));
             Logs.Error($"[AudioLab] Migrating legacy DAW projects for user '{user.UserID}' failed: {ex.ReadableString()}");
+        }
+    }
+
+    /// <summary>Moves each legacy DB-stored project (embedded audio) to a file, then drops its DB row.</summary>
+    private static async Task RunLegacyProjectMigration(User user)
+    {
+        foreach (SessionHandler.GenericDataStore entry in user.GetAllGenericData(DawProjectDataName))
+        {
+            string name = entry.ID.After("///").After("///");
+            string stem = ProjectStem(name);
+            if (stem is null || string.IsNullOrEmpty(entry.Data))
+            {
+                continue;
+            }
+            string path = ProjectPath(user, stem);
+            for (int i = 2; File.Exists(path); i++)
+            {
+                path = ProjectPath(user, $"{stem}_{i}");
+            }
+            await WriteProjectFile(path, entry.Data);
+            user.DeleteGenericData(DawProjectDataName, name);
         }
     }
 
