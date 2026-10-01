@@ -33,4 +33,57 @@ public class VoiceTurnOrchestratorTests
 
         Assert.Equal(JTokenType.Null, commandToken.Type);
     }
+
+    [Fact]
+    public void ResolveTurnText_NullCommand_FallsBackToTheTranscript()
+    {
+        // Built through the real producer (ToJson), not a hand-built JObject, so this fails for the actual
+        // reason -- ToJson mistagging a null Command -- and not just a test fixture's own shape. This is the
+        // detection shape a newer engine sends when it ran transcription but could not separate a command from
+        // the wake phrase: a real, non-absent, genuinely-null Command.
+        JObject payload = WakeWordService.ToJson(Detection(command: null, transcript: "only a transcript"));
+
+        string text = VoiceTurnOrchestrator.ResolveTurnText(payload);
+
+        Assert.Equal("only a transcript", text);
+    }
+
+    [Fact]
+    public void ResolveTurnText_NonNullCommand_PrefersItOverTheTranscript()
+    {
+        JObject payload = WakeWordService.ToJson(
+            Detection(command: "the real command", transcript: "hey jarvis the real command"));
+
+        string text = VoiceTurnOrchestrator.ResolveTurnText(payload);
+
+        Assert.Equal("the real command", text);
+    }
+
+    [Fact]
+    public void ResolveTurnText_EmptyCommand_DoesNotFallBackToTheTranscript()
+    {
+        // An empty command is the user saying the wake word and nothing else -- not "the engine did not
+        // separate them" -- so this must stay "", not the transcript. Pinned here because the obvious
+        // alternative fix (treating a null-or-empty command as one case) would route this payload's transcript
+        // to the assistant, silently changing this documented, already-shipped behavior.
+        JObject payload = WakeWordService.ToJson(Detection(command: "", transcript: "hey jarvis"));
+
+        string text = VoiceTurnOrchestrator.ResolveTurnText(payload);
+
+        Assert.Equal("", text);
+    }
+
+    [Fact]
+    public void ResolveTurnText_AbsentCommandKey_FallsBackToTheTranscript()
+    {
+        // The other documented "fall back" case (see WakeWordService.ToJson's own remarks): a command key
+        // that is missing entirely, from an engine old enough not to separate command from transcript at all --
+        // as opposed to a new engine reporting a separated-but-null command. Built by hand, not via ToJson
+        // (which always writes the key), since this models the older wire shape directly.
+        JObject payload = new() { ["transcript"] = "only a transcript" };
+
+        string text = VoiceTurnOrchestrator.ResolveTurnText(payload);
+
+        Assert.Equal("only a transcript", text);
+    }
 }
