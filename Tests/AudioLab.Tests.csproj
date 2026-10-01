@@ -37,6 +37,22 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The main project's own ItemGroup marks FreneticLLC.FreneticUtilities ExcludeAssets="runtime" because
+         that project only ever runs loaded inside the SwarmUI host, which already carries the DLL (see its
+         comment: "Host-provided packages ... avoids duplicate/version-skew"). That exclusion is an edge
+         property of AudioLab's own graph, so it flows through the ProjectReference above as part of what
+         AudioLab exposes; a `PackageReference Update` here cannot override it because Tests never has a
+         direct `Include` of its own for NuGet to update: confirmed empirically, Tests' own
+         obj/*.nuget.dgspec.json lists no direct dependency entry for the package at all without this. Giving
+         Tests a genuine direct Include, pinned to the exact version already resolved elsewhere in the graph,
+         creates its own un-excluded edge; NuGet then unions assets across both edges to the same package.
+         This project runs standalone under `dotnet test`, with no host to supply the DLL, and
+         SwarmUI.Utils.Logs's static constructor touches FreneticUtilities at runtime (not just at the
+         metadata level the SwarmUI reference above satisfies), so the physical copy is required here. -->
+    <PackageReference Include="FreneticLLC.FreneticUtilities" Version="1.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- AudioProviderRegistry is process-global static state (same hazard the engine's own Voice.Tests notes
          for Logs.SetLogger): keep test collections from this assembly running in parallel against it. -->
     <None Update="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />

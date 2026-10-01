@@ -22,10 +22,27 @@ public static class VoiceSessionEndpoints
     /// (eg <c>PhoneLinkServer</c>'s 20 ms ticks) and <see cref="VoiceAgentOptions.OutboundSampleRate"/>'s frame math.</summary>
     private static readonly TimeSpan PumpInterval = TimeSpan.FromMilliseconds(20);
 
+    /// <summary>Cap on one assembled inbound binary (audio) message: about 1 second of mono PCM16 at 48 kHz (the
+    /// highest <c>inputRate</c> a real browser is likely to offer), several times over any sane 20 ms capture
+    /// frame. <c>audio_process</c> defaults to power-users, not admins, so this bounds what any authenticated
+    /// caller can make the server buffer for one message, regardless of how many continuation frames it spans.</summary>
+    internal const int MaxInboundAudioMessageBytes = 64 * 1024;
+
+    /// <summary>Cap on one assembled inbound text (control) message -- the <c>start</c> handshake and <c>end</c>
+    /// are a handful of bytes; this is generous headroom, not a working budget.</summary>
+    internal const int MaxInboundControlMessageBytes = 16 * 1024;
+
     /// <summary>Shape of <see cref="VoiceAgentSession.ReadOutbound(Span{float}, out int)"/>, extracted so
     /// <see cref="PumpOutboundAsync"/> can be driven by a fake in <c>VoiceSessionEndpointsPumpTests</c> instead
     /// of a real session.</summary>
     internal delegate int ReadOutboundDelegate(Span<float> destination, out int turnId);
+
+    /// <summary>Shape of <see cref="VoiceAgentSession.PushInbound(ReadOnlySpan{float})"/>, extracted for the same
+    /// reason as <see cref="ReadOutboundDelegate"/>: <c>VoiceSessionEndpointsReceiveTests</c> drives
+    /// <see cref="ReceiveInboundAsync"/> with a fake socket and a recording delegate instead of a real session
+    /// (a <see cref="ReadOnlySpan{T}"/> parameter cannot be a generic delegate's type argument, hence the named
+    /// delegate rather than a plain <see cref="Action{T}"/>).</summary>
+    internal delegate void PushInboundDelegate(ReadOnlySpan<float> samples);
 
     public static void Register()
     {
@@ -132,7 +149,7 @@ public static class VoiceSessionEndpoints
             await voiceSession.StartAsync(Program.GlobalProgramCancel).ConfigureAwait(false);
             pumpTask = PumpOutboundAsync(voiceSession.ReadOutbound, lease.SessionOptions.OutboundSampleRate,
                 () => Volatile.Read(ref lastFlushedTurnId), SendBinaryAsync, pumpCancel.Token);
-            await ReceiveInboundAsync(ws, voiceSession, inbound, Program.GlobalProgramCancel).ConfigureAwait(false);
+            await ReceiveInboundAsync(ws, voiceSession.PushInbound, inbound, Program.GlobalProgramCancel).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -163,34 +180,56 @@ public static class VoiceSessionEndpoints
 
     /// <summary>Reads client frames until the socket closes or a JSON <c>{"end":true}</c> arrives: binary frames
     /// are mono PCM16 at <c>start.inputRate</c>, resampled to 16 kHz and pushed into the session; any other text
-    /// frame is ignored rather than ending the call, so a forward-compatible addition cannot kill an old client.</summary>
-    private static async Task ReceiveInboundAsync(WebSocket ws, VoiceAgentSession voiceSession, VoiceInboundResampler inbound, CancellationToken cancel)
+    /// frame is ignored rather than ending the call, so a forward-compatible addition cannot kill an old client.
+    ///
+    /// <para>Each assembled message is capped by type (<see cref="MaxInboundAudioMessageBytes"/> for binary,
+    /// <see cref="MaxInboundControlMessageBytes"/> for text) regardless of how many continuation frames it spans,
+    /// using one reused buffer rather than a fresh allocation per message. <c>audio_process</c> is a power-user
+    /// permission, not an admin one, so nothing here may let an authenticated-but-untrusted caller grow server
+    /// memory without bound through a single never-ending message. A message that would exceed its cap closes
+    /// the socket with <see cref="WebSocketCloseStatus.MessageTooBig"/> and ends the call, the same clean-ending
+    /// path a normal client-initiated <c>end</c> takes.</para></summary>
+    internal static async Task ReceiveInboundAsync(WebSocket ws, PushInboundDelegate pushInbound, VoiceInboundResampler inbound, CancellationToken cancel)
     {
-        byte[] buffer = new byte[16 * 1024];
+        byte[] receiveBuffer = new byte[16 * 1024];
+        byte[] messageBuffer = new byte[MaxInboundAudioMessageBytes]; // sized to the larger of the two caps; reused every message.
         while (ws.State == WebSocketState.Open && !cancel.IsCancellationRequested)
         {
-            using MemoryStream accumulated = new();
+            int messageLength = 0;
+            WebSocketMessageType? messageType = null;
             WebSocketReceiveResult result;
             do
             {
-                result = await ws.ReceiveAsync(buffer, cancel).ConfigureAwait(false);
+                result = await ws.ReceiveAsync(receiveBuffer, cancel).ConfigureAwait(false);
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
                     return;
                 }
-                accumulated.Write(buffer, 0, result.Count);
+                messageType ??= result.MessageType;
+                int cap = messageType == WebSocketMessageType.Binary ? MaxInboundAudioMessageBytes : MaxInboundControlMessageBytes;
+                if (messageLength + result.Count > cap)
+                {
+                    await CloseTooBigAsync(ws, cap, cancel).ConfigureAwait(false);
+                    return;
+                }
+                Buffer.BlockCopy(receiveBuffer, 0, messageBuffer, messageLength, result.Count);
+                messageLength += result.Count;
             }
             while (!result.EndOfMessage);
-            if (result.MessageType == WebSocketMessageType.Binary)
+            if (messageType == WebSocketMessageType.Binary)
             {
-                float[] resampled = inbound.Push(Pcm16.ToFloat(accumulated.ToArray()));
+                float[] resampled = inbound.Push(Pcm16.ToFloat(messageBuffer.AsSpan(0, messageLength)));
                 if (resampled.Length > 0)
                 {
-                    voiceSession.PushInbound(resampled);
+                    pushInbound(resampled);
                 }
                 continue;
             }
-            string raw = Encoding.UTF8.GetString(accumulated.ToArray());
+            if (messageLength == 0)
+            {
+                continue;
+            }
+            string raw = Encoding.UTF8.GetString(messageBuffer, 0, messageLength);
             if (string.IsNullOrWhiteSpace(raw))
             {
                 continue;
@@ -200,6 +239,24 @@ public static class VoiceSessionEndpoints
             {
                 return;
             }
+        }
+    }
+
+    /// <summary>Closes the socket for a message that exceeded its per-type cap. Best-effort: a close that itself
+    /// fails (the connection is already gone) is swallowed, since the caller is ending the session either way.</summary>
+    private static async Task CloseTooBigAsync(WebSocket ws, int cap, CancellationToken cancel)
+    {
+        Logs.Warning($"[AudioLab][Voice] Closing a voice session: an inbound message exceeded its {cap}-byte cap.");
+        try
+        {
+            if (ws.State == WebSocketState.Open)
+            {
+                await ws.CloseAsync(WebSocketCloseStatus.MessageTooBig, "Message exceeded the per-message size limit.", cancel).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logs.Debug($"[AudioLab][Voice] Closing an oversized-message connection threw: {ex.Message}");
         }
     }
 
