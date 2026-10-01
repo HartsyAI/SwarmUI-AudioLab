@@ -20,12 +20,12 @@ internal sealed class LazyIdleResource<T> where T : class
     private readonly TimeSpan _idleDelay;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private T? _value;
+    private T _value;
     private int _activeCount;
-    private CancellationTokenSource? _idleTimerCancel;
+    private CancellationTokenSource _idleTimerCancel;
 
     public LazyIdleResource(Func<CancellationToken, Task<T>> factory, Func<T, ValueTask> disposer, TimeSpan idleDelay,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task> delay = null)
     {
         _factory = factory ?? throw new ArgumentNullException(nameof(factory));
         _disposer = disposer ?? throw new ArgumentNullException(nameof(disposer));
@@ -37,7 +37,7 @@ internal sealed class LazyIdleResource<T> where T : class
     public int ActiveCount => Volatile.Read(ref _activeCount);
 
     /// <summary>The current value without creating one, for diagnostics/tests; null when not created or disposed.</summary>
-    public T? Current => _value;
+    public T Current => _value;
 
     /// <summary>Returns the shared value, creating it via the factory if none exists. A failed create leaves the
     /// resource empty for the next caller to retry -- nothing here loops or caches a failure. Pairs with
@@ -64,7 +64,7 @@ internal sealed class LazyIdleResource<T> where T : class
     /// <see cref="ForceDisposeAsync"/> cancels it first.</summary>
     public async Task ReleaseAsync()
     {
-        CancellationTokenSource? started = null;
+        CancellationTokenSource started = null;
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -94,7 +94,7 @@ internal sealed class LazyIdleResource<T> where T : class
     /// those first -- this neither waits for nor checks that; it only tears down the shared value itself.</summary>
     public async Task ForceDisposeAsync()
     {
-        T? toDispose;
+        T toDispose;
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -133,7 +133,7 @@ internal sealed class LazyIdleResource<T> where T : class
             // handled (or will handle) disposal, so this timer has nothing left to do.
             return;
         }
-        T? toDispose = null;
+        T toDispose = null;
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {

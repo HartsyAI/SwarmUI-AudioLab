@@ -20,7 +20,7 @@ public class RemoteTextServiceTests
     private static TextRequest SimpleRequest() => new() { Messages = [new TextMessage { Role = TextRole.User, Content = "Hello" }] };
 
     private static async Task<(JObject ServerRequest, List<TextChunk> Chunks, List<string> Notices)> RunScriptedTurnAsync(
-        FakeVoiceTurnServer server, IEnumerable<JObject> replyFrames, TextRequest? request = null, string? model = "qwen3", string? assistantId = "asst-1")
+        FakeVoiceTurnServer server, IEnumerable<JObject> replyFrames, TextRequest request = null, string model = "qwen3", string assistantId = "asst-1")
     {
         RemoteTextService service = new(server.BaseUrl, "sess-123", model, assistantId);
         List<string> notices = [];
@@ -159,7 +159,7 @@ public class RemoteTextServiceTests
     [InlineData("tool_call", StopReason.Stop)] // never ToolCall, whatever the wire says -- see the class remarks.
     [InlineData("something_unexpected", StopReason.Stop)]
     [InlineData(null, StopReason.Stop)]
-    public async Task StreamAsync_Done_MapsStopReason_AndNeverToolCall(string? wireStopReason, StopReason expected)
+    public async Task StreamAsync_Done_MapsStopReason_AndNeverToolCall(string wireStopReason, StopReason expected)
     {
         await using FakeVoiceTurnServer server = FakeVoiceTurnServer.Start();
         JObject doneFrame = new() { ["done"] = true, ["full_text"] = "ok" };
@@ -267,7 +267,7 @@ public class RemoteTextServiceTests
         await using FakeVoiceTurnServer server = FakeVoiceTurnServer.Start();
         RemoteTextService service = new(server.BaseUrl, "sess-1", "qwen3", null);
 
-        Exception? serverCloseException = null;
+        Exception serverCloseException = null;
         WebSocketState serverStateAfterClose = WebSocketState.None;
         Task serverTask = Task.Run(async () =>
         {

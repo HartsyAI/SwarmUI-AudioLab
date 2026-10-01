@@ -67,7 +67,7 @@ public class VoiceAudioCodecTests
     [InlineData(44100, 882)]
     public void TryComputeFrameSize_MatchesTheWorkedExamples(int inRate, int expectedFrameSize)
     {
-        bool ok = VoiceAudioFraming.TryComputeFrameSize(inRate, 16000, 64, 20, 8192, out int frameSize, out string? error);
+        bool ok = VoiceAudioFraming.TryComputeFrameSize(inRate, 16000, 64, 20, 8192, out int frameSize, out string error);
         Assert.True(ok, error);
         Assert.Equal(expectedFrameSize, frameSize);
     }
@@ -76,7 +76,7 @@ public class VoiceAudioCodecTests
     public void TryComputeFrameSize_RejectsAPathologicalRate_RatherThanReturningAHugeFrame()
     {
         // 16001 Hz is coprime-ish with 16000: down = 16001, forcing an enormous frame before anything could run.
-        bool ok = VoiceAudioFraming.TryComputeFrameSize(16001, 16000, 64, 20, 8192, out _, out string? error);
+        bool ok = VoiceAudioFraming.TryComputeFrameSize(16001, 16000, 64, 20, 8192, out _, out string error);
         Assert.False(ok);
         Assert.NotNull(error);
     }
@@ -93,7 +93,7 @@ public class VoiceAudioCodecTests
     [Fact]
     public void VoiceInboundResampler_At48kHz_BuffersUntilOneWholeFrame()
     {
-        Assert.True(VoiceInboundResampler.TryCreate(48000, out VoiceInboundResampler resampler, out string? error), error);
+        Assert.True(VoiceInboundResampler.TryCreate(48000, out VoiceInboundResampler resampler, out string error), error);
         // 960 samples/frame at 48k->16k (20 ms); feeding fewer than that yields nothing yet.
         float[] partial = new float[500];
         Assert.Empty(resampler.Push(partial));
@@ -106,7 +106,7 @@ public class VoiceAudioCodecTests
     [Fact]
     public void VoiceInboundResampler_RejectsAPathologicalRate()
     {
-        Assert.False(VoiceInboundResampler.TryCreate(16001, out _, out string? error));
+        Assert.False(VoiceInboundResampler.TryCreate(16001, out _, out string error));
         Assert.NotNull(error);
     }
 }

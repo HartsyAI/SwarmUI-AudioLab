@@ -6,7 +6,7 @@ namespace Hartsy.Extensions.AudioLab.AudioServices.Voice;
 /// <c>{model, assistantId?, voice?, systemPrompt?, bargeIn?, inputRate}</c>. Core hands the raw frame to the route
 /// handler as a <see cref="JObject"/> (the same shape <c>AudioLabWakeSaveSettings</c> takes it in) -- this is the
 /// WebSocket handshake frame itself, not a second message.</summary>
-internal sealed record VoiceSessionStartRequest(string Model, string? AssistantId, string? Voice, string? SystemPrompt, bool BargeIn, int InputRate);
+internal sealed record VoiceSessionStartRequest(string Model, string AssistantId, string Voice, string SystemPrompt, bool BargeIn, int InputRate);
 
 /// <summary>Parses and validates a <c>start</c> message, independent of any socket -- so the rules (which fields
 /// are required, which rates are usable) are unit-testable without a WebSocket at all.</summary>
@@ -20,21 +20,21 @@ internal static class VoiceSessionStart
     /// limit in practice is <see cref="VoiceInboundResampler.MaxFrameSamples"/> below.</summary>
     public const int MaxInputRate = 192000;
 
-    public static bool TryParse(JObject? rawInput, out VoiceSessionStartRequest request, out string? error)
+    public static bool TryParse(JObject rawInput, out VoiceSessionStartRequest request, out string error)
     {
-        request = null!;
+        request = null;
         if (rawInput is null)
         {
             error = "No start message was sent.";
             return false;
         }
-        string? model = rawInput["model"]?.ToString();
+        string model = rawInput["model"]?.ToString();
         if (string.IsNullOrWhiteSpace(model))
         {
             error = "'model' is required.";
             return false;
         }
-        JToken? rateToken = rawInput["inputRate"];
+        JToken rateToken = rawInput["inputRate"];
         if (rateToken is null || rateToken.Type == JTokenType.Null || !int.TryParse(rateToken.ToString(), out int inputRate))
         {
             error = "'inputRate' is required and must be an integer.";
@@ -47,7 +47,7 @@ internal static class VoiceSessionStart
         }
         if (inputRate != 16000
             && !VoiceAudioFraming.TryComputeFrameSize(inputRate, 16000, VoiceInboundResampler.NumTaps, VoiceInboundResampler.TargetFrameMs,
-                VoiceInboundResampler.MaxFrameSamples, out _, out string? frameError))
+                VoiceInboundResampler.MaxFrameSamples, out _, out string frameError))
         {
             error = frameError;
             return false;
@@ -70,5 +70,5 @@ internal static class VoiceSessionStart
         return true;
     }
 
-    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+    private static string NullIfBlank(string value) => string.IsNullOrWhiteSpace(value) ? null : value;
 }

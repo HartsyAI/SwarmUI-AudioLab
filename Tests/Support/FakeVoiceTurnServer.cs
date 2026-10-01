@@ -25,7 +25,7 @@ internal sealed class FakeVoiceTurnServer : IAsyncDisposable
     /// <summary>Binds a free loopback port, retrying on collision.</summary>
     public static FakeVoiceTurnServer Start()
     {
-        Exception? last = null;
+        Exception last = null;
         for (int attempt = 0; attempt < 25; attempt++)
         {
             int port = Random.Shared.Next(20000, 60000);
@@ -65,7 +65,7 @@ internal sealed class FakeVoiceTurnServer : IAsyncDisposable
 
     /// <summary>Null when the socket closed (gracefully or by abort) before a full text frame arrived -- the
     /// cancellation test's way of observing that the client actually closed its end.</summary>
-    public static async Task<JObject?> ReceiveJsonAsync(WebSocket socket, CancellationToken cancel)
+    public static async Task<JObject> ReceiveJsonAsync(WebSocket socket, CancellationToken cancel)
     {
         byte[] buffer = new byte[16 * 1024];
         using MemoryStream accumulated = new();

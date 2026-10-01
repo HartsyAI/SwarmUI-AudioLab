@@ -68,7 +68,7 @@ internal static class VoiceAudioFraming
     /// and at least <paramref name="targetMs"/> long, failing rather than returning one over
     /// <paramref name="maxSamples"/> (a pathological rate -- eg one chosen to be coprime-ish with 16000 -- would
     /// otherwise demand an enormous frame before the resampler could ever run).</summary>
-    public static bool TryComputeFrameSize(int inRate, int outRate, int numTaps, int targetMs, int maxSamples, out int frameSize, out string? error)
+    public static bool TryComputeFrameSize(int inRate, int outRate, int numTaps, int targetMs, int maxSamples, out int frameSize, out string error)
     {
         if (inRate <= 0 || outRate <= 0)
         {
@@ -128,11 +128,11 @@ internal sealed class VoiceInboundResampler
 
     private const int OutputRate = 16000;
 
-    private readonly StreamingResampler? _resampler;
+    private readonly StreamingResampler _resampler;
     private readonly int _frameSize;
     private readonly List<float> _pending = [];
 
-    private VoiceInboundResampler(StreamingResampler? resampler, int frameSize)
+    private VoiceInboundResampler(StreamingResampler resampler, int frameSize)
     {
         _resampler = resampler;
         _frameSize = frameSize;
@@ -141,7 +141,7 @@ internal sealed class VoiceInboundResampler
     /// <summary>The 16 kHz samples per input frame once resampling is needed; 0 for a passthrough instance.</summary>
     public int OutputFrameSize => _resampler?.OutputFrameSize ?? 0;
 
-    public static bool TryCreate(int inputRate, out VoiceInboundResampler resampler, out string? error)
+    public static bool TryCreate(int inputRate, out VoiceInboundResampler resampler, out string error)
     {
         if (inputRate == OutputRate)
         {
@@ -151,7 +151,7 @@ internal sealed class VoiceInboundResampler
         }
         if (!VoiceAudioFraming.TryComputeFrameSize(inputRate, OutputRate, NumTaps, TargetFrameMs, MaxFrameSamples, out int frameSize, out error))
         {
-            resampler = null!;
+            resampler = null;
             return false;
         }
         resampler = new VoiceInboundResampler(new StreamingResampler(inputRate, OutputRate, frameSize, NumTaps), frameSize);

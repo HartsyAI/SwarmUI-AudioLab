@@ -17,7 +17,7 @@ public class LazyIdleResourceTests
     /// <param name="delay">Replaces the real idle-timer wait; null keeps the real <see cref="Task.Delay(TimeSpan, CancellationToken)"/>,
     /// which every test below avoids actually letting fire (either by never idling, or by passing its own fast
     /// seam) so the suite stays instant.</param>
-    private static LazyIdleResource<FakeResource> Make(out int[] created, Func<TimeSpan, CancellationToken, Task>? delay = null)
+    private static LazyIdleResource<FakeResource> Make(out int[] created, Func<TimeSpan, CancellationToken, Task> delay = null)
     {
         int[] createdCounter = [0];
         created = createdCounter;

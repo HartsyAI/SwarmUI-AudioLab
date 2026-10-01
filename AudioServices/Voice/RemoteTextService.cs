@@ -34,19 +34,19 @@ internal sealed class RemoteTextService : ITextService
 {
     private readonly string _wsUrl;
     private readonly string _sessionId;
-    private readonly string? _model;
-    private readonly string? _assistantId;
+    private readonly string _model;
+    private readonly string _assistantId;
 
     /// <summary>Raised for a <c>{notice:"..."}</c> wire frame (eg "tool calling is unavailable for this model").
     /// Invoked on whatever thread is driving <see cref="StreamAsync"/>; a throwing handler is logged and does not
     /// stop the stream.</summary>
-    public event Action<string>? Notice;
+    public event Action<string> Notice;
 
     /// <param name="pageUrl">The server's own base URL (eg <c>SwarmUI.Core.WebServer.PageURL</c>), http(s).</param>
     /// <param name="sessionId">The browser session id to forward, so LLMAssistant answers as that user.</param>
     /// <param name="model">LLMAssistant model id, or null to let it pick its default.</param>
     /// <param name="assistantId">LLMAssistant assistant id, or null for its default.</param>
-    public RemoteTextService(string pageUrl, string sessionId, string? model, string? assistantId)
+    public RemoteTextService(string pageUrl, string sessionId, string model, string assistantId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pageUrl);
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
@@ -85,7 +85,7 @@ internal sealed class RemoteTextService : ITextService
         ArgumentNullException.ThrowIfNull(request);
         using ClientWebSocket socket = new();
         bool connected = false;
-        string? connectError = null;
+        string connectError = null;
         try
         {
             await socket.ConnectAsync(new Uri(_wsUrl), cancel).ConfigureAwait(false);
@@ -112,8 +112,8 @@ internal sealed class RemoteTextService : ITextService
         int toolIndex = 0;
         while (true)
         {
-            JObject? frame = null;
-            string? receiveError = null;
+            JObject frame = null;
+            string receiveError = null;
             try
             {
                 frame = await ReceiveJsonAsync(socket, cancel).ConfigureAwait(false);
@@ -141,7 +141,7 @@ internal sealed class RemoteTextService : ITextService
                 yield return new TextChunk { Kind = TextChunkKind.StopReason, Stop = StopReason.Error, Text = "The assistant closed the connection without finishing the reply." };
                 yield break;
             }
-            if (frame.TryGetValue("chunk", out JToken? chunkToken))
+            if (frame.TryGetValue("chunk", out JToken chunkToken))
             {
                 yield return new TextChunk { Kind = TextChunkKind.Chunk, Text = chunkToken.ToString() };
                 continue;
@@ -168,7 +168,7 @@ internal sealed class RemoteTextService : ITextService
             if (frame["tool_result"] is JObject resultFrame)
             {
                 string id = Str(resultFrame, "id");
-                NativeToolCall call = id.Length > 0 && pendingCalls.TryGetValue(id, out NativeToolCall? found)
+                NativeToolCall call = id.Length > 0 && pendingCalls.TryGetValue(id, out NativeToolCall found)
                     ? found
                     : new NativeToolCall { Id = id, Name = Str(resultFrame, "name") };
                 pendingCalls.Remove(id);
@@ -246,7 +246,7 @@ internal sealed class RemoteTextService : ITextService
     public int CountTokens(ModelSpec spec, string text) => string.IsNullOrEmpty(text) ? 0 : (text.Length + 3) / 4;
 
     /// <summary>Nothing is resident on this side to unload; always false.</summary>
-    public bool Unload(string? device = null) => false;
+    public bool Unload(string device = null) => false;
 
     private JObject BuildRequestFrame(TextRequest request)
     {
@@ -322,7 +322,7 @@ internal sealed class RemoteTextService : ITextService
 
     /// <summary>Never <see cref="StopReason.ToolCall"/>, whatever the wire says -- see the class remarks. Anything
     /// unrecognized (including null, absent, or anything tool-shaped) maps to the safe default, <see cref="StopReason.Stop"/>.</summary>
-    private static StopReason MapStopReason(string? wire) => wire?.ToLowerInvariant() switch
+    private static StopReason MapStopReason(string wire) => wire?.ToLowerInvariant() switch
     {
         "length" => StopReason.Length,
         "cancelled" or "canceled" => StopReason.Cancelled,
@@ -339,7 +339,7 @@ internal sealed class RemoteTextService : ITextService
     /// returned as-is, not re-encoded.</summary>
     private static string JsonFieldAsCompactString(JObject obj, string key)
     {
-        JToken? token = obj[key];
+        JToken token = obj[key];
         if (token is null || token.Type == JTokenType.Null)
         {
             return "";
@@ -392,7 +392,7 @@ internal sealed class RemoteTextService : ITextService
         }
     }
 
-    private static async Task<JObject?> ReceiveJsonAsync(ClientWebSocket socket, CancellationToken cancel)
+    private static async Task<JObject> ReceiveJsonAsync(ClientWebSocket socket, CancellationToken cancel)
     {
         byte[] buffer = new byte[16 * 1024];
         using MemoryStream accumulated = new();
