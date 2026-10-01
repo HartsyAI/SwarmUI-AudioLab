@@ -145,8 +145,18 @@
          CUDA_ERROR_INVALID_VALUE since alpha.130: the engine's GGUF writer emits ggml axis order and the two
          cache readers took the file's order verbatim, so every projection was transposed and the GEMV's M came
          out 0. Existing cache files stay valid. Nothing between alpha.130 and alpha.160 needed a code change
-         here: a full Release build from the nuget.org packages (UseLocalHartsy=false) succeeds as-is. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.183" />
+         here: a full Release build from the nuget.org packages (UseLocalHartsy=false) succeeds as-is.
+
+         2.0.0-alpha.235 = catch-up bump for the phone-call voice agent work, 2026-10-01 (alpha.183 -> alpha.235,
+         52 versions). Nothing in that span changes a signature this extension calls: the eviction fix (alpha.218,
+         #191), Kokoro's sentence-streaming runner (alpha.219, #194) and the Whisper/Kokoro speed and log-mel/GELU
+         fidelity passes (alpha.224/227/232/233/235, #199/#204/#212/#211/#214) are all internal to the engine or
+         additive; the new ISpeechService.OpenSynthesizerAsync/ITranscribeService.OpenTranscriberAsync leases
+         (alpha.223, #201) default-interface-throw for callers that don't opt in. Verified: a full Release build
+         from the nuget.org packages (UseLocalHartsy=false) succeeds as-is — see this PR for what actually
+         changed in this extension (tts_streaming on Kokoro, resident leases, RNNoise installer wiring), landed as
+         separate follow-up PRs on top of this pin so the bump itself stays reviewable on its own. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.235" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
