@@ -123,10 +123,14 @@ public static class VoiceTurnOrchestrator
     /// (see <c>InternalsVisibleTo.cs</c> for the same pattern elsewhere in this extension).</para></summary>
     internal static string ResolveTurnText(JObject payload)
     {
-        JToken commandToken = payload["command"];
-        return commandToken is null || commandToken.Type == JTokenType.Null
-            ? payload["transcript"]?.ToString()
-            : commandToken.ToString();
+        // Read the value, not the type tag: a token can be JTokenType.String with a null Value instead of
+        // JTokenType.Null (see WakeWordService.ToJson's own remarks on why a producer might still send that
+        // shape -- an older build, a hand-rolled caller), and Value<string>() returns null for either shape
+        // alike. Checked for null specifically, not string.IsNullOrEmpty: an explicit empty command ("") is a
+        // different, deliberate case -- the user said the wake word and nothing else -- and must keep
+        // resolving to "" rather than falling back to the transcript.
+        string command = payload["command"]?.Value<string>();
+        return command is null ? payload["transcript"]?.ToString() : command;
     }
 
     private static async Task RunTurnAsync(string deviceId, string text, CancellationTokenSource cts)
