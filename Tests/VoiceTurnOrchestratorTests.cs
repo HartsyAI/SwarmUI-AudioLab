@@ -11,8 +11,14 @@ namespace Hartsy.Extensions.AudioLab.Tests;
 /// <see langword="string"/> conversion tags the resulting token <see cref="JTokenType.String"/> with a
 /// <see langword="null"/> <c>Value</c> -- never <see cref="JTokenType.Null"/>. The consumer used to fall back
 /// to the transcript by checking <c>Type == JTokenType.Null</c>, which that mistagged token never matches, so
-/// a detection where the engine did not separate command from transcript silently sent <c>Done</c> instead of
-/// asking the assistant.</summary>
+/// a detection whose Command is null but whose Transcript is not silently sent <c>Done</c> instead of asking
+/// the assistant.
+///
+/// <para>Today's concrete <c>WakeService</c> happens to only null out <see cref="WakeEvent.Command"/> when
+/// <see cref="WakeEvent.Transcript"/> is null too, so that exact combination is not something it currently
+/// sends -- but <see cref="WakeEvent.Command"/> is declared <c>string?</c>, nothing here guarantees today's
+/// engine is the only producer, and <see cref="WakeWordService.ToJson"/> and its consumer both need to handle
+/// a null Command correctly regardless of what set it that way.</para></summary>
 public class VoiceTurnOrchestratorTests
 {
     private static WakeEvent Detection(string command, string transcript) => new()
@@ -38,9 +44,10 @@ public class VoiceTurnOrchestratorTests
     public void ResolveTurnText_NullCommand_FallsBackToTheTranscript()
     {
         // Built through the real producer (ToJson), not a hand-built JObject, so this fails for the actual
-        // reason -- ToJson mistagging a null Command -- and not just a test fixture's own shape. This is the
-        // detection shape a newer engine sends when it ran transcription but could not separate a command from
-        // the wake phrase: a real, non-absent, genuinely-null Command.
+        // reason -- ToJson mistagging a null Command -- and not just a test fixture's own shape. A null
+        // Command alongside a non-empty Transcript is not a combination today's WakeService happens to send
+        // (see this file's class remarks), but WakeEvent.Command is string?, so ToJson and its consumer must
+        // handle it correctly regardless of which caller produces it.
         JObject payload = WakeWordService.ToJson(Detection(command: null, transcript: "only a transcript"));
 
         string text = VoiceTurnOrchestrator.ResolveTurnText(payload);
