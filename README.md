@@ -20,6 +20,7 @@ Docker, and nothing to install beyond the extension itself.
 - [Engines and models](#engines-and-models)
 - [The Audio Lab DAW](#the-audio-lab-daw)
 - [Wake word listener](#wake-word-listener)
+- [Voice Agent](#voice-agent)
 - [API reference](#api-reference)
 - [Permissions](#permissions)
 - [Network connections](#network-connections)
@@ -36,6 +37,7 @@ Docker, and nothing to install beyond the extension itself.
 | **Install only what you want** | Per model Install and Remove, with Download All for multi variant engines |
 | **Multi track DAW** | Timeline, mixer, effect chains, stem separation, drum machine, in place generation, saved sessions |
 | **Wake word listener** | Voice satellites stream microphone audio in; detections are published on a WebSocket other extensions can subscribe to |
+| **Voice Agent** | A live, barge-in-capable phone call in your browser tab: your mic in, a spoken reply out, answered by LLMAssistant |
 | **Works like any Swarm model** | Pick an audio model in the Generate tab, type a prompt, and the result lands in your output history |
 | **Streaming speech** | Chunked text to speech plays back while it is still generating |
 | **Sheet music editing** | Read back the score YuE2 plans, edit the notes and harmony, audition it in the browser, and render the change |
@@ -465,6 +467,65 @@ Detections are published for other extensions, which is the point of the feature
   into their own process.
 - Configured webhook URLs receive a JSON POST per detection.
 
+## Voice Agent
+
+The **Voice Agent** tab, at the bottom of the Audio Lab DAW next to Score, is a live phone-style call running
+in your browser: your microphone in, endpointed and transcribed on the server, a reply from your LLM assistant,
+and spoken audio back, with barge-in (talk over the reply to interrupt it).
+
+It runs on the engine's `HartsyInference.Voice` package -- the same session shape the phone-call voice agent
+uses -- but answers through **LLMAssistant** instead of a local model: every turn is a loopback call to
+LLMAssistant's own streaming route on the same SwarmUI process, so your reply comes from your own configured
+assistant, its tools, and its permissions. **Installing LLMAssistant is required for this tab to answer** (the
+mic, transport and transcript still work without it; you will just get an error instead of a reply).
+
+What is pinned per call and what is yours to pick:
+
+- **Speech recognition and synthesis are fixed**: Whisper `small.en` and Kokoro, one voice at a time, shared by
+  every concurrent call on this server (`HartsyInference.Voice`'s own model set, loaded once and kept warm).
+  Switching the voice picker while a call is already using a different voice gets you a notice instead of a
+  switch -- the model set is rebuilt for a new voice only once every call using the old one has ended.
+- **The language model is yours to pick** per call: an LLMAssistant model and, optionally, a specific assistant
+  id and a system prompt override.
+- **Barge-in** is on by default; the toggle turns it off for a call that should finish speaking uninterrupted.
+
+The model set loads its Silero VAD and RNNoise (int8) from the same files folder the
+[wake word listener](#wake-word-listener) uses, so installing one does not mean downloading the other's weights
+twice; the voice front end always denoises (at int8 precision), independent of the wake listener's own
+Float denoiser setting.
+
+First call after a server start, or after a different voice needed a rebuild, takes a few seconds longer while
+the models load and warm up. The model set is released five minutes after the last call ends, and immediately
+-- ending any call still using it first -- whenever `Server` > `Backends` frees the Audio Backend's memory.
+
+### The wire protocol
+
+`AudioLabVoiceSession` is a WebSocket (permission `audio_process`, same as every other audio route). The first
+frame is the call's setup, and everything else streams after it:
+
+```jsonc
+// client -> server, first frame
+{ "model": "...", "assistantId": "...", "voice": "af_heart", "systemPrompt": "...", "bargeIn": true, "inputRate": 48000 }
+// client -> server, after that: binary mono PCM16 frames at inputRate, then a final
+{ "end": true }
+```
+
+```jsonc
+// server -> client: binary mono PCM16 reply audio at 24 kHz, each frame prefixed with a 4-byte little-endian
+// turn id (0 outside any turn) -- the client uses it to drop queued audio for a turn a `bargein` event named.
+
+// server -> client, JSON events, interleaved with that binary audio:
+{ "state": "Listening" }                                   // Listening | Thinking | Speaking | ToolRunning | Warming | Ended
+{ "transcript": { "role": "user", "text": "...", "turnId": 1 } }
+{ "transcript": { "role": "assistant", "text": "...", "turnId": 1 } }
+{ "bargein": { "turnId": 1 } }
+{ "tool_call": { "id": "...", "name": "...", "arguments": "...", "turnId": 1 } }
+{ "tool_result": { "id": "...", "name": "...", "result": "...", "turnId": 1 } }
+{ "notice": "..." }                                         // eg tool calling unavailable for this model; the chosen voice unavailable mid-call
+{ "metrics": { "turnId": 1, "kind": "utterance", "voice.stt.ms": 139.2, "voice.llm.ttft_ms": 65.2, "voice.tts.first_chunk_ms": 142.3, "voice.turn.total_ms": 1226.6, "...": "..." } }
+{ "error": "..." }
+```
+
 ## API reference
 
 AudioLab follows SwarmUI's API conventions exactly, so everything in the
@@ -552,6 +613,7 @@ usual `ProcessTTS` fields.
 | `AudioLabWakeTrainWord` | WebSocket | `audio_wake_manage` | `phrase`, `voices`, `negative_phrases`, `negative_audio`, `epochs` |
 | `AudioLabWakeEnrollSpeaker` | POST | `audio_wake_manage` | `name`, `clips` (array of base64 WAV), `phrase` |
 | `AudioLabWakeRemoveSpeaker` | POST | `audio_wake_manage` | `name` |
+| `AudioLabVoiceSession` | WebSocket | `audio_process` | setup frame `model`, `assistantId`, `voice`, `systemPrompt`, `bargeIn`, `inputRate`, then binary PCM16 audio |
 
 Reacting to wake detections from your own code is a WebSocket to `AudioLabWakeEvents`. It sends
 `{"subscribed":true, ...}` on connect, then one `{"detection":{...}}` per hit, with a `{"keepalive":true}` every 30

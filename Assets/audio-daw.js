@@ -620,11 +620,12 @@ const AudioDaw = (() => {
     function buildBottomPanel() {
         if (!bottomPanelEl) return;
         const pane = (id) => bottomPanelEl.querySelector(`.daw-bottom-tab-content[data-tab="${id}"]`);
-        // Beats + Generate + Score are built ONCE per session (not in updateBottomPanel) so
-        // typed prompts, pattern edits and a half-edited score survive selection-driven panel refreshes
+        // Beats + Generate + Score + Voice are built ONCE per session (not in updateBottomPanel) so
+        // typed prompts, pattern edits, a half-edited score and a live call survive selection-driven panel refreshes
         renderBeatsPanel(pane('beats'));
         renderGeneratePanel(pane('generate'));
         if (typeof AudioDawScore !== 'undefined') AudioDawScore.render(pane('score'), scoreCallbacks());
+        if (typeof AudioVoice !== 'undefined') AudioVoice.render(pane('voice'));
         updateBottomPanel();
     }
 
