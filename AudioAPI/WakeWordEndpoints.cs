@@ -330,23 +330,20 @@ public static class WakeWordEndpoints
         return null;
     }
 
-    /// <summary>Downloads the RNNoise denoiser from the configured <c>DenoiserUrl</c> into the wake model
-    /// directory's <c>denoise/</c> subfolder. Streams progress the same way the backbone install does.
+    /// <summary>Installs the RNNoise denoiser into the wake model directory's <c>denoise/</c> subfolder.
+    /// Streams progress the same way the backbone install does.
     ///
-    /// <para>Unlike the backbone and heads there is no registry entry to read: the weights are a conversion of
-    /// upstream's PyTorch checkpoint, so the URL is a setting. Fails with a clear message rather than a silent
-    /// no-op when it has not been set.</para></summary>
+    /// <para>With no <c>DenoiserUrl</c> configured (the default), this downloads and converts it from xiph's
+    /// own release through the engine's <c>RnnoiseInstaller</c> — no setting needed, unlike the backbone and
+    /// heads this still has no <c>AudioWeightsRegistry</c> entry for, since that installer is its own
+    /// canonical, verified source rather than a registry lookup. A configured <c>DenoiserUrl</c> still
+    /// overrides it, for a self-hosted or re-quantized build.</para></summary>
     public static async Task<JObject> AudioLabWakeInstallDenoiser(Session session, WebSocket ws)
     {
         try
         {
             async Task SendAsync(JObject payload) => await ws.SendJson(payload, API.WebsocketTimeout).ConfigureAwait(false);
             string url = WakeWordService.GetSettings().DenoiserUrl;
-            if (string.IsNullOrWhiteSpace(url))
-            {
-                await SendAsync(new JObject { ["error"] = "No denoiser URL is configured. Set one in the wake settings first — the weights are a conversion of upstream's PyTorch checkpoint, so there is no default download." });
-                return null;
-            }
             bool installed = await WakeWordService.InstallDenoiserAsync(url,
                 msg => SendAsync(new JObject { ["status"] = msg }), Program.GlobalProgramCancel);
             await SendAsync(new JObject { ["success"] = installed });

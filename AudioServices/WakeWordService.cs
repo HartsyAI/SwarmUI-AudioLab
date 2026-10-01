@@ -1,6 +1,7 @@
 using System.IO;
 using System.Collections.Concurrent;
 using System.Threading.Channels;
+using HartsyInference.Audio.Models.Denoise;
 using HartsyInference.Engine.Audio.Wake;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Core;
@@ -368,11 +369,26 @@ public static class WakeWordService
         File.Exists(Path.Combine(ModelRoot(), "vad", "silero_vad.onnx"))
         || File.Exists(Path.Combine(ModelRoot(), "vad", "silero_vad_16k.safetensors"));
 
+    /// <summary>Installs the RNNoise denoiser into <c>{ModelRoot}/denoise/</c>.
+    ///
+    /// <para>With no <paramref name="url"/> configured (the common case now), downloads and converts it from
+    /// xiph's own release through the engine's <see cref="RnnoiseInstaller"/> — a canonical, SHA-256-verified
+    /// source that did not exist when <see cref="WakeWordSettings.DenoiserUrl"/> was added, which is why that
+    /// setting existed at all. Always installs <see cref="RnnoisePrecision.Float"/>: the wake stack loads F32
+    /// (see <see cref="WakeModelSet.LoadDenoiser"/>), never the voice front end's separate, opt-in int8
+    /// tables.</para>
+    ///
+    /// <para>A configured <paramref name="url"/> is still honored exactly as before, for a self-hosted or
+    /// re-quantized build someone points this at directly: the same atomic download-and-verify path every
+    /// other weight here uses, with no published hash to pin so an interrupted download is caught by the size
+    /// floor rather than silently accepted.</para></summary>
     public static async Task<bool> InstallDenoiserAsync(string url, Func<string, Task> onProgress, CancellationToken cancel = default)
     {
         if (string.IsNullOrWhiteSpace(url))
         {
-            return false;
+            await onProgress("Downloading the RNNoise model from xiph's release (one-time, ~59 MB)...");
+            await RnnoiseInstaller.EnsureAsync(ModelRoot(), cancel, RnnoisePrecision.Float);
+            return true;
         }
         AudioWeightsRegistry.DownloadSpec spec = new(Url: url.Trim(), FileName: "rnnoise.safetensors", Sha256: "");
         string dir = Path.Combine(ModelRoot(), "denoise");
@@ -497,10 +513,11 @@ public class WakeWordSettings
     /// the raw microphone feed.</para></summary>
     public bool NoiseSuppression { get; set; }
 
-    /// <summary>Where to download the RNNoise denoiser from. Empty until you host one — the weights are a
-    /// conversion of upstream's PyTorch checkpoint, not a file with a canonical home, so there is no sensible
-    /// default to ship. Kept as a setting rather than baked into the weights registry so a re-quantized or
-    /// self-hosted build can be swapped in without an extension release.</summary>
+    /// <summary>Overrides where <see cref="WakeWordService.InstallDenoiserAsync"/> downloads the RNNoise
+    /// denoiser from. Leave empty (the default) to install the engine's own canonical, SHA-256-verified build
+    /// from xiph's release — no URL needed. Set this only to point at a self-hosted or re-quantized build
+    /// instead; kept as a setting rather than baked into the weights registry so that swap needs no extension
+    /// release.</summary>
     public string DenoiserUrl { get; set; } = "";
 
     /// <summary>Whether to end an utterance when the speaker stops rather than after a fixed wait.
