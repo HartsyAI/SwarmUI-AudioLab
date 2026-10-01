@@ -173,11 +173,23 @@
          alpha.236 fixed — a grep of src/HartsyInference.Audio on the engine side found no other reference to
          these sampler types. ACE-Step runs non-greedy in normal use (Temperature > 0; greedy would hurt
          generation quality), so its planner gets the same faster, token-identical decode the voice/LLM path
-         does. alpha.237 itself adds the new, separate HartsyInference.Voice package, which this extension
-         doesn't reference. Verified hartsyinference (this meta package) is indexed on nuget.org before
-         bumping; full Release build from the nuget.org packages (UseLocalHartsy=false) succeeds as-is, no
-         source changes needed by the bump itself. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.237" />
+         does. alpha.237 itself adds the new, separate HartsyInference.Voice package, which this extension now
+         does reference, added just below by the voice-agent-session PR this comment was merged with:
+         VoiceAgentSession/VoiceModelSet/VoiceAgentOptions for AudioServices/Voice/*, the browser "Voice Agent"
+         tab.
+
+         2.0.0-alpha.238 = the voice-agent-session PR's own follow-up bump, 2026-10-01 (alpha.237 -> alpha.238).
+         Adds HartsyInference.Voice's VoiceAgentSession.ReadOutbound(Span<float>, out int turnId) overload,
+         the one the phone host's own sender uses (VoiceHost/Calls/VoiceCall.cs) and this extension's outbound
+         pump now uses too, tagging every sent frame with the turn that actually produced it instead of the
+         StateChanged-event approximation the first version of this PR shipped before this overload was
+         published. Otherwise only adds the VoiceHost exe and its deploy files, which this extension does not
+         reference. Verified hartsyinference and hartsyinference.voice are both indexed on nuget.org at this
+         version before bumping. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.238" />
+    <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
+         repo tag and must never skew. -->
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.238" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak

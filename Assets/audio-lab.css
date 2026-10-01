@@ -2382,3 +2382,55 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
 .daw-keys-row { display: flex; gap: 0.2rem; flex-wrap: nowrap; overflow-x: auto; }
 .daw-keys-key { min-width: 2.6rem; }
 .daw-keys-gap { visibility: hidden; }
+
+/* ===== Voice Agent tab ===== */
+.voice-agent-root { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.6rem; height: 100%; overflow-y: auto; }
+.voice-agent-setup { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+.voice-agent-field { display: flex; flex-direction: column; gap: 0.15rem; min-width: 8rem; }
+.voice-agent-field-inline { flex-direction: row; align-items: center; gap: 0.35rem; min-width: auto; }
+.voice-agent-field-label { font-size: 0.75rem; color: var(--text-soft); }
+.voice-agent-select, .voice-agent-input { font: inherit; }
+.voice-agent-prompt { width: 100%; resize: vertical; font: inherit; }
+.voice-agent-transport { display: flex; align-items: center; gap: 0.6rem; }
+.voice-agent-start, .voice-agent-stop { flex: 0 0 auto; }
+.voice-agent-state {
+    padding: 0.2rem 0.6rem;
+    border-radius: 1rem;
+    font-size: 0.78rem;
+    border: 1px solid var(--shadow);
+    color: var(--text-soft);
+}
+.voice-agent-state-listening { border-color: var(--emphasis); color: var(--emphasis); }
+.voice-agent-state-thinking, .voice-agent-state-toolrunning { border-color: var(--yellow); color: var(--yellow); }
+.voice-agent-state-speaking { border-color: var(--green); color: var(--green); }
+.voice-agent-meter-track {
+    flex: 1 1 8rem;
+    max-width: 12rem;
+    height: 0.5rem;
+    border-radius: 0.3rem;
+    background: var(--background-soft);
+    border: 1px solid var(--shadow);
+    overflow: hidden;
+}
+.voice-agent-meter-fill { height: 100%; width: 0; background: var(--emphasis); transition: width 0.05s linear; }
+.voice-agent-notices { display: flex; flex-direction: column; gap: 0.1rem; max-height: 4.5rem; overflow-y: auto; font-size: 0.78rem; }
+.voice-agent-notice { color: var(--text-soft); }
+.voice-agent-notice-error { color: var(--red); }
+.voice-agent-transcript {
+    flex: 1 1 auto;
+    min-height: 8rem;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.4rem;
+    border: 1px solid var(--shadow);
+    border-radius: 0.3rem;
+    background: var(--background-soft);
+}
+.voice-agent-line { line-height: 1.4; }
+.voice-agent-line-role { font-weight: 600; }
+.voice-agent-line-user .voice-agent-line-role { color: var(--emphasis); }
+.voice-agent-line-assistant .voice-agent-line-role { color: var(--green); }
+.voice-agent-metrics { display: flex; flex-direction: column; gap: 0.15rem; max-height: 5rem; overflow-y: auto; }
+.voice-agent-metrics-row { display: flex; gap: 0.8rem; font-size: 0.72rem; font-family: var(--font-monospace); color: var(--text-soft); }
