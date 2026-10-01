@@ -22,6 +22,11 @@ public static class VoiceSessionEndpoints
     /// (eg <c>PhoneLinkServer</c>'s 20 ms ticks) and <see cref="VoiceAgentOptions.OutboundSampleRate"/>'s frame math.</summary>
     private static readonly TimeSpan PumpInterval = TimeSpan.FromMilliseconds(20);
 
+    /// <summary>Shape of <see cref="VoiceAgentSession.ReadOutbound(Span{float}, out int)"/>, extracted so
+    /// <see cref="PumpOutboundAsync"/> can be driven by a fake in <c>VoiceSessionEndpointsPumpTests</c> instead
+    /// of a real session.</summary>
+    internal delegate int ReadOutboundDelegate(Span<float> destination, out int turnId);
+
     public static void Register()
     {
         API.RegisterAPICall(AudioLabVoiceSession, false, AudioLabPermissions.PermProcessAudio);
@@ -118,28 +123,14 @@ public static class VoiceSessionEndpoints
             while (Interlocked.CompareExchange(ref lastFlushedTurnId, turnId, current) != current);
         }
 
-        // The published HartsyInference.Voice (2.0.0-alpha.237) ReadOutbound has no (Span, out turnId) overload --
-        // only ReadOutbound(Span<float>), which does not say which turn a read's samples belong to (see the type's
-        // own doc: that overload "reads across marks"). Approximated here from the StateChanged events every
-        // session already raises: the last turn seen entering Speaking is tagged on every frame read until the
-        // next one starts. This can mistag a few ms right at a turn boundary; it cannot mistag anything else, since
-        // between turns ReadOutbound returns 0 (no reply audio) regardless of this value.
-        int currentTurnId = 0;
-        voiceSession.EventRaised += ev =>
-        {
-            if (ev.Kind == VoiceAgentEventKind.StateChanged && ev.State == VoiceAgentState.Speaking)
-            {
-                Volatile.Write(ref currentTurnId, ev.TurnId);
-            }
-            _ = SendJsonAsync(EventToJson(ev, MarkFlushed));
-        };
+        voiceSession.EventRaised += ev => _ = SendJsonAsync(EventToJson(ev, MarkFlushed));
 
         using CancellationTokenSource pumpCancel = new();
         Task pumpTask = Task.CompletedTask;
         try
         {
             await voiceSession.StartAsync(Program.GlobalProgramCancel).ConfigureAwait(false);
-            pumpTask = PumpOutboundAsync(voiceSession, lease.SessionOptions.OutboundSampleRate, () => Volatile.Read(ref currentTurnId),
+            pumpTask = PumpOutboundAsync(voiceSession.ReadOutbound, lease.SessionOptions.OutboundSampleRate,
                 () => Volatile.Read(ref lastFlushedTurnId), SendBinaryAsync, pumpCancel.Token);
             await ReceiveInboundAsync(ws, voiceSession, inbound, Program.GlobalProgramCancel).ConfigureAwait(false);
         }
@@ -213,24 +204,27 @@ public static class VoiceSessionEndpoints
     }
 
     /// <summary>Reads reply audio in ~20 ms steps and sends it as turn-tagged binary frames; never blocks the
-    /// session's own audio threads (<see cref="VoiceAgentSession.ReadOutbound(Span{float})"/> never blocks). Drops
+    /// session's own audio threads (<see cref="VoiceAgentSession.ReadOutbound(Span{float}, out int)"/> never
+    /// blocks, and returns one turn's audio at most per call, stopping where the turn changes -- so every frame
+    /// this sends carries exactly the turn id that produced its samples, never two turns under one tag). Drops
     /// anything tagged at or below the last barge-in's turn, mirroring the engine's own voice-host sender -- the
     /// flush window the engine's docs describe can hand a tagged straggler to a reader an instant before the
-    /// producer notices the flush moved again.</summary>
-    private static async Task PumpOutboundAsync(VoiceAgentSession voiceSession, int outboundSampleRate,
-        Func<int> currentTurnIdRef, Func<int> lastFlushedTurnIdRef, Func<byte[], Task> sendBinaryAsync, CancellationToken cancel)
+    /// producer notices the flush moved again. Internal, and <paramref name="readOutbound"/> is a delegate rather
+    /// than a <see cref="VoiceAgentSession"/> directly, so <c>VoiceSessionEndpointsPumpTests</c> can drive this
+    /// with a fake read instead of a real session.</summary>
+    internal static async Task PumpOutboundAsync(ReadOutboundDelegate readOutbound, int outboundSampleRate,
+        Func<int> lastFlushedTurnIdRef, Func<byte[], Task> sendBinaryAsync, CancellationToken cancel)
     {
         int frameSamples = Math.Max(1, outboundSampleRate / 50); // 20 ms
         float[] buffer = new float[frameSamples];
         while (!cancel.IsCancellationRequested)
         {
             await Task.Delay(PumpInterval, cancel).ConfigureAwait(false);
-            int read = voiceSession.ReadOutbound(buffer);
+            int read = readOutbound(buffer, out int turnId);
             if (read <= 0)
             {
                 continue;
             }
-            int turnId = currentTurnIdRef();
             if (turnId != 0 && turnId <= lastFlushedTurnIdRef())
             {
                 continue; // a stale turn's straggling audio; the client has already been told to drop this turn.

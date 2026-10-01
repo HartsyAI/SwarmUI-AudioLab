@@ -33,10 +33,10 @@ internal static class Pcm16
 }
 
 /// <summary>The outbound reply-audio frame: a 4-byte little-endian turn id, then PCM16 mono at
-/// <c>OutboundSampleRate</c> (24 kHz). The turn id is what lets the browser's per-turn playback queue -- and, in
-/// principle, a server-side pump -- drop audio for a turn a <c>bargein</c> event named, per
-/// <c>VoiceAgentSession.ReadOutbound(Span{float}, out int turnId)</c>'s own "tag every read with the turn that
-/// produced it" contract.</summary>
+/// <c>OutboundSampleRate</c> (24 kHz). The turn id is what lets the browser's per-turn playback queue, and the
+/// server's own outbound pump (<c>VoiceSessionEndpoints.PumpOutboundAsync</c>), drop audio for a turn a
+/// <c>bargein</c> event named, per <c>VoiceAgentSession.ReadOutbound(Span{float}, out int turnId)</c>'s own "one
+/// turn's audio at most per call, stopping where the turn changes" contract.</summary>
 internal static class VoiceOutboundFrame
 {
     public const int HeaderBytes = 4;
