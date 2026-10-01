@@ -578,34 +578,35 @@ public static class AudioEngineBridge
             return;
         }
         string key = spec.Requested ?? spec.LocalPath ?? "";
-        await _residencyLock.WaitAsync(cancel).ConfigureAwait(false);
         try
         {
             if (service == AudioEngineService.Speech)
             {
-                if (_pinnedSynth is not null && _pinnedSynthKey == key)
+                bool stored = await OpenResidentPinCoreAsync(
+                    _residencyLock, () => _keepResident, key,
+                    () => (_pinnedSynth, _pinnedSynthKey),
+                    (lease, k) => { _pinnedSynth = lease; _pinnedSynthKey = k; },
+                    ct => Engine.Speech.OpenSynthesizerAsync(spec, ct),
+                    lease => lease.Dispose(),
+                    cancel).ConfigureAwait(false);
+                if (stored)
                 {
-                    return;
+                    Logs.Debug($"[AudioLab] Keeping TTS '{key}' resident.");
                 }
-                ISynthesizerLease opened = await Engine.Speech.OpenSynthesizerAsync(spec, cancel).ConfigureAwait(false);
-                ISynthesizerLease previous = _pinnedSynth;
-                _pinnedSynth = opened;
-                _pinnedSynthKey = key;
-                previous?.Dispose();
-                Logs.Debug($"[AudioLab] Keeping TTS '{key}' resident.");
             }
             else if (service == AudioEngineService.Transcribe)
             {
-                if (_pinnedTranscriber is not null && _pinnedTranscriberKey == key)
+                bool stored = await OpenResidentPinCoreAsync(
+                    _residencyLock, () => _keepResident, key,
+                    () => (_pinnedTranscriber, _pinnedTranscriberKey),
+                    (lease, k) => { _pinnedTranscriber = lease; _pinnedTranscriberKey = k; },
+                    ct => Engine.Transcribe.OpenTranscriberAsync(spec, ct),
+                    lease => lease.Dispose(),
+                    cancel).ConfigureAwait(false);
+                if (stored)
                 {
-                    return;
+                    Logs.Debug($"[AudioLab] Keeping STT '{key}' resident.");
                 }
-                ITranscriberLease opened = await Engine.Transcribe.OpenTranscriberAsync(spec, cancel).ConfigureAwait(false);
-                ITranscriberLease previous = _pinnedTranscriber;
-                _pinnedTranscriber = opened;
-                _pinnedTranscriberKey = key;
-                previous?.Dispose();
-                Logs.Debug($"[AudioLab] Keeping STT '{key}' resident.");
             }
         }
         catch (OperationCanceledException) when (cancel.IsCancellationRequested)
@@ -619,25 +620,129 @@ public static class AudioEngineBridge
             // once (eg switching between two large STT models with keep-resident on).
             Logs.Warning($"[AudioLab] Could not keep '{key}' resident: {ex.Message}");
         }
-        finally
-        {
-            _residencyLock.Release();
-        }
     }
 
-    /// <summary>Disposes and forgets both pins. Safe to call when neither (or the engine itself) exists.</summary>
+    /// <summary>Race-safe core of <see cref="MaybeKeepResidentAsync"/>, generic over the lease type so it
+    /// serves both <see cref="ISynthesizerLease"/> and <see cref="ITranscriberLease"/> from one implementation,
+    /// and <c>internal</c> (rather than a closure inline above) so a test can drive it with a controllable
+    /// <paramref name="openAsync"/> and plain local state instead of this class's real static fields and a
+    /// live <see cref="Engine"/>.
+    ///
+    /// <para>Everything happens under <paramref name="gate"/> — including the <paramref name="openAsync"/>
+    /// await, which can be slow (a model load) — so this never races <see cref="ClearResidentPinCore{TLease}"/>
+    /// on the same gate: the two fully serialize instead of interleaving their reads/writes of the pin. That
+    /// alone stops a just-opened lease from landing in the pin fields after a concurrent clear already ran,
+    /// but a second check matters too: <paramref name="keepResidentNow"/> is re-read <b>after</b> the open
+    /// completes, still inside the gate, and a lease opened while the setting was going off is disposed
+    /// instead of stored — otherwise a request that started before <see cref="RequestKeepResident"/>(false)
+    /// but finishes its (possibly long) open after it would resurrect exactly the pin that call was trying to
+    /// drop, with nothing left to ever clear it again (<see cref="MaybeKeepResidentAsync"/>'s own top-of-method
+    /// guard short-circuits every later call once <c>_keepResident</c> is false).</para>
+    ///
+    /// <para>Disposal (of a superseded previous pin, or of a lease discarded by the recheck above) happens
+    /// <b>after</b> releasing <paramref name="gate"/>, never while holding it: <c>ISynthesizerLease</c>/
+    /// <c>ITranscriberLease</c>'s own contract says <c>Dispose</c> waits for a call in flight, bounded by the
+    /// engine's 120 s release budget, and holding this gate for up to two minutes would stall every other
+    /// TTS/STT request and <see cref="ClearResidentPinCore{TLease}"/> call behind it.</para></summary>
+    /// <returns>True if a new lease was opened and stored; false if one matching <paramref name="key"/> was
+    /// already pinned, or the setting was/went off and nothing was stored.</returns>
+    internal static async Task<bool> OpenResidentPinCoreAsync<TLease>(
+        SemaphoreSlim gate,
+        Func<bool> keepResidentNow,
+        string key,
+        Func<(TLease Lease, string Key)> getPinned,
+        Action<TLease, string> setPinned,
+        Func<CancellationToken, Task<TLease>> openAsync,
+        Action<TLease> disposeLease,
+        CancellationToken cancel)
+        where TLease : class
+    {
+        // No `return` inside the try below, on purpose: every exit path must still reach the dispose-after-
+        // release step past the finally, and a `return` from inside a try/finally runs the finally but then
+        // leaves the method immediately afterward, skipping any code written after the whole construct. An
+        // earlier version of this returned early from inside the try for the "already pinned" and "setting
+        // off" cases, which skipped disposing `opened`/`toDispose` entirely -- caught by this method's own
+        // tests, not just reasoned about.
+        TLease toDispose = null;
+        bool stored = false;
+        await gate.WaitAsync(cancel).ConfigureAwait(false);
+        try
+        {
+            (TLease current, string currentKey) = getPinned();
+            if (current is null || currentKey != key)
+            {
+                if (keepResidentNow())
+                {
+                    TLease opened = await openAsync(cancel).ConfigureAwait(false);
+                    if (keepResidentNow())
+                    {
+                        (TLease previous, _) = getPinned();
+                        setPinned(opened, key);
+                        toDispose = previous;
+                        stored = true;
+                    }
+                    else
+                    {
+                        // The setting turned off while the (possibly slow -- a model load) open was in
+                        // flight. This lease was never a keeper; dispose it below rather than resurrecting a
+                        // pin RequestKeepResident(false) already tried to drop.
+                        toDispose = opened;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            gate.Release();
+        }
+        if (toDispose is not null)
+        {
+            try { disposeLease(toDispose); }
+            catch (Exception ex) { Logs.Debug($"[AudioLab] Disposing a residency lease threw: {ex.Message}"); }
+        }
+        return stored;
+    }
+
+    /// <summary>Disposes and forgets both pins. Safe to call when neither (or the engine itself) exists. Takes
+    /// <see cref="_residencyLock"/> around each field swap (the two kinds are independent pins, so clearing
+    /// them is two short, separate critical sections rather than one combined one) so this can never race
+    /// <see cref="OpenResidentPinCoreAsync{TLease}"/> on the same gate — see that method's doc for why that
+    /// race was the actual bug an earlier version of this had.</summary>
     private static void ClearResidencyPins()
     {
-        ISynthesizerLease synth = _pinnedSynth;
-        ITranscriberLease transcriber = _pinnedTranscriber;
-        _pinnedSynth = null;
-        _pinnedSynthKey = null;
-        _pinnedTranscriber = null;
-        _pinnedTranscriberKey = null;
-        try { synth?.Dispose(); }
-        catch (Exception ex) { Logs.Debug($"[AudioLab] Disposing the pinned TTS lease threw: {ex.Message}"); }
-        try { transcriber?.Dispose(); }
-        catch (Exception ex) { Logs.Debug($"[AudioLab] Disposing the pinned STT lease threw: {ex.Message}"); }
+        ClearResidentPinCore<ISynthesizerLease>(_residencyLock, () => (_pinnedSynth, _pinnedSynthKey),
+            (lease, k) => { _pinnedSynth = lease; _pinnedSynthKey = k; }, lease => lease.Dispose());
+        ClearResidentPinCore<ITranscriberLease>(_residencyLock, () => (_pinnedTranscriber, _pinnedTranscriberKey),
+            (lease, k) => { _pinnedTranscriber = lease; _pinnedTranscriberKey = k; }, lease => lease.Dispose());
+    }
+
+    /// <summary>Race-safe core of <see cref="ClearResidencyPins"/> for one lease kind — see
+    /// <see cref="OpenResidentPinCoreAsync{TLease}"/>'s doc for why this takes <paramref name="gate"/>
+    /// (synchronously; every caller of this method is itself synchronous) and disposes after releasing it
+    /// rather than while holding it. <c>internal</c> for the same testability reason as that method.</summary>
+    internal static void ClearResidentPinCore<TLease>(
+        SemaphoreSlim gate,
+        Func<(TLease Lease, string Key)> getPinned,
+        Action<TLease, string> setPinned,
+        Action<TLease> disposeLease)
+        where TLease : class
+    {
+        TLease toDispose;
+        gate.Wait();
+        try
+        {
+            (toDispose, _) = getPinned();
+            setPinned(null, null);
+        }
+        finally
+        {
+            gate.Release();
+        }
+        if (toDispose is not null)
+        {
+            try { disposeLease(toDispose); }
+            catch (Exception ex) { Logs.Debug($"[AudioLab] Disposing a residency lease threw: {ex.Message}"); }
+        }
     }
 
     #endregion
