@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using Hartsy.Extensions.AudioLab.AudioServices.Voice;
 using Hartsy.Extensions.AudioLab.Tests.Support;
+using HartsyInference.Engine;
 using HartsyInference.Engine.Dispatch;
 using HartsyInference.Engine.Requests;
 using HartsyInference.Tools;
