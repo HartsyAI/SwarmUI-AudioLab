@@ -18,6 +18,13 @@ public sealed class KokoroProvider : IAudioProviderSource
         .WithModelClass("kokoro_tts", "Kokoro TTS")
         .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("kokoro_tts_params")
+        // Not per-frame streaming — Kokoro has no incremental decode loop. The engine synthesizes a sentence
+        // at a time (SentenceChunkedSynthesis, the same shared helper Piper uses) through the same
+        // IStreamingTtsRunner path Kyutai/CosyVoice/Orpheus/VibeVoice use — see
+        // AudioEngineBridge.SupportsNativeStreaming, the single source of truth this flag also drives.
+        // Needs HartsyInference 2.0.0-alpha.219 or newer (Kokoro became a StreamingTtsRunner there); below
+        // that the engine has no streaming Kokoro runner and ProcessStreamAsync throws for this provider.
+        .AddFeatureFlag("tts_streaming")
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();

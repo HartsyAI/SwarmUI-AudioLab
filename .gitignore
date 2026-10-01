@@ -34,6 +34,9 @@
 *.log
 /obj
 /bin
+# Tests/ is a separate project one level down (its own obj/bin), not covered by the root-anchored rules above.
+Tests/obj
+Tests/bin
 /python_backend/engines/__pycache__
 /python_backend/venvs
 /.vs

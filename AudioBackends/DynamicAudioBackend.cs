@@ -81,6 +81,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
         [ConfigComment("Free host RAM, in GB, below which loading a new audio model first unloads every other one.\n\nAudio runners accumulate: each holds its own multi-GB copy of its weights, and nothing evicts them until this floor is crossed. Left too low, a box that switches between speech, transcription and music gets OOM-killed by the kernel rather than slowed — observed at 21.8 GB resident on a 32 GB machine, and again at 11.5 GB with a desktop session sharing it.\n\n0 leaves the engine's own default (14 GB). Raise it on a machine doing anything else; lower it only if you know the working set fits.\n\nHost RAM is process-wide, so with several audio backends each judges the floor independently. HARTSY_AUDIO_EVICT_BELOW_GB overrides this for headless runs.")]
         public int EvictBelowGb = 0;
+
+        [ConfigComment("Keep the last-used TTS model and the last-used STT model resident, instead of letting the\nengine's memory-pressure sweep (EvictBelowGb above) unload whichever one isn't about to run.\n\nWithout this, switching back and forth between a TTS and an STT model under low free RAM reloads one of\nthem from disk on every single switch, since the sweep that protects the model about to run still evicts\nthe other one as soon as it's idle. With it on, both stay warm as long as the box has room for both.\n\nOff by default: it trades some RAM/VRAM headroom for that warm-switch latency, and the two models are not\nfreed until this is turned back off, the backend is unloaded, or the engine otherwise releases its memory.")]
+        public bool KeepTtsSttResident = false;
     }
 
     /// <summary>Builds the Device dropdown from whatever compute backends the engine reports
@@ -346,6 +349,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
             AddLoadStatus($"Audio is already running in VRAM mode '{vramInUse}', so '{vramMode}' will not take effect until SwarmUI restarts.");
             Logs.Warning($"[AudioLab] Audio engine already built with VRAM mode '{vramInUse}', ignoring '{vramMode}'. Restart SwarmUI to change it.");
         }
+        // Unlike Device/VramMode above this isn't an engine-build-time choice — it only decides whether later
+        // TTS/STT calls open a residency pin — so it always takes effect, but it's still only read here (at
+        // backend Init, same restart-to-apply convention as every setting in this method) rather than watched
+        // for live changes.
+        AudioEngineBridge.RequestKeepResident(Settings?.KeepTtsSttResident ?? false);
         return true;
     }
 

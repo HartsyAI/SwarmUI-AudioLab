@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- net10.0, not the host's net8.0: this project is never loaded into SwarmUI's extension
+         AssemblyLoadContext (SwarmUI.extension.props forces net8.0 for that reason alone), it just runs
+         standalone under `dotnet test`, and this box has only the net10.0 shared runtime installed. A net10.0
+         test host referencing a net8.0 library/SwarmUI.dll is a normal backward-compatible TFM consumption. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>Hartsy.Extensions.AudioLab.Tests</AssemblyName>
+    <RootNamespace>Hartsy.Extensions.AudioLab.Tests</RootNamespace>
+    <!-- Pure bridge-mapping / provider-flag tests only (see README in this folder): no live Engine, no GPU,
+         no model weights. They register the built-in providers directly (AudioProviderDefinitions.RegisterAll)
+         rather than going through a SwarmUI host init. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SwarmUI-AudioLab.csproj" />
+    <!-- Same reasoning as the ProjectReference above: AudioEngineBridge's public surface (eg SupportsNativeStreaming)
+         is plain CLR types from HartsyInference packages and SwarmUI's own JObject/Logs usage pulls in SwarmUI.dll
+         metadata too, same as LLMAssistant's Tests project; this project copies it locally since nothing else here
+         provides SwarmUI.dll at test-run time. -->
+    <Reference Include="SwarmUI">
+      <HintPath>../../../bin/live_release/SwarmUI.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- AudioProviderRegistry is process-global static state (same hazard the engine's own Voice.Tests notes
+         for Logs.SetLogger): keep test collections from this assembly running in parallel against it. -->
+    <None Update="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
