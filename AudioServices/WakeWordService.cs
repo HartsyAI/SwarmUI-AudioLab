@@ -457,6 +457,31 @@ public static class WakeWordService
     }
 }
 
+/// <summary>Which server-side voice turn implementation <see cref="WakeWordSettings.ServerSideTurns"/> runs.
+/// Meaningless while that setting is off: no server-side turn runs in either mode then.</summary>
+public enum SatelliteVoiceMode
+{
+    /// <summary>Today's one-shot turn: a finished transcript in, one loopback call to the assistant, one
+    /// synthesized reply out. Unchanged by, and the only mode available before, <see cref="Session"/>'s
+    /// addition. The default, and the only mode that actually runs today -- see <see cref="Session"/>'s own
+    /// remarks.</summary>
+    Legacy,
+
+    /// <summary>A continuous, VAD-endpointed <c>VoiceAgentSession</c> per satellite instead of one loopback
+    /// call per utterance -- barge-in by voice activity rather than by saying the wake word again, and a call
+    /// that stays open for a follow-up without it.
+    ///
+    /// <para><b>Not implemented yet.</b> It needs two things from the engine's wake listener that its current
+    /// public surface does not expose: per-device access to decoded inbound audio frames as they arrive (today
+    /// <c>WakeService.ServeConnectionAsync</c> owns the whole connection and the engine's own end-of-speech
+    /// capture and transcription run before anything reaches this extension), and a per-device way to tell the
+    /// listener "a host session owns this device's turns now" so it stops running its own capture/transcribe
+    /// (and likely wake scoring) for that device while still delivering frames and keeping the connection
+    /// alive. Selecting this logs one warning and runs <see cref="Legacy"/> instead, rather than silently doing
+    /// nothing or pretending to work.</para></summary>
+    Session,
+}
+
 /// <summary>Shared wake-word settings. Off by default: a SwarmUI install with no voice satellite should never
 /// bind a port or hold a detection thread.</summary>
 public class WakeWordSettings
@@ -471,6 +496,11 @@ public class WakeWordSettings
     /// its own. Older firmware does not read the mark, so it answers the turn as well and the reply is spoken
     /// twice — turn this on together with firmware that plays <c>audio</c> frames.</para></summary>
     public bool ServerSideTurns { get; set; }
+
+    /// <summary>Which server-side voice turn implementation <see cref="ServerSideTurns"/> runs, when it is on.
+    /// Defaults to <see cref="SatelliteVoiceMode.Legacy"/> -- today's behavior, unchanged -- since
+    /// <see cref="SatelliteVoiceMode.Session"/> is not implemented yet (see its own remarks).</summary>
+    public SatelliteVoiceMode SatelliteVoiceMode { get; set; } = SatelliteVoiceMode.Legacy;
 
     /// <summary>Assistant the server-side turn asks. Empty means whichever one is active.</summary>
     public string AssistantId { get; set; } = "";
