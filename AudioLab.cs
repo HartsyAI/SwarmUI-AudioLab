@@ -74,6 +74,7 @@ public class AudioLab : Extension
             ScriptFiles.Add("Assets/audio-daw-fx.js");
             ScriptFiles.Add("Assets/audio-daw-store.js");
             ScriptFiles.Add("Assets/audio-daw-score.js");
+            ScriptFiles.Add("Assets/audio-voice.js");
             ScriptFiles.Add("Assets/audio-daw.js");
             ScriptFiles.Add("Assets/audio-editor.js");
             ScriptFiles.Add("Assets/audio-integration.js");
@@ -124,7 +125,8 @@ public class AudioLab : Extension
             AudioLabAPI.Register();
             VideoAudioEndpoints.Register();
             WakeWordEndpoints.Register();
-            Logs.Info("[AudioLab] Registered wake-word endpoints");
+            VoiceSessionEndpoints.Register();
+            Logs.Info("[AudioLab] Registered wake-word and voice-agent endpoints");
         }
         catch (Exception ex)
         {

@@ -468,6 +468,16 @@ public static class AudioEngineBridge
         }
     }
 
+    /// <summary>Raised after <see cref="Unload"/> or <see cref="FreeMemory"/> actually calls
+    /// <see cref="IInferenceEngine.FreeMemory"/> -- after <see cref="ClearResidencyPins"/>, on whatever thread
+    /// called them. <c>HartsyInference.Voice</c>'s own leases (<c>AudioServices/Voice/VoiceEngineModels</c>) are
+    /// revoked by the same <c>FreeMemory</c> call exactly like the resident TTS/STT pins above are, but that
+    /// package already re-opens a revoked lease once on its own worker thread -- which would silently re-claim
+    /// the VRAM a user just asked to free the moment the next voice turn ran. Subscribing here is what lets that
+    /// module end its active sessions and drop its model set instead of letting them quietly resurrect it. A
+    /// throwing handler is caught and logged; it never turns a free-memory request into a failure.</summary>
+    public static event Action EngineReleased;
+
     /// <summary>Drops resident audio pipelines to free memory.
     ///
     /// <para><b>Engine gap:</b> the audio services have no per-model <c>Unload</c> (unlike <c>ITextService</c>),
@@ -498,6 +508,7 @@ public static class AudioEngineBridge
             // via MaybeKeepResidentAsync, instead of racing to reload here and fighting whatever this Unload
             // call was trying to free in the first place.
             ClearResidencyPins();
+            RaiseEngineReleased();
         }
     }
 
@@ -520,6 +531,19 @@ public static class AudioEngineBridge
         finally
         {
             ClearResidencyPins();
+            RaiseEngineReleased();
+        }
+    }
+
+    private static void RaiseEngineReleased()
+    {
+        try
+        {
+            EngineReleased?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            Logs.Warning($"[AudioLab] An EngineReleased handler threw: {ex.Message}");
         }
     }
 
