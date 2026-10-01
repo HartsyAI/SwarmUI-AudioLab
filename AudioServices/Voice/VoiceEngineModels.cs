@@ -12,14 +12,14 @@ namespace Hartsy.Extensions.AudioLab.AudioServices.Voice;
 /// <see cref="VoiceModelSet"/> (fixed at load, one Kokoro voice for every session sharing it -- see
 /// <c>VoiceAgentSession</c>'s own <c>RequireSameModels</c> check). Pure decision, independent of
 /// <see cref="VoiceModelSet"/> itself, so it is unit-testable without a live engine.</summary>
-internal readonly record struct VoiceSelection(string VoiceToUse, bool NeedsRebuild, string? Notice);
+internal readonly record struct VoiceSelection(string VoiceToUse, bool NeedsRebuild, string Notice);
 
 internal static class VoiceSelectionPolicy
 {
     /// <summary>No set loaded yet, or it already matches: use the requested voice, no rebuild. A mismatch with
     /// nothing else using the set: rebuild for the new voice. A mismatch while calls are active: keep the loaded
     /// voice and say so, rather than tear down a set calls are using.</summary>
-    public static VoiceSelection Decide(string? loadedVoice, string requestedVoice, int activeSessions)
+    public static VoiceSelection Decide(string loadedVoice, string requestedVoice, int activeSessions)
     {
         if (loadedVoice is null || loadedVoice == requestedVoice)
         {
@@ -37,7 +37,7 @@ internal static class VoiceSelectionPolicy
 /// <summary>What <see cref="VoiceEngineModels.AcquireAsync"/> hands back: the shared model set, this session's own
 /// options (model/device fields copied from the set so <c>VoiceAgentSession</c>'s <c>RequireSameModels</c> check
 /// always passes), an optional notice for the client, and the specific lifetime handle to release through later.</summary>
-internal sealed record VoiceModelLease(VoiceModelSet Set, VoiceAgentOptions SessionOptions, string? Notice, LazyIdleResource<VoiceModelSet> Resource);
+internal sealed record VoiceModelLease(VoiceModelSet Set, VoiceAgentOptions SessionOptions, string Notice, LazyIdleResource<VoiceModelSet> Resource);
 
 /// <summary>Owns AudioLab's one <see cref="VoiceModelSet"/>: created lazily on the first <see cref="AcquireAsync"/>,
 /// disposed five minutes after the last session releases it, rebuilt for a different Kokoro voice once idle, and
@@ -47,17 +47,18 @@ internal sealed record VoiceModelLease(VoiceModelSet Set, VoiceAgentOptions Sess
 /// <see cref="LazyIdleResource{T}"/> it wraps: the state machine that is actually unit-tested lives there, with
 /// fakes; this class is the thin, engine-specific wiring around it (device resolution, VAD/RNNoise install, warm-up,
 /// the voice-rebuild policy above) that cannot run without a real engine and so is exercised by the extension
-/// compiling and working, not by a unit test.</para></summary>
+/// compiling and working, not by a unit test. The one piece of this class's own logic that IS independently
+/// tested is the acquire/teardown mutual exclusion -- see <see cref="AcquireTeardownGate"/>.</para></summary>
 internal sealed class VoiceEngineModels
 {
     public static readonly VoiceEngineModels Shared = new();
 
     private static readonly TimeSpan IdleDelay = TimeSpan.FromMinutes(5);
 
-    private readonly SemaphoreSlim _acquireGate = new(1, 1);
+    private readonly AcquireTeardownGate _gate = new();
     private readonly ConcurrentDictionary<VoiceAgentSession, LazyIdleResource<VoiceModelSet>> _activeSessions = new();
-    private LazyIdleResource<VoiceModelSet>? _resource;
-    private string? _loadedVoice;
+    private LazyIdleResource<VoiceModelSet> _resource;
+    private string _loadedVoice;
     private int _hooked;
 
     private VoiceEngineModels()
@@ -77,18 +78,20 @@ internal sealed class VoiceEngineModels
     /// <summary>Gets (creating or rebuilding as needed) the model set for <paramref name="start"/>'s requested
     /// voice, and warms it with <paramref name="text"/> the first time it is actually created. Pairs with
     /// <see cref="ReleaseSessionAsync"/>, which must be called exactly once for every session this returns a lease
-    /// for.</summary>
-    public async Task<VoiceModelLease> AcquireAsync(VoiceSessionStartRequest start, RemoteTextService text, CancellationToken cancel)
+    /// for.
+    ///
+    /// <para>The whole decision-and-lease-fetch runs inside <see cref="AcquireTeardownGate.AcquireAsync{T}"/>,
+    /// not just the bookkeeping around it: a lease this method hands back is only ever handed back once it is
+    /// fully real, so a concurrent <see cref="OnEngineReleased"/> teardown either finishes first (this call then
+    /// sees the rebuilt/fresh state) or waits for this call to finish first (so its active-session snapshot is
+    /// never racing a lease that exists but is not registered yet).</para></summary>
+    public Task<VoiceModelLease> AcquireAsync(VoiceSessionStartRequest start, RemoteTextService text, CancellationToken cancel)
     {
         EnsureHooked();
         string requestedVoice = string.IsNullOrWhiteSpace(start.Voice) ? "af_heart" : start.Voice;
-        LazyIdleResource<VoiceModelSet> resource;
-        string? notice;
-        await _acquireGate.WaitAsync(cancel).ConfigureAwait(false);
-        try
+        return _gate.AcquireAsync(async () =>
         {
             VoiceSelection selection = VoiceSelectionPolicy.Decide(_loadedVoice, requestedVoice, _resource?.ActiveCount ?? 0);
-            notice = selection.Notice;
             if (_resource is null || selection.NeedsRebuild)
             {
                 if (_resource is not null)
@@ -99,32 +102,28 @@ internal sealed class VoiceEngineModels
                 _resource = new LazyIdleResource<VoiceModelSet>(ct => CreateSetAsync(capturedVoice, text, ct), DisposeSetAsync, IdleDelay);
                 _loadedVoice = capturedVoice;
             }
-            resource = _resource;
-        }
-        finally
-        {
-            _acquireGate.Release();
-        }
-        VoiceModelSet set = await resource.GetOrCreateAsync(cancel).ConfigureAwait(false);
-        VoiceAgentOptions sessionOptions = set.Options with
-        {
-            SystemPrompt = start.SystemPrompt ?? VoiceAgentOptions.DefaultSystemPrompt,
-            BargeInEnabled = start.BargeIn,
-            OutboundSampleRate = 24000, // Kokoro's own rate: no outbound resample (see VoiceSessionEndpoints).
-        };
-        return new VoiceModelLease(set, sessionOptions, notice, resource);
+            LazyIdleResource<VoiceModelSet> resource = _resource;
+            VoiceModelSet set = await resource.GetOrCreateAsync(cancel).ConfigureAwait(false);
+            VoiceAgentOptions sessionOptions = set.Options with
+            {
+                SystemPrompt = start.SystemPrompt ?? VoiceAgentOptions.DefaultSystemPrompt,
+                BargeInEnabled = start.BargeIn,
+                OutboundSampleRate = 24000, // Kokoro's own rate: no outbound resample (see VoiceSessionEndpoints).
+            };
+            return new VoiceModelLease(set, sessionOptions, selection.Notice, resource);
+        }, cancel);
     }
 
     /// <summary>Tracks <paramref name="session"/> as active against <paramref name="lease"/>'s specific resource
     /// instance, so an engine release can end it, and so <see cref="ReleaseSessionAsync"/> releases the same
-    /// instance it was acquired from even if a voice change has since rebuilt <see cref="_resource"/>.</summary>
+    /// instance it was acquired from even if a voice change has since rebuilt the current resource.</summary>
     public void RegisterSession(VoiceAgentSession session, VoiceModelLease lease) => _activeSessions[session] = lease.Resource;
 
     /// <summary>Releases the hold <see cref="AcquireAsync"/> took for <paramref name="session"/>. Call once the
     /// session has ended (or failed to start), after <see cref="RegisterSession"/>.</summary>
     public async Task ReleaseSessionAsync(VoiceAgentSession session)
     {
-        if (_activeSessions.TryRemove(session, out LazyIdleResource<VoiceModelSet>? resource))
+        if (_activeSessions.TryRemove(session, out LazyIdleResource<VoiceModelSet> resource))
         {
             await resource.ReleaseAsync().ConfigureAwait(false);
         }
@@ -149,7 +148,10 @@ internal sealed class VoiceEngineModels
         });
     }
 
-    private async Task EndActiveSessionsAndDisposeAsync()
+    /// <summary>Runs entirely inside <see cref="AcquireTeardownGate.TeardownAsync"/>: an <see cref="AcquireAsync"/>
+    /// already in flight finishes (and is reflected in the snapshot below) before this starts, and no new one can
+    /// start until this -- snapshot, end every session, force-dispose -- is done.</summary>
+    private Task EndActiveSessionsAndDisposeAsync() => _gate.TeardownAsync(async () =>
     {
         VoiceAgentSession[] sessions = [.. _activeSessions.Keys];
         if (sessions.Length > 0)
@@ -157,20 +159,12 @@ internal sealed class VoiceEngineModels
             Logs.Info($"[AudioLab][Voice] The audio engine was released; ending {sessions.Length} active voice session(s) so they cannot re-claim its VRAM.");
             await Task.WhenAll(sessions.Select(EndSessionSafelyAsync)).ConfigureAwait(false);
         }
-        await _acquireGate.WaitAsync().ConfigureAwait(false);
-        try
+        if (_resource is not null)
         {
-            if (_resource is not null)
-            {
-                await _resource.ForceDisposeAsync().ConfigureAwait(false);
-                _loadedVoice = null;
-            }
+            await _resource.ForceDisposeAsync().ConfigureAwait(false);
+            _loadedVoice = null;
         }
-        finally
-        {
-            _acquireGate.Release();
-        }
-    }
+    });
 
     private static async Task EndSessionSafelyAsync(VoiceAgentSession session)
     {
