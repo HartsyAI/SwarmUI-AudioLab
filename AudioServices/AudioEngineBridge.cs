@@ -213,9 +213,11 @@ public static class AudioEngineBridge
             switch (binding.Service)
             {
                 case AudioEngineService.Speech:
+                    await MaybeKeepResidentAsync(AudioEngineService.Speech, spec, cancel).ConfigureAwait(false);
                     return Audio(await Engine.Speech.SynthesizeAsync(spec, AudioEngineRequests.Speech(args), cancel).ConfigureAwait(false));
                 case AudioEngineService.Transcribe:
                 {
+                    await MaybeKeepResidentAsync(AudioEngineService.Transcribe, spec, cancel).ConfigureAwait(false);
                     TranscriptResult transcript = await Engine.Transcribe
                         .RunAsync(spec, AudioEngineRequests.Transcribe(args), cancel).ConfigureAwait(false);
                     return AudioIo.TranscriptionResult(transcript.Text, transcript.Language);
@@ -348,6 +350,7 @@ public static class AudioEngineBridge
             throw new InvalidOperationException($"Provider '{providerId}' has no native streaming Engine binding.");
         }
         ModelSpec spec = BuildSpec(providerId, binding, args);
+        await MaybeKeepResidentAsync(AudioEngineService.Speech, spec, cancel).ConfigureAwait(false);
         await foreach (AudioChunk chunk in Engine.Speech.SynthesizeStreamAsync(spec, AudioEngineRequests.Speech(args), cancel).ConfigureAwait(false))
         {
             yield return chunk;
@@ -486,6 +489,16 @@ public static class AudioEngineBridge
         {
             Logs.Debug($"[AudioLab] Unload('{providerId}','{modelId}') threw: {ex.Message}");
         }
+        finally
+        {
+            // IInferenceEngine.FreeMemory revokes any open synthesizer/transcriber lease unconditionally (it
+            // is one of the engine release paths ISynthesizerLease/ITranscriberLease document as revoking) —
+            // there is no selective "free everything except the pin" lever. Forget the pins rather than
+            // leave them pointing at revoked leases; the setting re-opens one lazily on the next TTS/STT call
+            // via MaybeKeepResidentAsync, instead of racing to reload here and fighting whatever this Unload
+            // call was trying to free in the first place.
+            ClearResidencyPins();
+        }
     }
 
     /// <summary>Releases every loaded audio model and its device memory, leaving the engine usable. Used by the
@@ -504,7 +517,130 @@ public static class AudioEngineBridge
         {
             Logs.Warning($"[AudioLab] Freeing audio engine memory failed: {ex.Message}");
         }
+        finally
+        {
+            ClearResidencyPins();
+        }
     }
+
+    #region Resident TTS/STT leases ("Keep selected TTS/STT resident")
+
+    /// <summary>Whether the backend setting asks AudioLab to keep the last-used TTS and STT models resident
+    /// through the engine's memory-pressure eviction, via <see cref="ISpeechService.OpenSynthesizerAsync"/> /
+    /// <see cref="ITranscribeService.OpenTranscriberAsync"/>. Off by default (see <see cref="RequestKeepResident"/>).</summary>
+    private static bool _keepResident;
+
+    /// <summary>Serializes opening/replacing the two pins — <see cref="ProcessAsync"/>/<see cref="ProcessStreamAsync"/>
+    /// calls can race from concurrent requests, and a lease open is not itself atomic with the "is this already
+    /// the pinned model" check.</summary>
+    private static readonly SemaphoreSlim _residencyLock = new(1, 1);
+
+    private static ISynthesizerLease _pinnedSynth;
+    private static string _pinnedSynthKey;
+    private static ITranscriberLease _pinnedTranscriber;
+    private static string _pinnedTranscriberKey;
+
+    /// <summary>Turns the "keep resident" setting on or off. Disabling it drops whatever is currently pinned
+    /// immediately (so the next memory-pressure sweep can evict it again); enabling it only takes effect on the
+    /// next TTS/STT call, which is when a spec is next available to pin. Called from
+    /// <c>DynamicAudioBackend.Init</c>, the same place <c>RequestDevice</c>/<c>RequestVramMode</c> apply their
+    /// settings — see that method for why a settings change here means restarting this backend, not a live
+    /// setter.</summary>
+    public static void RequestKeepResident(bool enabled)
+    {
+        _keepResident = enabled;
+        if (!enabled)
+        {
+            ClearResidencyPins();
+        }
+    }
+
+    /// <summary>Pins <paramref name="spec"/>'s model resident (replacing whichever one of the same kind was
+    /// pinned before) when the setting is on; a no-op otherwise. Called before the matching
+    /// <c>Engine.Speech</c>/<c>Engine.Transcribe</c> service call in <see cref="ProcessAsync"/> and
+    /// <see cref="ProcessStreamAsync"/>, so the model about to run is itself protected from memory-pressure
+    /// eviction, not just whatever ran last.
+    ///
+    /// <para>The lease is held only as a pin — nothing calls <c>ISynthesizerLease.Synthesize</c>/
+    /// <c>ITranscriberLease.Transcribe</c> through it. Generation keeps going through the normal
+    /// <c>SynthesizeAsync</c>/<c>SynthesizeStreamAsync</c>/<c>RunAsync</c> service path, which alpha.223
+    /// documents as working alongside an open lease on the same model; routing the actual audio through the
+    /// lease instead would lose <c>SynthesizeStreamAsync</c>'s incremental chunks (the lease's <c>Synthesize</c>
+    /// returns one <c>float[]</c>) and would need this class to hold <c>DeviceGate</c> itself, which the service
+    /// path already does internally.</para>
+    ///
+    /// <para>Failure (eg a card too small to hold two models at once) only logs — the generation that is about
+    /// to run through the normal service path is not affected by a pin that didn't take.</para></summary>
+    private static async Task MaybeKeepResidentAsync(AudioEngineService service, ModelSpec spec, CancellationToken cancel)
+    {
+        if (!_keepResident || spec is null)
+        {
+            return;
+        }
+        string key = spec.Requested ?? spec.LocalPath ?? "";
+        await _residencyLock.WaitAsync(cancel).ConfigureAwait(false);
+        try
+        {
+            if (service == AudioEngineService.Speech)
+            {
+                if (_pinnedSynth is not null && _pinnedSynthKey == key)
+                {
+                    return;
+                }
+                ISynthesizerLease opened = await Engine.Speech.OpenSynthesizerAsync(spec, cancel).ConfigureAwait(false);
+                ISynthesizerLease previous = _pinnedSynth;
+                _pinnedSynth = opened;
+                _pinnedSynthKey = key;
+                previous?.Dispose();
+                Logs.Debug($"[AudioLab] Keeping TTS '{key}' resident.");
+            }
+            else if (service == AudioEngineService.Transcribe)
+            {
+                if (_pinnedTranscriber is not null && _pinnedTranscriberKey == key)
+                {
+                    return;
+                }
+                ITranscriberLease opened = await Engine.Transcribe.OpenTranscriberAsync(spec, cancel).ConfigureAwait(false);
+                ITranscriberLease previous = _pinnedTranscriber;
+                _pinnedTranscriber = opened;
+                _pinnedTranscriberKey = key;
+                previous?.Dispose();
+                Logs.Debug($"[AudioLab] Keeping STT '{key}' resident.");
+            }
+        }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Not fatal to the caller's generation, which runs through the normal service path regardless —
+            // see the method doc. Most likely cause: not enough VRAM/RAM to hold two models of this kind at
+            // once (eg switching between two large STT models with keep-resident on).
+            Logs.Warning($"[AudioLab] Could not keep '{key}' resident: {ex.Message}");
+        }
+        finally
+        {
+            _residencyLock.Release();
+        }
+    }
+
+    /// <summary>Disposes and forgets both pins. Safe to call when neither (or the engine itself) exists.</summary>
+    private static void ClearResidencyPins()
+    {
+        ISynthesizerLease synth = _pinnedSynth;
+        ITranscriberLease transcriber = _pinnedTranscriber;
+        _pinnedSynth = null;
+        _pinnedSynthKey = null;
+        _pinnedTranscriber = null;
+        _pinnedTranscriberKey = null;
+        try { synth?.Dispose(); }
+        catch (Exception ex) { Logs.Debug($"[AudioLab] Disposing the pinned TTS lease threw: {ex.Message}"); }
+        try { transcriber?.Dispose(); }
+        catch (Exception ex) { Logs.Debug($"[AudioLab] Disposing the pinned STT lease threw: {ex.Message}"); }
+    }
+
+    #endregion
 
     /// <summary>The provider-private on-disk locations a model occupies (for delete / missing-weights checks).
     /// HF-auto-download models live in the engine's shared model cache, keyed by the repo named in the model

@@ -28,6 +28,12 @@
     <PackageReference Include="FFMpegCore" Version="5.4.0" />
   </ItemGroup>
 
+  <!-- Tests/ is its own project (own xunit/Test.Sdk references, net10.0) — without this, the SDK's default
+       **/*.cs glob would also compile its sources into this net8.0 Web SDK assembly and fail. -->
+  <ItemGroup>
+    <Compile Remove="Tests/**" />
+  </ItemGroup>
+
   <!-- RELEASE: the published meta-package. Was temporarily split into 10 direct sub-package
        references (alpha.45) because the meta-package's own publish step didn't exist yet — it was
        a manual, easily-forgotten `dotnet pack`+push that had been stuck at alpha.44 for weeks. Fixed

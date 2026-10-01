@@ -87,7 +87,7 @@ AudioLab adds one backend type, **Audio Backend**. Add a single instance; it rou
 
 ![The Audio Backend card](Assets/readme/backend-card.png)
 
-The card has one setting, **Device**, listing every compute backend the engine supports on your machine with one
+The card's main setting is **Device**, listing every compute backend the engine supports on your machine with one
 entry per GPU. The list is built from the engine itself, so a backend it gains later appears here automatically:
 
 ```
@@ -104,6 +104,20 @@ correct unless you are deliberately steering audio off a card another backend is
 
 One thing to know: audio shares a single engine instance for the whole process, so `Device` is not really a per
 backend choice. Run one audio backend, and restart SwarmUI to change devices once audio has run.
+
+A few more settings live on the same card (restart this backend, under Server > Backends, for a change to take
+effect):
+
+- **VRAM Mode** — how hard the engine works to fit audio models in VRAM (`Auto`/`Performance`/`Balanced`/
+  `Aggressive`/`Maximum`).
+- **Evict Below Gb** — free host RAM, in GB, below which loading a new audio model unloads every other one. `0`
+  leaves the engine's own default (14 GB).
+- **Keep Tts Stt Resident** — keep the last-used TTS model and the last-used STT model resident instead of
+  letting the Evict Below Gb sweep unload whichever one isn't about to run. Off by default: without it, switching
+  back and forth between a TTS and an STT model under low free RAM reloads one of them from disk on every switch,
+  since the sweep still evicts the idle one even while protecting the one about to run. On, both stay warm as
+  long as the box has room for both — this trades some RAM/VRAM headroom for that warm-switch latency, and uses
+  the engine's `OpenSynthesizerAsync`/`OpenTranscriberAsync` leases rather than a coarser unload-everything step.
 
 ### Installing engines
 
