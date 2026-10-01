@@ -161,8 +161,23 @@
          (alpha.223, #201) default-interface-throw for callers that don't opt in. Verified: a full Release build
          from the nuget.org packages (UseLocalHartsy=false) succeeds as-is — see this PR for what actually
          changed in this extension (tts_streaming on Kokoro, resident leases, RNNoise installer wiring), landed as
-         separate follow-up PRs on top of this pin so the bump itself stays reviewable on its own. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.235" />
+         separate follow-up PRs on top of this pin so the bump itself stays reviewable on its own.
+
+         2.0.0-alpha.237 = catch-up bump, 2026-10-01 (alpha.235 -> alpha.237). alpha.236 (#215) fixes
+         SamplerChain/TopPStep/TopKStep/MinPStep to reuse scratch buffers instead of argsorting the whole
+         vocabulary through a Comparison<int> delegate every non-greedy decode step — faster decode,
+         token-identical output, no public signature touched. This IS on an AudioLab code path: this extension
+         calls no ITextService/LLM-provider API directly, but AceStepLmPlanner.cs (ACE-Step's music-codes
+         planner, Models/Music/) constructs HartsyInference.LLM.Sampling.SamplerChain directly
+         (AceStepLmPlanner.cs:75,125) from the caller's Temperature/TopK/TopP, the exact sampler classes
+         alpha.236 fixed — a grep of src/HartsyInference.Audio on the engine side found no other reference to
+         these sampler types. ACE-Step runs non-greedy in normal use (Temperature > 0; greedy would hurt
+         generation quality), so its planner gets the same faster, token-identical decode the voice/LLM path
+         does. alpha.237 itself adds the new, separate HartsyInference.Voice package, which this extension
+         doesn't reference. Verified hartsyinference (this meta package) is indexed on nuget.org before
+         bumping; full Release build from the nuget.org packages (UseLocalHartsy=false) succeeds as-is, no
+         source changes needed by the bump itself. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.237" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
