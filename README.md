@@ -445,6 +445,32 @@ Satellites connect two ways, with the same wire protocol either way, so firmware
 > it is empty the check is disabled, which is fine on a home network, but anyone who can reach the endpoint could
 > otherwise stream audio in and read every detection, including transcripts of what was said.
 
+### Server-side voice turns
+
+**Off by default.** Turn on **Server-side turns** and the server runs the whole voice turn itself and sends the
+reply back down the socket the satellite already has open, instead of the satellite opening its own connections
+to ask the assistant and request speech. Turning it on marks every transcript frame `handled`, so firmware new
+enough to read that stands down and waits for the reply on the socket; older firmware does not read the mark and
+answers the turn itself as well, so the reply is spoken twice — turn this on together with firmware that plays
+`audio` frames.
+
+With server-side turns on, **Satellite voice mode** picks which implementation runs:
+
+- **Legacy** (the default): today's behavior. A finished transcript comes in, one loopback call asks the
+  configured assistant, one synthesized reply goes back out. Each follow-up needs the wake word again; saying it
+  again while a reply is still playing barges in on that reply instead of talking over it.
+- **Session**: **not implemented yet.** The intent is a continuous, VAD-endpointed voice-agent session per
+  satellite — barge-in by voice activity instead of by repeating the wake word, and a call that stays open for a
+  follow-up without it, the same session shape the browser-tab [Voice Agent](#voice-agent) uses. Building it
+  needs two things from the engine's wake listener that are not published yet: per-device access to decoded
+  inbound audio frames as they arrive (today the listener owns the whole connection, and its own end-of-speech
+  capture and transcription run before anything reaches this extension), and a per-device way to tell it "a host
+  session owns this device's turns now" so it stops running its own capture and transcription for that device
+  while still delivering frames and keeping the connection alive. Selecting Session today logs one warning and
+  runs Legacy instead, rather than silently doing nothing or pretending to work — so it is safe to leave the
+  default alone until a later release actually implements it, and safe to select early without breaking
+  anything in the meantime.
+
 ### Words and speakers
 
 Train a new wake word from its text in the **Wake Words** group. Training reports recall, false accept rate, false accepts per
