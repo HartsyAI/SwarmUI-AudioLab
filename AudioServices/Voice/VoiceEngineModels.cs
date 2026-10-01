@@ -47,8 +47,9 @@ internal sealed record VoiceModelLease(VoiceModelSet Set, VoiceAgentOptions Sess
 /// <see cref="LazyIdleResource{T}"/> it wraps: the state machine that is actually unit-tested lives there, with
 /// fakes; this class is the thin, engine-specific wiring around it (device resolution, VAD/RNNoise install, warm-up,
 /// the voice-rebuild policy above) that cannot run without a real engine and so is exercised by the extension
-/// compiling and working, not by a unit test. The one piece of this class's own logic that IS independently
-/// tested is the acquire/teardown mutual exclusion -- see <see cref="AcquireTeardownGate"/>.</para></summary>
+/// compiling and working, not by a unit test. The two pieces of this class's own logic that ARE independently
+/// tested, generically, are the acquire/teardown mutual exclusion itself (see <see cref="AcquireTeardownGate"/>)
+/// and the stale-lease check <see cref="RegisterSession"/> runs inside it.</para></summary>
 internal sealed class VoiceEngineModels
 {
     public static readonly VoiceEngineModels Shared = new();
@@ -81,10 +82,11 @@ internal sealed class VoiceEngineModels
     /// for.
     ///
     /// <para>The whole decision-and-lease-fetch runs inside <see cref="AcquireTeardownGate.AcquireAsync{T}"/>,
-    /// not just the bookkeeping around it: a lease this method hands back is only ever handed back once it is
-    /// fully real, so a concurrent <see cref="OnEngineReleased"/> teardown either finishes first (this call then
-    /// sees the rebuilt/fresh state) or waits for this call to finish first (so its active-session snapshot is
-    /// never racing a lease that exists but is not registered yet).</para></summary>
+    /// not just the bookkeeping around it, so a concurrent <see cref="OnEngineReleased"/> teardown either
+    /// finishes first (this call then sees the rebuilt/fresh state) or waits for this call to finish first. That
+    /// alone still leaves a gap between this method returning and the caller reaching <see cref="RegisterSession"/>
+    /// with the session it builds from the lease -- see that method, and <see cref="AcquireTeardownGate"/>'s own
+    /// remarks, for how that gap is actually closed.</para></summary>
     public Task<VoiceModelLease> AcquireAsync(VoiceSessionStartRequest start, RemoteTextService text, CancellationToken cancel)
     {
         EnsureHooked();
@@ -116,8 +118,32 @@ internal sealed class VoiceEngineModels
 
     /// <summary>Tracks <paramref name="session"/> as active against <paramref name="lease"/>'s specific resource
     /// instance, so an engine release can end it, and so <see cref="ReleaseSessionAsync"/> releases the same
-    /// instance it was acquired from even if a voice change has since rebuilt the current resource.</summary>
-    public void RegisterSession(VoiceAgentSession session, VoiceModelLease lease) => _activeSessions[session] = lease.Resource;
+    /// instance it was acquired from even if a voice change has since rebuilt the current resource.
+    ///
+    /// <para><see cref="AcquireAsync"/> releases <see cref="_gate"/> as soon as it hands the lease back, before
+    /// the caller has built a <see cref="VoiceAgentSession"/> from it -- this call is what the caller must reach
+    /// next, and running it inside the same gate (rather than a bare dictionary write) is what makes the two
+    /// calls together closed against a teardown landing in between. It is not enough to just take the gate here
+    /// though: <see cref="LazyIdleResource{T}.ForceDisposeAsync"/> resets the resource to empty rather than
+    /// poisoning it, so <paramref name="lease"/>'s own <see cref="VoiceModelLease.Resource"/> reference is
+    /// unchanged by a teardown that ran in the gap -- only what it currently holds changes. The check below
+    /// compares the specific <see cref="VoiceModelSet"/> instance <paramref name="lease"/> was handed against
+    /// <see cref="LazyIdleResource{T}.Current"/> for that same reason: a teardown that force-disposed it in the
+    /// gap leaves <c>Current</c> null (or, if another acquire has since rebuilt it, pointing at a different
+    /// instance entirely), never the one <paramref name="lease"/> carries. Throws rather than silently skipping
+    /// the registration, so the caller -- which has already built the session by this point, but has not yet
+    /// called <see cref="VoiceAgentSession.StartAsync"/> or touched any audio path -- treats this exactly like
+    /// any other failure to start the call.</para></summary>
+    public Task RegisterSession(VoiceAgentSession session, VoiceModelLease lease, CancellationToken cancel) => _gate.AcquireAsync(() =>
+    {
+        if (!ReferenceEquals(lease.Set, lease.Resource.Current))
+        {
+            throw new InvalidOperationException(
+                "The voice model set backing this call was reset by an engine release before the call could start.");
+        }
+        _activeSessions[session] = lease.Resource;
+        return Task.CompletedTask;
+    }, cancel);
 
     /// <summary>Releases the hold <see cref="AcquireAsync"/> took for <paramref name="session"/>. Call once the
     /// session has ended (or failed to start), after <see cref="RegisterSession"/>.</summary>

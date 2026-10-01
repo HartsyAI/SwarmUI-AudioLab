@@ -121,7 +121,32 @@ public static class VoiceSessionEndpoints
         // ToolLoop never has anything to dispatch even if it were somehow reached. See RemoteTextService's remarks.
         ToolRegistry emptyTools = new();
         VoiceAgentSession voiceSession = new(lease.Set, text, emptyTools, lease.SessionOptions);
-        VoiceEngineModels.Shared.RegisterSession(voiceSession, lease);
+        try
+        {
+            // Construction above only stores references (StartAsync below is where the session actually touches
+            // audio/engine resources), so building it against a lease an engine release raced past is harmless on
+            // its own; RegisterSession is what re-checks that race and rejects a lease it caught stale, before
+            // this method goes anywhere near StartAsync.
+            await VoiceEngineModels.Shared.RegisterSession(voiceSession, lease, Program.GlobalProgramCancel).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Logs.Warning($"[AudioLab][Voice] Could not start the call: {ex.Message}");
+            await SendJsonAsync(new JObject { ["error"] = $"Could not start the call: {ex.Message}" }).ConfigureAwait(false);
+            // RegisterSession threw before adding this session to the active set, so ReleaseSessionAsync (keyed
+            // by session) would be a no-op; release the hold AcquireAsync's GetOrCreateAsync took directly instead,
+            // the same one RegisterSession would have attached to this session had it succeeded.
+            await lease.Resource.ReleaseAsync().ConfigureAwait(false);
+            try
+            {
+                await voiceSession.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception disposeEx)
+            {
+                Logs.Debug($"[AudioLab][Voice] Disposing a session rejected at registration threw: {disposeEx.Message}");
+            }
+            return null;
+        }
 
         // Written on the event pump's pool thread (BargeIn), read on the outbound pump's own loop: a CAS keeps
         // both sides' view of "flush everything at or below this turn" consistent without a lock on the hot path.
