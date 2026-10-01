@@ -170,8 +170,17 @@ public class SatelliteTurnRunnerTests
     }
 
     [Fact]
-    public async Task OnDetected_FallsBackToTranscript_WhenTheEngineDidNotSeparateCommand()
+    public async Task OnDetected_FallsBackToTranscript_WhenTheCommandKeyIsAbsent()
     {
+        // Named for exactly the "absent" case the production doc comment describes, not "the engine did not
+        // separate them": WakeWordService.ToJson builds the real event via `["command"] = evt.Command`, and if
+        // evt.Command is a genuine null, Newtonsoft tags that as JTokenType.String with a null Value, not
+        // JTokenType.Null (confirmed empirically -- see the Detection helper's own remarks) -- so OnDetected's
+        // `Type == JTokenType.Null` branch never actually fires on that path, and commandToken.ToString()
+        // returns "" there instead of falling back. That looks like a real, pre-existing Legacy bug (a
+        // wake-only detection where the engine did not separate command from transcript would send Done and
+        // never ask the assistant), separate from this PR and preserved verbatim rather than fixed here, since
+        // fixing it would contradict the Legacy-unchanged requirement every other test in this file is for.
         List<string> calls = await RunAndCollectAsync(SatelliteVoiceMode.Legacy,
             detection: Detection("sat-1", command: null, transcript: "only a transcript"));
 
