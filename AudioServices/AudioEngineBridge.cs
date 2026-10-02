@@ -77,6 +77,7 @@ public static class AudioEngineBridge
         ["cosyvoice_tts"] = new AudioEngineBinding("cosyvoice", AudioEngineService.Speech, true),
         ["f5_tts"] = new AudioEngineBinding("f5", AudioEngineService.Speech, true),
         ["zipvoice_tts"] = new AudioEngineBinding("zipvoice", AudioEngineService.Speech, true),
+        ["auk_tts"] = new AudioEngineBinding("auk", AudioEngineService.Speech, true),
         ["qwen3_tts"] = new AudioEngineBinding("qwen3tts", AudioEngineService.Speech, true),
         ["chatterbox_tts"] = new AudioEngineBinding("chatterbox", AudioEngineService.Speech, true),
         ["kyutaitts_tts"] = new AudioEngineBinding("kyutaitts", AudioEngineService.Speech, true),
@@ -122,6 +123,16 @@ public static class AudioEngineBridge
         ["resemble_enhance_fx"] = "ResembleAI/resemble-enhance",
         ["yue2_music"] = "Comfy-Org/YuE2",
         ["sheetsage2_transcribe"] = "Comfy-Org/YuE2",
+    };
+
+    /// <summary>Extra HuggingFace repos an engine-managed provider cannot run without, beyond the repo named by its
+    /// model's <c>SourceUrl</c>. <see cref="WeightsPresent"/> requires each of these to hold weights too, because
+    /// the any-location heuristic would otherwise report AuK installed once only its small transformer repo (or only
+    /// the shared Qwen2.5-Omni-3B encoder, which other tools also fetch) was on disk. Deliberately NOT part of
+    /// <see cref="GetWeightLocations"/>, so removing one AuK variant never deletes the shared encoder.</summary>
+    private static readonly Dictionary<string, string[]> _engineCompanionRepos = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["auk_tts"] = ["Qwen/Qwen2.5-Omni-3B"],
     };
 
     /// <summary>Engine-managed providers cached outside their own AudioLab category, mapped to the Engine's
@@ -1114,30 +1125,39 @@ public static class AudioEngineBridge
         {
             return true;
         }
-        foreach (string path in locations)
+        if (!locations.Any(PathHoldsWeights))
         {
-            if (string.IsNullOrEmpty(path))
-            {
-                continue;
-            }
-            try
-            {
-                if (File.Exists(path))
-                {
-                    return true;
-                }
-                // A directory counts only if it actually holds a weight-ish file (an empty dir left by a
-                // half-cleaned cache is "missing"). Cheap heuristic: any file over ~1 MB.
-                if (Directory.Exists(path)
-                    && Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)
-                        .Any(f => AudioWeights.WeightFileSize(f) > 1_000_000))
-                {
-                    return true;
-                }
-            }
-            catch (Exception ex) { Logs.Debug($"[AudioLab] WeightsPresent probe of '{path}' threw: {ex.Message}"); }
+            return false;
         }
-        return false;
+        if (_engineCompanionRepos.TryGetValue(providerId ?? "", out string[] companions))
+        {
+            AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId);
+            string category = AudioWeights.CategorySubfolder(provider.Category);
+            return companions.All(repo => PathHoldsWeights(AudioModelCache.GetRepoDirectory(repo, category)));
+        }
+        return true;
+    }
+
+    /// <summary>True when the path is a file, or a directory holding a weight-ish file (an empty dir left by a
+    /// half-cleaned cache is "missing"). Cheap heuristic: any file over ~1 MB.</summary>
+    private static bool PathHoldsWeights(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return false;
+        }
+        try
+        {
+            return File.Exists(path)
+                || (Directory.Exists(path)
+                    && Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)
+                        .Any(f => AudioWeights.WeightFileSize(f) > 1_000_000));
+        }
+        catch (Exception ex)
+        {
+            Logs.Debug($"[AudioLab] WeightsPresent probe of '{path}' threw: {ex.Message}");
+            return false;
+        }
     }
 
     /// <summary>True when a spec's file, or any file in its fallback chain, is on disk. A spec that downloaded

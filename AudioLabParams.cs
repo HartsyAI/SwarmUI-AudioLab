@@ -212,6 +212,19 @@ public static class AudioLabParams
 
     #endregion
 
+    #region TTS — AuK (flag: auk_tts_params)
+
+    /// <summary>Sampling step count for AuK. Ignored by the Flash variant (fixed 4 steps). Feature flag: <c>auk_tts_params</c>.</summary>
+    public static T2IRegisteredParam<int> AukSteps;
+    /// <summary>Classifier-free guidance scale for AuK. Ignored by the Flash variant (no CFG). Feature flag: <c>auk_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> AukCFG;
+    /// <summary>Target output length in seconds for AuK; 0 means automatic. Feature flag: <c>auk_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> AukDuration;
+    /// <summary>Natural-language voice/style instruction for AuK (voice design, no reference clip needed). Feature flag: <c>auk_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> AukInstruction;
+
+    #endregion
+
     #region TTS — Zonos (flag: zonos_tts_params)
 
     /// <summary>Language selection for Zonos TTS. Feature flag: <c>zonos_tts_params</c>.</summary>
@@ -1025,6 +1038,32 @@ public static class AudioLabParams
             "1.0",
             Min: 0.0, Max: 10.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -3, Group: TTSGroup, FeatureFlag: "zipvoice_tts_params", IsAdvanced: true));
+
+        #endregion
+
+        #region TTS — AuK
+        AukSteps = T2IParamTypes.Register<int>(new("AuK Steps",
+            "Sampling steps.\nThe AuK base model defaults to 32. The Flash variant is fixed at 4 steps and ignores this.",
+            "32",
+            Min: 1, Max: 100, Step: 1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "auk_tts_params", IsAdvanced: true));
+
+        AukCFG = T2IParamTypes.Register<double>(new("AuK CFG",
+            "Classifier-free guidance scale.\nThe AuK base model defaults to 2.0. The Flash variant has no CFG and ignores this.",
+            "2.0",
+            Min: 0.0, Max: 10.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "auk_tts_params", IsAdvanced: true));
+
+        AukDuration = T2IParamTypes.Register<double>(new("AuK Duration",
+            "Target length of the generated speech in seconds.\n0 = automatic.",
+            "0",
+            Min: 0.0, Max: 60.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -3, Group: TTSGroup, FeatureFlag: "auk_tts_params"));
+
+        AukInstruction = T2IParamTypes.Register<string>(new("AuK Instruction",
+            "Natural language description of the voice or style (e.g. 'A calm young woman speaking softly').\nWith no reference audio this designs a voice; leave empty to clone the reference clip.",
+            "",
+            OrderPriority: -2, Group: TTSGroup, FeatureFlag: "auk_tts_params"));
 
         #endregion
 
