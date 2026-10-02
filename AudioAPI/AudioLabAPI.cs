@@ -514,13 +514,10 @@ public static class AudioLabAPI
             // Naming the voice explicitly is what makes an unparameterised request work. Verified against a
             // real install 2026-09-05: with "default" every call failed, with this value the same call
             // returned 1.20s of non-silent 16 kHz mono. Piper only — the zero-shot providers accept the
-            // sentinel and pick their own speaker, so leave those alone.
-            string voice = input["voice"]?.ToString();
-            if (string.IsNullOrWhiteSpace(voice))
-            {
-                voice = provider.Id.Equals("piper_tts", StringComparison.OrdinalIgnoreCase)
-                    ? "en_US-lessac-medium" : AudioConfiguration.DefaultVoice;
-            }
+            // sentinel and pick their own speaker, so leave those alone. AudioConfiguration.ResolveVoice is
+            // the one place this substitution happens now (see ProcessTTS, SpeakStreamRoute and
+            // VoiceTurnOrchestrator for the other three callers that share it).
+            string voice = AudioConfiguration.ResolveVoice(input["voice"]?.ToString(), provider.Id);
             Dictionary<string, object> args = new()
             {
                 ["text"] = text,
@@ -643,10 +640,20 @@ public static class AudioLabAPI
             }
             Logs.Info($"[AudioLab] ProcessTTS: routing to provider '{ttsProvider.Id}' ({ttsProvider.Name}).");
 
+            // ParseTTSRequest defaults an unparameterised request's Voice to the generic "default" sentinel
+            // (AudioConfiguration.DefaultVoice), which every zero-shot provider is fine receiving -- but Piper's
+            // weights ARE the voice, so "default" cannot survive the trip to the Engine: with no real voice
+            // named, the Engine's selector falls back to its bare catalog token ("piper") and 404s trying to
+            // fetch "piper.onnx" from rhasspy/piper-voices (there is no such file -- every real voice there is
+            // "<lang>/<lang_REGION>/<name>/<quality>/<lang_REGION>-<name>-<quality>.onnx"). ResolveVoice is the
+            // one place every TTS entry point substitutes a real default for Piper; AudioLabSpeakRaw,
+            // SpeakStreamRoute and VoiceTurnOrchestrator already relied on it (or its inline equivalent) --
+            // this endpoint was the one call site that forwarded the sentinel unresolved.
+            string voice = AudioConfiguration.ResolveVoice(request.Voice, ttsProvider.Id);
             Dictionary<string, object> args = new()
             {
                 ["text"] = request.Text,
-                ["voice"] = request.Voice,
+                ["voice"] = voice,
                 ["language"] = request.Language,
                 ["volume"] = request.Volume
             };
@@ -667,7 +674,7 @@ public static class AudioLabAPI
                     Success = true,
                     AudioData = result["audio_data"]?.ToString() ?? "",
                     Text = request.Text,
-                    Voice = request.Voice,
+                    Voice = voice,
                     Language = request.Language,
                     Volume = request.Volume,
                     Duration = result["duration"]?.Value<double>() ?? 0,
@@ -737,7 +744,12 @@ public static class AudioLabAPI
                 else if (category == AudioCategory.TTS)
                 {
                     args["text"] = currentData?.ToString() ?? "";
-                    args["voice"] = step.Config?["voice"]?.ToString() ?? "default";
+                    // Same bug ProcessTTS had (fixed in #37): an unparameterised step used to forward the
+                    // generic "default" sentinel unresolved, which 404s for Piper specifically (its weights
+                    // ARE the voice, so "default" is not enough -- see AudioConfiguration.ResolveVoice).
+                    // "tts" workflow steps run against whichever TTS provider GetByCategory returns first,
+                    // which can be Piper, so this call site needed the same fix as every other TTS entry point.
+                    args["voice"] = AudioConfiguration.ResolveVoice(step.Config?["voice"]?.ToString(), provider.Id);
                     args["language"] = step.Config?["language"]?.ToString() ?? "en-US";
                     args["volume"] = step.Config?["volume"]?.Value<float>() ?? 0.8f;
                 }

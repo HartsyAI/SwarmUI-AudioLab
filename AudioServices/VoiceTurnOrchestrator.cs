@@ -95,10 +95,7 @@ public static class VoiceTurnOrchestrator
         }
         // Prefer the command; fall back to the transcript only when the engine did not separate them. An
         // empty command is the user saying the wake word and nothing else, and is not a question.
-        JToken commandToken = payload["command"];
-        string text = commandToken is null || commandToken.Type == JTokenType.Null
-            ? payload["transcript"]?.ToString()
-            : commandToken.ToString();
+        string text = ResolveTurnText(payload);
         if (string.IsNullOrWhiteSpace(text))
         {
             _ = WakeWordService.SendStatusAsync(deviceId, WakeStatus.Done);
@@ -113,6 +110,27 @@ public static class VoiceTurnOrchestrator
         }
         _running[deviceId] = cts;
         _ = Task.Run(() => RunTurnAsync(deviceId, text, cts), CancellationToken.None);
+    }
+
+    /// <summary>Resolves what the turn should ask: the command the engine separated from the wake phrase, or
+    /// the transcript when it did not separate them (see the call site's own remarks on why an empty command
+    /// does not also fall back).
+    ///
+    /// <para>Pulled out of <see cref="OnDetected"/> as its own <see langword="internal"/> method: unlike the
+    /// rest of that method, this decision touches neither <see cref="WakeWordService.GetSettings"/> nor any
+    /// socket, so the Tests project can drive it directly -- including with a payload built by the real
+    /// <see cref="WakeWordService.ToJson"/>, the actual producer -- instead of needing a running host
+    /// (see <c>InternalsVisibleTo.cs</c> for the same pattern elsewhere in this extension).</para></summary>
+    internal static string ResolveTurnText(JObject payload)
+    {
+        // Read the value, not the type tag: a token can be JTokenType.String with a null Value instead of
+        // JTokenType.Null (see WakeWordService.ToJson's own remarks on why a producer might still send that
+        // shape -- an older build, a hand-rolled caller), and Value<string>() returns null for either shape
+        // alike. Checked for null specifically, not string.IsNullOrEmpty: an explicit empty command ("") is a
+        // different, deliberate case -- the user said the wake word and nothing else -- and must keep
+        // resolving to "" rather than falling back to the transcript.
+        string command = payload["command"]?.Value<string>();
+        return command is null ? payload["transcript"]?.ToString() : command;
     }
 
     private static async Task RunTurnAsync(string deviceId, string text, CancellationTokenSource cts)
@@ -249,8 +267,9 @@ public static class VoiceTurnOrchestrator
         Dictionary<string, object> args = new()
         {
             ["text"] = reply,
-            ["voice"] = provider.Id.Equals("piper_tts", StringComparison.OrdinalIgnoreCase)
-                ? "en_US-lessac-medium" : AudioConfiguration.DefaultVoice,
+            // No per-turn voice override exists here, so this always resolves the provider's own default --
+            // Piper's being the Engine's "en_US-lessac-medium" (see AudioConfiguration.ResolveVoice).
+            ["voice"] = AudioConfiguration.ResolveVoice(null, provider.Id),
             ["language"] = AudioConfiguration.DefaultLanguage,
             ["volume"] = 1.0,
         };

@@ -27,7 +27,7 @@ public sealed class DiaTTSProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "1.6b", Name = "Dia 1.6B", Description = "Ultra-realistic dialogue, 2 speakers in one pass, nonverbal sounds", SourceUrl = "https://huggingface.co/nari-labs/Dia-1.6B-0626", License = "Apache 2.0", EstimatedSize = "~6.4GB", EstimatedVram = "~10GB", EngineConfig = new() { ["model_name"] = "nari-labs/Dia-1.6B-0626" } }
+        new() { Id = "1.6b", Name = "Dia 1.6B", Description = "Dialogue model, not a single-sentence narrator: start with [S1] and alternate [S1]/[S2] for each speaker turn, and give it roughly 5-20 seconds of speech worth of text. Very short, single-sentence prompts often come back as non-speech rather than silence -- that's upstream Dia's own behavior, not an error. Also does nonverbal sounds (laughs, coughs) inline.", SourceUrl = "https://huggingface.co/nari-labs/Dia-1.6B-0626", License = "Apache 2.0", EstimatedSize = "~6.4GB", EstimatedVram = "~10GB", EngineConfig = new() { ["model_name"] = "nari-labs/Dia-1.6B-0626" } }
     ];
 
     #endregion

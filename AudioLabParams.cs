@@ -106,6 +106,55 @@ public static class AudioLabParams
     /// <summary>Speech speed multiplier for Piper. Feature flag: <c>piper_tts_params</c>.</summary>
     public static T2IRegisteredParam<double> PiperSpeed;
 
+    /// <summary>All 37 English voices from Piper's official VOICES.md, as (id, display label) pairs. Each id
+    /// is exactly <c>&lt;lang_REGION&gt;-&lt;name&gt;-&lt;quality&gt;</c> -- the format
+    /// <c>PiperPipeline.VoiceRepoPath</c> (Engine side) splits on '-' to build the real
+    /// <c>rhasspy/piper-voices</c> path, e.g. <c>en_US-amy-low</c> -&gt;
+    /// <c>en/en_US/amy/low/en_US-amy-low(.onnx|.onnx.json)</c>. A static field (not inline in
+    /// <see cref="RegisterAll"/>'s <c>GetValues</c> lambda below) so a test can read the same list the UI
+    /// offers and check every entry actually resolves -- <c>RegisterAll</c> needs a SwarmUI host init the test
+    /// project does not have, but a plain array does not.</summary>
+    public static readonly (string Id, string Label)[] PiperVoices =
+    [
+        ("en_US-amy-low", "US amy (low)"),
+        ("en_US-amy-medium", "US amy (medium)"),
+        ("en_US-arctic-medium", "US arctic (medium)"),
+        ("en_US-bryce-medium", "US bryce (medium)"),
+        ("en_US-danny-low", "US danny (low)"),
+        ("en_US-hfc_female-medium", "US hfc female (medium)"),
+        ("en_US-hfc_male-medium", "US hfc male (medium)"),
+        ("en_US-joe-medium", "US joe (medium)"),
+        ("en_US-john-medium", "US john (medium)"),
+        ("en_US-kathleen-low", "US kathleen (low)"),
+        ("en_US-kristin-medium", "US kristin (medium)"),
+        ("en_US-kusal-medium", "US kusal (medium)"),
+        ("en_US-l2arctic-medium", "US l2arctic (medium)"),
+        ("en_US-lessac-low", "US lessac (low)"),
+        ("en_US-lessac-medium", "US lessac (medium)"),
+        ("en_US-lessac-high", "US lessac (high)"),
+        ("en_US-libritts-high", "US libritts (high)"),
+        ("en_US-libritts_r-medium", "US libritts r (medium)"),
+        ("en_US-ljspeech-medium", "US ljspeech (medium)"),
+        ("en_US-ljspeech-high", "US ljspeech (high)"),
+        ("en_US-norman-medium", "US norman (medium)"),
+        ("en_US-reza_ibrahim-medium", "US reza ibrahim (medium)"),
+        ("en_US-ryan-low", "US ryan (low)"),
+        ("en_US-ryan-medium", "US ryan (medium)"),
+        ("en_US-ryan-high", "US ryan (high)"),
+        ("en_US-sam-medium", "US sam (medium)"),
+        ("en_GB-alan-low", "GB alan (low)"),
+        ("en_GB-alan-medium", "GB alan (medium)"),
+        ("en_GB-alba-medium", "GB alba (medium)"),
+        ("en_GB-aru-medium", "GB aru (medium)"),
+        ("en_GB-cori-medium", "GB cori (medium)"),
+        ("en_GB-cori-high", "GB cori (high)"),
+        ("en_GB-jenny_dioco-medium", "GB jenny dioco (medium)"),
+        ("en_GB-northern_english_male-medium", "GB northern english male (medium)"),
+        ("en_GB-semaine-medium", "GB semaine (medium)"),
+        ("en_GB-southern_english_female-low", "GB southern english female (low)"),
+        ("en_GB-vctk-medium", "GB vctk (medium)"),
+    ];
+
     #endregion
 
     #region TTS — Orpheus (flag: orpheus_tts_params)
@@ -869,45 +918,7 @@ public static class AudioLabParams
         PiperVoice = T2IParamTypes.Register<string>(new("Piper Voice",
             "Piper voice. Each voice is a separate download, named language-speaker-quality.\nAll 37 English voices from the official VOICES.md are listed; higher quality is larger and slower.",
             "en_US-amy-medium",
-            GetValues: _ => [
-                "en_US-amy-low///US amy (low)",
-                "en_US-amy-medium///US amy (medium)",
-                "en_US-arctic-medium///US arctic (medium)",
-                "en_US-bryce-medium///US bryce (medium)",
-                "en_US-danny-low///US danny (low)",
-                "en_US-hfc_female-medium///US hfc female (medium)",
-                "en_US-hfc_male-medium///US hfc male (medium)",
-                "en_US-joe-medium///US joe (medium)",
-                "en_US-john-medium///US john (medium)",
-                "en_US-kathleen-low///US kathleen (low)",
-                "en_US-kristin-medium///US kristin (medium)",
-                "en_US-kusal-medium///US kusal (medium)",
-                "en_US-l2arctic-medium///US l2arctic (medium)",
-                "en_US-lessac-low///US lessac (low)",
-                "en_US-lessac-medium///US lessac (medium)",
-                "en_US-lessac-high///US lessac (high)",
-                "en_US-libritts-high///US libritts (high)",
-                "en_US-libritts_r-medium///US libritts r (medium)",
-                "en_US-ljspeech-medium///US ljspeech (medium)",
-                "en_US-ljspeech-high///US ljspeech (high)",
-                "en_US-norman-medium///US norman (medium)",
-                "en_US-reza_ibrahim-medium///US reza ibrahim (medium)",
-                "en_US-ryan-low///US ryan (low)",
-                "en_US-ryan-medium///US ryan (medium)",
-                "en_US-ryan-high///US ryan (high)",
-                "en_US-sam-medium///US sam (medium)",
-                "en_GB-alan-low///GB alan (low)",
-                "en_GB-alan-medium///GB alan (medium)",
-                "en_GB-alba-medium///GB alba (medium)",
-                "en_GB-aru-medium///GB aru (medium)",
-                "en_GB-cori-medium///GB cori (medium)",
-                "en_GB-cori-high///GB cori (high)",
-                "en_GB-jenny_dioco-medium///GB jenny dioco (medium)",
-                "en_GB-northern_english_male-medium///GB northern english male (medium)",
-                "en_GB-semaine-medium///GB semaine (medium)",
-                "en_GB-southern_english_female-low///GB southern english female (low)",
-                "en_GB-vctk-medium///GB vctk (medium)"
-            ],
+            GetValues: _ => [.. PiperVoices.Select(v => $"{v.Id}///{v.Label}")],
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "piper_tts_params"));
 
         PiperSpeed = T2IParamTypes.Register<double>(new("Piper Speed",
