@@ -264,8 +264,16 @@ public static class WakeWordService
         ["route"] = evt.Route,
         ["transcript"] = evt.Transcript,
         // The transcript with the wake phrase removed. Empty means the user said the wake word and nothing
-        // else; absent means an engine old enough not to separate them.
-        ["command"] = evt.Command,
+        // else; absent means a producer old enough not to separate command from transcript at all. A null
+        // Command is its own, documented "no separated command" case -- WakeEvent.Command is string?, and
+        // today's WakeService only sets it null when Transcript is also null -- but this must still serialize
+        // as a real JSON null regardless of which caller set it, since nothing here guarantees today's engine
+        // is the only producer. Built explicitly rather than `["command"] = evt.Command`: Newtonsoft's implicit
+        // string conversion (what that shorthand uses) hard-codes JTokenType.String regardless of nullness, so
+        // a genuinely-null Command came out tagged String with a null Value, not Null. CreateNull() is the one
+        // JValue factory that actually sets JTokenType.Null -- consumers can also read the value instead of
+        // the type tag (as VoiceTurnOrchestrator.ResolveTurnText now does) and get the right answer either way.
+        ["command"] = evt.Command is null ? JValue.CreateNull() : new JValue(evt.Command),
         ["speaker"] = evt.Speaker,
         ["detected_at"] = evt.DetectedAtUtc.ToString("O"),
     };
