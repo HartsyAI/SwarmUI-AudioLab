@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net.WebSockets;
 using System.Text;
+using Hartsy.Extensions.AudioLab.AudioServices;
 using Hartsy.Extensions.AudioLab.AudioServices.Voice;
 using HartsyInference.Engine.Requests;
 using HartsyInference.Tools;
@@ -99,6 +100,10 @@ public static class VoiceSessionEndpoints
 
         RemoteTextService text = new(WebServer.PageURL, session.ID, start.Model, start.AssistantId);
         text.Notice += noticeText => _ = SendJsonAsync(new JObject { ["notice"] = noticeText });
+
+        // Held for the whole call: an idle release cannot start while the call is open, and one already running
+        // finishes before the call loads its models, rather than ending the call a moment after it starts.
+        using IDisposable idleHold = await AudioEngineBridge.IdleRelease.BeginAsync(Program.GlobalProgramCancel).ConfigureAwait(false);
 
         VoiceModelLease lease;
         try

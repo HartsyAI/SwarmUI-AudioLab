@@ -471,6 +471,9 @@ public static class WakeWordEndpoints
                 options = options with { Voices = voiceList };
             }
 
+            // Training synthesizes its samples through the engine for minutes on end; hold off the idle release
+            // until it is done rather than unload the voices between samples.
+            using IDisposable idleHold = await AudioEngineBridge.IdleRelease.BeginAsync(Program.GlobalProgramCancel);
             WakeTrainingJob job = new(AudioEngineBridge.Engine, WakeWordService.ModelRoot());
             // A WebSocket throws on concurrent SendAsync, and progress reports arrive from thread-pool threads,
             // so two overlapping reports would kill the stream mid-training. Serialize every send through one

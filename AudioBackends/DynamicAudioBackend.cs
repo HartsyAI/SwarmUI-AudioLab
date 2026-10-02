@@ -88,6 +88,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
         [ConfigComment("When loading or running an audio model hits an out-of-VRAM error, ask SwarmUI's other idle,\nlocal backends to free memory and retry once instead of just failing outright.\n\nAudioLab's engine is its own process-wide instance, with no coordination against SwarmUI's other\nbackends (ComfyUI, HartsyInference image/video, ...) sharing the same card — an image backend that still\nholds weights resident after a generation can leave an audio model with nowhere to fit, even though that\nmemory is just sitting idle. On, an out-of-VRAM error reserves -- exclusively, so two overlapping AudioLab\nrecoveries can never both free the same backend at once -- and asks every OTHER local backend that is\ncurrently idle (never one mid-generation, and never one a reservation catches picking up new work in the\nmeantime) to free its memory the same way Server > Backends > Free Memory Now does, waits a moment for that\nto actually land, then retries the load or generation exactly once. A second failure is reported as-is —\nthe request genuinely does not fit. This reacts to the error; it does not try to predict and avoid it ahead\nof time (the providers' VRAM estimates are free text, not a number this could size a pre-check against). A\nremote SwarmUI backend is never a candidate -- its idle state can't be verified from here, and its own\n/API/FreeBackendMemory frees unconditionally on that remote machine.\n\nAudioLab's OWN resident models are the engine's job, not this setting's, because only the engine can unload\nthem inside the lock its generations hold: switching to a model that is not loaded yet unloads the others\nfirst when free VRAM is under what the incoming model needs, and an out-of-VRAM error inside the engine\nunloads every other unpinned audio model and retries once there before it ever reaches this retry. What this setting\nadds is the memory SwarmUI's other backends hold. A model kept resident by \"Keep Tts Stt Resident\" is\nnever evicted by either retry.\n\nOff restores the previous behavior: an out-of-VRAM error fails the request immediately. The backends asked\nto free memory simply reload their models on their next generation; nothing running is ever interrupted.")]
         public bool CoordinateVramOnOutOfMemory = true;
+
+        [ConfigComment("Release AudioLab's resident audio models and their device memory after this many minutes with no audio request. 0 turns it off.\n\nAudio models stay loaded after a generation so the next one starts warm, but on a card shared with SwarmUI's image backend they can leave it no room, and an image generation then fails or crawls until SwarmUI's own idle VRAM clear runs. This hands the memory back sooner. The next audio request reloads its model, which costs that one request a few seconds.\n\nNothing in use is released: the timer only starts once every audio request has finished (a stream counts until it stops), each new request resets it, and a model kept resident by Keep Tts Stt Resident, an open Voice Agent call or a wake-word training run holds it off until it ends. A request that arrives while a release is running waits for it, then loads afresh.\n\nThe release is the same one Server > Backends > Free Memory Now triggers. Like the other settings here it is read when the backend starts, and it is process-wide: with several audio backends, the last one to start sets it.")]
+        public int UnloadIdleModelsAfterMinutes = AudioEngineBridge.DefaultIdleUnloadMinutes;
     }
 
     /// <summary>Builds the Device dropdown from whatever compute backends the engine reports
@@ -372,6 +375,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
         // Same reasoning: a per-request retry policy, not an engine-build-time choice, so it always takes
         // effect even though (like every setting in this method) it's only read at backend Init.
         AudioEngineBridge.RequestVramCoordination(Settings?.CoordinateVramOnOutOfMemory ?? true);
+        // Same again: a release policy, not an engine-build-time choice.
+        AudioEngineBridge.RequestIdleUnload(Settings?.UnloadIdleModelsAfterMinutes ?? AudioEngineBridge.DefaultIdleUnloadMinutes);
         return true;
     }
 
@@ -390,6 +395,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
         Program.ModelRefreshEvent -= ReRegisterModelsAfterRefresh;
         Program.ModelPathsChangedEvent -= ReRegisterModelsAfterPathChange;
+        AudioEngineBridge.EngineReleased -= ForgetLoadedModel;
+        AudioEngineBridge.EngineReleased += ForgetLoadedModel;
 
         // Re-read on every init so restarting this backend picks up a changed server ModelRoot.
         AudioConfiguration.SyncModelRootFromServer();
@@ -1194,6 +1201,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
         return (long)(value * multiplier);
     }
 
+    /// <summary>Forgets the loaded model when the engine releases its models from anywhere (the idle release, another
+    /// backend's free-memory call, a model switch), as <see cref="FreeMemory"/> does for its own: the next request for
+    /// it is a fresh load, so it gets <see cref="LoadModel"/>'s headroom check again.</summary>
+    private void ForgetLoadedModel() => CurrentModelName = null;
+
     /// <summary>Hands the engine's resident audio models back on request.
     /// <para>Without this override the base <see cref="AbstractBackend.FreeMemory"/> returns false and does
     /// nothing, so Swarm's "free memory" API and its memory-pressure paths could never reclaim audio VRAM —
@@ -1217,6 +1229,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
     {
         Logs.Info("[AudioLab] Shutting down audio backend");
         Program.ModelRefreshEvent -= ReRegisterModelsAfterRefresh;
+        AudioEngineBridge.EngineReleased -= ForgetLoadedModel;
         lock (_modelsLock)
         {
             foreach (string modelName in RegisteredAudioModels.Keys)

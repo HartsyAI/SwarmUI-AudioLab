@@ -218,6 +218,7 @@ public static class AudioEngineBridge
         }
         try
         {
+            using IDisposable idleHold = await IdleRelease.BeginAsync(cancel).ConfigureAwait(false);
             return await RunWithVramRecoveryAsync(
                 () => DispatchAsync(providerId, binding, args, cancel),
                 _coordinateVramOnOom,
@@ -528,6 +529,7 @@ public static class AudioEngineBridge
         }
         try
         {
+            using IDisposable idleHold = await IdleRelease.BeginAsync(cancel).ConfigureAwait(false);
             ModelSpec spec = BuildSpec(providerId, binding, args);
             return AudioIo.ScoreTranscript(await Engine.Transcribe
                 .RunScoreAsync(spec, AudioEngineRequests.Transcribe(args), cancel).ConfigureAwait(false));
@@ -558,6 +560,7 @@ public static class AudioEngineBridge
         }
         try
         {
+            using IDisposable idleHold = await IdleRelease.BeginAsync(cancel).ConfigureAwait(false);
             ModelSpec spec = BuildSpec(providerId, binding, args);
             return AudioIo.ScorePlan(await run(spec, AudioEngineRequests.Music(args), cancel).ConfigureAwait(false));
         }
@@ -590,6 +593,8 @@ public static class AudioEngineBridge
         {
             throw new InvalidOperationException($"Provider '{providerId}' has no native streaming Engine binding.");
         }
+        // Held until the caller stops enumerating, so a stream that is still speaking counts as in use.
+        using IDisposable idleHold = await IdleRelease.BeginAsync(cancel).ConfigureAwait(false);
         ModelSpec spec = BuildSpec(providerId, binding, args);
         await MaybeKeepResidentAsync(AudioEngineService.Speech, spec, cancel).ConfigureAwait(false);
         await foreach (AudioChunk chunk in Engine.Speech.SynthesizeStreamAsync(spec, AudioEngineRequests.Speech(args), cancel).ConfigureAwait(false))
@@ -731,50 +736,107 @@ public static class AudioEngineBridge
         {
             return;
         }
-        try
+        lock (_releaseLock)
         {
-            _engine.FreeMemory();
-            Logs.Debug($"[AudioLab] Released resident audio models (requested for '{providerId}/{modelId}').");
-        }
-        catch (Exception ex)
-        {
-            Logs.Debug($"[AudioLab] Unload('{providerId}','{modelId}') threw: {ex.Message}");
-        }
-        finally
-        {
-            // IInferenceEngine.FreeMemory revokes any open synthesizer/transcriber lease unconditionally (it
-            // is one of the engine release paths ISynthesizerLease/ITranscriberLease document as revoking) —
-            // there is no selective "free everything except the pin" lever. Forget the pins rather than
-            // leave them pointing at revoked leases; the setting re-opens one lazily on the next TTS/STT call
-            // via MaybeKeepResidentAsync, instead of racing to reload here and fighting whatever this Unload
-            // call was trying to free in the first place.
-            ClearResidencyPins();
-            RaiseEngineReleased();
+            try
+            {
+                _engine.FreeMemory();
+                Logs.Debug($"[AudioLab] Released resident audio models (requested for '{providerId}/{modelId}').");
+            }
+            catch (Exception ex)
+            {
+                Logs.Debug($"[AudioLab] Unload('{providerId}','{modelId}') threw: {ex.Message}");
+            }
+            finally
+            {
+                // IInferenceEngine.FreeMemory revokes any open synthesizer/transcriber lease unconditionally (it
+                // is one of the engine release paths ISynthesizerLease/ITranscriberLease document as revoking) —
+                // there is no selective "free everything except the pin" lever. Forget the pins rather than
+                // leave them pointing at revoked leases; the setting re-opens one lazily on the next TTS/STT call
+                // via MaybeKeepResidentAsync, instead of racing to reload here and fighting whatever this Unload
+                // call was trying to free in the first place.
+                ClearResidencyPins();
+                RaiseEngineReleased();
+            }
         }
     }
 
     /// <summary>Releases every loaded audio model and its device memory, leaving the engine usable. Used by the
-    /// backend's shutdown / free-memory path.</summary>
+    /// backend's shutdown / free-memory path and by the idle release (<see cref="IdleRelease"/>).</summary>
     public static void FreeMemory()
     {
         if (_engine is null)
         {
             return;
         }
-        try
+        lock (_releaseLock)
         {
-            _engine.FreeMemory();
-        }
-        catch (Exception ex)
-        {
-            Logs.Warning($"[AudioLab] Freeing audio engine memory failed: {ex.Message}");
-        }
-        finally
-        {
-            ClearResidencyPins();
-            RaiseEngineReleased();
+            try
+            {
+                _engine.FreeMemory();
+            }
+            catch (Exception ex)
+            {
+                Logs.Warning($"[AudioLab] Freeing audio engine memory failed: {ex.Message}");
+            }
+            finally
+            {
+                ClearResidencyPins();
+                RaiseEngineReleased();
+            }
         }
     }
+
+    /// <summary>Serializes <see cref="Unload"/> and <see cref="FreeMemory"/>. They are reached from more than one
+    /// place at once (SwarmUI's own free-memory calls, a model switch, the idle release), and the engine's release
+    /// clears its pipeline maps without a lock of its own, so two must never run it together.</summary>
+    private static readonly object _releaseLock = new();
+
+    #region Idle release ("Unload Idle Models After Minutes")
+
+    /// <summary>Frees the resident audio models once no AudioLab request has run for the configured time. Every
+    /// entry point that runs a model holds an activity for as long as it runs; voice calls and wake-word training
+    /// hold one too. A model kept resident by "Keep Tts Stt Resident" or an open voice session is never released
+    /// (<see cref="IdleReleaseBlocker"/>). Starts at <see cref="DefaultIdleUnloadMinutes"/>, the backend setting's own
+    /// default, so the API routes behave the same with no audio backend configured; the backend's
+    /// <see cref="RequestIdleUnload"/> replaces it.
+    ///
+    /// <para>Requests that reach the engine without going through here (the wake listener's per-detection
+    /// transcription) are covered by the engine's own generation lock, which a release waits on before unloading:
+    /// such a request either finishes first or loads its model again afterwards.</para></summary>
+    internal static readonly IdleModelReleaser IdleRelease = CreateIdleRelease();
+
+    /// <summary>The idle time used until a backend sets one; the default of the backend's "Unload Idle Models After
+    /// Minutes".</summary>
+    public const int DefaultIdleUnloadMinutes = 3;
+
+    private static IdleModelReleaser CreateIdleRelease()
+    {
+        IdleModelReleaser releaser = new(
+            IdleReleaseBlocker,
+            FreeMemory,
+            log: msg => Logs.Info(msg),
+            logDetail: msg => Logs.Debug(msg));
+        releaser.Configure(TimeSpan.FromMinutes(DefaultIdleUnloadMinutes));
+        return releaser;
+    }
+
+    /// <summary>Sets how long AudioLab waits after its last audio request before releasing its models; 0 (or less)
+    /// turns it off. Process-wide like the backend's other settings: the last audio backend to initialize decides.</summary>
+    public static void RequestIdleUnload(int minutes) => IdleRelease.Configure(TimeSpan.FromMinutes(Math.Max(0, minutes)));
+
+    /// <summary>What still needs the resident models even though no request is running, or null when nothing does.</summary>
+    private static string IdleReleaseBlocker()
+    {
+        if (HasResidencyPins)
+        {
+            return "a model is kept resident by Keep Tts Stt Resident";
+        }
+        int sessions = Voice.VoiceEngineModels.Shared.ActiveSessionCount;
+        return sessions > 0 ? $"{sessions} voice session(s) are open" : null;
+    }
+
+    #endregion
 
     private static void RaiseEngineReleased()
     {
@@ -804,6 +866,10 @@ public static class AudioEngineBridge
     private static string _pinnedSynthKey;
     private static ITranscriberLease _pinnedTranscriber;
     private static string _pinnedTranscriberKey;
+
+    /// <summary>Whether a TTS or STT model is pinned resident right now. Read without <see cref="_residencyLock"/>: a pin
+    /// opening at this moment belongs to a request that is itself still running, which the caller already counts.</summary>
+    internal static bool HasResidencyPins => Volatile.Read(ref _pinnedSynth) is not null || Volatile.Read(ref _pinnedTranscriber) is not null;
 
     /// <summary>Turns the "keep resident" setting on or off. Disabling it drops whatever is currently pinned
     /// immediately (so the next memory-pressure sweep can evict it again); enabling it only takes effect on the

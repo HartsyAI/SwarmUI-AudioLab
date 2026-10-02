@@ -139,6 +139,18 @@ effect):
   Resident is never evicted by either. Off restores the previous behavior (an out-of-VRAM error fails
   immediately); either way, a backend asked to free memory simply reloads its own models on its next
   generation, so nothing already running is ever interrupted.
+- **Unload Idle Models After Minutes** — `3` by default; `0` turns it off. After this many minutes with no audio
+  request, AudioLab releases its resident models and their device memory, the same release Server > Backends > Free
+  Memory Now triggers.
+  - *Why.* Audio models otherwise stay loaded after a generation. On a card shared with SwarmUI's image backend, that
+    can leave an image generation no room until SwarmUI's own idle VRAM clear runs. The next audio request reloads
+    its model, which costs that one request a few seconds.
+  - *What is never released.* The timer starts only once every audio request has finished; a stream counts until it
+    stops. Each new request resets it. A model pinned by Keep Tts Stt Resident, an open Voice Agent call or a
+    wake-word training run holds it off until it ends.
+  - *Timing with new requests.* A request that arrives while a release is running waits for it, then loads afresh.
+  - *Wake listener.* Its transcriptions reach the engine directly and are covered by the engine's own generation
+    lock: one that is running finishes before the release, and one that starts after it reloads its model.
 
 ### Installing engines
 
