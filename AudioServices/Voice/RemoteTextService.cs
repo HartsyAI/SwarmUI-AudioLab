@@ -296,6 +296,14 @@ internal sealed class RemoteTextService : ITextService
         {
             frame["assistantId"] = _assistantId;
         }
+        if (!string.IsNullOrWhiteSpace(request.PrefixCacheKey))
+        {
+            // The voice session's per-call key, set on its priming request and on every turn. LLMAssistant scopes
+            // its local engine's prefix-KV reuse by conversationId (under the calling user and the model), so each
+            // call keeps its own retained entry; without it, every call made from this browser session would
+            // share one entry keyed by session_id.
+            frame["conversationId"] = request.PrefixCacheKey;
+        }
         return frame;
     }
 
