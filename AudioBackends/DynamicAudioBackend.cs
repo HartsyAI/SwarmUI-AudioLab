@@ -320,9 +320,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// host.</para></summary>
     internal static void ApplyEvictionFloor(int gb)
     {
+        // Read before setting: the engine loads its settings file on the first knob read, and that load overwrites
+        // whatever was set before it, so setting first would let the file's vram.audioEvictBelowGb win.
+        long engineValue = EngineKnobs.AudioEvictBelowGb.Value;
         if (gb <= 0)
         {
-            Logs.Debug($"[AudioLab] Audio eviction floor left at {EngineKnobs.AudioEvictBelowGb.Value} GB "
+            Logs.Debug($"[AudioLab] Audio eviction floor left at {engineValue} GB "
                 + $"({KnobStore.SourceOf(EngineKnobs.AudioEvictBelowGb.Id)}).");
             return;
         }
