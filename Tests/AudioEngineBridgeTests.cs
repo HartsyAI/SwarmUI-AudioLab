@@ -106,4 +106,22 @@ public class AudioEngineBridgeTests
         AudioEngineBridge.RequestKeepResident(true);
         AudioEngineBridge.RequestKeepResident(false);
     }
+
+    [Fact]
+    public void AukProvider_DeclaresIdPrefixAndFlags()
+    {
+        AudioProviderDefinition def = AukProvider.Instance.GetProvider();
+        Assert.Equal("auk_tts", def.Id);
+        Assert.Equal("AuK", def.ModelPrefix);
+        Assert.Contains("auk_tts_params", def.FeatureFlags, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("tts_voice_ref", def.FeatureFlags, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal(new[] { "flash", "base" }, def.Models.Select(m => m.Id).ToArray());
+    }
+
+    [Fact]
+    public void AukProvider_IsEngineBoundAndSelfDownloading()
+    {
+        Assert.True(AudioEngineBridge.IsProviderSupported("auk_tts"));
+        Assert.True(AudioEngineBridge.ProviderManagesOwnWeights("auk_tts"));
+    }
 }

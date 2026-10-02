@@ -2090,6 +2090,15 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["cfg_scale"] = input.TryGet(AudioLabParams.ZipVoiceCFG, out double zvCfg) ? zvCfg : 1.0;
                 break;
 
+            case "auk_tts":
+                args["nfe_step"] = input.TryGet(AudioLabParams.AukSteps, out int aukSteps) ? aukSteps : 32;
+                args["cfg_scale"] = input.TryGet(AudioLabParams.AukCFG, out double aukCfg) ? aukCfg : 2.0;
+                if (input.TryGet(AudioLabParams.AukDuration, out double aukDur) && aukDur > 0)
+                    args["duration_seconds"] = aukDur;
+                if (input.TryGet(AudioLabParams.AukInstruction, out string aukInst) && !string.IsNullOrEmpty(aukInst))
+                    args["instruction"] = aukInst;
+                break;
+
             case "zonos_tts":
                 if (input.TryGet(AudioLabParams.ZonosLanguage, out string zl))
                     args["language"] = zl;

@@ -171,10 +171,11 @@ Generated from the running server, so this is what the extension actually offers
 whether the engine downloads on first use or exposes per model installs.
 
 
-#### Text to Speech (20 engines, 25 models)
+#### Text to Speech (21 engines, 27 models)
 
 | Engine | Models | VRAM | License | Weights |
 | --- | --- | --- | --- | --- |
+| [AuK](https://huggingface.co/tencent/AuK) | 2 | ~10GB | MIT (text encoder: Qwen Research License) | on first use |
 | [Bark TTS](https://huggingface.co/suno/bark) | 1 | ~5GB | MIT | on first use |
 | [Chatterbox TTS](https://github.com/resemble-ai/chatterbox) | 1 | ~4GB | MIT | on first use |
 | [CosyVoice TTS](https://huggingface.co/FunAudioLLM/CosyVoice2-0.5B) | 1 | ~8GB | Apache 2.0 | on first use |
@@ -195,6 +196,8 @@ whether the engine downloads on first use or exposes per model installs.
 | [VibeVoice TTS](https://huggingface.co/vibevoice/VibeVoice-1.5B) | 1 | ~7GB | MIT | on first use |
 | [ZipVoice](https://huggingface.co/k2-fsa/ZipVoice) | 1 | ~2GB | Apache 2.0 | on first use |
 | [Zonos TTS](https://huggingface.co/Zyphra/Zonos-v0.1-transformer) | 2 | ~4GB | Apache 2.0 | on first use |
+
+**AuK** (Tencent; variants `flash` and `base`) is unverified: there is no parity run against the reference implementation yet. AuK itself is MIT, but it also downloads the Qwen2.5-Omni-3B text encoder (~10GB), which is under the Qwen Research License. Flash uses a fixed 4 steps with no CFG, so the AuK Steps and AuK CFG settings only affect the base variant.
 
 #### Speech to Text (7 engines, 18 models)
 
@@ -685,6 +688,7 @@ Known and planned, so you can tell missing from broken:
 - **Cloud API engines.** All 20 provider definitions exist but none are tested, so all are disabled. They get
   re-enabled per provider as each is verified.
 - **RealtimeSTT** needs a C# engine implementation.
+- **AuK editing.** Only AuK text-to-speech ships; a separate AuK editing provider is not built yet.
 - **Engine side gates.** Piper, Zonos, MeloTTS and CosyVoice are wired up and waiting on front end pieces from the
   engine. They light up on their own once those land.
 - **Voice cloning for a few engines** (Chatterbox, NeuTTS, Spark-TTS) is waiting on encoder support; the default
