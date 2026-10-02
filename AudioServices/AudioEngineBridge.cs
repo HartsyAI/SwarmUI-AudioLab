@@ -2,11 +2,15 @@ using HartsyInference.Core.Configuration;
 using System.IO;
 using System.Runtime.CompilerServices;
 using Newtonsoft.Json.Linq;
+using SwarmUI.Backends;
+using SwarmUI.Core;
 using SwarmUI.Utils;
+using Hartsy.Extensions.AudioLab.AudioBackends;
 using Hartsy.Extensions.AudioLab.AudioModels;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using HartsyInference.Audio.Cache;
 using HartsyInference.Audio.Streaming;
+using HartsyInference.Core.Exceptions;
 using HartsyInference.Core.MemoryManagement;
 using HartsyInference.Engine;
 using HartsyInference.Engine.Dispatch;
@@ -200,7 +204,12 @@ public static class AudioEngineBridge
     }
 
     /// <summary>Runs an audio request on the Engine, returning the JObject shape AudioLab's generation path
-    /// parses (<c>success</c> + <c>audio_data</c>/<c>text</c>/<c>stems</c>, or <c>error</c>).</summary>
+    /// parses (<c>success</c> + <c>audio_data</c>/<c>text</c>/<c>stems</c>, or <c>error</c>).
+    ///
+    /// <para>Wrapped in <see cref="RunWithVramRecoveryAsync{T}"/>: SwarmUI's image/video backends and AudioLab
+    /// share one card, each with its own Engine instance and no coordination, so a GPU that still holds an
+    /// image model resident after a generation can leave too little free for an audio model to load — see the
+    /// backend card's <c>Coordinate Vram On Out Of Memory</c> setting.</para></summary>
     public static async Task<JObject> ProcessAsync(string providerId, IReadOnlyDictionary<string, object> args, CancellationToken cancel)
     {
         if (!_bindings.TryGetValue(providerId ?? "", out AudioEngineBinding binding))
@@ -209,39 +218,14 @@ public static class AudioEngineBridge
         }
         try
         {
-            ModelSpec spec = BuildSpec(providerId, binding, args);
-            switch (binding.Service)
-            {
-                case AudioEngineService.Speech:
-                    await MaybeKeepResidentAsync(AudioEngineService.Speech, spec, cancel).ConfigureAwait(false);
-                    return Audio(await Engine.Speech.SynthesizeAsync(spec, AudioEngineRequests.Speech(args), cancel).ConfigureAwait(false));
-                case AudioEngineService.Transcribe:
-                {
-                    await MaybeKeepResidentAsync(AudioEngineService.Transcribe, spec, cancel).ConfigureAwait(false);
-                    TranscriptResult transcript = await Engine.Transcribe
-                        .RunAsync(spec, AudioEngineRequests.Transcribe(args), cancel).ConfigureAwait(false);
-                    return AudioIo.TranscriptionResult(transcript.Text, transcript.Language);
-                }
-                case AudioEngineService.Music:
-                    return Audio(await Engine.Music.GenerateAsync(spec, AudioEngineRequests.Music(args), null, cancel).ConfigureAwait(false));
-                case AudioEngineService.VoiceConversion:
-                    return Audio(await Engine.VoiceConversion.ConvertAsync(spec, AudioEngineRequests.VoiceConversion(args), cancel).ConfigureAwait(false));
-                case AudioEngineService.Separate:
-                {
-                    StemsResult stems = await Engine.Fx
-                        .SeparateAsync(spec, AudioEngineRequests.Separate(args), cancel).ConfigureAwait(false);
-                    List<(string, string)> encoded = new(stems.Stems.Count);
-                    foreach (KeyValuePair<string, byte[]> stem in stems.Stems)
-                    {
-                        encoded.Add((stem.Key, Convert.ToBase64String(stem.Value)));
-                    }
-                    return AudioIo.StemsResult(encoded);
-                }
-                case AudioEngineService.Enhance:
-                    return Audio(await Engine.Fx.EnhanceAsync(spec, AudioEngineRequests.Enhance(args), cancel).ConfigureAwait(false));
-                default:
-                    return AudioIo.Error($"Provider '{providerId}' has no Engine service wired.");
-            }
+            return await RunWithVramRecoveryAsync(
+                () => DispatchAsync(providerId, binding, args, cancel),
+                _coordinateVramOnOom,
+                FreeMemory,
+                FreeIdleOtherBackendsAsync,
+                Task.Delay,
+                msg => Logs.Warning(msg),
+                cancel).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancel.IsCancellationRequested)
         {
@@ -253,6 +237,179 @@ public static class AudioEngineBridge
             return AudioIo.Error(ex.Message);
         }
     }
+
+    /// <summary>The actual per-service Engine dispatch -- split out of <see cref="ProcessAsync"/> so
+    /// <see cref="RunWithVramRecoveryAsync{T}"/> can run it a second time verbatim after freeing memory,
+    /// without duplicating the switch. Unchanged from before VRAM recovery existed.</summary>
+    private static async Task<JObject> DispatchAsync(string providerId, AudioEngineBinding binding,
+        IReadOnlyDictionary<string, object> args, CancellationToken cancel)
+    {
+        ModelSpec spec = BuildSpec(providerId, binding, args);
+        switch (binding.Service)
+        {
+            case AudioEngineService.Speech:
+                await MaybeKeepResidentAsync(AudioEngineService.Speech, spec, cancel).ConfigureAwait(false);
+                return Audio(await Engine.Speech.SynthesizeAsync(spec, AudioEngineRequests.Speech(args), cancel).ConfigureAwait(false));
+            case AudioEngineService.Transcribe:
+            {
+                await MaybeKeepResidentAsync(AudioEngineService.Transcribe, spec, cancel).ConfigureAwait(false);
+                TranscriptResult transcript = await Engine.Transcribe
+                    .RunAsync(spec, AudioEngineRequests.Transcribe(args), cancel).ConfigureAwait(false);
+                return AudioIo.TranscriptionResult(transcript.Text, transcript.Language);
+            }
+            case AudioEngineService.Music:
+                return Audio(await Engine.Music.GenerateAsync(spec, AudioEngineRequests.Music(args), null, cancel).ConfigureAwait(false));
+            case AudioEngineService.VoiceConversion:
+                return Audio(await Engine.VoiceConversion.ConvertAsync(spec, AudioEngineRequests.VoiceConversion(args), cancel).ConfigureAwait(false));
+            case AudioEngineService.Separate:
+            {
+                StemsResult stems = await Engine.Fx
+                    .SeparateAsync(spec, AudioEngineRequests.Separate(args), cancel).ConfigureAwait(false);
+                List<(string, string)> encoded = new(stems.Stems.Count);
+                foreach (KeyValuePair<string, byte[]> stem in stems.Stems)
+                {
+                    encoded.Add((stem.Key, Convert.ToBase64String(stem.Value)));
+                }
+                return AudioIo.StemsResult(encoded);
+            }
+            case AudioEngineService.Enhance:
+                return Audio(await Engine.Fx.EnhanceAsync(spec, AudioEngineRequests.Enhance(args), cancel).ConfigureAwait(false));
+            default:
+                return AudioIo.Error($"Provider '{providerId}' has no Engine service wired.");
+        }
+    }
+
+    #region VRAM coordination with other SwarmUI backends (OOM evict-and-retry)
+
+    /// <summary>Whether <see cref="ProcessAsync"/> reacts to <see cref="OutOfVramException"/> by evicting
+    /// AudioLab's own idle models, asking other idle SwarmUI backends to free theirs, and retrying once. On by
+    /// default; set from <c>DynamicAudioSettings.CoordinateVramOnOutOfMemory</c> via
+    /// <see cref="RequestVramCoordination"/>.</summary>
+    private static volatile bool _coordinateVramOnOom = true;
+
+    /// <summary>Turns VRAM-OOM recovery on or off. Always takes effect immediately (unlike Device/VramMode,
+    /// there is no engine to rebuild) -- called from <c>DynamicAudioBackend.ApplyDeviceSetting</c> the same
+    /// place <see cref="RequestKeepResident"/> is.</summary>
+    public static void RequestVramCoordination(bool enabled) => _coordinateVramOnOom = enabled;
+
+    /// <summary>How long to wait after freeing memory and before retrying. <see cref="AbstractBackend.FreeMemory"/>'s
+    /// own contract: "some backends may take extra time between when this call returns and when memory is
+    /// actually freed ... generally give at least one full second." Retrying immediately would race that and
+    /// could fail the retry for a reason the wait alone would have avoided.</summary>
+    private static readonly TimeSpan VramSettleDelay = TimeSpan.FromSeconds(1);
+
+    /// <summary>Runs <paramref name="operation"/>; on <see cref="OutOfVramException"/>, while
+    /// <paramref name="enabled"/>, evicts AudioLab's own models (<paramref name="evictOwnModels"/>), then asks
+    /// other idle SwarmUI backends to free theirs (<paramref name="freeOtherBackends"/>), waits
+    /// <paramref name="delay"/> for the free to actually land, logs what happened, and retries
+    /// <paramref name="operation"/> exactly once -- a second failure of any kind propagates unchanged.
+    /// <paramref name="enabled"/> is a plain snapshot, not re-read mid-call: this decides the retry policy for
+    /// one request, not a pin that can be raced by a concurrent setting change. A <paramref name="cancel"/>
+    /// already signaled when the OOM lands skips recovery entirely -- there is no point evicting models for a
+    /// request about to be cancelled anyway.
+    ///
+    /// <para><c>internal</c> and parameterized over every side effect (same reasoning as
+    /// <see cref="OpenResidentPinCoreAsync{TLease}"/>) so a test can drive the eviction order, the retry-once
+    /// limit, and "setting off" with fakes -- no live Engine, no real SwarmUI backends, no GPU, no real
+    /// delay.</para></summary>
+    internal static async Task<T> RunWithVramRecoveryAsync<T>(
+        Func<Task<T>> operation,
+        bool enabled,
+        Action evictOwnModels,
+        Func<CancellationToken, Task<IReadOnlyList<string>>> freeOtherBackends,
+        Func<TimeSpan, CancellationToken, Task> delay,
+        Action<string> log,
+        CancellationToken cancel)
+    {
+        try
+        {
+            return await operation().ConfigureAwait(false);
+        }
+        catch (OutOfVramException ex) when (enabled)
+        {
+            cancel.ThrowIfCancellationRequested();
+            log($"[AudioLab] {ex.Message} Evicting idle audio models and asking other idle backends to free memory; retrying once.");
+            evictOwnModels();
+            IReadOnlyList<string> freed = await freeOtherBackends(cancel).ConfigureAwait(false);
+            log(freed.Count > 0
+                ? $"[AudioLab] Freed {freed.Count} other idle backend(s): {string.Join(", ", freed)}."
+                : "[AudioLab] No other idle backend had memory to free.");
+            await delay(VramSettleDelay, cancel).ConfigureAwait(false);
+            return await operation().ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>One backend <see cref="FreeIdleOtherBackendsCoreAsync"/> can consider freeing: a label for
+    /// logging, whether it is AudioLab's own (skip -- <see cref="FreeMemory"/> already handles those, and
+    /// double-freeing through the generic path would be redundant at best), whether it is currently idle (not
+    /// mid-generation, not reserved for a model load -- never true for a backend that might be busy), and the
+    /// actual free action. A record rather than a real <see cref="AbstractBackend"/> so a test can supply fakes
+    /// instead of a live SwarmUI backend registry.</summary>
+    internal readonly record struct VramBackendCandidate(string Name, bool IsAudioLabOwned, bool IsIdle, Func<Task<bool>> FreeMemoryAsync);
+
+    /// <summary>Decides which candidates to free and does it: every one that is idle and not AudioLab's own.
+    /// Mirrors what <c>BackendAPI.FreeBackendMemory</c> (the <c>/API/FreeBackendMemory</c> endpoint) does
+    /// internally -- iterate running backends, call <see cref="AbstractBackend.FreeMemory"/> -- but adds the
+    /// busy check that endpoint does NOT have: it frees every running backend unconditionally, which would risk
+    /// interrupting a generation genuinely in flight on another backend. A candidate whose own
+    /// <see cref="VramBackendCandidate.FreeMemoryAsync"/> throws is logged and skipped, not fatal to the rest.
+    /// <c>internal</c> for the same testability reason as <see cref="RunWithVramRecoveryAsync{T}"/>.</summary>
+    /// <returns>The names of the backends that reported they actually freed something.</returns>
+    internal static async Task<IReadOnlyList<string>> FreeIdleOtherBackendsCoreAsync(
+        IEnumerable<VramBackendCandidate> candidates, Action<string> log, CancellationToken cancel)
+    {
+        List<string> freed = [];
+        foreach (VramBackendCandidate candidate in candidates)
+        {
+            cancel.ThrowIfCancellationRequested();
+            if (candidate.IsAudioLabOwned || !candidate.IsIdle)
+            {
+                continue;
+            }
+            try
+            {
+                if (await candidate.FreeMemoryAsync().ConfigureAwait(false))
+                {
+                    freed.Add(candidate.Name);
+                }
+            }
+            catch (Exception ex)
+            {
+                log($"[AudioLab] FreeMemory on backend '{candidate.Name}' threw: {ex.Message}");
+            }
+        }
+        return freed;
+    }
+
+    /// <summary>Whether a backend counts as idle for VRAM recovery: genuinely running (not loading, errored,
+    /// disabled or shutting down) and neither reserved for a model load nor claimed by any in-flight request.
+    /// Reconstructed independently from the three raw signals rather than read off
+    /// <see cref="BackendHandler.BackendData.CheckIsInUseAtAll"/> directly, so this exact "is it safe to touch"
+    /// decision has its own unit tests instead of only ever being exercised through a live
+    /// <see cref="AbstractBackend"/>.</summary>
+    internal static bool IsIdleCandidate(BackendStatus status, bool reserveModelLoad, int usages) =>
+        status == BackendStatus.RUNNING && !reserveModelLoad && usages <= 0;
+
+    /// <summary>Real wiring for <see cref="FreeIdleOtherBackendsCoreAsync"/>: every currently-running SwarmUI
+    /// backend (<see cref="BackendHandler.RunningBackendsOfType{T}"/>), idle per <see cref="IsIdleCandidate"/>,
+    /// with every <see cref="DynamicAudioBackend"/> instance excluded (that is AudioLab's own;
+    /// <see cref="FreeMemory"/> already covers it). Freed with <c>systemRam: false</c> -- this is a VRAM
+    /// problem, not a host-RAM one, and clearing filename-block history or RAM caches on an unrelated backend
+    /// is not this feature's business.</summary>
+    private static Task<IReadOnlyList<string>> FreeIdleOtherBackendsAsync(CancellationToken cancel)
+    {
+        IEnumerable<VramBackendCandidate> candidates = Program.Backends.RunningBackendsOfType<AbstractBackend>()
+            .Select(backend =>
+            {
+                BackendHandler.BackendData data = backend.AbstractBackendData;
+                string name = $"{data?.BackType?.Name ?? backend.GetType().Name} #{data?.ID}";
+                bool idle = data is not null && IsIdleCandidate(backend.Status, data.ReserveModelLoad, data.Usages);
+                return new VramBackendCandidate(name, backend is DynamicAudioBackend, idle, () => backend.FreeMemory(systemRam: false));
+            });
+        return FreeIdleOtherBackendsCoreAsync(candidates, msg => Logs.Debug(msg), cancel);
+    }
+
+    #endregion
 
     /// <summary>Plans a provider's symbolic score without rendering it.
     ///

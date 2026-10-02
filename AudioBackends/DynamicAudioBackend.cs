@@ -84,6 +84,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
         [ConfigComment("Keep the last-used TTS model and the last-used STT model resident, instead of letting the\nengine's memory-pressure sweep (EvictBelowGb above) unload whichever one isn't about to run.\n\nWithout this, switching back and forth between a TTS and an STT model under low free RAM reloads one of\nthem from disk on every single switch, since the sweep that protects the model about to run still evicts\nthe other one as soon as it's idle. With it on, both stay warm as long as the box has room for both.\n\nOff by default: it trades some RAM/VRAM headroom for that warm-switch latency, and the two models are not\nfreed until this is turned back off, the backend is unloaded, or the engine otherwise releases its memory.")]
         public bool KeepTtsSttResident = false;
+
+        [ConfigComment("When loading or running an audio model hits an out-of-VRAM error, free memory and retry once\ninstead of just failing outright.\n\nAudioLab's engine is its own process-wide instance, with no coordination against SwarmUI's other\nbackends (ComfyUI, HartsyInference image/video, ...) sharing the same card — an image backend that still\nholds weights resident after a generation can leave an audio model with nowhere to fit, even though that\nmemory is just sitting idle. On, an out-of-VRAM error first evicts AudioLab's own idle models, then asks\nevery OTHER currently idle backend (never one mid-generation) to free its memory the same way Server >\nBackends > Free Memory Now does, waits a moment for that to actually land, then retries the load or\ngeneration exactly once. A second failure is reported as-is — the request genuinely does not fit.\nThis reacts to the error; it does not try to predict and avoid it ahead of time (the providers' VRAM\nestimates are free text, not a number this could size a pre-check against).\n\nOff restores the previous behavior: an out-of-VRAM error fails the request immediately. The backends asked\nto free memory simply reload their models on their next generation; nothing running is ever interrupted.")]
+        public bool CoordinateVramOnOutOfMemory = true;
     }
 
     /// <summary>Builds the Device dropdown from whatever compute backends the engine reports
@@ -354,6 +357,9 @@ public class DynamicAudioBackend : AbstractT2IBackend
         // backend Init, same restart-to-apply convention as every setting in this method) rather than watched
         // for live changes.
         AudioEngineBridge.RequestKeepResident(Settings?.KeepTtsSttResident ?? false);
+        // Same reasoning: a per-request retry policy, not an engine-build-time choice, so it always takes
+        // effect even though (like every setting in this method) it's only read at backend Init.
+        AudioEngineBridge.RequestVramCoordination(Settings?.CoordinateVramOnOutOfMemory ?? true);
         return true;
     }
 
