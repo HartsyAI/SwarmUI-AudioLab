@@ -249,8 +249,9 @@ public static class VoiceTurnOrchestrator
         Dictionary<string, object> args = new()
         {
             ["text"] = reply,
-            ["voice"] = provider.Id.Equals("piper_tts", StringComparison.OrdinalIgnoreCase)
-                ? "en_US-lessac-medium" : AudioConfiguration.DefaultVoice,
+            // No per-turn voice override exists here, so this always resolves the provider's own default --
+            // Piper's being the Engine's "en_US-lessac-medium" (see AudioConfiguration.ResolveVoice).
+            ["voice"] = AudioConfiguration.ResolveVoice(null, provider.Id),
             ["language"] = AudioConfiguration.DefaultLanguage,
             ["volume"] = 1.0,
         };
