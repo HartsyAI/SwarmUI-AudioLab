@@ -66,6 +66,9 @@ internal sealed class VoiceEngineModels
     {
     }
 
+    /// <summary>Voice calls registered and not yet released.</summary>
+    public int ActiveSessionCount => _activeSessions.Count;
+
     /// <summary>Subscribes to <see cref="AudioEngineBridge.EngineReleased"/> exactly once, lazily -- not at
     /// extension load, so a Swarm process that never opens the Voice Agent tab never touches it.</summary>
     private void EnsureHooked()
