@@ -113,7 +113,8 @@ effect):
 - **VRAM Mode** — how hard the engine works to fit audio models in VRAM (`Auto`/`Performance`/`Balanced`/
   `Aggressive`/`Maximum`).
 - **Evict Below Gb** — free host RAM, in GB, below which loading a new audio model unloads every other one. `0`
-  leaves the engine's own default (14 GB).
+  leaves the engine's own value (`vram.audioEvictBelowGb` in `~/.config/hartsyinference/settings.json`, else
+  14 GB); any other value overrides that file.
 - **Keep Tts Stt Resident** — keep the last-used TTS model and the last-used STT model resident instead of
   letting the Evict Below Gb sweep unload whichever one isn't about to run. Off by default: without it, switching
   back and forth between a TTS and an STT model under low free RAM reloads one of them from disk on every switch,
@@ -131,13 +132,13 @@ effect):
   actually land, then retries once. A second failure is reported as-is: the request genuinely does not fit.
   This reacts to the error rather than predicting it ahead of a load. A remote SwarmUI backend is never a
   candidate: its idle state can't be verified from here, and freeing it would hit that remote machine's own
-  `/API/FreeBackendMemory`, which frees unconditionally. AudioLab's own resident models are not part of this
-  retry either — the engine's own memory-pressure sweep, which runs only when switching to a different model
-  while host RAM or VRAM is low (never again before this retry — the model didn't change, so the Engine's own
-  check skips the sweep), inside a lock this setting has no safe way to reach from the outside, is what manages
-  those; a model pinned by Keep Tts Stt Resident is correspondingly never evicted by this retry. Off restores
-  the previous behavior (an out-of-VRAM error fails immediately); either way, a backend asked to free memory
-  simply reloads its own models on its next generation, so nothing already running is ever interrupted.
+  `/API/FreeBackendMemory`, which frees unconditionally. AudioLab's own resident models are the engine's job,
+  inside the lock its generations hold: switching to a model that is not loaded yet unloads the others first when
+  free VRAM is under what the incoming model needs, and an out-of-VRAM error inside the engine unloads every other
+  unpinned audio model and retries once there before it reaches this retry. A model pinned by Keep Tts Stt
+  Resident is never evicted by either. Off restores the previous behavior (an out-of-VRAM error fails
+  immediately); either way, a backend asked to free memory simply reloads its own models on its next
+  generation, so nothing already running is ever interrupted.
 
 ### Installing engines
 

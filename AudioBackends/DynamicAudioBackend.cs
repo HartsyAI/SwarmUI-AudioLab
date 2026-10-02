@@ -10,6 +10,7 @@ using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using Hartsy.Extensions.AudioLab.AudioServices;
 using Hartsy.Extensions.AudioLab.WebAPI.Models;
 using HartsyInference.Audio.Streaming;
+using HartsyInference.Core.Configuration;
 using HartsyInference.Cuda;
 using HartsyInference.Engine;
 using HartsyInference.Vulkan;
@@ -79,13 +80,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 "Aggressive (smaller chunks, half-precision caches)", "Maximum (every lever, changes output)"])]
         public string VramMode = "Auto";
 
-        [ConfigComment("Free host RAM, in GB, below which loading a new audio model first unloads every other one.\n\nAudio runners accumulate: each holds its own multi-GB copy of its weights, and nothing evicts them until this floor is crossed. Left too low, a box that switches between speech, transcription and music gets OOM-killed by the kernel rather than slowed — observed at 21.8 GB resident on a 32 GB machine, and again at 11.5 GB with a desktop session sharing it.\n\n0 leaves the engine's own default (14 GB). Raise it on a machine doing anything else; lower it only if you know the working set fits.\n\nHost RAM is process-wide, so with several audio backends each judges the floor independently. HARTSY_AUDIO_EVICT_BELOW_GB overrides this for headless runs.")]
+        [ConfigComment("Free host RAM, in GB, below which loading a new audio model first unloads every other one.\n\nAudio runners accumulate: each holds its own multi-GB copy of its weights, and nothing evicts them until this floor is crossed. Left too low, a box that switches between speech, transcription and music gets OOM-killed by the kernel rather than slowed — observed at 21.8 GB resident on a 32 GB machine, and again at 11.5 GB with a desktop session sharing it.\n\n0 leaves the engine's own value: vram.audioEvictBelowGb from its settings file (~/.config/hartsyinference/settings.json), else 14 GB. A value here overrides that file. Raise it on a machine doing anything else; lower it only if you know the working set fits.\n\nThe floor is process-wide: with several audio backends, the last one to start sets it.")]
         public int EvictBelowGb = 0;
 
         [ConfigComment("Keep the last-used TTS model and the last-used STT model resident, instead of letting the\nengine's memory-pressure sweep (EvictBelowGb above) unload whichever one isn't about to run.\n\nWithout this, switching back and forth between a TTS and an STT model under low free RAM reloads one of\nthem from disk on every single switch, since the sweep that protects the model about to run still evicts\nthe other one as soon as it's idle. With it on, both stay warm as long as the box has room for both.\n\nOff by default: it trades some RAM/VRAM headroom for that warm-switch latency, and the two models are not\nfreed until this is turned back off, the backend is unloaded, or the engine otherwise releases its memory.")]
         public bool KeepTtsSttResident = false;
 
-        [ConfigComment("When loading or running an audio model hits an out-of-VRAM error, ask SwarmUI's other idle,\nlocal backends to free memory and retry once instead of just failing outright.\n\nAudioLab's engine is its own process-wide instance, with no coordination against SwarmUI's other\nbackends (ComfyUI, HartsyInference image/video, ...) sharing the same card — an image backend that still\nholds weights resident after a generation can leave an audio model with nowhere to fit, even though that\nmemory is just sitting idle. On, an out-of-VRAM error reserves -- exclusively, so two overlapping AudioLab\nrecoveries can never both free the same backend at once -- and asks every OTHER local backend that is\ncurrently idle (never one mid-generation, and never one a reservation catches picking up new work in the\nmeantime) to free its memory the same way Server > Backends > Free Memory Now does, waits a moment for that\nto actually land, then retries the load or generation exactly once. A second failure is reported as-is —\nthe request genuinely does not fit. This reacts to the error; it does not try to predict and avoid it ahead\nof time (the providers' VRAM estimates are free text, not a number this could size a pre-check against). A\nremote SwarmUI backend is never a candidate -- its idle state can't be verified from here, and its own\n/API/FreeBackendMemory frees unconditionally on that remote machine.\n\nAudioLab's OWN resident models are not touched by this retry — only the engine's own existing\nmemory-pressure sweep manages those, and it runs only when switching to a different model while host RAM or\nVRAM is low, inside a lock this setting cannot safely reach into from the outside; it does not run again\nbefore this retry (the model didn't change), so the retry's only extra headroom is whatever the other\nbackends above actually free. A model kept resident by \"Keep Tts Stt Resident\" is therefore never evicted\nby this retry either.\n\nOff restores the previous behavior: an out-of-VRAM error fails the request immediately. The backends asked\nto free memory simply reload their models on their next generation; nothing running is ever interrupted.")]
+        [ConfigComment("When loading or running an audio model hits an out-of-VRAM error, ask SwarmUI's other idle,\nlocal backends to free memory and retry once instead of just failing outright.\n\nAudioLab's engine is its own process-wide instance, with no coordination against SwarmUI's other\nbackends (ComfyUI, HartsyInference image/video, ...) sharing the same card — an image backend that still\nholds weights resident after a generation can leave an audio model with nowhere to fit, even though that\nmemory is just sitting idle. On, an out-of-VRAM error reserves -- exclusively, so two overlapping AudioLab\nrecoveries can never both free the same backend at once -- and asks every OTHER local backend that is\ncurrently idle (never one mid-generation, and never one a reservation catches picking up new work in the\nmeantime) to free its memory the same way Server > Backends > Free Memory Now does, waits a moment for that\nto actually land, then retries the load or generation exactly once. A second failure is reported as-is —\nthe request genuinely does not fit. This reacts to the error; it does not try to predict and avoid it ahead\nof time (the providers' VRAM estimates are free text, not a number this could size a pre-check against). A\nremote SwarmUI backend is never a candidate -- its idle state can't be verified from here, and its own\n/API/FreeBackendMemory frees unconditionally on that remote machine.\n\nAudioLab's OWN resident models are the engine's job, not this setting's, because only the engine can unload\nthem inside the lock its generations hold: switching to a model that is not loaded yet unloads the others\nfirst when free VRAM is under what the incoming model needs, and an out-of-VRAM error inside the engine\nunloads every other unpinned audio model and retries once there before it ever reaches this retry. What this setting\nadds is the memory SwarmUI's other backends hold. A model kept resident by \"Keep Tts Stt Resident\" is\nnever evicted by either retry.\n\nOff restores the previous behavior: an out-of-VRAM error fails the request immediately. The backends asked\nto free memory simply reload their models on their next generation; nothing running is ever interrupted.")]
         public bool CoordinateVramOnOutOfMemory = true;
     }
 
@@ -303,26 +304,34 @@ public class DynamicAudioBackend : AbstractT2IBackend
         Status = BackendStatus.LOADING;
     }
 
-    /// <summary>Pushes the configured compute device to the shared engine, failing the backend loudly on a bad
-    /// selector instead of letting it die mid-generation. Returns false when the backend was set to ERRORED.</summary>
     /// <summary>Publishes the eviction floor to the engine, and says what it ended up as.
     ///
-    /// <para>The knob has always existed as an environment variable and has therefore been invisible: a host
+    /// <para>The knob used to be reachable only as an environment variable and was therefore invisible: a host
     /// being OOM-killed had no way to find the lever from the UI, and no way to see which value was in force.
-    /// Setting it here writes the same variable the engine reads, and the log line is so that a number nobody
-    /// set is still a number somebody can see.</para></summary>
-    private void ApplyEvictionFloor()
+    /// The log line is so that a number nobody set is still a number somebody can see.</para></summary>
+    private void ApplyEvictionFloor() => ApplyEvictionFloor(Settings?.EvictBelowGb ?? 0);
+
+    /// <summary>Sets the engine's <c>vram.audioEvictBelowGb</c> to <paramref name="gb"/>, or leaves the engine's own
+    /// value when <paramref name="gb"/> is not positive.
+    ///
+    /// <para>Through the engine's knob registry, the way <c>AlignModelsRoot</c> sets the models root: the engine
+    /// stopped reading the process environment, so the <c>HARTSY_AUDIO_EVICT_BELOW_GB</c> variable this used to
+    /// export changed nothing. <c>internal</c> so a test can check what reaches the engine without a SwarmUI
+    /// host.</para></summary>
+    internal static void ApplyEvictionFloor(int gb)
     {
-        int gb = Settings?.EvictBelowGb ?? 0;
         if (gb <= 0)
         {
-            Logs.Debug("[AudioLab] Audio eviction floor left at the engine default.");
+            Logs.Debug($"[AudioLab] Audio eviction floor left at {EngineKnobs.AudioEvictBelowGb.Value} GB "
+                + $"({KnobStore.SourceOf(EngineKnobs.AudioEvictBelowGb.Id)}).");
             return;
         }
-        Environment.SetEnvironmentVariable("HARTSY_AUDIO_EVICT_BELOW_GB", gb.ToString());
+        KnobStore.Set(EngineKnobs.AudioEvictBelowGb, (long)gb);
         Logs.Init($"[AudioLab] Audio models will be evicted when free host RAM drops below {gb} GB.");
     }
 
+    /// <summary>Pushes the configured compute device to the shared engine, failing the backend loudly on a bad
+    /// selector instead of letting it die mid-generation. Returns false when the backend was set to ERRORED.</summary>
     private bool ApplyDeviceSetting()
     {
         string device = string.IsNullOrWhiteSpace(Settings?.Device) ? "auto" : Settings.Device.Trim();
