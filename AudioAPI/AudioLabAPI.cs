@@ -744,7 +744,12 @@ public static class AudioLabAPI
                 else if (category == AudioCategory.TTS)
                 {
                     args["text"] = currentData?.ToString() ?? "";
-                    args["voice"] = step.Config?["voice"]?.ToString() ?? "default";
+                    // Same bug ProcessTTS had (fixed in #37): an unparameterised step used to forward the
+                    // generic "default" sentinel unresolved, which 404s for Piper specifically (its weights
+                    // ARE the voice, so "default" is not enough -- see AudioConfiguration.ResolveVoice).
+                    // "tts" workflow steps run against whichever TTS provider GetByCategory returns first,
+                    // which can be Piper, so this call site needed the same fix as every other TTS entry point.
+                    args["voice"] = AudioConfiguration.ResolveVoice(step.Config?["voice"]?.ToString(), provider.Id);
                     args["language"] = step.Config?["language"]?.ToString() ?? "en-US";
                     args["volume"] = step.Config?["volume"]?.Value<float>() ?? 0.8f;
                 }
