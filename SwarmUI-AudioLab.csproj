@@ -211,11 +211,16 @@
          bound to the 3060, so its device calls went to the 3060's context. The sticky CUDA 700 that followed also
          took down the image backend's generations on the 4090 until a restart. The fix only protects the process
          when every engine copy in it has it, so LLMAssistant takes alpha.243 at the same time. Verified
-         hartsyinference and hartsyinference.voice are both indexed on nuget.org at this version before bumping. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.243" />
+         hartsyinference and hartsyinference.voice are both indexed on nuget.org at this version before bumping.
+         2.0.0-alpha.244 = 2026-10-02 (alpha.243 -> alpha.244). REQUIRED by this extension's source: carries
+         HartsyInference#245 (AuK / AuK-Flash), which adds SpeechRequest.Instruction/DurationSeconds that
+         AudioEngineRequests.Speech sets unconditionally (PR #45, auk_tts provider) — this extension does not
+         compile against alpha.243. Verified hartsyinference and hartsyinference.voice are both indexed on
+         nuget.org at this version before bumping. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.244" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
-    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.243" />
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.244" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
