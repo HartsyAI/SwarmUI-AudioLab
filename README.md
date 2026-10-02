@@ -120,6 +120,24 @@ effect):
   since the sweep still evicts the idle one even while protecting the one about to run. On, both stay warm as
   long as the box has room for both — this trades some RAM/VRAM headroom for that warm-switch latency, and uses
   the engine's `OpenSynthesizerAsync`/`OpenTranscriberAsync` leases rather than a coarser unload-everything step.
+- **Coordinate Vram On Out Of Memory** — on by default. AudioLab's engine is its own process-wide instance with
+  no coordination against SwarmUI's other backends (ComfyUI, HartsyInference image/video, ...) sharing the same
+  card, so a backend that still holds weights resident after a generation can leave an audio model with nowhere
+  to fit, even though that memory is just sitting idle. When a model load or a generation hits an out-of-VRAM
+  error, this reserves — exclusively, so two overlapping AudioLab recoveries (or an existing reservation from
+  elsewhere) can never both free the same backend at once — every OTHER local backend that is currently idle
+  (never one mid-generation, and never one a reservation catches picking up new work in the meantime) to free
+  its memory — the same action Server > Backends > Free Memory Now triggers — waits a moment for that to
+  actually land, then retries once. A second failure is reported as-is: the request genuinely does not fit.
+  This reacts to the error rather than predicting it ahead of a load. A remote SwarmUI backend is never a
+  candidate: its idle state can't be verified from here, and freeing it would hit that remote machine's own
+  `/API/FreeBackendMemory`, which frees unconditionally. AudioLab's own resident models are not part of this
+  retry either — the engine's own memory-pressure sweep, which runs only when switching to a different model
+  while host RAM or VRAM is low (never again before this retry — the model didn't change, so the Engine's own
+  check skips the sweep), inside a lock this setting has no safe way to reach from the outside, is what manages
+  those; a model pinned by Keep Tts Stt Resident is correspondingly never evicted by this retry. Off restores
+  the previous behavior (an out-of-VRAM error fails immediately); either way, a backend asked to free memory
+  simply reloads its own models on its next generation, so nothing already running is ever interrupted.
 
 ### Installing engines
 
@@ -689,6 +707,13 @@ own unless you launch with a `launch-dev` script; otherwise run the `update` scr
 
 **Out of memory when switching between large models.** AudioLab evicts other providers under memory pressure, but
 host RAM, not VRAM, is usually the limit with multi gigabyte models. Close other heavy processes.
+
+**Out of VRAM right after generating an image or video.** An image/video backend sharing the card can still hold
+its weights resident. With **Coordinate Vram On Out Of Memory** on (the default), AudioLab retries automatically —
+see that setting above — so this should recover on its own; check the log for "Asking other idle backends to
+free memory" to confirm it did. If it still fails, the retry's one extra free was not enough: the other
+backend's model and the audio model you asked for do not fit on the card at the same time, and one of them
+needs to not be resident — close the other generation's tab/session, or use a smaller audio model.
 
 ## License and credits
 
