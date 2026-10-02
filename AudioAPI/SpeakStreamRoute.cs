@@ -89,12 +89,7 @@ public static class SpeakStreamRoute
 
         // Same reasoning as AudioLabSpeakRaw: Piper selects its weights by voice, so the "default" sentinel
         // becomes a request for a voice file named after the model and fails the download.
-        string voice = context.Request.Query["voice"].ToString();
-        if (string.IsNullOrWhiteSpace(voice))
-        {
-            voice = provider.Id.Equals("piper_tts", StringComparison.OrdinalIgnoreCase)
-                ? "en_US-lessac-medium" : AudioConfiguration.DefaultVoice;
-        }
+        string voice = AudioConfiguration.ResolveVoice(context.Request.Query["voice"].ToString(), provider.Id);
         Dictionary<string, object> args = new()
         {
             ["text"] = text,
