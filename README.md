@@ -124,16 +124,20 @@ effect):
   no coordination against SwarmUI's other backends (ComfyUI, HartsyInference image/video, ...) sharing the same
   card, so a backend that still holds weights resident after a generation can leave an audio model with nowhere
   to fit, even though that memory is just sitting idle. When a model load or a generation hits an out-of-VRAM
-  error, this reserves and asks every OTHER backend that is currently idle (never one mid-generation, and never
-  one a reservation catches picking up new work in the meantime) to free its memory — the same action Server >
-  Backends > Free Memory Now triggers — waits a moment for that to actually land, then retries once. A second
-  failure is reported as-is: the request genuinely does not fit. This reacts to the error rather than predicting
-  it ahead of a load. AudioLab's own resident models are not part of this retry — the engine's own
-  memory-pressure sweep (which already runs before every load, inside a lock this setting has no safe way to
-  reach from the outside) is what manages those; a model pinned by Keep Tts Stt Resident is correspondingly
-  never evicted by this retry. Off restores the previous behavior (an out-of-VRAM error fails immediately);
-  either way, a backend asked to free memory simply reloads its own models on its next generation, so nothing
-  already running is ever interrupted.
+  error, this reserves — exclusively, so two overlapping AudioLab recoveries (or an existing reservation from
+  elsewhere) can never both free the same backend at once — every OTHER local backend that is currently idle
+  (never one mid-generation, and never one a reservation catches picking up new work in the meantime) to free
+  its memory — the same action Server > Backends > Free Memory Now triggers — waits a moment for that to
+  actually land, then retries once. A second failure is reported as-is: the request genuinely does not fit.
+  This reacts to the error rather than predicting it ahead of a load. A remote SwarmUI backend is never a
+  candidate: its idle state can't be verified from here, and freeing it would hit that remote machine's own
+  `/API/FreeBackendMemory`, which frees unconditionally. AudioLab's own resident models are not part of this
+  retry either — the engine's own memory-pressure sweep, which runs only when switching to a different model
+  while host RAM or VRAM is low (never again before this retry — the model didn't change, so the Engine's own
+  check skips the sweep), inside a lock this setting has no safe way to reach from the outside, is what manages
+  those; a model pinned by Keep Tts Stt Resident is correspondingly never evicted by this retry. Off restores
+  the previous behavior (an out-of-VRAM error fails immediately); either way, a backend asked to free memory
+  simply reloads its own models on its next generation, so nothing already running is ever interrupted.
 
 ### Installing engines
 

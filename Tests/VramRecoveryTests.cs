@@ -13,18 +13,24 @@ namespace Hartsy.Extensions.AudioLab.Tests;
 /// SwarmUI backend registry, no GPU, no real delay (same pattern <see cref="AudioEngineBridge.OpenResidentPinCoreAsync{TLease}"/>
 /// already uses, see ResidencyPinRaceTests).
 ///
-/// <para>Independent review of an earlier version of this feature found two real problems with the REAL
-/// wiring (not reachable by a suite that only drives the parameterized core with fakes): (1) an explicit
-/// "evict AudioLab's own idle models" step actually called <c>IInferenceEngine.FreeMemory()</c>, which drops
-/// EVERY loaded model with no busy check at all -- unsafe, since the Engine's generation lock is released
-/// before this code's catch block ever runs, so a second, already-queued request could be genuinely
-/// generating against a different resident model at that exact moment. (2) freeing another SwarmUI backend
-/// read its idle state once and acted on it, with nothing stopping the scheduler from assigning it new work
-/// in between. Both are fixed now: (1) by removing AudioLab's own eviction step entirely (the Engine's own
-/// in-lock memory-pressure sweep is what covers that, and nothing outside the lock can safely duplicate it --
-/// see <see cref="AudioEngineBridge.RunWithVramRecoveryAsync{T}"/>'s doc), and (2) by reserving each other
-/// backend (<see cref="AbstractBackend.Reservations"/>) before rechecking idle, mirroring SwarmUI core's own
-/// <c>ModelsAPI.cs</c> model-resave recovery path. These tests cover both fixes directly.</para></summary>
+/// <para>Two independent-review rounds of an earlier version of this feature found real problems in the REAL
+/// wiring -- not reachable by a suite that only drives the parameterized core with fakes using
+/// behavior-correct stand-ins. Round 1: an explicit "evict AudioLab's own idle models" step called
+/// <c>IInferenceEngine.FreeMemory()</c> with no busy check, unsafe because the Engine's generation lock
+/// releases before this code's catch block ever runs; and freeing another SwarmUI backend read its idle
+/// state once with nothing stopping the scheduler from assigning it new work in between. Round 2, after a
+/// reservation step was added: the reservation itself was not exclusive (two overlapping AudioLab
+/// recoveries, or an existing reservation from elsewhere, could both pass it and both call
+/// <c>FreeMemory</c> on the same backend at once -- demonstrated with a real concurrent-call probe), and a
+/// remote SwarmUI backend was a candidate at all (its own <c>FreeMemory</c> hits that remote machine's
+/// unconditional <c>/API/FreeBackendMemory</c>, which this process cannot verify is safe). All four are
+/// fixed: the own-eviction step is gone entirely (the Engine's in-lock memory-pressure sweep covers that,
+/// and nothing outside the lock can safely duplicate it -- see
+/// <see cref="AudioEngineBridge.RunWithVramRecoveryAsync{T}"/>'s doc); each OTHER backend is now reserved
+/// EXCLUSIVELY (<see cref="AudioEngineBridge.VramBackendCandidate.TryReserve"/>, only the caller whose
+/// <see cref="AbstractBackend.Reservations"/> increment lands on exactly 1 proceeds) before its idle state
+/// is rechecked, mirroring SwarmUI core's own <c>ModelsAPI.cs</c> model-resave recovery path; and a
+/// <c>SwarmSwarmBackend</c> instance is never a candidate at all. These tests cover all of it directly.</para></summary>
 public class VramRecoveryTests
 {
     private static OutOfVramException Oom() => new(64 * 1024 * 1024, 152 * 1024 * 1024, 24082L * 1024 * 1024);
@@ -159,13 +165,40 @@ public class VramRecoveryTests
         Assert.False(freeCalled);
     }
 
+    /// <summary>Builds a candidate whose <c>TryReserve</c>/<c>Release</c> share a real
+    /// <see cref="Interlocked"/>-guarded counter -- the same shape <c>FreeIdleOtherBackendsAsync</c> wires a
+    /// real <see cref="AbstractBackend.Reservations"/> with -- so tests can exercise genuine exclusivity
+    /// instead of a fake that always says yes.</summary>
+    /// <summary><paramref name="reservations"/> is a one-element array, not a <c>ref int</c> -- a lambda
+    /// cannot capture a byref parameter, and this needs the SAME mutable counter visible to multiple
+    /// candidates built from the same test, same as two real <see cref="AbstractBackend"/> instances would
+    /// share one <see cref="AbstractBackend.Reservations"/> field.</summary>
+    private static AudioEngineBridge.VramBackendCandidate ExclusiveCandidate(
+        string name, int[] reservations, Func<bool> isIdleNow, Func<Task<bool>> freeMemoryAsync)
+    {
+        return new(
+            name, IsAudioLabOwned: false, IsRemote: false,
+            TryReserve: () =>
+            {
+                if (Interlocked.Increment(ref reservations[0]) == 1)
+                {
+                    return true;
+                }
+                Interlocked.Decrement(ref reservations[0]);
+                return false;
+            },
+            Release: () => Interlocked.Decrement(ref reservations[0]),
+            IsIdleNow: isIdleNow,
+            FreeMemoryAsync: freeMemoryAsync);
+    }
+
     [Fact]
     public async Task FreeIdleOtherBackendsCoreAsync_ReservesBeforeCheckingIdle()
     {
         List<string> order = [];
         AudioEngineBridge.VramBackendCandidate candidate = new(
-            "comfy #1", IsAudioLabOwned: false,
-            Reserve: () => order.Add("reserve"),
+            "comfy #1", IsAudioLabOwned: false, IsRemote: false,
+            TryReserve: () => { order.Add("reserve"); return true; },
             Release: () => order.Add("release"),
             IsIdleNow: () => { order.Add("check"); return true; },
             FreeMemoryAsync: () => { order.Add("free"); return Task.FromResult(true); });
@@ -178,13 +211,13 @@ public class VramRecoveryTests
     [Fact]
     public async Task FreeIdleOtherBackendsCoreAsync_NotIdleAfterReservation_IsNeverFreed_ButStillReleased()
     {
-        // The race Finding 2 closed: something was already running on this backend by the time the
-        // reservation landed (the reservation can only block NEW work, not undo work already in flight).
-        // Must not free it, and must still release the reservation so it isn't stuck forever.
+        // Something was already running on this backend by the time the reservation landed (a reservation
+        // can only block NEW work, not undo work already in flight). Must not free it, and must still
+        // release the reservation so it isn't stuck forever.
         bool reserved = false, released = false, freeCalled = false;
         AudioEngineBridge.VramBackendCandidate candidate = new(
-            "busy-after-reserve", IsAudioLabOwned: false,
-            Reserve: () => reserved = true,
+            "busy-after-reserve", IsAudioLabOwned: false, IsRemote: false,
+            TryReserve: () => { reserved = true; return true; },
             Release: () => released = true,
             IsIdleNow: () => false,
             FreeMemoryAsync: () => { freeCalled = true; return Task.FromResult(true); });
@@ -202,8 +235,8 @@ public class VramRecoveryTests
     {
         List<string> order = [];
         AudioEngineBridge.VramBackendCandidate candidate = new(
-            "idle-comfy #3", IsAudioLabOwned: false,
-            Reserve: () => { },
+            "idle-comfy #3", IsAudioLabOwned: false, IsRemote: false,
+            TryReserve: () => true,
             Release: () => order.Add("release"),
             IsIdleNow: () => true,
             FreeMemoryAsync: () => { order.Add("free"); return Task.FromResult(true); });
@@ -219,8 +252,8 @@ public class VramRecoveryTests
     {
         bool touched = false;
         AudioEngineBridge.VramBackendCandidate candidate = new(
-            "own-audio #2", IsAudioLabOwned: true,
-            Reserve: () => touched = true,
+            "own-audio #2", IsAudioLabOwned: true, IsRemote: false,
+            TryReserve: () => { touched = true; return true; },
             Release: () => touched = true,
             IsIdleNow: () => { touched = true; return true; },
             FreeMemoryAsync: () => { touched = true; return Task.FromResult(true); });
@@ -232,18 +265,38 @@ public class VramRecoveryTests
     }
 
     [Fact]
+    public async Task FreeIdleOtherBackendsCoreAsync_Remote_IsNeverReservedCheckedOrFreed()
+    {
+        // A SwarmSwarmBackend's FreeMemory hits the REMOTE machine's own unconditional
+        // /API/FreeBackendMemory; this process cannot verify what else is running there, so it must never
+        // even attempt to reserve or free one.
+        bool touched = false;
+        AudioEngineBridge.VramBackendCandidate candidate = new(
+            "remote-swarm #4", IsAudioLabOwned: false, IsRemote: true,
+            TryReserve: () => { touched = true; return true; },
+            Release: () => touched = true,
+            IsIdleNow: () => { touched = true; return true; },
+            FreeMemoryAsync: () => { touched = true; return Task.FromResult(true); });
+
+        IReadOnlyList<string> freed = await AudioEngineBridge.FreeIdleOtherBackendsCoreAsync([candidate], _ => { }, CancellationToken.None);
+
+        Assert.False(touched, "a remote backend must be skipped entirely, with no reserve/check/free");
+        Assert.Empty(freed);
+    }
+
+    [Fact]
     public async Task FreeIdleOtherBackendsCoreAsync_FreeMemoryThrows_StillReleases_AndOthersStillTried()
     {
         bool throwerReleased = false, okReleased = false, okFreed = false;
         AudioEngineBridge.VramBackendCandidate throwing = new(
-            "throws", IsAudioLabOwned: false,
-            Reserve: () => { },
+            "throws", IsAudioLabOwned: false, IsRemote: false,
+            TryReserve: () => true,
             Release: () => throwerReleased = true,
             IsIdleNow: () => true,
             FreeMemoryAsync: () => throw new InvalidOperationException("boom"));
         AudioEngineBridge.VramBackendCandidate ok = new(
-            "idle-ok", IsAudioLabOwned: false,
-            Reserve: () => { },
+            "idle-ok", IsAudioLabOwned: false, IsRemote: false,
+            TryReserve: () => true,
             Release: () => okReleased = true,
             IsIdleNow: () => true,
             FreeMemoryAsync: () => { okFreed = true; return Task.FromResult(true); });
@@ -260,13 +313,76 @@ public class VramRecoveryTests
     public async Task FreeIdleOtherBackendsCoreAsync_FreeMemoryReturningFalse_IsNotCountedAsFreed()
     {
         AudioEngineBridge.VramBackendCandidate candidate = new(
-            "idle-but-nothing-cached", IsAudioLabOwned: false,
-            Reserve: () => { }, Release: () => { }, IsIdleNow: () => true,
+            "idle-but-nothing-cached", IsAudioLabOwned: false, IsRemote: false,
+            TryReserve: () => true, Release: () => { }, IsIdleNow: () => true,
             FreeMemoryAsync: () => Task.FromResult(false));
 
         IReadOnlyList<string> freed = await AudioEngineBridge.FreeIdleOtherBackendsCoreAsync([candidate], _ => { }, CancellationToken.None);
 
         Assert.Empty(freed);
+    }
+
+    [Fact]
+    public async Task FreeIdleOtherBackendsCoreAsync_TryReserveFails_IsSkipped_NoReleaseNoFree()
+    {
+        // The direct, single-call-site version of the exclusivity contract: when TryReserve itself reports
+        // failure (another holder already has it), nothing else about that candidate runs -- not
+        // IsIdleNow, not FreeMemoryAsync, not even Release (TryReserve already backed off its own
+        // increment; a second decrement here would under-flow the counter below zero).
+        bool idleChecked = false, freeCalled = false, released = false;
+        AudioEngineBridge.VramBackendCandidate candidate = new(
+            "already-held", IsAudioLabOwned: false, IsRemote: false,
+            TryReserve: () => false,
+            Release: () => released = true,
+            IsIdleNow: () => { idleChecked = true; return true; },
+            FreeMemoryAsync: () => { freeCalled = true; return Task.FromResult(true); });
+
+        IReadOnlyList<string> freed = await AudioEngineBridge.FreeIdleOtherBackendsCoreAsync([candidate], _ => { }, CancellationToken.None);
+
+        Assert.False(idleChecked);
+        Assert.False(freeCalled);
+        Assert.False(released);
+        Assert.Empty(freed);
+    }
+
+    [Fact]
+    public async Task FreeIdleOtherBackendsCoreAsync_TwoConcurrentRecoveries_OnlyOneFreesTheSameBackend()
+    {
+        // The actual race the second review round demonstrated with a live probe: two AudioLab recoveries
+        // running at once (e.g. two queued requests that both OOM) both see the same other backend as a
+        // candidate. Driven with real overlapping Tasks and explicit signals -- not simulated by flipping a
+        // flag inline -- so the ordering is deterministic without relying on timing, the same reasoning
+        // ResidencyPinRaceTests uses for its own genuinely-concurrent case.
+        int[] reservations = [0];
+        int freeCallCount = 0;
+        TaskCompletionSource firstIsInsideFree = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource releaseFirstFree = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        AudioEngineBridge.VramBackendCandidate MakeCandidate() => ExclusiveCandidate(
+            "shared-backend", reservations,
+            isIdleNow: () => true,
+            freeMemoryAsync: async () =>
+            {
+                Interlocked.Increment(ref freeCallCount);
+                firstIsInsideFree.TrySetResult();
+                await releaseFirstFree.Task; // held open deliberately so the second sweep can race it
+                return true;
+            });
+
+        Task<IReadOnlyList<string>> first = AudioEngineBridge.FreeIdleOtherBackendsCoreAsync(
+            [MakeCandidate()], _ => { }, CancellationToken.None);
+        await firstIsInsideFree.Task; // the first sweep now holds the reservation AND is inside FreeMemoryAsync
+
+        IReadOnlyList<string> second = await AudioEngineBridge.FreeIdleOtherBackendsCoreAsync(
+            [MakeCandidate()], _ => { }, CancellationToken.None);
+
+        releaseFirstFree.SetResult();
+        IReadOnlyList<string> firstResult = await first;
+
+        Assert.Equal(1, freeCallCount); // only the sweep that actually reserved it ever called FreeMemoryAsync
+        Assert.Equal(["shared-backend"], firstResult);
+        Assert.Empty(second); // the second sweep saw TryReserve fail and backed off without touching it
+        Assert.Equal(0, reservations[0]); // both sweeps fully unwound; nothing left stuck reserved
     }
 
     [Fact]
