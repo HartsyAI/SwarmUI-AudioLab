@@ -185,11 +185,19 @@
          StateChanged-event approximation the first version of this PR shipped before this overload was
          published. Otherwise only adds the VoiceHost exe and its deploy files, which this extension does not
          reference. Verified hartsyinference and hartsyinference.voice are both indexed on nuget.org at this
-         version before bumping. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.238" />
+         version before bumping.
+         2.0.0-alpha.241 = 2026-10-02 (alpha.238 -> alpha.241). Dia's decode self-attention is GPU-resident (warm
+         generation about 3.6x faster, bit-identical output); HeartMuLa's quantized GGUF cache resolves under
+         modelsRoot/audio instead of ~/.cache; a bare `piper` request falls back to Piper's default voice instead
+         of 404ing on piper.onnx (alpha.240); the TTS samplers stop sorting the whole vocabulary every token
+         (Kyutai TTS -63 %, FishSpeech -37 %; alpha.239); ApplyRope's combined q+k overload is safe for GQA; LLM
+         uploads fail fast on a retired CUDA stream. Voice gains opt-in prefix-KV reuse
+         (TextRequest.PrefixCacheKey). Verified hartsyinference and hartsyinference.voice are both indexed on
+         nuget.org at this version before bumping. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.241" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
-    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.238" />
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.241" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
