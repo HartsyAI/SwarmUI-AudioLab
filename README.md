@@ -231,9 +231,13 @@ The short version as of the most recent passes:
 - **Speech to text is uniformly solid.** Every Whisper, Distil-Whisper, Moonshine and streaming variant transcribes
   on GPU at speeds in the faster-whisper reference range, with Moonshine tiny the fastest measured.
 - **Most text to speech engines work and are word correct.** Kokoro, Chatterbox, Fish Speech, Kyutai TTS, Pocket
-  TTS, Spark-TTS, StyleTTS 2 and Dia all produce intelligible, matching speech.
+  TTS, Spark-TTS and StyleTTS 2 all produce intelligible, matching speech.
 - **A few have caveats worth knowing** before you rely on them: Bark sounds staticy, F5-TTS is correct but slow,
-  VibeVoice is a long form model that destabilizes on short prompts, and NeuTTS can append a garbled tail.
+  VibeVoice is a long form model that destabilizes on short prompts, NeuTTS can append a garbled tail, and Dia
+  is a dialogue model, not a single-sentence narrator — start with `[S1]` and alternate `[S1]`/`[S2]` per speaker
+  turn, and give it roughly 5-20 seconds of speech worth of text; a short single sentence often comes back as
+  non-speech rather than silence, confirmed as upstream Dia's own behavior (same input through the reference
+  implementation fails the same way), not an engine bug.
 - **Some are gated on engine work** and refuse cleanly with a specific reason rather than failing at generation
   time: Piper, Zonos, MeloTTS and CosyVoice each need front end pieces the engine does not have yet.
 - **Music generation works** across ACE-Step, MusicGen, AudioGen, HeartLib, YuE and YuE2, though the large
