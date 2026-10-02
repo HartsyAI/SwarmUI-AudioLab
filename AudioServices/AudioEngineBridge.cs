@@ -323,15 +323,15 @@ public static class AudioEngineBridge
     /// catch block ever runs, so a second, already-queued AudioLab request can acquire it and start
     /// generating against a different resident model between this request's failure and the
     /// <see cref="FreeMemory"/> call -- which would then drop that model's weights out from under a
-    /// generation genuinely in flight. The only AudioLab-side lever that cannot race it is
-    /// <c>AudioRuntime.EvictOthersUnderMemoryPressure</c>, inside that same lock -- but it runs only when
-    /// <paramref name="operation"/>'s NEXT attempt is switching to a different resident model while host RAM
-    /// or VRAM is low; it does NOT run again before this retry (same model, so the Engine's own key check
-    /// short-circuits it). So the retry's only extra headroom is whatever <paramref name="freeOtherBackends"/>
-    /// frees below -- there is no second, safe, AudioLab-side eviction to add. One real consequence: a model
-    /// pinned by "Keep Tts Stt Resident" is -- correctly, since nothing here can prove it is safe to touch --
-    /// never evicted by this retry; freeing it still requires the setting being turned off, the backend
-    /// unloading, or the pin naturally being replaced.</para>
+    /// generation genuinely in flight. Evicting AudioLab's own models is the Engine's job, inside that lock:
+    /// a switch to a model that is not loaded yet unloads the others first when free VRAM is under the incoming
+    /// model's estimated need, and an <see cref="OutOfVramException"/> inside the work makes the Engine unload
+    /// every other unpinned audio model and retry once before the exception ever reaches this method. So by the
+    /// time one gets here, the Engine has already freed what it safely can of its own; the remaining headroom is
+    /// whatever <paramref name="freeOtherBackends"/> frees below. A model pinned by "Keep Tts Stt Resident" is
+    /// -- correctly, since nothing can prove it is safe to touch -- never evicted by either retry; freeing it
+    /// still requires the setting being turned off, the backend unloading, or the pin naturally being
+    /// replaced.</para>
     ///
     /// <para><c>internal</c> and parameterized over every side effect (same reasoning as
     /// <see cref="OpenResidentPinCoreAsync{TLease}"/>) so a test can drive the retry-once limit and "setting

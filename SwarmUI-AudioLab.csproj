@@ -193,11 +193,21 @@
          (Kyutai TTS -63 %, FishSpeech -37 %; alpha.239); ApplyRope's combined q+k overload is safe for GQA; LLM
          uploads fail fast on a retired CUDA stream. Voice gains opt-in prefix-KV reuse
          (TextRequest.PrefixCacheKey). Verified hartsyinference and hartsyinference.voice are both indexed on
-         nuget.org at this version before bumping. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.241" />
+         nuget.org at this version before bumping.
+         2.0.0-alpha.242 = 2026-10-02 (alpha.241 -> alpha.242). A switch between audio models sizes the incoming
+         model and evicts the others when free VRAM is under what it needs, instead of only under a fixed 3 GiB, and
+         an out-of-VRAM failure unloads every other unpinned audio model and retries once inside the engine (Dia no
+         longer fails and Orpheus no longer streams its weights after a long sweep; floor knob
+         vram.audioEvictFreeVramFloorMb, default 3072). cuDNN skips nondeterministic engines by default, so
+         Chatterbox, CosyVoice 2 and Piper repeat their output on identical calls; a short Dia prompt fails in seconds;
+         Kokoro and the synthesizer lease stop a cancelled synthesis at the next stage; a cancelled LLM prefill frees
+         the GPU within about two layers; prefix-KV reuse is bounded; the wake listener gains a per-device
+         Claim/Release handoff. Verified hartsyinference and hartsyinference.voice are both indexed on nuget.org at
+         this version before bumping. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.242" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
-    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.241" />
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.242" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
