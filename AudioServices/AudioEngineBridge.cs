@@ -221,7 +221,6 @@ public static class AudioEngineBridge
             return await RunWithVramRecoveryAsync(
                 () => DispatchAsync(providerId, binding, args, cancel),
                 _coordinateVramOnOom,
-                FreeMemory,
                 FreeIdleOtherBackendsAsync,
                 Task.Delay,
                 msg => Logs.Warning(msg),
@@ -281,10 +280,9 @@ public static class AudioEngineBridge
 
     #region VRAM coordination with other SwarmUI backends (OOM evict-and-retry)
 
-    /// <summary>Whether <see cref="ProcessAsync"/> reacts to <see cref="OutOfVramException"/> by evicting
-    /// AudioLab's own idle models, asking other idle SwarmUI backends to free theirs, and retrying once. On by
-    /// default; set from <c>DynamicAudioSettings.CoordinateVramOnOutOfMemory</c> via
-    /// <see cref="RequestVramCoordination"/>.</summary>
+    /// <summary>Whether <see cref="ProcessAsync"/> reacts to <see cref="OutOfVramException"/> by asking other
+    /// idle SwarmUI backends to free their memory and retrying once. On by default; set from
+    /// <c>DynamicAudioSettings.CoordinateVramOnOutOfMemory</c> via <see cref="RequestVramCoordination"/>.</summary>
     private static volatile bool _coordinateVramOnOom = true;
 
     /// <summary>Turns VRAM-OOM recovery on or off. Always takes effect immediately (unlike Device/VramMode,
@@ -299,23 +297,36 @@ public static class AudioEngineBridge
     private static readonly TimeSpan VramSettleDelay = TimeSpan.FromSeconds(1);
 
     /// <summary>Runs <paramref name="operation"/>; on <see cref="OutOfVramException"/>, while
-    /// <paramref name="enabled"/>, evicts AudioLab's own models (<paramref name="evictOwnModels"/>), then asks
-    /// other idle SwarmUI backends to free theirs (<paramref name="freeOtherBackends"/>), waits
-    /// <paramref name="delay"/> for the free to actually land, logs what happened, and retries
-    /// <paramref name="operation"/> exactly once -- a second failure of any kind propagates unchanged.
-    /// <paramref name="enabled"/> is a plain snapshot, not re-read mid-call: this decides the retry policy for
-    /// one request, not a pin that can be raced by a concurrent setting change. A <paramref name="cancel"/>
-    /// already signaled when the OOM lands skips recovery entirely -- there is no point evicting models for a
-    /// request about to be cancelled anyway.
+    /// <paramref name="enabled"/>, asks other idle SwarmUI backends to free their memory
+    /// (<paramref name="freeOtherBackends"/>), waits <paramref name="delay"/> for that to actually land, logs
+    /// what happened, and retries <paramref name="operation"/> exactly once -- a second failure of any kind
+    /// propagates unchanged. <paramref name="enabled"/> is a plain snapshot, not re-read mid-call: this
+    /// decides the retry policy for one request, not a pin that can be raced by a concurrent setting change.
+    /// A <paramref name="cancel"/> already signaled when the OOM lands skips recovery entirely -- there is no
+    /// point freeing memory for a request about to be cancelled anyway.
+    ///
+    /// <para>Deliberately does NOT evict AudioLab's own resident models here. An earlier version called
+    /// <see cref="FreeMemory"/> (-&gt; <c>IInferenceEngine.FreeMemory</c>) directly from this catch block;
+    /// independent review found that unsafe: the Engine's generation lock
+    /// (<c>AudioRuntime._genLock</c>) is released in its own <c>RunAsync</c>'s <c>finally</c> BEFORE this
+    /// catch block ever runs, so a second, already-queued AudioLab request can acquire it and start
+    /// generating against a different resident model between this request's failure and the
+    /// <see cref="FreeMemory"/> call -- which would then drop that model's weights out from under a
+    /// generation genuinely in flight. AudioLab's own eviction already happens the one place that cannot
+    /// race it: <c>AudioRuntime.EvictOthersUnderMemoryPressure</c>, inside that same lock, before every
+    /// attempt (including this one) when host RAM or VRAM is low. If attempt 1 still hits
+    /// <see cref="OutOfVramException"/> despite that in-lock sweep, there is no second, safe, AudioLab-side
+    /// lever to pull before retrying -- only the other-backends step below, and the wait. One real
+    /// consequence: a model pinned by "Keep Tts Stt Resident" is -- correctly, since nothing here can prove
+    /// it is safe to touch -- never evicted by this retry; freeing it still requires the setting being
+    /// turned off, the backend unloading, or the pin naturally being replaced.</para>
     ///
     /// <para><c>internal</c> and parameterized over every side effect (same reasoning as
-    /// <see cref="OpenResidentPinCoreAsync{TLease}"/>) so a test can drive the eviction order, the retry-once
-    /// limit, and "setting off" with fakes -- no live Engine, no real SwarmUI backends, no GPU, no real
-    /// delay.</para></summary>
+    /// <see cref="OpenResidentPinCoreAsync{TLease}"/>) so a test can drive the retry-once limit and "setting
+    /// off" with fakes -- no live Engine, no real SwarmUI backends, no GPU, no real delay.</para></summary>
     internal static async Task<T> RunWithVramRecoveryAsync<T>(
         Func<Task<T>> operation,
         bool enabled,
-        Action evictOwnModels,
         Func<CancellationToken, Task<IReadOnlyList<string>>> freeOtherBackends,
         Func<TimeSpan, CancellationToken, Task> delay,
         Action<string> log,
@@ -328,8 +339,7 @@ public static class AudioEngineBridge
         catch (OutOfVramException ex) when (enabled)
         {
             cancel.ThrowIfCancellationRequested();
-            log($"[AudioLab] {ex.Message} Evicting idle audio models and asking other idle backends to free memory; retrying once.");
-            evictOwnModels();
+            log($"[AudioLab] {ex.Message} Asking other idle backends to free memory; retrying once.");
             IReadOnlyList<string> freed = await freeOtherBackends(cancel).ConfigureAwait(false);
             log(freed.Count > 0
                 ? $"[AudioLab] Freed {freed.Count} other idle backend(s): {string.Join(", ", freed)}."
@@ -340,20 +350,41 @@ public static class AudioEngineBridge
     }
 
     /// <summary>One backend <see cref="FreeIdleOtherBackendsCoreAsync"/> can consider freeing: a label for
-    /// logging, whether it is AudioLab's own (skip -- <see cref="FreeMemory"/> already handles those, and
-    /// double-freeing through the generic path would be redundant at best), whether it is currently idle (not
-    /// mid-generation, not reserved for a model load -- never true for a backend that might be busy), and the
-    /// actual free action. A record rather than a real <see cref="AbstractBackend"/> so a test can supply fakes
-    /// instead of a live SwarmUI backend registry.</summary>
-    internal readonly record struct VramBackendCandidate(string Name, bool IsAudioLabOwned, bool IsIdle, Func<Task<bool>> FreeMemoryAsync);
+    /// logging, whether it is AudioLab's own (skip -- its own models are the Engine's in-lock sweep's job,
+    /// not this one's; see <see cref="RunWithVramRecoveryAsync{T}"/>'s doc), and the reserve/check/free/release
+    /// steps as delegates. A record rather than a real <see cref="AbstractBackend"/> so a test can supply
+    /// fakes instead of a live SwarmUI backend registry.</summary>
+    /// <param name="Name">Label for logging.</param>
+    /// <param name="IsAudioLabOwned">True for AudioLab's own <c>DynamicAudioBackend</c> instances -- skipped entirely, never reserved.</param>
+    /// <param name="Reserve">Marks the backend "don't assign new work here" -- SwarmUI's scheduler checks this before the idle recheck below can possibly run, closing the window a bare read-then-free would leave open.</param>
+    /// <param name="Release">Undoes <paramref name="Reserve"/> -- always called, even when the candidate turned out busy or <see cref="FreeMemoryAsync"/> threw.</param>
+    /// <param name="IsIdleNow">Re-read AFTER <paramref name="Reserve"/>: whether anything was already running when reserved (a reservation cannot evict in-flight work, only block new work from arriving).</param>
+    /// <param name="FreeMemoryAsync">The actual free action, called only when <paramref name="IsIdleNow"/> is true at that point.</param>
+    internal readonly record struct VramBackendCandidate(
+        string Name,
+        bool IsAudioLabOwned,
+        Action Reserve,
+        Action Release,
+        Func<bool> IsIdleNow,
+        Func<Task<bool>> FreeMemoryAsync);
 
-    /// <summary>Decides which candidates to free and does it: every one that is idle and not AudioLab's own.
-    /// Mirrors what <c>BackendAPI.FreeBackendMemory</c> (the <c>/API/FreeBackendMemory</c> endpoint) does
-    /// internally -- iterate running backends, call <see cref="AbstractBackend.FreeMemory"/> -- but adds the
-    /// busy check that endpoint does NOT have: it frees every running backend unconditionally, which would risk
-    /// interrupting a generation genuinely in flight on another backend. A candidate whose own
-    /// <see cref="VramBackendCandidate.FreeMemoryAsync"/> throws is logged and skipped, not fatal to the rest.
-    /// <c>internal</c> for the same testability reason as <see cref="RunWithVramRecoveryAsync{T}"/>.</summary>
+    /// <summary>Decides which candidates to free and does it, closing the race a plain "read idle, then free"
+    /// would leave open: SwarmUI's own <c>Reservations</c> counter
+    /// (<see cref="AbstractBackend.Reservations"/>) keeps the scheduler from assigning a backend new work
+    /// (`BackendHandler`'s own backend-selection already skips any <c>Reservations &gt; 0</c> backend) the
+    /// moment it is raised -- so for each non-AudioLab candidate: reserve first, THEN recheck idle (a
+    /// reservation cannot undo work already in flight, only block new work from landing), free only if still
+    /// idle, always release in a <c>finally</c>. Deliberately does not wait for a busy candidate to drain
+    /// (unlike <c>ModelsAPI.cs</c>'s model-resave recovery, which blocks on exactly this pattern) -- this path
+    /// is latency-bound (a user's retry, not a maintenance operation), so a busy backend is simply left
+    /// alone rather than waited on.
+    ///
+    /// <para>Mirrors what <c>BackendAPI.FreeBackendMemory</c> (the <c>/API/FreeBackendMemory</c> endpoint)
+    /// does internally -- iterate running backends, call <see cref="AbstractBackend.FreeMemory"/> -- but that
+    /// endpoint has neither this reservation nor an idle check at all: it frees every running backend
+    /// unconditionally. A candidate whose own <see cref="VramBackendCandidate.FreeMemoryAsync"/> throws is
+    /// logged and skipped, not fatal to the rest. <c>internal</c> for the same testability reason as
+    /// <see cref="RunWithVramRecoveryAsync{T}"/>.</para></summary>
     /// <returns>The names of the backends that reported they actually freed something.</returns>
     internal static async Task<IReadOnlyList<string>> FreeIdleOtherBackendsCoreAsync(
         IEnumerable<VramBackendCandidate> candidates, Action<string> log, CancellationToken cancel)
@@ -362,12 +393,19 @@ public static class AudioEngineBridge
         foreach (VramBackendCandidate candidate in candidates)
         {
             cancel.ThrowIfCancellationRequested();
-            if (candidate.IsAudioLabOwned || !candidate.IsIdle)
+            if (candidate.IsAudioLabOwned)
             {
                 continue;
             }
+            candidate.Reserve();
             try
             {
+                if (!candidate.IsIdleNow())
+                {
+                    // Something was already running when reserved -- the reservation only blocked NEW work
+                    // from landing, it did not (and must not) touch work already in flight. Leave it alone.
+                    continue;
+                }
                 if (await candidate.FreeMemoryAsync().ConfigureAwait(false))
                 {
                     freed.Add(candidate.Name);
@@ -376,6 +414,10 @@ public static class AudioEngineBridge
             catch (Exception ex)
             {
                 log($"[AudioLab] FreeMemory on backend '{candidate.Name}' threw: {ex.Message}");
+            }
+            finally
+            {
+                candidate.Release();
             }
         }
         return freed;
@@ -386,27 +428,43 @@ public static class AudioEngineBridge
     /// Reconstructed independently from the three raw signals rather than read off
     /// <see cref="BackendHandler.BackendData.CheckIsInUseAtAll"/> directly, so this exact "is it safe to touch"
     /// decision has its own unit tests instead of only ever being exercised through a live
-    /// <see cref="AbstractBackend"/>.</summary>
+    /// <see cref="AbstractBackend"/>. Deliberately does not look at <see cref="AbstractBackend.Reservations"/>
+    /// -- that is <see cref="FreeIdleOtherBackendsCoreAsync"/>'s own job (raise it first, then call this), not
+    /// a read this method takes.</summary>
     internal static bool IsIdleCandidate(BackendStatus status, bool reserveModelLoad, int usages) =>
         status == BackendStatus.RUNNING && !reserveModelLoad && usages <= 0;
 
     /// <summary>Real wiring for <see cref="FreeIdleOtherBackendsCoreAsync"/>: every currently-running SwarmUI
-    /// backend (<see cref="BackendHandler.RunningBackendsOfType{T}"/>), idle per <see cref="IsIdleCandidate"/>,
-    /// with every <see cref="DynamicAudioBackend"/> instance excluded (that is AudioLab's own;
-    /// <see cref="FreeMemory"/> already covers it). Freed with <c>systemRam: false</c> -- this is a VRAM
-    /// problem, not a host-RAM one, and clearing filename-block history or RAM caches on an unrelated backend
-    /// is not this feature's business.</summary>
-    private static Task<IReadOnlyList<string>> FreeIdleOtherBackendsAsync(CancellationToken cancel)
+    /// backend (<see cref="BackendHandler.RunningBackendsOfType{T}"/>), with every <see cref="DynamicAudioBackend"/>
+    /// instance excluded (that is AudioLab's own; see <see cref="RunWithVramRecoveryAsync{T}"/>'s doc for why
+    /// it is deliberately not evicted here). <c>Reserve</c>/<c>Release</c> raise and lower
+    /// <see cref="AbstractBackend.Reservations"/> -- the exact field <c>BackendHandler</c>'s own
+    /// backend-selection already excludes from new work -- via <see cref="Interlocked"/>, matching
+    /// <c>ModelsAPI.cs</c>'s own model-resave recovery path; <c>IsIdleNow</c> re-reads
+    /// <see cref="IsIdleCandidate"/> off the live backend AFTER a reservation could have landed. Freed with
+    /// <c>systemRam: false</c> -- this is a VRAM problem, not a host-RAM one, and clearing filename-block
+    /// history or RAM caches on an unrelated backend is not this feature's business. Signals
+    /// <c>Program.Backends.CheckBackendsSignal</c> once after the whole sweep, the same way the
+    /// <c>ModelsAPI.cs</c> precedent does after its own reservation loop, so the scheduler re-evaluates
+    /// availability promptly instead of on its own next poll.</summary>
+    private static async Task<IReadOnlyList<string>> FreeIdleOtherBackendsAsync(CancellationToken cancel)
     {
         IEnumerable<VramBackendCandidate> candidates = Program.Backends.RunningBackendsOfType<AbstractBackend>()
             .Select(backend =>
             {
                 BackendHandler.BackendData data = backend.AbstractBackendData;
                 string name = $"{data?.BackType?.Name ?? backend.GetType().Name} #{data?.ID}";
-                bool idle = data is not null && IsIdleCandidate(backend.Status, data.ReserveModelLoad, data.Usages);
-                return new VramBackendCandidate(name, backend is DynamicAudioBackend, idle, () => backend.FreeMemory(systemRam: false));
+                return new VramBackendCandidate(
+                    name,
+                    IsAudioLabOwned: backend is DynamicAudioBackend,
+                    Reserve: () => Interlocked.Increment(ref backend.Reservations),
+                    Release: () => Interlocked.Decrement(ref backend.Reservations),
+                    IsIdleNow: () => data is not null && IsIdleCandidate(backend.Status, data.ReserveModelLoad, data.Usages),
+                    FreeMemoryAsync: () => backend.FreeMemory(systemRam: false));
             });
-        return FreeIdleOtherBackendsCoreAsync(candidates, msg => Logs.Debug(msg), cancel);
+        IReadOnlyList<string> freed = await FreeIdleOtherBackendsCoreAsync(candidates, msg => Logs.Debug(msg), cancel).ConfigureAwait(false);
+        Program.Backends.CheckBackendsSignal.Set();
+        return freed;
     }
 
     #endregion
