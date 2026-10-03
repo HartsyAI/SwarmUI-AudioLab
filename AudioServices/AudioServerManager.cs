@@ -61,7 +61,7 @@ public class AudioServerManager
     {
         if (provider.IsApiProvider || !AudioEngineBridge.IsProviderSupported(provider.Id))
         {
-            return CreateErrorResponse($"{provider.Name} cannot write a score — only local music models plan one.");
+            return CreateErrorResponse($"{provider.Name} cannot write a score; only local music models plan one.");
         }
         if (!AudioEngineBridge.EngineReady())
         {
@@ -81,7 +81,7 @@ public class AudioServerManager
     {
         if (provider.IsApiProvider || !AudioEngineBridge.IsProviderSupported(provider.Id))
         {
-            return CreateErrorResponse($"{provider.Name} cannot read a score off a recording — only local transcription models do.");
+            return CreateErrorResponse($"{provider.Name} cannot read a score off a recording; only local transcription models do.");
         }
         if (!AudioEngineBridge.EngineReady())
         {
