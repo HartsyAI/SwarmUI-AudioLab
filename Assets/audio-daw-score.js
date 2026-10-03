@@ -2545,12 +2545,12 @@ const AudioDawScore = (() => {
         card.appendChild(els.transcribeInfo);
 
         const desc = createDiv(null, 'daw-stems-desc');
-        desc.textContent = translate('SheetSage2 reads the score behind a recording — melody, chords, key, meter and tempo. '
+        desc.textContent = translate('SheetSage2 reads the score behind a recording: melody, chords, key, meter and tempo. '
             + 'It comes back in two renderings from one listen: Melody is what a cover is rendered from, Full '
             + 'keeps the harmony. Cover transcribes the clip and renders its melody in the style above. '
             + 'It is about 1.4 GB and stays resident afterwards unless Free audio models after is ticked, '
             + 'which releases every loaded audio model rather than just this one. '
-            + 'Weights are CC BY-NC 4.0 — non-commercial use only.');
+            + 'Weights are CC BY-NC 4.0: non-commercial use only.');
         card.appendChild(desc);
         parent.appendChild(card);
     }
@@ -2560,11 +2560,11 @@ const AudioDawScore = (() => {
     function showRendering(which) {
         const meta = current?.meta;
         const next = which === 'melody' ? meta?.melodyAbc : meta?.fullAbc;
-        if (!next) { notice('Transcribe a recording first — both renderings come from the model', 'yellow'); return; }
+        if (!next) { notice('Transcribe a recording first; both renderings come from the model', 'yellow'); return; }
         if (next === current.abc) { syncRenderingButtons(); return; }
         const edited = !onCanonical();
         edit(next);
-        if (edited) notice('Switched renderings — your edits are one undo away', 'yellow');
+        if (edited) notice('Switched renderings; your edits are one undo away', 'yellow');
     }
 
     /** True while the editor still holds one of the model's own renderings, untouched. */
@@ -2592,7 +2592,7 @@ const AudioDawScore = (() => {
         if (meta.windowCount > 1) bits.push(`${meta.windowCount} windows stitched`);
         if (meta.sourceName) bits.push(escapeHtml(meta.sourceName));
         els.transcribeInfo.innerHTML = bits.join(' · ') + (meta.truncated
-            ? ' — <strong>cut short</strong>: the decoder hit its token ceiling, so the score stops before the '
+            ? '; <strong>cut short</strong>: the decoder hit its token ceiling, so the score stops before the '
                 + 'audio does. Transcribe the rest as a second section.'
             : '');
     }
@@ -2617,7 +2617,7 @@ const AudioDawScore = (() => {
         if (els.transcribeStem) {
             els.transcribeStem.disabled = transcribing || !stem?.clip?.blob;
             els.transcribeStem.title = stem?.clip?.blob
-                ? `Transcribe the vocal stem of ${clip.name} — a cleaner melody than the mix`
+                ? `Transcribe the vocal stem of ${clip.name}: a cleaner melody than the mix`
                 : 'Separate the clip in the Stems tab first, then the vocal alone can be transcribed';
         }
         if (els.cover) {
@@ -2654,7 +2654,7 @@ const AudioDawScore = (() => {
     async function runTranscribe(target, show, which) {
         if (!target) {
             notice(which === 'stem' && selectedClip?.clip?.blob
-                ? 'No vocal stem for this clip yet — separate it in the Stems tab first'
+                ? 'No vocal stem for this clip yet: separate it in the Stems tab first'
                 : 'Select a clip to transcribe', 'yellow');
             return null;
         }
@@ -2721,7 +2721,7 @@ const AudioDawScore = (() => {
         const meta = await runTranscribe(target, 'melody');
         if (!meta) return;
         if (validate(current.abc).some(i => i.severity === 'error')) {
-            notice('The transcribed score did not validate — fix it before rendering', 'yellow');
+            notice('The transcribed score did not validate: fix it before rendering', 'yellow');
             return;
         }
         return runRenders([{ style, label: `Cover: ${style.slice(0, 18)}` }]);
