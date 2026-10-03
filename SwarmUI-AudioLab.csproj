@@ -216,11 +216,16 @@
          HartsyInference#245 (AuK / AuK-Flash), which adds SpeechRequest.Instruction/DurationSeconds that
          AudioEngineRequests.Speech sets unconditionally (PR #45, auk_tts provider) — this extension does not
          compile against alpha.243. Verified hartsyinference and hartsyinference.voice are both indexed on
-         nuget.org at this version before bumping. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.244" />
+         nuget.org at this version before bumping.
+         2.0.0-alpha.245 = 2026-10-02 (alpha.244 -> alpha.245). Carries HartsyInference#248: AuK only frees and
+         reloads every stage's weights between calls when the device doesn't actually have room to keep them
+         resident, instead of always evicting. Cuts the fixed per-call overhead the previous version paid on every
+         AuK/AuK-Flash generation regardless of free VRAM. Verified hartsyinference and hartsyinference.voice are
+         both indexed on nuget.org at this version before bumping. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.245" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
-    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.244" />
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.245" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
