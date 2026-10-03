@@ -144,7 +144,7 @@ public static class AudioArtifactIndex
                   $"({nonPrimary} component/shard file(s) held back).");
         if (unknownArch > 0)
         {
-            Logs.Warning($"[AudioLab] {unknownArch} admitted artifact(s) carry an architecture no model class is registered for — " +
+            Logs.Warning($"[AudioLab] {unknownArch} admitted artifact(s) carry an architecture no model class is registered for: " +
                          "audio parameters will not gate correctly for them until a class is registered.");
         }
     }

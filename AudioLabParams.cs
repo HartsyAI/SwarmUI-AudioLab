@@ -220,7 +220,7 @@ public static class AudioLabParams
     public static T2IRegisteredParam<double> AukCFG;
     /// <summary>Target output length in seconds for AuK; 0 means automatic. Feature flag: <c>auk_tts_params</c>.</summary>
     public static T2IRegisteredParam<double> AukDuration;
-    /// <summary>Natural-language voice/style instruction for AuK (voice design, no reference clip needed). Feature flag: <c>auk_tts_params</c>.</summary>
+    /// <summary>Natural-language instruction for AuK: a voice description with no reference clip, or a full edit command with one. Feature flag: <c>auk_tts_params</c>.</summary>
     public static T2IRegisteredParam<string> AukInstruction;
 
     #endregion
@@ -805,8 +805,10 @@ public static class AudioLabParams
             OrderPriority: -10, Group: VoiceRefGroup, FeatureFlag: "tts_voice_ref"));
 
         ReferenceText = T2IParamTypes.Register<string>(new("Reference Text",
-            "Transcript of the reference audio.\nOptional but improves quality when provided.",
+            "Approximate transcript of what is spoken in Reference Audio, in plain text (no special formatting).\n"
+            + "Optional, but several models, including AuK, use its length compared to the Prompt's to estimate how long the generated speech should be when no explicit duration is set.",
             "",
+            ViewType: ParamViewType.PROMPT,
             OrderPriority: -9, Group: VoiceRefGroup, FeatureFlag: "tts_voice_ref"));
 
         #endregion
@@ -1055,14 +1057,20 @@ public static class AudioLabParams
             OrderPriority: -4, Group: TTSGroup, FeatureFlag: "auk_tts_params", IsAdvanced: true));
 
         AukDuration = T2IParamTypes.Register<double>(new("AuK Duration",
-            "Target length of the generated speech in seconds.\n0 = automatic.",
+            "Target length of the generated speech in seconds.\n"
+            + "0 = automatic, which needs Reference Audio: it matches the reference clip's own length, or scales from it by the ratio of Prompt length to Reference Text length when both of those are filled in.\n"
+            + "With no Reference Audio (voice design from AuK Instruction alone), this must be a positive number.",
             "0",
             Min: 0.0, Max: 60.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
             OrderPriority: -3, Group: TTSGroup, FeatureFlag: "auk_tts_params"));
 
         AukInstruction = T2IParamTypes.Register<string>(new("AuK Instruction",
-            "Natural language description of the voice or style (e.g. 'A calm young woman speaking softly').\nWith no reference audio this designs a voice; leave empty to clone the reference clip.",
+            "What AuK does with this and the Prompt depends on Reference Audio.\n"
+            + "No Reference Audio: this is the voice description, Prompt is the line to speak. Example: \"A calm young woman speaking softly\".\n"
+            + "Reference Audio, this left empty: Prompt is cloned verbatim in the reference voice.\n"
+            + "Reference Audio, this filled in: it replaces Prompt entirely and must be a full command, not just a description. Examples: \"Change the emotion to happy.\", \"Raise the pitch by 2 semitones.\", \"Adjust the speech speed to 1.5x.\", \"Replace 'old text' with 'new text'.\", \"Convert this speech into a soft whisper while preserving the speaker and content.\", \"Remove the background noise, preserve everything else, and output audio of the same length.\"",
             "",
+            ViewType: ParamViewType.PROMPT,
             OrderPriority: -2, Group: TTSGroup, FeatureFlag: "auk_tts_params"));
 
         #endregion
@@ -1936,7 +1944,7 @@ public static class AudioLabParams
             OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
 
         Yue2Guidance = T2IParamTypes.Register<double>(new("Song Guidance",
-            "Classifier-free guidance. YuE2 runs at or just above 1.0 — the release uses 1.01 with planning off\n"
+            "Classifier-free guidance. YuE2 runs at or just above 1.0; the release uses 1.01 with planning off\n"
             + "and 1.0 otherwise. Anything much higher distorts rather than sharpens.",
             "1.0",
             Min: 1.0, Max: 3.0, Step: 0.01, ViewType: ParamViewType.SLIDER,
@@ -1949,7 +1957,7 @@ public static class AudioLabParams
             OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
 
         Yue2Temperature = T2IParamTypes.Register<double>(new("Song Temperature",
-            "Sampling temperature for the pass that emits codec tokens — the audio you actually hear.",
+            "Sampling temperature for the pass that emits codec tokens: the audio you actually hear.",
             "1.0",
             Min: 0.1, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
             OrderPriority: -4, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
@@ -1984,7 +1992,7 @@ public static class AudioLabParams
             OrderPriority: 1, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
 
         Yue2ScoreTemperature = T2IParamTypes.Register<double>(new("Score Temperature",
-            "Temperature for the score planner. It runs far cooler than the codec pass — the release uses 0.7.",
+            "Temperature for the score planner. It runs far cooler than the codec pass; the release uses 0.7.",
             "0.7",
             Min: 0.1, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
             OrderPriority: 2, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
@@ -2000,7 +2008,7 @@ public static class AudioLabParams
             OrderPriority: 4, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
 
         Yue2ScoreRepetitionPenalty = T2IParamTypes.Register<double>(new("Score Repetition Penalty",
-            "Penalty on repeated tokens in the score planner. The release uses 1.005 — a score repeats by nature.",
+            "Penalty on repeated tokens in the score planner. The release uses 1.005; a score repeats by nature.",
             "1.005",
             Min: 1.0, Max: 2.0, Step: 0.005, ViewType: ParamViewType.SLIDER,
             OrderPriority: 5, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));

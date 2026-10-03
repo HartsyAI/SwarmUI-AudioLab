@@ -536,7 +536,7 @@ public static class AudioEngineBridge
         }
         if (binding.Service != AudioEngineService.Transcribe)
         {
-            return AudioIo.Error($"Provider '{providerId}' does not listen to audio — only transcription models read a score off a recording.");
+            return AudioIo.Error($"Provider '{providerId}' does not listen to audio; only transcription models read a score off a recording.");
         }
         try
         {
@@ -567,7 +567,7 @@ public static class AudioEngineBridge
         }
         if (binding.Service != AudioEngineService.Music)
         {
-            return AudioIo.Error($"Provider '{providerId}' does not write a score — only music models plan one.");
+            return AudioIo.Error($"Provider '{providerId}' does not write a score; only music models plan one.");
         }
         try
         {
@@ -1324,7 +1324,7 @@ public static class AudioEngineBridge
         {
             // Info, not Debug: a box that quietly runs audio on the CPU when it has a GPU in it is the single
             // most expensive misconfiguration here, and it is invisible from the outside.
-            Logs.Info($"[AudioLab] Device 'auto' resolved to CPU — {BackendFactory.CudaProbeFailureReason ?? "no GPU was usable"}");
+            Logs.Info($"[AudioLab] Device 'auto' resolved to CPU: {BackendFactory.CudaProbeFailureReason ?? "no GPU was usable"}");
         }
         return resolved;
     }
