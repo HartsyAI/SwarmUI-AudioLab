@@ -2788,7 +2788,7 @@ const AudioDawScore = (() => {
             els.clipInfo.innerHTML = '<strong>No clip selected.</strong> Select a generated clip to load the score it came from.';
         }
         else if (!score) {
-            els.clipInfo.innerHTML = `<strong>${escapeHtml(selectedClip.clip.name)}</strong> carries no score — only YuE2 generations plan one.`;
+            els.clipInfo.innerHTML = `<strong>${escapeHtml(selectedClip.clip.name)}</strong> carries no score; only YuE2 generations plan one.`;
         }
         else {
             els.clipInfo.innerHTML = `<strong>${escapeHtml(selectedClip.clip.name)}</strong> has a planned score${score.truncated ? ' (cut short by the token budget)' : ''}.`;
@@ -2826,7 +2826,7 @@ const AudioDawScore = (() => {
     async function runRenders(jobs) {
         if (!current?.abc.trim() || els.go.disabled) return;
         const model = cb.modelFor ? cb.modelFor('yue2_music') : null;
-        if (!model) { notice('No YuE2 model is installed — install one from the Generate tab', 'yellow'); return; }
+        if (!model) { notice('No YuE2 model is installed: install one from the Generate tab', 'yellow'); return; }
 
         const abc = current.abc;
         const mode = modeForScore(abc);
@@ -2876,7 +2876,7 @@ const AudioDawScore = (() => {
             const failed = takes.length - added;
             if (!added) notice(translate('Render failed:') + ' ' + (takes[0]?.error?.message || translate('no audio came back')), 'red');
             else notice(failed
-                ? `${added} ${translate('of')} ${takes.length} ${translate('rendered —')} ${failed} ${translate('failed')}`
+                ? `${added} ${translate('of')} ${takes.length} ${translate('rendered:')} ${failed} ${translate('failed')}`
                 : added > 1 ? `${added} ${translate('variants rendered into their own tracks')}` : translate('Score rendered into a new track'),
                 failed ? 'yellow' : 'green');
         }
