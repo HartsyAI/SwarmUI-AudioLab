@@ -241,11 +241,19 @@
          (only top-k + temperature were applied) and the reference's unconditional 20ms tail fade-out (stochastic
          stop-token sampling can land early, leaving an audible click at the end of a clip). Both fixed in the
          engine; no source change needed here. Verified hartsyinference and hartsyinference.voice are both indexed
-         on nuget.org at this version before bumping. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.248" />
+         on nuget.org at this version before bumping.
+         2.0.0-alpha.249 = 2026-10-04 (alpha.248 -> alpha.249). Carries HartsyInference#252: Kokoro output now
+         matches the official model. The F0/energy predictor read the wrong features (pitch off by ~74 Hz), the
+         voice-pack style row was two rows late, the English G2P is now a misaki port (Kokoro's training
+         phonemizer; 44% -> 98.7% word agreement), and text over 510 phonemes is chunked instead of throwing.
+         The engine fetches misaki's two pinned dictionaries into the shared audio folder on first Kokoro load,
+         beside cmudict. No source change needed here: this extension reaches Kokoro only through the engine's
+         speech service. Verified hartsyinference and hartsyinference.voice are both indexed on nuget.org at
+         this version before bumping. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.249" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
-    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.248" />
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.249" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
