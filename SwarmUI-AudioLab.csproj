@@ -221,11 +221,17 @@
          reloads every stage's weights between calls when the device doesn't actually have room to keep them
          resident, instead of always evicting. Cuts the fixed per-call overhead the previous version paid on every
          AuK/AuK-Flash generation regardless of free VRAM. Verified hartsyinference and hartsyinference.voice are
-         both indexed on nuget.org at this version before bumping. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.245" />
+         both indexed on nuget.org at this version before bumping.
+         2.0.0-alpha.246 = 2026-10-03 (alpha.245 -> alpha.246). REQUIRED by this extension's source: carries
+         HartsyInference#249 (IndexTTS-1.5, zero-shot voice cloning), which adds the "indextts" Engine catalog
+         entry IndexTtsProvider.cs/AudioEngineBridge's new indextts_tts binding resolve to — this extension does
+         not compile against alpha.245 (ModelSpec.Requested = "indextts:v1_5" has nothing to resolve to before
+         this version). Verified hartsyinference and hartsyinference.voice are both indexed on nuget.org at this
+         version before bumping. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.246" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
-    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.245" />
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.246" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak

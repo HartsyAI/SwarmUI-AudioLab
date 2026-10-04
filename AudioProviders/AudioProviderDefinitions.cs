@@ -21,6 +21,7 @@ public static class AudioProviderDefinitions
         CosyVoiceProvider.Instance,
         ZipVoiceProvider.Instance,
         AukProvider.Instance,
+        IndexTtsProvider.Instance,
         NeuTTSProvider.Instance,
         PocketTTSProvider.Instance,
         KyutaiTTSProvider.Instance,
