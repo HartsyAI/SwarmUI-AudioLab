@@ -235,11 +235,17 @@
          alpha.246 on swarm.hartsy.ai (AudioLabInstallEngine + GenerateText2Image against the real
          IndexTeam/IndexTTS-1.5 checkpoint), not by this extension's own code. No source change needed here; this
          bump exists only so a fresh install pulls the fixed engine. Verified hartsyinference and
-         hartsyinference.voice are both indexed on nuget.org at this version before bumping. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.247" />
+         hartsyinference.voice are both indexed on nuget.org at this version before bumping.
+         2.0.0-alpha.248 = 2026-10-04 (alpha.247 -> alpha.248). Carries HartsyInference#251: an audit of the
+         IndexTTS-1.5 port against the real index-tts Python source found it was missing top-p (nucleus) sampling
+         (only top-k + temperature were applied) and the reference's unconditional 20ms tail fade-out (stochastic
+         stop-token sampling can land early, leaving an audible click at the end of a clip). Both fixed in the
+         engine; no source change needed here. Verified hartsyinference and hartsyinference.voice are both indexed
+         on nuget.org at this version before bumping. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.248" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
-    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.247" />
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.248" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
