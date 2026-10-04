@@ -227,11 +227,19 @@
          entry IndexTtsProvider.cs/AudioEngineBridge's new indextts_tts binding resolve to — this extension does
          not compile against alpha.245 (ModelSpec.Requested = "indextts:v1_5" has nothing to resolve to before
          this version). Verified hartsyinference and hartsyinference.voice are both indexed on nuget.org at this
-         version before bumping. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.246" />
+         version before bumping.
+         2.0.0-alpha.247 = 2026-10-04 (alpha.246 -> alpha.247). Carries HartsyInference#250: IndexTtsPipeline's
+         ToF32 helper was unconditionally casting every tensor in the loaded weight dictionaries to F32, which
+         crashed loading the real gpt.pth checkpoint's non-floating-point buffers (GPT-2-style integer position
+         ids / boolean causal mask) with "Unsupported dtype conversion: I64 -> F32." — found via a real deploy of
+         alpha.246 on swarm.hartsy.ai (AudioLabInstallEngine + GenerateText2Image against the real
+         IndexTeam/IndexTTS-1.5 checkpoint), not by this extension's own code. No source change needed here; this
+         bump exists only so a fresh install pulls the fixed engine. Verified hartsyinference and
+         hartsyinference.voice are both indexed on nuget.org at this version before bumping. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.247" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
-    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.246" />
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.247" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
