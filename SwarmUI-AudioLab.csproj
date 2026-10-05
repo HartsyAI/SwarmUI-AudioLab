@@ -250,10 +250,10 @@
          beside cmudict. No source change needed here: this extension reaches Kokoro only through the engine's
          speech service. Verified hartsyinference and hartsyinference.voice are both indexed on nuget.org at
          this version before bumping. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.249" />
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.251" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
-    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.249" />
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.251" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
