@@ -249,11 +249,17 @@
          The engine fetches misaki's two pinned dictionaries into the shared audio folder on first Kokoro load,
          beside cmudict. No source change needed here: this extension reaches Kokoro only through the engine's
          speech service. Verified hartsyinference and hartsyinference.voice are both indexed on nuget.org at
-         this version before bumping. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.251" />
+         this version before bumping.
+         2.0.0-alpha.253 = carries HartsyInference#258 (alpha.252) and #259 (alpha.253). Kokoro picks its text
+         front-end from the voice's first letter as KPipeline does: British (b), espeak-read Spanish, French, Hindi,
+         Italian and Portuguese (e/f/h/i/p), Japanese (j, misaki JAG2P over UniDic) and Mandarin (z, misaki ZHG2P).
+         Before this every voice read its text as American English. The engine also accepts a blended voice
+         (af_heart:0.7,af_bella:0.3), which Kokoro Blend Voice / Kokoro Blend Weight build. Pinned ahead of
+         publish, as with alpha.4 and alpha.10: do not merge until both packages are indexed on nuget.org. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.253" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
-    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.251" />
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.253" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
