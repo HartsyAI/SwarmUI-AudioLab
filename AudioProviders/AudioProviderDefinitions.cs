@@ -22,6 +22,7 @@ public static class AudioProviderDefinitions
         ZipVoiceProvider.Instance,
         AukProvider.Instance,
         IndexTtsProvider.Instance,
+        IndexTts2Provider.Instance,
         NeuTTSProvider.Instance,
         PocketTTSProvider.Instance,
         KyutaiTTSProvider.Instance,
