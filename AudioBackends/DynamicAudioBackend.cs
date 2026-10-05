@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -1914,6 +1915,27 @@ public class DynamicAudioBackend : AbstractT2IBackend
             ? Convert.ToBase64String(audio.RawData) : "";
     }
 
+    /// <summary>The Kokoro voice the engine takes: the main voice, or with Kokoro Blend Voice enabled a weighted
+    /// blend in the engine's syntax ("af_heart:0.7,af_bella:0.3"), which averages the two voices' style vectors.</summary>
+    internal static string KokoroVoiceSpec(T2IParamInput input)
+    {
+        string voice = input.TryGet(AudioLabParams.KokoroVoice, out string kv) && !string.IsNullOrWhiteSpace(kv) ? kv : "af_heart";
+        if (!input.TryGet(AudioLabParams.KokoroBlendVoice, out string blend) || string.IsNullOrWhiteSpace(blend) || blend == voice)
+        {
+            return voice;
+        }
+        double weight = Math.Clamp(input.TryGet(AudioLabParams.KokoroBlendWeight, out double bw) ? bw : 0.5, 0.0, 1.0);
+        if (weight <= 0.0)
+        {
+            return voice;
+        }
+        if (weight >= 1.0)
+        {
+            return blend;
+        }
+        return string.Create(CultureInfo.InvariantCulture, $"{voice}:{1.0 - weight:0.###},{blend}:{weight:0.###}");
+    }
+
     /// <summary>Builds engine kwargs from T2I parameters.
     /// Combines category-level args, model EngineConfig, and provider-specific params.</summary>
     private static Dictionary<string, object> BuildEngineArgs(T2IParamInput input, AudioProviderDefinition provider, AudioModelDefinition modelDef)
@@ -2056,7 +2078,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 break;
 
             case "kokoro_tts":
-                args["voice"] = input.TryGet(AudioLabParams.KokoroVoice, out string kv) ? kv : "af_heart";
+                args["voice"] = KokoroVoiceSpec(input);
                 args["speed"] = input.TryGet(AudioLabParams.KokoroSpeed, out double ks) ? ks : 1.0;
                 break;
 
