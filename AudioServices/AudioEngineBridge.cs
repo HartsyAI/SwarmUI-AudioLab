@@ -79,6 +79,7 @@ public static class AudioEngineBridge
         ["zipvoice_tts"] = new AudioEngineBinding("zipvoice", AudioEngineService.Speech, true),
         ["auk_tts"] = new AudioEngineBinding("auk", AudioEngineService.Speech, true),
         ["indextts_tts"] = new AudioEngineBinding("indextts", AudioEngineService.Speech, true),
+        ["indextts2_tts"] = new AudioEngineBinding("indextts2", AudioEngineService.Speech, true),
         ["qwen3_tts"] = new AudioEngineBinding("qwen3tts", AudioEngineService.Speech, true),
         ["chatterbox_tts"] = new AudioEngineBinding("chatterbox", AudioEngineService.Speech, true),
         ["kyutaitts_tts"] = new AudioEngineBinding("kyutaitts", AudioEngineService.Speech, true),

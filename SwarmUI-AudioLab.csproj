@@ -250,12 +250,23 @@
          beside cmudict. No source change needed here: this extension reaches Kokoro only through the engine's
          speech service. Verified hartsyinference and hartsyinference.voice are both indexed on nuget.org at
          this version before bumping.
-         2.0.0-alpha.253 = carries HartsyInference#258 (alpha.252) and #259 (alpha.253). Kokoro picks its text
-         front-end from the voice's first letter as KPipeline does: British (b), espeak-read Spanish, French, Hindi,
-         Italian and Portuguese (e/f/h/i/p), Japanese (j, misaki JAG2P over UniDic) and Mandarin (z, misaki ZHG2P).
-         Before this every voice read its text as American English. The engine also accepts a blended voice
-         (af_heart:0.7,af_bella:0.3), which Kokoro Blend Voice / Kokoro Blend Weight build. Pinned ahead of
-         publish, as with alpha.4 and alpha.10: do not merge until both packages are indexed on nuget.org. -->
+         2.0.0-alpha.253 = CORRECTION, 2026-10-06: the above was pinned ahead of HartsyInference#259 (Kokoro
+         Japanese/Mandarin front-ends + voice blending), expecting that PR's own version bump to land as
+         alpha.253 once its base branch merged to main. It never did: #259 reports "merged" on GitHub, but
+         its commits landed on a side branch (hartsy/kokoro-ja-zh-mix, based on a pre-main branch of #258)
+         that was never itself merged into main, so none of that work (KokoroJapaneseG2P/KokoroMandarinG2P/
+         the engine-side blend-string parsing KokoroVoiceSpec above relies on) is in HartsyInference main or
+         published under any version. What actually published as alpha.253 is HartsyInference#264 (IndexTTS
+         2.5, emotion-controllable zero-shot voice cloning, unrelated to Kokoro): confirmed by downloading
+         the real nupkgs from nuget.org and finding IndexTts2Pipeline/IndexTts2Model in them, not
+         KokoroJapaneseG2P. This PR (#53) merged to this repo's main anyway, despite the explicit "do not
+         merge until both packages are indexed" warning that was already here, so AudioLab's main currently
+         ships Kokoro Japanese/Mandarin/blend-voice UI params (AudioLabParams.cs's KokoroBlendVoice etc.) that
+         call into engine behavior that does not exist at this pin, or any currently-published version. Real
+         generation with those voices/params will fail at runtime until #259's branch is actually merged to
+         HartsyInference main and published under its own (higher) version number, and this pin is bumped
+         again to match. Not fixed here: out of scope for the IndexTTS-2.5 provider this version bump is
+         actually for; flagging so the next person pinning this file doesn't trust the paragraph above. -->
     <PackageReference Include="HartsyInference" Version="2.0.0-alpha.253" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
