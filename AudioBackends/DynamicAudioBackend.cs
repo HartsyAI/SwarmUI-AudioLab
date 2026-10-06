@@ -1896,6 +1896,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
     {
         "audiogen_sfx" => 10.0,
         "stableaudio_music" => 11.0,
+        "controlfoley_sfx" => 8.0,
         _ => 30.0,
     };
 
@@ -2142,6 +2143,12 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     args["instruction"] = aukInst;
                 break;
 
+            case "breeze_tts":
+                if (input.TryGet(AudioLabParams.BreezeInstruction, out string breezeInst) && !string.IsNullOrEmpty(breezeInst))
+                    args["instruction"] = breezeInst;
+                args["cfg_scale"] = input.TryGet(AudioLabParams.BreezeCFG, out double breezeCfg) ? breezeCfg : 1.0;
+                break;
+
             case "zonos_tts":
                 if (input.TryGet(AudioLabParams.ZonosLanguage, out string zl))
                     args["language"] = zl;
@@ -2309,6 +2316,15 @@ public class DynamicAudioBackend : AbstractT2IBackend
             case "amazon_polly":
                 args["engine"] = input.TryGet(AudioLabParams.PollyEngine, out string polEng) ? polEng : "neural";
                 args["voice_id"] = input.TryGet(AudioLabParams.PollyVoice, out string polVoice) ? polVoice : "Joanna";
+                break;
+
+            case "controlfoley_sfx":
+                args["infer_step"] = input.TryGet(AudioLabParams.ControlFoleySteps, out int cfSteps) ? cfSteps : 25;
+                args["cfg_scale"] = input.TryGet(AudioLabParams.ControlFoleyCFG, out double cfCfg) ? cfCfg : 4.5;
+                if (args.TryGetValue("duration", out object cfDur) && cfDur is double cd && cd > 8.0)
+                {
+                    args["duration"] = 8.0;
+                }
                 break;
 
             case "stableaudio_music":

@@ -27,6 +27,8 @@ public static class AudioProviderDefinitions
         PocketTTSProvider.Instance,
         KyutaiTTSProvider.Instance,
         FishSpeechProvider.Instance,
+        FishAudioS2Provider.Instance,
+        BreezeProvider.Instance,
         Qwen3TTSProvider.Instance,
         PiperProvider.Instance,
         MeloTTSProvider.Instance,
@@ -44,6 +46,7 @@ public static class AudioProviderDefinitions
         // Local audio generation providers
         AceStepProvider.Instance,
         StableAudioProvider.Instance,
+        ControlFoleyProvider.Instance,
         MusicGenProvider.Instance,
         AudioGenProvider.Instance,
         YuEProvider.Instance,

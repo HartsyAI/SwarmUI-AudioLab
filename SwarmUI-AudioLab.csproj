@@ -285,11 +285,14 @@
          resampling, segmentation, text normalization), the S2Mel DiT/WaveNet on backend ops (no per-op device-to-host round
          trips), a per-generation timing log, and the streaming indextts2 runner with a reference cache. No source change
          needed here. Verified hartsyinference.engine is indexed on nuget.org at this version.
+         2.0.0-alpha.264 = 2026-10-06 (alpha.261 -> alpha.264). Adds the Breeze TTS 2 (breeze), Fish Audio S2 Pro (fishaudio)
+         and ControlFoley (controlfoley, music service) engine catalog entries these providers bind to. No source change
+         needed in AudioEngineRequests; the new providers use its existing instruction / cfg_scale / reference fields.
          -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.261" />
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.264" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
-    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.261" />
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.264" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak

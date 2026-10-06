@@ -74,6 +74,8 @@ public static class AudioEngineBridge
         ["csm_tts"] = new AudioEngineBinding("csm", AudioEngineService.Speech, true),
         ["neutts_tts"] = new AudioEngineBinding("neutts", AudioEngineService.Speech, true),
         ["fishspeech_tts"] = new AudioEngineBinding("fishspeech", AudioEngineService.Speech, true),
+        ["fishaudio_tts"] = new AudioEngineBinding("fishaudio", AudioEngineService.Speech, true),
+        ["breeze_tts"] = new AudioEngineBinding("breeze", AudioEngineService.Speech, true),
         ["cosyvoice_tts"] = new AudioEngineBinding("cosyvoice", AudioEngineService.Speech, true),
         ["f5_tts"] = new AudioEngineBinding("f5", AudioEngineService.Speech, true),
         ["zipvoice_tts"] = new AudioEngineBinding("zipvoice", AudioEngineService.Speech, true),
@@ -99,6 +101,7 @@ public static class AudioEngineBridge
         ["yue2_music"] = new AudioEngineBinding("yue2", AudioEngineService.Music, true),
         ["heartlib_music"] = new AudioEngineBinding("heartmula", AudioEngineService.Music, true),
         ["stableaudio_music"] = new AudioEngineBinding("stableaudio", AudioEngineService.Music, true),
+        ["controlfoley_sfx"] = new AudioEngineBinding("controlfoley", AudioEngineService.Music, true),
         // Self-downloading: the engine fetches the diffusers-format subfolders on first generation.
         ["minimax_music3"] = new AudioEngineBinding("minimaxmusic3", AudioEngineService.Music, true),
         // Voice conversion.
@@ -118,6 +121,9 @@ public static class AudioEngineBridge
     private static readonly Dictionary<string, string> _engineWeightRepos = new(StringComparer.OrdinalIgnoreCase)
     {
         ["chatterbox_tts"] = "ResembleAI/chatterbox",
+        ["fishaudio_tts"] = "fishaudio/s2-pro",
+        ["breeze_tts"] = "BreezeBlue/Breeze-TTS-2",
+        ["controlfoley_sfx"] = "YJX-Xiaomi/ControlFoley",
         ["piper_tts"] = "rhasspy/piper-voices",
         ["pockettts_tts"] = "kyutai/pocket-tts-without-voice-cloning",
         ["gptsovits_clone"] = "lj1995/GPT-SoVITS",
@@ -135,6 +141,7 @@ public static class AudioEngineBridge
     private static readonly Dictionary<string, string[]> _engineCompanionRepos = new(StringComparer.OrdinalIgnoreCase)
     {
         ["auk_tts"] = ["Qwen/Qwen2.5-Omni-3B"],
+        ["controlfoley_sfx"] = ["nvidia/bigvgan_v2_44khz_128band_512x", "apple/DFN5B-CLIP-ViT-H-14-384"],
     };
 
     /// <summary>Engine-managed providers cached outside their own AudioLab category, mapped to the Engine's

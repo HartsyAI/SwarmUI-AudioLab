@@ -594,6 +594,24 @@ public static class AudioLabParams
 
     #endregion
 
+    #region TTS — Breeze (flag: breeze_tts_params)
+
+    /// <summary>Written voice description for Breeze voice design. Feature flag: <c>breeze_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> BreezeInstruction;
+    /// <summary>Classifier-free guidance scale for Breeze. Feature flag: <c>breeze_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> BreezeCFG;
+
+    #endregion
+
+    #region Music — ControlFoley (flag: controlfoley_sfx_params)
+
+    /// <summary>Flow-matching steps for ControlFoley. Feature flag: <c>controlfoley_sfx_params</c>.</summary>
+    public static T2IRegisteredParam<int> ControlFoleySteps;
+    /// <summary>Classifier-free guidance strength for ControlFoley. Feature flag: <c>controlfoley_sfx_params</c>.</summary>
+    public static T2IRegisteredParam<double> ControlFoleyCFG;
+
+    #endregion
+
     #region Music — Stable Audio (flag: stableaudio_music_params)
 
     /// <summary>Diffusion steps for Stable Audio Open Small. Feature flag: <c>stableaudio_music_params</c>.</summary>
@@ -1893,6 +1911,36 @@ public static class AudioLabParams
             "0.0",
             Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
             OrderPriority: -4, Group: AudioGenGroup, FeatureFlag: "acestep_task_params", IsAdvanced: true));
+
+        #endregion
+
+        #region TTS — Breeze
+        BreezeInstruction = T2IParamTypes.Register<string>(new("Breeze Instruction",
+            "Voice design: describe the voice and Breeze invents it, for example \"A warm, thoughtful young woman with a calm, reflective delivery\".\nLeave empty when you supply Reference Audio to clone a voice instead.",
+            "",
+            ViewType: ParamViewType.PROMPT,
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "breeze_tts_params"));
+
+        BreezeCFG = T2IParamTypes.Register<double>(new("Breeze CFG",
+            "Classifier-free guidance scale.\n1 disables guidance; voice design works best around 4.",
+            "1.0",
+            Min: 1.0, Max: 8.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "breeze_tts_params", IsAdvanced: true));
+
+        #endregion
+
+        #region Music — ControlFoley
+        ControlFoleySteps = T2IParamTypes.Register<int>(new("ControlFoley Steps",
+            "Flow-matching steps.\nThe reference demo uses 25; fewer steps are faster and noisier.",
+            "25",
+            Min: 1, Max: 100, Step: 1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "controlfoley_sfx_params", IsAdvanced: true));
+
+        ControlFoleyCFG = T2IParamTypes.Register<double>(new("ControlFoley CFG",
+            "Classifier-free guidance strength.\nThe reference demo uses 4.5.",
+            "4.5",
+            Min: 0.0, Max: 12.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "controlfoley_sfx_params", IsAdvanced: true));
 
         #endregion
 
