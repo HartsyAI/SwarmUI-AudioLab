@@ -266,11 +266,19 @@
          generation with those voices/params will fail at runtime until #259's branch is actually merged to
          HartsyInference main and published under its own (higher) version number, and this pin is bumped
          again to match. Not fixed here: out of scope for the IndexTTS-2.5 provider this version bump is
-         actually for; flagging so the next person pinning this file doesn't trust the paragraph above. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.253" />
+         actually for; flagging so the next person pinning this file doesn't trust the paragraph above.
+         2.0.0-alpha.254 = 2026-10-06 (alpha.253 -> alpha.254). Resolves the correction above: the Kokoro work
+         from the lost #259 re-landed on HartsyInference main as #266 and published as alpha.254. Checked by
+         downloading the real nupkgs from nuget.org: hartsyinference.audio and hartsyinference.engine at
+         2.0.0-alpha.254 both contain KokoroJapaneseG2P, KokoroMandarinG2P and KokoroVoiceMix, and
+         hartsyinference and hartsyinference.voice are both indexed at this version. Kokoro now picks its front-end
+         from the voice's first letter (j Japanese, z Mandarin, b British, e/f/h/i/p espeak languages) and accepts
+         blended voices such as af_heart:0.7,af_bella:0.3, so the Kokoro Blend Voice / Kokoro Blend Weight params
+         and the j/z voices in KokoroVoices now have an engine to call. No source change needed here. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.254" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
-    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.253" />
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.254" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
