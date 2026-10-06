@@ -2125,6 +2125,14 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["cfg_scale"] = input.TryGet(AudioLabParams.ZipVoiceCFG, out double zvCfg) ? zvCfg : 1.0;
                 break;
 
+            case "indextts2_tts":
+                if (input.TryGet(AudioLabParams.IndexTts2EmotionText, out string ixEmo) && !string.IsNullOrWhiteSpace(ixEmo))
+                {
+                    args["emotion_text"] = ixEmo;
+                    args["emotion_alpha"] = input.TryGet(AudioLabParams.IndexTts2EmotionAlpha, out double ixAlpha) ? ixAlpha : 1.0;
+                }
+                break;
+
             case "auk_tts":
                 args["nfe_step"] = input.TryGet(AudioLabParams.AukSteps, out int aukSteps) ? aukSteps : 32;
                 args["cfg_scale"] = input.TryGet(AudioLabParams.AukCFG, out double aukCfg) ? aukCfg : 2.0;

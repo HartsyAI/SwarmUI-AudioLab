@@ -29,6 +29,7 @@ const AudioLabConfig = {
         styletts2_tts: { category: 'audiolab_tts', providerFlag: 'styletts2_tts_params', extraFlags: ['tts_voice_ref', 'styletts2_clone_params'] },
         melotts_tts: { category: 'audiolab_tts', providerFlag: 'melotts_tts_params' },
         zipvoice_tts: { category: 'audiolab_tts', providerFlag: 'zipvoice_tts_params', extraFlags: ['tts_voice_ref'] },
+        indextts2_tts: { category: 'audiolab_tts', providerFlag: 'indextts2_tts_params', extraFlags: ['tts_voice_ref'] },
         auk_tts: { category: 'audiolab_tts', providerFlag: 'auk_tts_params', extraFlags: ['tts_voice_ref'] },
         // Provider-level fallback: every Qwen3 model overrides ModelClassId, but an unmapped arch
         // hides ALL audio params, so keep a safe entry in case a future variant forgets to.

@@ -1,6 +1,7 @@
 using Hartsy.Extensions.AudioLab.AudioProviders;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using Hartsy.Extensions.AudioLab.AudioServices;
+using HartsyInference.Engine.Requests;
 using Xunit;
 
 namespace Hartsy.Extensions.AudioLab.Tests;
@@ -123,5 +124,39 @@ public class AudioEngineBridgeTests
     {
         Assert.True(AudioEngineBridge.IsProviderSupported("auk_tts"));
         Assert.True(AudioEngineBridge.ProviderManagesOwnWeights("auk_tts"));
+    }
+
+    [Fact]
+    public void IndexTts2Provider_ListsBothVersionsAndDeclaresTheEmotionFlag()
+    {
+        AudioProviderDefinition def = IndexTts2Provider.Instance.GetProvider();
+        Assert.Equal("indextts2_tts", def.Id);
+        Assert.Contains("indextts2_tts_params", def.FeatureFlags, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("tts_voice_ref", def.FeatureFlags, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal(new[] { "v2_0", "v2_5" }, def.Models.Select(m => m.Id).ToArray());
+        Assert.Equal("IndexTeam/IndexTTS-2", def.Models.Single(m => m.Id == "v2_0").EngineConfig["model_name"]);
+        Assert.Equal("IndexTeam/IndexTTS-2.5", def.Models.Single(m => m.Id == "v2_5").EngineConfig["model_name"]);
+    }
+
+    [Fact]
+    public void IndexTts2Provider_IsEngineBoundAndSelfDownloading()
+    {
+        Assert.True(AudioEngineBridge.IsProviderSupported("indextts2_tts"));
+        Assert.True(AudioEngineBridge.ProviderManagesOwnWeights("indextts2_tts"));
+    }
+
+    [Fact]
+    public void Speech_MapsTheIndexTts2EmotionArgs()
+    {
+        SpeechRequest withEmotion = AudioEngineRequests.Speech(new Dictionary<string, object>
+        {
+            ["text"] = "hello", ["emotion_text"] = "furious", ["emotion_alpha"] = 0.6,
+        });
+        Assert.Equal("furious", withEmotion.EmotionText);
+        Assert.Equal(0.6, withEmotion.EmotionAlpha);
+
+        SpeechRequest plain = AudioEngineRequests.Speech(new Dictionary<string, object> { ["text"] = "hello" });
+        Assert.Null(plain.EmotionText);
+        Assert.Null(plain.EmotionAlpha);
     }
 }

@@ -286,6 +286,15 @@ public static class AudioLabParams
 
     #endregion
 
+    #region TTS — IndexTTS-2 (flag: indextts2_tts_params)
+
+    /// <summary>Free-text description of the wanted emotion for IndexTTS-2; empty keeps the speaker's own emotion. Feature flag: <c>indextts2_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> IndexTts2EmotionText;
+    /// <summary>Strength of the IndexTTS-2 text emotion, 0-1. Feature flag: <c>indextts2_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> IndexTts2EmotionAlpha;
+
+    #endregion
+
     #region TTS — Zonos (flag: zonos_tts_params)
 
     /// <summary>Language selection for Zonos TTS. Feature flag: <c>zonos_tts_params</c>.</summary>
@@ -1058,6 +1067,23 @@ public static class AudioLabParams
             "1.0",
             Min: 0.0, Max: 10.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -3, Group: TTSGroup, FeatureFlag: "zipvoice_tts_params", IsAdvanced: true));
+
+        #endregion
+
+        #region TTS — IndexTTS-2
+        IndexTts2EmotionText = T2IParamTypes.Register<string>(new("IndexTTS-2 Emotion",
+            "Describe the emotion you want in words and IndexTTS-2 speaks the Prompt that way, in the Reference Audio's voice. Example: \"I am absolutely furious about this!\".\n"
+            + "Empty keeps the emotion of the Reference Audio itself.\n"
+            + "A small classifier reads this text on first use, which downloads about 1.2 GB once and takes a moment to load.",
+            "",
+            ViewType: ParamViewType.PROMPT,
+            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "indextts2_tts_params"));
+
+        IndexTts2EmotionAlpha = T2IParamTypes.Register<double>(new("IndexTTS-2 Emotion Strength",
+            "How strongly the Emotion text applies, from 0 (none) to 1 (full). Ignored when Emotion is empty.",
+            "1.0",
+            Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -3, Group: TTSGroup, FeatureFlag: "indextts2_tts_params", IsAdvanced: true));
 
         #endregion
 
