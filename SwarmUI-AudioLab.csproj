@@ -274,11 +274,17 @@
          hartsyinference and hartsyinference.voice are both indexed at this version. Kokoro now picks its front-end
          from the voice's first letter (j Japanese, z Mandarin, b British, e/f/h/i/p espeak languages) and accepts
          blended voices such as af_heart:0.7,af_bella:0.3, so the Kokoro Blend Voice / Kokoro Blend Weight params
-         and the j/z voices in KokoroVoices now have an engine to call. No source change needed here. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.254" />
+         and the j/z voices in KokoroVoices now have an engine to call. No source change needed here.
+         2.0.0-alpha.255 = 2026-10-06 (alpha.254 -> alpha.255). Carries HartsyInference#267: IndexTTS-2.0
+         (indextts2:2.0) next to 2.5, and emotion control for both. SpeechRequest gains EmotionText and EmotionAlpha
+         (plus EmotionReference/EmotionFromText, not used here), which AudioEngineRequests now reads, so this change does
+         not compile against alpha.254. Verified hartsyinference and hartsyinference.voice are both indexed on nuget.org
+         at this version, and that hartsyinference.engine/.audio are too.
+         -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.255" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
-    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.254" />
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.255" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
