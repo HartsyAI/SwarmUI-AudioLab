@@ -159,4 +159,87 @@ public class AudioEngineBridgeTests
         Assert.Null(plain.EmotionText);
         Assert.Null(plain.EmotionAlpha);
     }
+
+    [Fact]
+    public void TryFreeMemory_WithNoEngineBuilt_ReportsSuccess()
+    {
+        // Nothing is resident, so the idle release counts it as done rather than retrying forever.
+        Assert.True(AudioEngineBridge.TryFreeMemory());
+    }
+
+    [Fact]
+    public async Task FreeMemory_SettlesThePendingIdleTimer()
+    {
+        // A free-memory request from outside leaves nothing for the idle timer to release, so it is cancelled.
+        // Uses its own releaser, so no process-wide state is involved.
+        IdleModelReleaser idle = new(() => null, () => true);
+        idle.Configure(TimeSpan.FromMinutes(3));
+        using (await idle.BeginAsync(CancellationToken.None))
+        {
+        }
+        Task pending = idle.PendingTimer;
+        Assert.False(pending.IsCompleted);
+
+        AudioEngineBridge.FreeMemory(idle);
+
+        Assert.Same(pending, await Task.WhenAny(pending, Task.Delay(TimeSpan.FromSeconds(30))));
+    }
+
+    [Theory]
+    [InlineData(int.MaxValue, 43200)]
+    [InlineData(43201, 43200)]
+    [InlineData(5, 5)]
+    public async Task ConfigureIdle_MapsTheSettingToThePeriod_ClampingTheTop(int minutes, int expectedMinutes)
+    {
+        List<TimeSpan> spans = [];
+        IdleModelReleaser idle = new(() => null, () => true, delay: (span, _) =>
+        {
+            spans.Add(span);
+            return new TaskCompletionSource().Task;
+        });
+        AudioEngineBridge.ConfigureIdle(idle, minutes);
+
+        using (await idle.BeginAsync(CancellationToken.None))
+        {
+        }
+
+        Assert.Equal(TimeSpan.FromMinutes(expectedMinutes), Assert.Single(spans));
+    }
+
+    [Fact]
+    public async Task ConfigureIdle_ZeroOrNegative_TurnsItOff()
+    {
+        int delays = 0;
+        IdleModelReleaser idle = new(() => null, () => true, delay: (_, _) =>
+        {
+            delays++;
+            return new TaskCompletionSource().Task;
+        });
+        AudioEngineBridge.ConfigureIdle(idle, -5);
+        using (await idle.BeginAsync(CancellationToken.None))
+        {
+        }
+        Assert.Equal(0, delays);
+    }
+
+    [Fact]
+    public async Task WakeWordBuildOptions_RoutesTranscriptionThroughTheIdleReleaser()
+    {
+        IdleModelReleaser idle = new(() => null, () => true, delay: (_, _) => new TaskCompletionSource().Task);
+        WakeWordSettings settings = new() { Port = 12345 };
+
+        HartsyInference.Engine.Audio.Wake.WakeServiceOptions options = WakeWordService.BuildOptions(settings, idle, CancellationToken.None);
+
+        Assert.Equal(12345, options.Port);
+        Assert.NotNull(options.TranscribeGate);
+        int during = -1;
+        string result = await options.TranscribeGate(() =>
+        {
+            during = idle.ActiveCount;
+            return Task.FromResult("text");
+        });
+        Assert.Equal("text", result);
+        Assert.Equal(1, during);
+        Assert.Equal(0, idle.ActiveCount);
+    }
 }

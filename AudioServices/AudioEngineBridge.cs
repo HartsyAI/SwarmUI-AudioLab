@@ -756,11 +756,14 @@ public static class AudioEngineBridge
         {
             return;
         }
+        long generation = IdleRelease.Generation;
+        bool freed = false;
         lock (_releaseLock)
         {
             try
             {
                 _engine.FreeMemory();
+                freed = true;
                 Logs.Debug($"[AudioLab] Released resident audio models (requested for '{providerId}/{modelId}').");
             }
             catch (Exception ex)
@@ -779,25 +782,49 @@ public static class AudioEngineBridge
                 RaiseEngineReleased();
             }
         }
+        if (freed)
+        {
+            IdleRelease.NoteExternalRelease(generation);
+        }
     }
 
     /// <summary>Releases every loaded audio model and its device memory, leaving the engine usable. Used by the
-    /// backend's shutdown / free-memory path and by the idle release (<see cref="IdleRelease"/>).</summary>
-    public static void FreeMemory()
+    /// backend's shutdown / free-memory path. A release asked for from outside also settles the idle timer: nothing
+    /// is resident any more, so it does not fire a second, redundant release later.</summary>
+    public static void FreeMemory() => FreeMemory(IdleRelease);
+
+    /// <summary><see cref="FreeMemory()"/> against a given releaser, so tests need not touch the process-wide one.</summary>
+    internal static void FreeMemory(IdleModelReleaser idle)
+    {
+        long generation = idle.Generation;
+        if (TryFreeMemory())
+        {
+            idle.NoteExternalRelease(generation);
+        }
+    }
+
+    /// <summary>The release itself. The idle release (<see cref="IdleRelease"/>) calls this rather than
+    /// <see cref="FreeMemory"/> so it does not notify itself of a release it is in the middle of. False means the
+    /// engine threw while freeing (logged); true otherwise, including when there is no engine yet and so nothing
+    /// resident. The residency pins are forgotten and <see cref="EngineReleased"/> is raised either way, because
+    /// the engine may have revoked leases before it threw.</summary>
+    internal static bool TryFreeMemory()
     {
         if (_engine is null)
         {
-            return;
+            return true;
         }
         lock (_releaseLock)
         {
             try
             {
                 _engine.FreeMemory();
+                return true;
             }
             catch (Exception ex)
             {
                 Logs.Warning($"[AudioLab] Freeing audio engine memory failed: {ex.Message}");
+                return false;
             }
             finally
             {
@@ -821,9 +848,10 @@ public static class AudioEngineBridge
     /// default, so the API routes behave the same with no audio backend configured; the backend's
     /// <see cref="RequestIdleUnload"/> replaces it.
     ///
-    /// <para>Requests that reach the engine without going through here (the wake listener's per-detection
-    /// transcription) are covered by the engine's own generation lock, which a release waits on before unloading:
-    /// such a request either finishes first or loads its model again afterwards.</para></summary>
+    /// <para>The wake listener's per-detection transcription reaches the engine without going through here, so
+    /// <c>WakeWordService</c> hands the engine a <c>TranscribeGate</c> that runs it as an activity: it keeps a release
+    /// off while it runs (waiting for the command after the wake word included), and one that starts during a
+    /// release waits for it.</para></summary>
     internal static readonly IdleModelReleaser IdleRelease = CreateIdleRelease();
 
     /// <summary>The idle time used until a backend sets one; the default of the backend's "Unload Idle Models After
@@ -834,7 +862,7 @@ public static class AudioEngineBridge
     {
         IdleModelReleaser releaser = new(
             IdleReleaseBlocker,
-            FreeMemory,
+            TryFreeMemory,
             log: msg => Logs.Info(msg),
             logDetail: msg => Logs.Debug(msg));
         releaser.Configure(TimeSpan.FromMinutes(DefaultIdleUnloadMinutes));
@@ -843,7 +871,11 @@ public static class AudioEngineBridge
 
     /// <summary>Sets how long AudioLab waits after its last audio request before releasing its models; 0 (or less)
     /// turns it off. Process-wide like the backend's other settings: the last audio backend to initialize decides.</summary>
-    public static void RequestIdleUnload(int minutes) => IdleRelease.Configure(TimeSpan.FromMinutes(Math.Max(0, minutes)));
+    public static void RequestIdleUnload(int minutes) => ConfigureIdle(IdleRelease, minutes);
+
+    /// <summary>The setting-to-period mapping behind <see cref="RequestIdleUnload"/>; the releaser clamps the
+    /// result to its minimum and maximum.</summary>
+    internal static void ConfigureIdle(IdleModelReleaser idle, int minutes) => idle.Configure(TimeSpan.FromMinutes(Math.Max(0, minutes)));
 
     /// <summary>What still needs the resident models even though no request is running, or null when nothing does.</summary>
     private static string IdleReleaseBlocker()

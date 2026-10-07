@@ -139,9 +139,9 @@ effect):
   Resident is never evicted by either. Off restores the previous behavior (an out-of-VRAM error fails
   immediately); either way, a backend asked to free memory simply reloads its own models on its next
   generation, so nothing already running is ever interrupted.
-- **Unload Idle Models After Minutes** — `3` by default; `0` turns it off. After this many minutes with no audio
-  request, AudioLab releases its resident models and their device memory, the same release Server > Backends > Free
-  Memory Now triggers.
+- **Unload Idle Models After Minutes** — `3` by default; `0` (or any negative value) turns it off, and the most it
+  takes is `43200` (30 days). After this many minutes with no audio request, AudioLab releases its resident models
+  and their device memory, the same release Server > Backends > Free Memory Now triggers.
   - *Why.* Audio models otherwise stay loaded after a generation. On a card shared with SwarmUI's image backend, that
     can leave an image generation no room until SwarmUI's own idle VRAM clear runs. The next audio request reloads
     its model, which costs that one request a few seconds.
@@ -149,8 +149,11 @@ effect):
     stops. Each new request resets it. A model pinned by Keep Tts Stt Resident, an open Voice Agent call or a
     wake-word training run holds it off until it ends.
   - *Timing with new requests.* A request that arrives while a release is running waits for it, then loads afresh.
-  - *Wake listener.* Its transcriptions reach the engine directly and are covered by the engine's own generation
-    lock: one that is running finishes before the release, and one that starts after it reloads its model.
+  - *Wake listener.* A wake-word transcription counts as an audio request. It holds the timer off from the moment
+    the word is heard until the transcript is done, which includes the wait for the command that follows the word,
+    and the timer starts again afterwards, so a setup that only uses wake words has its transcription model
+    released after the idle time like any other. A detection that arrives while a release is running waits for it
+    before it captures the command, so a slow release can clip the start of that command.
 
 ### Installing engines
 
@@ -482,6 +485,40 @@ Satellites connect two ways, with the same wire protocol either way, so firmware
 > **Set the shared secret before exposing this beyond a trusted LAN.** Satellites send it in their hello frame. If
 > it is empty the check is disabled, which is fine on a home network, but anyone who can reach the endpoint could
 > otherwise stream audio in and read every detection, including transcripts of what was said.
+
+### Server-side voice turns
+
+**Off by default.** Turn on **Server-side turns** and the server runs the whole voice turn itself and sends the
+reply back down the socket the satellite already has open, instead of the satellite opening its own connections
+to ask the assistant and request speech. Turning it on marks every transcript frame `handled`, so firmware new
+enough to read that stands down and waits for the reply on the socket; older firmware does not read the mark and
+answers the turn itself as well, so the reply is spoken twice — turn this on together with firmware that plays
+`audio` frames.
+
+With server-side turns on, **Satellite voice mode** picks which implementation runs:
+
+- **Legacy** (the default): today's behavior. A finished transcript comes in, one loopback call asks the
+  configured assistant, one synthesized reply goes back out. Each follow-up needs the wake word again; saying it
+  again while a reply is still playing barges in on that reply instead of talking over it.
+- **Session**: a continuous, VAD-endpointed voice-agent session per satellite -- barge-in by voice activity
+  instead of by repeating the wake word, and a call that stays open for a follow-up without it, the same session
+  shape the browser-tab [Voice Agent](#voice-agent) uses (answered through LLMAssistant, same shared voice
+  models). On a detection the extension **claims** the satellite on the engine's wake listener
+  (`WakeService.Claim`): the engine stops running its own wake scoring, capture and transcription for that device
+  and hands its decoded audio to the session, while the connection, pings and outbound audio keep working. The
+  reply is sent down the same socket (24 kHz session audio resampled to the 16 kHz the protocol plays), one stream
+  per turn, flushed on barge-in; status frames follow the session's thinking/speaking state and a final `done`
+  closes the call. The claim is released when the call ends: 15 seconds with nothing happening, the device
+  going away, an engine release (free memory), or shutdown. A reconnecting satellite is re-claimed and the call
+  continues. Tool calls the assistant makes are logged on the server; the satellite protocol has no frame for a
+  device action, so they are not forwarded, and they never end the session. If the claim cannot be taken (no
+  live connection, or another host holds it) that detection falls back to the Legacy turn with a log line.
+  Wake words with a `route` are left alone in both modes.
+
+  Session mode starts after the engine has delivered the detection, so with **Transcribe on detection** on
+  (the default) the first command after the wake word has already been captured and transcribed by the engine
+  and is not heard by the session; turn that setting off for the quickest hand-off, so the session hears the
+  command itself. Selected from **Satellite voice mode** in the wake word settings.
 
 ### Words and speakers
 

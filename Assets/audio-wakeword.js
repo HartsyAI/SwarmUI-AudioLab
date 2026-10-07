@@ -219,6 +219,8 @@ const WakeWordUI = {
             getRequiredElementById('wakeword_setting_utterance').value = s.UtteranceSeconds ?? 12;
             getRequiredElementById('wakeword_setting_server_turns').checked = s.ServerSideTurns === true;
             getRequiredElementById('wakeword_setting_assistant').value = s.AssistantId ?? '';
+            // The enum serializes as a number (0 = Legacy, 1 = Session); a string is accepted too.
+            getRequiredElementById('wakeword_setting_voice_mode').value = (s.SatelliteVoiceMode === 1 || s.SatelliteVoiceMode === 'Session') ? 'Session' : 'Legacy';
         });
     },
 
@@ -240,6 +242,7 @@ const WakeWordUI = {
                 UtteranceSeconds: parseFloat(getRequiredElementById('wakeword_setting_utterance').value),
                 ServerSideTurns: getRequiredElementById('wakeword_setting_server_turns').checked,
                 AssistantId: getRequiredElementById('wakeword_setting_assistant').value.trim(),
+                SatelliteVoiceMode: getRequiredElementById('wakeword_setting_voice_mode').value,
             }
         }, data => {
             if (!data.success) { showError(`${translate('Could not save settings:')} ${data.error}`); }
@@ -369,6 +372,8 @@ const WakeWordUI = {
                         <span class="audiolab-wake-hint">${translate('Caps both the audio transcribed and how long end-of-speech waits, so someone who never stops talking still gets an answer.')}</span></label>
                     <label>${translate('Answer on the server')}<input type="checkbox" id="wakeword_setting_server_turns" class="form-check-input">
                         <span class="audiolab-wake-hint">${translate('The server asks the assistant, synthesizes the reply, and sends the audio back down the socket the satellite already has open, instead of the satellite opening three connections of its own to do it. Needs firmware that plays <code>audio</code> frames: turn it on for a device that still runs its own turn and every reply is spoken twice. Wake words with a route configured are left alone, since a route means something else owns that turn.')}</span></label>
+                    <label>${translate('Satellite voice mode')}<select id="wakeword_setting_voice_mode" class="form-select"><option value="Legacy">${translate('Legacy (one turn per wake word)')}</option><option value="Session">${translate('Session (continuous voice-agent session)')}</option></select>
+                        <span class="audiolab-wake-hint">${translate('Only applies with Answer on the server on. Legacy answers one finished transcript per wake word. Session hands the satellite\'s live audio to a voice-agent session after the wake word: barge-in by voice, and follow-up questions without repeating the wake word. For the quickest hand-off turn off Transcribe on detection, otherwise the session starts only after the first command has been transcribed. If the session cannot take the device it falls back to Legacy.')}</span></label>
                     <label>${translate('Assistant')}<input type="text" id="wakeword_setting_assistant" class="form-control" placeholder="${translate('(the active one)')}">
                         <span class="audiolab-wake-hint">${translate('Which assistant answers, when the server runs the turn. Empty means whichever is currently active.')}</span></label>
                     <label>${translate('Noise suppression')}<input type="checkbox" id="wakeword_setting_denoise" class="form-check-input">
