@@ -508,8 +508,9 @@ With server-side turns on, **Satellite voice mode** picks which implementation r
   closes the call. The claim is released when the call ends: 15 seconds with nothing happening, the device
   going away, an engine release (free memory), or shutdown. A reconnecting satellite is re-claimed and the call
   continues. Tool calls the assistant makes are logged on the server; the satellite protocol has no frame for a
-  device action, so they are not forwarded, and they never end the session. If the claim cannot be taken (no
-  live connection, or another host holds it) that detection falls back to the Legacy turn with a log line.
+  device action, so they are not forwarded, and they never end the session. If there is no live connection to
+  claim, that detection falls back to the Legacy turn with a log line; if another host already holds the claim,
+  the detection is left to it (a second voice on the same speaker would be worse).
   Wake words with a `route` are left alone in both modes.
 
   Session mode starts after the engine has delivered the detection, so with **Transcribe on detection** on

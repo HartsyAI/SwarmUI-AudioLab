@@ -358,6 +358,26 @@ public class SatelliteVoiceSessionTests
     }
 
     [Fact]
+    public async Task AnErrorMidTurn_DoesNotHoldTheClaimOpenForever()
+    {
+        var options = new SatelliteSessionOptions
+        {
+            IdleTimeout = TimeSpan.FromMilliseconds(60),
+            IdleCheckInterval = TimeSpan.FromMilliseconds(10),
+            PumpInterval = TimeSpan.FromMilliseconds(5),
+        };
+        var (manager, claims, _, factory) = Build(options);
+        manager.TryStart("sat-1");
+        await WaitUntilAsync(() => factory.Session.Started, "the session to start");
+        factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.Thinking));
+        factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.Error, 1, "boom"));
+
+        await WaitUntilAsync(() => manager.ActiveCount == 0, "the call to end after the error");
+
+        Assert.Equal(1, claims.Count("Release"));
+    }
+
+    [Fact]
     public async Task ADisconnect_ReclaimsTheDevice_AndTheNewClaimFeedsTheSameSession()
     {
         var (manager, claims, _, factory) = Build();
@@ -405,12 +425,12 @@ public class SatelliteVoiceSessionTests
     }
 
     [Fact]
-    public void TryStart_WhenTheDeviceIsAlreadyClaimedByAnotherHost_FallsBack()
+    public void TryStart_WhenTheDeviceIsAlreadyClaimedByAnotherHost_ConsumesTheDetectionWithoutFallingBack()
     {
         var (manager, claims, _, factory) = Build();
         claims.ThrowAlreadyClaimed = true;
 
-        Assert.False(manager.TryStart("sat-1"));
+        Assert.True(manager.TryStart("sat-1")); // true = no Legacy turn on top of the other host
 
         Assert.Equal(0, manager.ActiveCount);
         Assert.Equal(0, factory.Created);
