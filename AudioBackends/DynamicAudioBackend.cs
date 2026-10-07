@@ -2321,6 +2321,21 @@ public class DynamicAudioBackend : AbstractT2IBackend
             case "controlfoley_sfx":
                 args["infer_step"] = input.TryGet(AudioLabParams.ControlFoleySteps, out int cfSteps) ? cfSteps : 25;
                 args["cfg_scale"] = input.TryGet(AudioLabParams.ControlFoleyCFG, out double cfCfg) ? cfCfg : 4.5;
+                if (input.TryGet(AudioLabParams.ControlFoleyNegativePrompt, out string cfNegative) && !string.IsNullOrWhiteSpace(cfNegative))
+                {
+                    args["negative_prompt"] = cfNegative;
+                }
+                if (input.TryGet(AudioLabParams.ControlFoleyVideo, out VideoFile cfVideo) && cfVideo != null)
+                {
+                    args["video_data"] = Convert.ToBase64String(cfVideo.RawData);
+                    args["video_format"] = cfVideo.Type?.Extension ?? "";
+                    args["mask_away_clip"] = input.TryGet(AudioLabParams.ControlFoleyMaskAwayClip, out bool cfMask) && cfMask;
+                }
+                string cfReference = GetBase64Audio(input, AudioLabParams.ControlFoleyReferenceAudio);
+                if (!string.IsNullOrEmpty(cfReference))
+                {
+                    args["controlfoley_reference_audio"] = cfReference;
+                }
                 if (args.TryGetValue("duration", out object cfDur) && cfDur is double cd && cd > 8.0)
                 {
                     args["duration"] = 8.0;
