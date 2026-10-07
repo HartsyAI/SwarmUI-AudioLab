@@ -24,6 +24,10 @@ internal interface ISatelliteLink
 
     /// <summary>See <see cref="WakeWordService.SendAudioAsync"/>.</summary>
     Task<int> SendAudioAsync(string deviceId, ReadOnlyMemory<byte> pcm, int sampleRate, CancellationToken cancel);
+
+    /// <summary>Like <see cref="BeginAudio"/>, as an <see cref="ISatelliteAudioSink"/> (the Session mode
+    /// seam). Null when the listener is not running or the device is not connected.</summary>
+    ISatelliteAudioSink OpenAudioSink(string deviceId, int sampleRate);
 }
 
 /// <summary>Asks the configured assistant one question and gets its whole reply back. A thin, testable facade
@@ -50,6 +54,12 @@ internal sealed class WakeServiceSatelliteLink : ISatelliteLink
 
     public Task<int> SendAudioAsync(string deviceId, ReadOnlyMemory<byte> pcm, int sampleRate, CancellationToken cancel) =>
         WakeWordService.SendAudioAsync(deviceId, pcm, sampleRate, cancel);
+
+    public ISatelliteAudioSink OpenAudioSink(string deviceId, int sampleRate)
+    {
+        WakeAudioStream stream = WakeWordService.BeginAudio(deviceId, sampleRate);
+        return stream is null ? null : new WakeAudioStreamSink(stream);
+    }
 }
 
 /// <summary>The real <see cref="IVoiceAssistantCaller"/>, over a loopback HTTP call to LLMAssistant's one-shot
@@ -73,15 +83,15 @@ internal sealed class LoopbackAssistantCaller : IVoiceAssistantCaller
     {
     }
 
-    public async Task<(string Reply, string Error)> AskAsync(string text, CancellationToken cancel)
+    /// <summary>Opens a Swarm session over loopback, as the one-shot turn does; the Session mode factory reuses
+    /// it, since a satellite has no browser session to borrow.</summary>
+    public async Task<(string SessionId, string Error)> OpenSessionAsync(CancellationToken cancel)
     {
-        WakeWordSettings settings = WakeWordService.GetSettings();
         // Whatever address this server is actually listening on, not 127.0.0.1. A server bound to one specific
         // interface — which is how the production box is configured — refuses the loopback address, and the
         // whole turn failed there with nothing to say but "could not open a session". PageURL is the existing
         // answer to the same question: it maps a wildcard bind to localhost and otherwise uses the real host.
         string baseUrl = $"{WebServer.PageURL}/API";
-
         JObject session = await PostAsync($"{baseUrl}/GetNewSession", new JObject(), cancel).ConfigureAwait(false);
         string sessionId = session?["session_id"]?.ToString();
         if (string.IsNullOrEmpty(sessionId))
@@ -90,6 +100,18 @@ internal sealed class LoopbackAssistantCaller : IVoiceAssistantCaller
             // up in a bench run, which on a box whose logs are not readable from here is the only way anyone
             // finds out why a turn produced silence.
             return (null, $"could not open a session at {baseUrl}: {_lastPostFailure ?? "no session_id in the reply"}");
+        }
+        return (sessionId, null);
+    }
+
+    public async Task<(string Reply, string Error)> AskAsync(string text, CancellationToken cancel)
+    {
+        WakeWordSettings settings = WakeWordService.GetSettings();
+        string baseUrl = $"{WebServer.PageURL}/API";
+        (string sessionId, string openError) = await OpenSessionAsync(cancel).ConfigureAwait(false);
+        if (sessionId is null)
+        {
+            return (null, openError);
         }
 
         JObject request = new()
@@ -165,19 +187,25 @@ internal sealed class SatelliteTurnRunner
     /// reply cancels the first rather than interleaving two voices on one speaker.</summary>
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _running = new();
 
+    /// <summary>Runs <see cref="SatelliteVoiceMode.Session"/>; null means that mode is not wired and every turn
+    /// runs the Legacy sequence.</summary>
+    private readonly SatelliteVoiceSessionManager _sessions;
+
     private int _loggedSessionModeUnavailable;
 
     public SatelliteTurnRunner(ISatelliteLink link, IVoiceAssistantCaller assistant,
-        Func<string, string, CancellationToken, Task<int>> speak = null)
+        Func<string, string, CancellationToken, Task<int>> speak = null, SatelliteVoiceSessionManager sessions = null)
     {
         _link = link ?? throw new ArgumentNullException(nameof(link));
         _assistant = assistant ?? throw new ArgumentNullException(nameof(assistant));
         _speak = speak ?? SpeakToDeviceAsync;
+        _sessions = sessions;
     }
 
-    /// <summary>Cancels every turn in flight (shutdown).</summary>
+    /// <summary>Cancels every turn in flight and ends every session (shutdown).</summary>
     public void CancelAll()
     {
+        _sessions?.StopAll();
         foreach (CancellationTokenSource cts in _running.Values)
         {
             try { cts.Cancel(); } catch (ObjectDisposedException) { }
@@ -189,11 +217,11 @@ internal sealed class SatelliteTurnRunner
     /// <remarks>Returns immediately. A turn takes seconds and this is called from the wake service's own
     /// notification path, which also has a transcript to deliver to the device and webhooks to post.
     ///
-    /// <para><paramref name="mode"/> selects <see cref="SatelliteVoiceMode.Session"/> having no effect yet
-    /// beyond a once-logged warning: every turn runs the <see cref="SatelliteVoiceMode.Legacy"/> sequence below
-    /// regardless, since <see cref="SatelliteVoiceMode.Session"/> is not implemented (see its own remarks on
-    /// why). Checked here, not by the caller, so the warning fires at most once per process even though
-    /// <see cref="WakeWordService.GetSettings"/> is re-read on every detection.</para></remarks>
+    /// <para>In <see cref="SatelliteVoiceMode.Session"/> a detection (after the route check) claims the device
+    /// for a <see cref="SatelliteVoiceSessionManager"/> session, which then owns its turns; only when that claim
+    /// cannot be taken does the detection fall through to the <see cref="SatelliteVoiceMode.Legacy"/> sequence
+    /// below. A wake word with nothing after it is the normal Session case (the session listens for the
+    /// question), so the empty-text check applies to the Legacy path only.</para></remarks>
     public void OnDetected(JObject payload, SatelliteVoiceMode mode)
     {
         string deviceId = payload["device_id"]?.ToString();
@@ -213,6 +241,21 @@ internal sealed class SatelliteTurnRunner
             _ = _link.SendStatusAsync(deviceId, WakeStatus.Done);
             return;
         }
+        if (mode == SatelliteVoiceMode.Session)
+        {
+            if (_sessions is null)
+            {
+                if (Interlocked.Exchange(ref _loggedSessionModeUnavailable, 1) == 0)
+                {
+                    Logs.Warning("[AudioLab][Turn] SatelliteVoiceMode is Session but no session host is wired; running the Legacy turn.");
+                }
+            }
+            else if (_sessions.TryStart(deviceId))
+            {
+                return;
+            }
+            // Claim refused: TryStart already logged why. Run the Legacy turn for this detection.
+        }
         // Prefer the command; fall back to the transcript only when the engine did not separate them. An
         // empty command is the user saying the wake word and nothing else, and is not a question.
         string text = VoiceTurnOrchestrator.ResolveTurnText(payload);
@@ -220,13 +263,6 @@ internal sealed class SatelliteTurnRunner
         {
             _ = _link.SendStatusAsync(deviceId, WakeStatus.Done);
             return;
-        }
-        if (mode == SatelliteVoiceMode.Session && Interlocked.Exchange(ref _loggedSessionModeUnavailable, 1) == 0)
-        {
-            Logs.Warning("[AudioLab][Turn] SatelliteVoiceMode is set to Session, but Session mode needs engine "
-                + "support that is not published yet (no hook for raw post-wake audio on a device the wake "
-                + "listener already owns); running the Legacy turn instead. See the AudioLab README's Wake word "
-                + "listener section.");
         }
 
         CancellationTokenSource cts = new();
@@ -400,8 +436,9 @@ internal sealed class SatelliteTurnRunner
 /// means somebody else has claimed that turn.</para></summary>
 public static class VoiceTurnOrchestrator
 {
-    private static readonly SatelliteTurnRunner _runner =
-        new(WakeServiceSatelliteLink.Instance, LoopbackAssistantCaller.Instance);
+    private static readonly SatelliteTurnRunner _runner = new(WakeServiceSatelliteLink.Instance,
+        LoopbackAssistantCaller.Instance, sessions: new SatelliteVoiceSessionManager(WakeServiceClaimHost.Instance,
+            WakeServiceSatelliteLink.Instance, EngineSatelliteVoiceSessionFactory.Instance));
 
     private static bool _subscribed;
 

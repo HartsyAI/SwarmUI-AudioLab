@@ -42,6 +42,9 @@ internal sealed class RecordingSatelliteLink : ISatelliteLink
 
     public Task<int> SendAudioAsync(string deviceId, ReadOnlyMemory<byte> pcm, int sampleRate, CancellationToken cancel) =>
         throw new NotSupportedException("Not exercised: every test here supplies its own speak delegate.");
+
+    public ISatelliteAudioSink OpenAudioSink(string deviceId, int sampleRate) =>
+        throw new NotSupportedException("Not exercised: Legacy turns never open a Session-mode sink.");
 }
 
 /// <summary>A scripted <see cref="IVoiceAssistantCaller"/> that records every question asked and returns a
@@ -72,14 +75,8 @@ internal sealed class RecordingAssistantCaller : IVoiceAssistantCaller
 /// delivery. No live wake listener, no HTTP, no TTS engine, no GPU.</summary>
 public class SatelliteTurnRunnerTests
 {
-    /// <summary>Builds a detection payload, omitting a null field entirely rather than setting it to a JSON
-    /// null -- matching the real wire shape (<c>WakeWordService.ToJson</c>) closely enough to matter here:
-    /// Newtonsoft's object-initializer indexer tags a null C# string as <see cref="JTokenType.String"/> with a
-    /// null value, not <see cref="JTokenType.Null"/>, so a key that is really meant to be absent (the doc on
-    /// <c>SatelliteTurnRunner.OnDetected</c>'s command/transcript fallback says exactly that: "absent means an
-    /// engine old enough not to separate them") must never be assigned at all, or the production code's own
-    /// <c>commandToken is null || commandToken.Type == JTokenType.Null</c> check does not see what this test
-    /// means it to.</summary>
+    /// <summary>Builds a detection payload, leaving a null field out entirely (the "engine did not separate
+    /// command from transcript" shape older builds sent).</summary>
     private static JObject Detection(string deviceId, string command = null, string transcript = null, string route = null)
     {
         JObject payload = new() { ["device_id"] = deviceId };
@@ -142,11 +139,11 @@ public class SatelliteTurnRunnerTests
     }
 
     [Fact]
-    public async Task OnDetected_SessionMode_RunsTheExactSameSequenceAsLegacy()
+    public async Task OnDetected_SessionMode_WithNoSessionHostWired_RunsTheLegacySequence()
     {
-        // The headline property this PR adds: selecting Session does not change what actually runs, because
-        // Session is not implemented yet (see SatelliteVoiceMode.Session's own remarks on why) -- it only logs
-        // one warning. This proves the call sequence is identical to the Legacy test above, mode for mode.
+        // A runner built without a session manager (as every test here builds one) cannot run Session mode, so
+        // it must behave exactly like Legacy rather than dropping the detection. The Session path itself is
+        // covered by SatelliteVoiceSessionTests.
         List<string> calls = await RunAndCollectAsync(SatelliteVoiceMode.Session, reply: "it is noon");
 
         Assert.Equal(
@@ -172,15 +169,9 @@ public class SatelliteTurnRunnerTests
     [Fact]
     public async Task OnDetected_FallsBackToTranscript_WhenTheCommandKeyIsAbsent()
     {
-        // Named for exactly the "absent" case the production doc comment describes, not "the engine did not
-        // separate them": WakeWordService.ToJson builds the real event via `["command"] = evt.Command`, and if
-        // evt.Command is a genuine null, Newtonsoft tags that as JTokenType.String with a null Value, not
-        // JTokenType.Null (confirmed empirically -- see the Detection helper's own remarks) -- so OnDetected's
-        // `Type == JTokenType.Null` branch never actually fires on that path, and commandToken.ToString()
-        // returns "" there instead of falling back. That looks like a real, pre-existing Legacy bug (a
-        // wake-only detection where the engine did not separate command from transcript would send Done and
-        // never ask the assistant), separate from this PR and preserved verbatim rather than fixed here, since
-        // fixing it would contradict the Legacy-unchanged requirement every other test in this file is for.
+        // WakeWordService.ToJson now emits a real JSON null for a null Command, and
+        // VoiceTurnOrchestrator.ResolveTurnText falls back command -> transcript for that shape and for an
+        // absent key alike. This payload leaves the key absent; ResolveTurnText's own tests cover the null shape.
         List<string> calls = await RunAndCollectAsync(SatelliteVoiceMode.Legacy,
             detection: Detection("sat-1", command: null, transcript: "only a transcript"));
 
