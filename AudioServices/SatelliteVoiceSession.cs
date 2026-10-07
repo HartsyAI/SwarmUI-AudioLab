@@ -132,6 +132,13 @@ internal sealed class SatelliteSessionOptions
     /// talking, which holds the idle timer off.</summary>
     public float SpeechLevel { get; init; } = 0.02f;
 
+    /// <summary>Hard ceiling on one call, however much noise or echo keeps it looking active.</summary>
+    public TimeSpan MaxCallDuration { get; init; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>How long teardown waits for queued statuses to reach the device before giving up on them, so a
+    /// hung send cannot stop the session being disposed.</summary>
+    public TimeSpan StatusDrainTimeout { get; init; } = TimeSpan.FromSeconds(5);
+
     /// <summary>Inbound audio held between the claim and the session being ready (models load, the session
     /// starts), so the start of the user's speech is not lost. Oldest dropped beyond this.</summary>
     public int MaxPendingInboundSamples { get; init; } = 16000 * 5;
@@ -174,7 +181,8 @@ internal sealed class SatelliteVoiceSessionManager
             return true;
         }
         SatelliteVoiceCall call = new(deviceId, _claims, _link, _factory, _options, c => _calls.TryRemove(
-            new KeyValuePair<string, SatelliteVoiceCall>(c.DeviceId, c)));
+            new KeyValuePair<string, SatelliteVoiceCall>(c.DeviceId, c)),
+            c => _calls.TryGetValue(c.DeviceId, out SatelliteVoiceCall current) && !ReferenceEquals(current, c));
         if (!_calls.TryAdd(deviceId, call))
         {
             return true;
@@ -229,6 +237,10 @@ internal sealed class SatelliteVoiceCall
     private readonly ISatelliteVoiceSessionFactory _factory;
     private readonly SatelliteSessionOptions _options;
     private readonly Action<SatelliteVoiceCall> _onFinished;
+    private readonly Func<SatelliteVoiceCall, bool> _isSuperseded;
+    private readonly long _startedTicks = Environment.TickCount64;
+    private volatile bool _speaking;
+    private int _latestTurn;
     private readonly CancellationTokenSource _cts = new();
     private readonly Channel<(string State, string Detail)> _statuses = Channel.CreateUnbounded<(string, string)>();
     private readonly object _frameLock = new();
@@ -251,7 +263,8 @@ internal sealed class SatelliteVoiceCall
     private string _lastStatus;
 
     public SatelliteVoiceCall(string deviceId, ISatelliteClaimHost claims, ISatelliteLink link,
-        ISatelliteVoiceSessionFactory factory, SatelliteSessionOptions options, Action<SatelliteVoiceCall> onFinished)
+        ISatelliteVoiceSessionFactory factory, SatelliteSessionOptions options, Action<SatelliteVoiceCall> onFinished,
+        Func<SatelliteVoiceCall, bool> isSuperseded = null)
     {
         _deviceId = deviceId;
         _claims = claims;
@@ -259,6 +272,7 @@ internal sealed class SatelliteVoiceCall
         _factory = factory;
         _options = options;
         _onFinished = onFinished;
+        _isSuperseded = isSuperseded ?? (_ => false);
     }
 
     public string DeviceId => _deviceId;
@@ -306,7 +320,7 @@ internal sealed class SatelliteVoiceCall
             {
                 sum += Math.Abs(samples[i]);
             }
-            if (samples.Length > 0 && sum / samples.Length > _options.SpeechLevel)
+            if (!_speaking && samples.Length > 0 && sum / samples.Length > _options.SpeechLevel)
             {
                 Touch(); // the user is still talking: not idle.
             }
@@ -398,6 +412,10 @@ internal sealed class SatelliteVoiceCall
                 await Task.Delay(_options.IdleCheckInterval, cancel).ConfigureAwait(false);
                 long now = Environment.TickCount64;
                 bool busy = _busy && now - Interlocked.Read(ref _busySinceTicks) < _options.BusyCap.TotalMilliseconds;
+                if (now - _startedTicks > _options.MaxCallDuration.TotalMilliseconds)
+                {
+                    End("maximum call length");
+                }
                 if (!busy && now - Interlocked.Read(ref _activityTicks) > _options.IdleTimeout.TotalMilliseconds)
                 {
                     End("idle");
@@ -446,7 +464,10 @@ internal sealed class SatelliteVoiceCall
             // The satellite is told it is over before the slow disposal, not after.
             Enqueue(WakeStatus.Done, null);
             _statuses.Writer.TryComplete();
-            await statusLoop.ConfigureAwait(false);
+            if (await Task.WhenAny(statusLoop, Task.Delay(_options.StatusDrainTimeout)).ConfigureAwait(false) != statusLoop)
+            {
+                Logs.Warning($"[AudioLab][Session] '{_deviceId}': a status send did not finish; disposing anyway.");
+            }
             if (session is not null)
             {
                 try { await session.DisposeAsync().ConfigureAwait(false); }
@@ -469,16 +490,19 @@ internal sealed class SatelliteVoiceCall
             {
                 case SatelliteSessionEventKind.Listening:
                     _busy = false;
+                    _speaking = false;
                     _lastStatus = null; // a later Speaking is a new state to tell the device about.
                     Touch();
                     break;
                 case SatelliteSessionEventKind.Thinking:
-                    MarkBusy();
+                    _speaking = false;
+                    MarkBusy(ev.TurnId);
                     Touch();
                     EnqueueOnChange(WakeStatus.Thinking);
                     break;
                 case SatelliteSessionEventKind.Speaking:
-                    MarkBusy();
+                    _speaking = true; // the mic is hearing our own reply: not the user.
+                    MarkBusy(ev.TurnId);
                     Touch();
                     EnqueueOnChange(WakeStatus.Speaking);
                     break;
@@ -490,6 +514,8 @@ internal sealed class SatelliteVoiceCall
                     Touch();
                     break;
                 case SatelliteSessionEventKind.BargeIn:
+                    InterlockedMax(ref _latestTurn, ev.TurnId);
+                    _speaking = false;
                     MarkFlushed(ev.TurnId);
                     Touch();
                     break;
@@ -501,7 +527,13 @@ internal sealed class SatelliteVoiceCall
                     break;
                 case SatelliteSessionEventKind.TurnCompleted:
                     InterlockedMax(ref _completedTurn, ev.TurnId);
-                    _busy = false;
+                    // A barged-in turn completes after its replacement has started: that one is stale and
+                    // must not mark the new turn idle.
+                    if (ev.TurnId >= Volatile.Read(ref _latestTurn))
+                    {
+                        _busy = false;
+                        _speaking = false;
+                    }
                     Touch();
                     break;
                 case SatelliteSessionEventKind.Error:
@@ -523,13 +555,13 @@ internal sealed class SatelliteVoiceCall
         }
     }
 
-    private void MarkBusy()
+    /// <summary>Every busy-state event renews the cap, so it bounds a turn that has gone silent, not a long
+    /// one that is still making progress.</summary>
+    private void MarkBusy(int turnId)
     {
-        if (!_busy)
-        {
-            Interlocked.Exchange(ref _busySinceTicks, Environment.TickCount64);
-            _busy = true;
-        }
+        InterlockedMax(ref _latestTurn, turnId);
+        Interlocked.Exchange(ref _busySinceTicks, Environment.TickCount64);
+        _busy = true;
     }
 
     private void Touch() => Interlocked.Exchange(ref _activityTicks, Environment.TickCount64);
@@ -567,6 +599,12 @@ internal sealed class SatelliteVoiceCall
     {
         await foreach ((string state, string detail) in _statuses.Reader.ReadAllAsync().ConfigureAwait(false))
         {
+            if (_isSuperseded(this))
+            {
+                // A newer call owns the device now; a late status (above all this call's Done) would end the
+                // new call's turn on the satellite.
+                continue;
+            }
             try
             {
                 await _link.SendStatusAsync(_deviceId, state, detail).ConfigureAwait(false);
@@ -779,9 +817,9 @@ internal sealed class EngineSatelliteVoiceSession : ISatelliteVoiceSession
         {
             VoiceAgentEventKind.StateChanged => ev.State switch
             {
-                VoiceAgentState.Listening => new SatelliteSessionEvent(SatelliteSessionEventKind.Listening),
-                VoiceAgentState.Thinking or VoiceAgentState.ToolRunning => new SatelliteSessionEvent(SatelliteSessionEventKind.Thinking),
-                VoiceAgentState.Speaking => new SatelliteSessionEvent(SatelliteSessionEventKind.Speaking),
+                VoiceAgentState.Listening => new SatelliteSessionEvent(SatelliteSessionEventKind.Listening, ev.TurnId),
+                VoiceAgentState.Thinking or VoiceAgentState.ToolRunning => new SatelliteSessionEvent(SatelliteSessionEventKind.Thinking, ev.TurnId),
+                VoiceAgentState.Speaking => new SatelliteSessionEvent(SatelliteSessionEventKind.Speaking, ev.TurnId),
                 VoiceAgentState.Ended => new SatelliteSessionEvent(SatelliteSessionEventKind.Ended),
                 _ => null,
             },
