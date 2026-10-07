@@ -1258,7 +1258,7 @@ public static class AudioEngineBridge
     /// Engine resolves on its own (and shared assets like ContentVec/cmudict) lands beside AudioLab's weights.
     /// Only set when the host hasn't already chosen one — the variable is process-wide and shared with any other
     /// HartsyInference-backed extension.</summary>
-    private static void AlignModelsRoot()
+    internal static void AlignModelsRoot()
     {
         try
         {

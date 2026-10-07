@@ -47,6 +47,10 @@ public class AudioLab : Extension
             AudioConfiguration.SyncModelRootFromServer();
             Logs.Info($"[AudioLab] Audio model root: {Path.GetFullPath(AudioConfiguration.ModelRoot)}");
 
+            // The engine's model cache root is fixed on first read; align it before any weight-presence check can
+            // touch it, so downloads land under the configured Swarm model root instead of ~/.cache.
+            AudioEngineBridge.AlignModelsRoot();
+
             // Register all built-in audio providers
             AudioProviderDefinitions.RegisterAll();
             Logs.Info($"[AudioLab] Registered {AudioProviderDefinitions.All.Count} audio providers");
