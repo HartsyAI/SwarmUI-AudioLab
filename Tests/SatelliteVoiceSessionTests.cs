@@ -15,6 +15,9 @@ internal sealed class FakeClaimHost : ISatelliteClaimHost
     public WakeDeviceClaim Current;
     public bool ReturnNull;
     public bool ThrowAlreadyClaimed;
+    public readonly List<WakeDeviceClaim> Released = [];
+    /// <summary>Runs once, inside the first Claim, after the claim exists but before it is returned.</summary>
+    public Action<WakeDeviceClaim> DuringFirstClaim;
 
     public WakeDeviceClaim Claim(string deviceId, WakeInboundFrameHandler onFrame, Action onDisconnected = null)
     {
@@ -32,6 +35,9 @@ internal sealed class FakeClaimHost : ISatelliteClaimHost
             WakeDeviceClaim claim = new(onFrame, onDisconnected);
             Claims.Add(claim);
             Current = claim;
+            Action<WakeDeviceClaim> hook = DuringFirstClaim;
+            DuringFirstClaim = null;
+            hook?.Invoke(claim);
             return claim;
         }
     }
@@ -41,6 +47,7 @@ internal sealed class FakeClaimHost : ISatelliteClaimHost
         lock (Gate)
         {
             Log.Add("Release");
+            Released.Add(claim);
             if (ReferenceEquals(Current, claim))
             {
                 Current = null;
@@ -146,7 +153,14 @@ internal sealed class FakeVoiceSession : ISatelliteVoiceSession
     public bool Started;
     public bool Disposed;
 
-    public int OutboundSampleRate => 16000; // passthrough in the resampler: samples go out one for one.
+    /// <summary>24 kHz like the Kokoro-backed session, so the 24k -> 16k resample path runs: a 480-sample read
+    /// (20 ms) comes out as 320 samples.</summary>
+    public int OutboundSampleRate => 24000;
+
+    public const int Frame24k = 480;
+
+    public Action OnDispose;
+    public TaskCompletionSource DisposeGate;
 
     public event Action<SatelliteSessionEvent> EventRaised;
 
@@ -202,10 +216,14 @@ internal sealed class FakeVoiceSession : ISatelliteVoiceSession
 
     public void Raise(SatelliteSessionEvent ev) => EventRaised?.Invoke(ev);
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
+        OnDispose?.Invoke();
+        if (DisposeGate is not null)
+        {
+            await DisposeGate.Task.ConfigureAwait(false);
+        }
         Disposed = true;
-        return ValueTask.CompletedTask;
     }
 }
 
@@ -333,8 +351,8 @@ public class SatelliteVoiceSessionTests
         await WaitUntilAsync(() => manager.ActiveCount == 0, "the idle session to end");
 
         Assert.Equal(1, claims.Count("Release"));
-        Assert.True(factory.Session.Disposed);
-        Assert.Equal(WakeStatus.Done, link.StatusSnapshot()[^1]);
+        await WaitUntilAsync(() => factory.Session.Disposed && link.StatusSnapshot().LastOrDefault() == WakeStatus.Done,
+            "teardown to finish");
     }
 
     [Fact]
@@ -355,6 +373,26 @@ public class SatelliteVoiceSessionTests
 
         Assert.Equal(1, manager.ActiveCount);
         await manager.StopAllAsync();
+    }
+
+    [Fact]
+    public async Task AnErrorMidTurn_DoesNotHoldTheClaimOpenForever()
+    {
+        var options = new SatelliteSessionOptions
+        {
+            IdleTimeout = TimeSpan.FromMilliseconds(60),
+            IdleCheckInterval = TimeSpan.FromMilliseconds(10),
+            PumpInterval = TimeSpan.FromMilliseconds(5),
+        };
+        var (manager, claims, _, factory) = Build(options);
+        manager.TryStart("sat-1");
+        await WaitUntilAsync(() => factory.Session.Started, "the session to start");
+        factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.Thinking));
+        factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.Error, 1, "boom"));
+
+        await WaitUntilAsync(() => manager.ActiveCount == 0, "the call to end after the error");
+
+        Assert.Equal(1, claims.Count("Release"));
     }
 
     [Fact]
@@ -387,8 +425,8 @@ public class SatelliteVoiceSessionTests
         claims.Disconnect();
 
         await WaitUntilAsync(() => manager.ActiveCount == 0, "the call to end");
-        Assert.True(factory.Session.Disposed);
-        Assert.Equal(WakeStatus.Done, link.StatusSnapshot()[^1]);
+        await WaitUntilAsync(() => factory.Session.Disposed && link.StatusSnapshot().LastOrDefault() == WakeStatus.Done,
+            "teardown to finish");
     }
 
     [Fact]
@@ -405,12 +443,12 @@ public class SatelliteVoiceSessionTests
     }
 
     [Fact]
-    public void TryStart_WhenTheDeviceIsAlreadyClaimedByAnotherHost_FallsBack()
+    public void TryStart_WhenTheDeviceIsAlreadyClaimedByAnotherHost_ConsumesTheDetectionWithoutFallingBack()
     {
         var (manager, claims, _, factory) = Build();
         claims.ThrowAlreadyClaimed = true;
 
-        Assert.False(manager.TryStart("sat-1"));
+        Assert.True(manager.TryStart("sat-1")); // true = no Legacy turn on top of the other host
 
         Assert.Equal(0, manager.ActiveCount);
         Assert.Equal(0, factory.Created);
@@ -429,23 +467,27 @@ public class SatelliteVoiceSessionTests
         await manager.StopAllAsync();
     }
 
+    private static float[] Chunk(int samples, float level = 0.5f) => Enumerable.Repeat(level, samples).ToArray();
+
     [Fact]
-    public async Task ReplyAudio_ReachesTheSatelliteAsOneStreamPerTurn_AndCompletesWhenTheTurnDoes()
+    public async Task ReplyAudio_IsResampledTo16k_OneStreamPerTurn_AndTheTailIsFlushedWhenTheTurnCompletes()
     {
         var (manager, _, link, factory) = Build();
         manager.TryStart("sat-1");
         await WaitUntilAsync(() => factory.Session.Started, "the session to start");
 
-        factory.Session.Enqueue(1, 0.5f, 0.5f);
-        factory.Session.Enqueue(1, 0.5f);
+        factory.Session.Enqueue(1, Chunk(FakeVoiceSession.Frame24k));
+        factory.Session.Enqueue(1, Chunk(FakeVoiceSession.Frame24k));
+        factory.Session.Enqueue(1, Chunk(240)); // half a frame: held by the resampler until flushed
         await WaitUntilAsync(() => link.SinkSnapshot().Length == 1 && link.SinkSnapshot()[0].Writes.Count == 2, "turn 1 audio");
         factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.TurnCompleted, 1));
         await WaitUntilAsync(() => link.SinkSnapshot()[0].Completed, "turn 1's stream to complete");
 
-        factory.Session.Enqueue(2, 0.25f);
-        await WaitUntilAsync(() => link.SinkSnapshot().Length == 2, "a second stream for turn 2");
+        // 480 samples at 24 kHz -> 320 samples at 16 kHz -> 640 bytes of PCM16, three times (two frames + tail).
+        Assert.Equal([640, 640, 640], link.SinkSnapshot()[0].Writes.Select(w => w.Length).ToArray());
 
-        Assert.Equal(6, link.SinkSnapshot()[0].Writes.Sum(w => w.Length)); // 3 samples, PCM16
+        factory.Session.Enqueue(2, Chunk(FakeVoiceSession.Frame24k));
+        await WaitUntilAsync(() => link.SinkSnapshot().Length == 2, "a second stream for turn 2");
         await manager.StopAllAsync();
     }
 
@@ -455,18 +497,163 @@ public class SatelliteVoiceSessionTests
         var (manager, _, link, factory) = Build();
         manager.TryStart("sat-1");
         await WaitUntilAsync(() => factory.Session.Started, "the session to start");
-        factory.Session.Enqueue(1, 0.5f);
+        factory.Session.Enqueue(1, Chunk(FakeVoiceSession.Frame24k));
         await WaitUntilAsync(() => link.SinkSnapshot().Length == 1 && link.SinkSnapshot()[0].Writes.Count == 1, "turn 1 audio");
 
         factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.BargeIn, 1));
         await WaitUntilAsync(() => link.SinkSnapshot()[0].Completed, "the barged-in stream to be flushed");
-        factory.Session.Enqueue(1, 0.5f, 0.5f, 0.5f); // a straggler tagged with the flushed turn
-        factory.Session.Enqueue(2, 0.25f);
+        factory.Session.Enqueue(1, Chunk(FakeVoiceSession.Frame24k)); // a straggler tagged with the flushed turn
+        factory.Session.Enqueue(2, Chunk(FakeVoiceSession.Frame24k));
         await WaitUntilAsync(() => link.SinkSnapshot().Length == 2, "turn 2 to open its own stream");
 
         Assert.Single(link.SinkSnapshot()[0].Writes); // the straggler never reached the device
-        Assert.Equal(2, link.SinkSnapshot()[1].Writes.Sum(w => w.Length));
+        await WaitUntilAsync(() => link.SinkSnapshot()[1].Writes.Count == 1, "turn 2 audio");
         await manager.StopAllAsync();
+    }
+
+    [Fact]
+    public async Task AReplyStream_SurvivesATtsGapWhileTheSessionIsStillSpeaking()
+    {
+        var (manager, _, link, factory) = Build(); // StreamIdleGap is 100 ms here
+        manager.TryStart("sat-1");
+        await WaitUntilAsync(() => factory.Session.Started, "the session to start");
+        factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.Speaking));
+        factory.Session.Enqueue(1, Chunk(FakeVoiceSession.Frame24k));
+        await WaitUntilAsync(() => link.SinkSnapshot().Length == 1, "the stream to open");
+
+        await Task.Delay(400); // well past StreamIdleGap, with no audio
+
+        Assert.False(link.SinkSnapshot()[0].Completed);
+        await manager.StopAllAsync();
+    }
+
+    [Fact]
+    public async Task ADetection_WhileTheLastCallIsStillTearingDown_StartsANewCall()
+    {
+        var (manager, claims, _, factory) = Build();
+        factory.Session.DisposeGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        manager.TryStart("sat-1");
+        await WaitUntilAsync(() => factory.Session.Started, "the session to start");
+
+        Task stopping = manager.StopAllAsync(); // blocks in the session's slow disposal
+        await WaitUntilAsync(() => claims.Count("Release") == 1, "the claim to be released");
+
+        Assert.True(manager.TryStart("sat-1"));
+        Assert.Equal(2, claims.Count("Claim")); // a real new claim, not "already owned"
+
+        factory.Session.DisposeGate.SetResult();
+        await stopping;
+        await manager.StopAllAsync();
+    }
+
+    [Fact]
+    public async Task ADisconnectDuringTheInitialClaim_IsNeverOverwrittenByTheStaleClaim()
+    {
+        var (manager, claims, _, factory) = Build();
+        Task disconnect = null;
+        claims.DuringFirstClaim = a =>
+        {
+            // The engine's disconnect callback fires on its own thread while Claim is still returning.
+            disconnect = Task.Run(() => a.OnDisconnected());
+            Thread.Sleep(100);
+        };
+
+        Assert.True(manager.TryStart("sat-1"));
+        await disconnect.WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => factory.Session.Started, "the session to start");
+        Assert.Equal(2, claims.Count("Claim"));
+
+        await manager.StopAllAsync();
+
+        Assert.Same(claims.Claims[1], claims.Released[^1]); // the re-claim is what gets released, not the stale one
+    }
+
+    [Fact]
+    public async Task Done_IsTheLastStatus_AndIsSentBeforeTheSlowSessionDisposal()
+    {
+        var (manager, _, link, factory) = Build();
+        string[] atDispose = null;
+        factory.Session.OnDispose = () => atDispose = link.StatusSnapshot();
+        manager.TryStart("sat-1");
+        await WaitUntilAsync(() => factory.Session.Started, "the session to start");
+        factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.Speaking));
+
+        await manager.StopAllAsync();
+
+        Assert.NotNull(atDispose);
+        Assert.Equal(WakeStatus.Done, atDispose[^1]);
+        Assert.Equal(WakeStatus.Done, link.StatusSnapshot()[^1]);
+    }
+
+    [Fact]
+    public async Task SpeakingListeningSpeaking_SendsBothSpeakingStatuses()
+    {
+        var (manager, _, link, factory) = Build();
+        manager.TryStart("sat-1");
+        await WaitUntilAsync(() => factory.Session.Started, "the session to start");
+
+        factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.Speaking));
+        factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.Listening));
+        factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.Speaking));
+        await WaitUntilAsync(() => link.StatusSnapshot().Count(x => x == WakeStatus.Speaking) == 2, "two Speaking statuses");
+        await manager.StopAllAsync();
+    }
+
+    [Fact]
+    public async Task ATurnStuckThinking_StopsHoldingTheClaimAfterTheBusyCap()
+    {
+        var options = new SatelliteSessionOptions
+        {
+            IdleTimeout = TimeSpan.FromMilliseconds(60),
+            IdleCheckInterval = TimeSpan.FromMilliseconds(10),
+            PumpInterval = TimeSpan.FromMilliseconds(5),
+            BusyCap = TimeSpan.FromMilliseconds(150),
+        };
+        var (manager, claims, _, factory) = Build(options);
+        manager.TryStart("sat-1");
+        await WaitUntilAsync(() => factory.Session.Started, "the session to start");
+        factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.Thinking));
+
+        await WaitUntilAsync(() => manager.ActiveCount == 0, "the stuck call to end");
+
+        Assert.Equal(1, claims.Count("Release"));
+    }
+
+    [Fact]
+    public async Task TheUserStillTalking_HoldsTheIdleTimerOff()
+    {
+        var options = new SatelliteSessionOptions
+        {
+            IdleTimeout = TimeSpan.FromMilliseconds(120),
+            IdleCheckInterval = TimeSpan.FromMilliseconds(10),
+            PumpInterval = TimeSpan.FromMilliseconds(5),
+        };
+        var (manager, claims, _, factory) = Build(options);
+        manager.TryStart("sat-1");
+        await WaitUntilAsync(() => factory.Session.Started, "the session to start");
+
+        for (int i = 0; i < 20; i++)
+        {
+            Frame(claims, Chunk(320, 0.3f)); // loud: speech
+            await Task.Delay(30);
+        }
+        Assert.Equal(1, manager.ActiveCount);
+
+        await WaitUntilAsync(() => manager.ActiveCount == 0, "the call to end once the user stops");
+    }
+
+    [Fact]
+    public async Task LeaseGuard_ReleasesTheLease_WhenTheBuildStepThrows()
+    {
+        int released = 0;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => LeaseGuard.BuildOrReleaseAsync<int>(
+            () => throw new InvalidOperationException("session constructor failed"),
+            () => { released++; return Task.CompletedTask; }));
+
+        Assert.Equal(1, released);
+        Assert.Equal(7, await LeaseGuard.BuildOrReleaseAsync(() => Task.FromResult(7), () => { released++; return Task.CompletedTask; }));
+        Assert.Equal(1, released); // not released on success
     }
 
     [Fact]
