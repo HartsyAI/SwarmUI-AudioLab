@@ -101,6 +101,10 @@ public static class VoiceSessionEndpoints
         RemoteTextService text = new(WebServer.PageURL, session.ID, start.Model, start.AssistantId);
         text.Notice += noticeText => _ = SendJsonAsync(new JObject { ["notice"] = noticeText });
 
+        // Said before the wait below, so a caller who arrives while an idle release is running sees the tab warming
+        // up rather than nothing.
+        await SendJsonAsync(new JObject { ["state"] = "Warming" }).ConfigureAwait(false);
+
         // Held for the whole call: an idle release cannot start while the call is open, and one already running
         // finishes before the call loads its models, rather than ending the call a moment after it starts.
         using IDisposable idleHold = await AudioEngineBridge.IdleRelease.BeginAsync(Program.GlobalProgramCancel).ConfigureAwait(false);
@@ -108,7 +112,6 @@ public static class VoiceSessionEndpoints
         VoiceModelLease lease;
         try
         {
-            await SendJsonAsync(new JObject { ["state"] = "Warming" }).ConfigureAwait(false);
             lease = await VoiceEngineModels.Shared.AcquireAsync(start, text, Program.GlobalProgramCancel).ConfigureAwait(false);
         }
         catch (Exception ex)
