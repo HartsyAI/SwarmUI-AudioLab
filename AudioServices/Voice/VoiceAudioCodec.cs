@@ -158,9 +158,8 @@ internal sealed class VoiceInboundResampler
         return true;
     }
 
-    /// <summary>Feeds more input samples and returns however many whole 16 kHz frames are now ready to push into
-    /// <c>VoiceAgentSession.PushInbound</c> -- an empty array when less than one input frame has accumulated yet.
-    /// A passthrough instance returns <paramref name="input"/> unchanged.</summary>
+    /// <summary>Emits what is left in the buffer as one final frame, zero-padded to a whole input frame (so up
+    /// to one frame of trailing silence). Empty for a passthrough instance or an empty buffer.</summary>
     public float[] Flush()
     {
         if (_resampler is null || _pending.Count == 0)
@@ -171,6 +170,9 @@ internal sealed class VoiceInboundResampler
         return Push([]);
     }
 
+    /// <summary>Feeds more input samples and returns however many whole 16 kHz frames are now ready to push into
+    /// <c>VoiceAgentSession.PushInbound</c> -- an empty array when less than one input frame has accumulated yet.
+    /// A passthrough instance returns <paramref name="input"/> unchanged.</summary>
     public float[] Push(ReadOnlySpan<float> input)
     {
         if (_resampler is null)

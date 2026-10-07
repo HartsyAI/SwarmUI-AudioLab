@@ -103,14 +103,24 @@ internal sealed class FakeSessionLink : ISatelliteLink
 {
     public readonly List<string> Statuses = [];
     public readonly List<FakeSink> Sinks = [];
+    public TaskCompletionSource ThinkingGate;
+    public bool HangStatuses;
 
-    public Task<bool> SendStatusAsync(string deviceId, string state, string detail = null)
+    public async Task<bool> SendStatusAsync(string deviceId, string state, string detail = null)
     {
+        if (HangStatuses)
+        {
+            await Task.Delay(Timeout.Infinite).ConfigureAwait(false);
+        }
+        if (state == WakeStatus.Thinking && ThinkingGate is not null)
+        {
+            await ThinkingGate.Task.ConfigureAwait(false);
+        }
         lock (Statuses)
         {
             Statuses.Add(state);
         }
-        return Task.FromResult(true);
+        return true;
     }
 
     public WakeAudioStream BeginAudio(string deviceId, int sampleRate) => throw new NotSupportedException();
@@ -640,6 +650,125 @@ public class SatelliteVoiceSessionTests
         Assert.Equal(1, manager.ActiveCount);
 
         await WaitUntilAsync(() => manager.ActiveCount == 0, "the call to end once the user stops");
+    }
+
+    private static SatelliteSessionOptions Opts(int idleMs = 60, int busyCapMs = 90_000, int maxCallMs = 600_000, int drainMs = 5000) => new()
+    {
+        IdleTimeout = TimeSpan.FromMilliseconds(idleMs),
+        IdleCheckInterval = TimeSpan.FromMilliseconds(10),
+        PumpInterval = TimeSpan.FromMilliseconds(5),
+        BusyCap = TimeSpan.FromMilliseconds(busyCapMs),
+        MaxCallDuration = TimeSpan.FromMilliseconds(maxCallMs),
+        StatusDrainTimeout = TimeSpan.FromMilliseconds(drainMs),
+    };
+
+    [Fact]
+    public async Task ALateDone_FromAnEndedCall_IsNotSentDuringTheNewCallOnTheSameDevice()
+    {
+        var (manager, claims, link, factory) = Build();
+        link.ThinkingGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        manager.TryStart("sat-1");
+        await WaitUntilAsync(() => factory.Session.Started, "the session to start");
+        factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.Thinking)); // the relay blocks on this
+        factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.Ended));
+        await WaitUntilAsync(() => manager.ActiveCount == 0, "the first call to leave the active set");
+
+        Assert.True(manager.TryStart("sat-1")); // the new call
+        Assert.Equal(2, claims.Count("Claim"));
+        link.ThinkingGate.SetResult(); // the old call's relay now reaches its queued Done
+
+        await Task.Delay(200);
+        Assert.DoesNotContain(WakeStatus.Done, link.StatusSnapshot());
+        await manager.StopAllAsync();
+        Assert.Contains(WakeStatus.Done, link.StatusSnapshot()); // the new call's own Done still goes out
+    }
+
+    [Fact]
+    public async Task ACallPastItsMaximumLength_EndsEvenWhileTheUserKeepsLookingActive()
+    {
+        var (manager, claims, _, factory) = Build(Opts(idleMs: 5000, maxCallMs: 200));
+        manager.TryStart("sat-1");
+        await WaitUntilAsync(() => factory.Session.Started, "the session to start");
+
+        for (int i = 0; i < 40 && manager.ActiveCount > 0; i++)
+        {
+            if (claims.Current is not null)
+            {
+                Frame(claims, Chunk(320, 0.3f));
+            }
+            await Task.Delay(20);
+        }
+
+        Assert.Equal(0, manager.ActiveCount);
+        Assert.Equal(1, claims.Count("Release"));
+    }
+
+    [Fact]
+    public async Task OwnReplyEcho_WhileSpeaking_DoesNotKeepAStuckTurnAlive()
+    {
+        var (manager, claims, _, factory) = Build(Opts(idleMs: 60, busyCapMs: 100));
+        manager.TryStart("sat-1");
+        await WaitUntilAsync(() => factory.Session.Started, "the session to start");
+        factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.Speaking, 1));
+
+        for (int i = 0; i < 100 && manager.ActiveCount > 0; i++)
+        {
+            if (claims.Current is not null)
+            {
+                Frame(claims, Chunk(320, 0.3f)); // loud: the mic hearing the speaker
+            }
+            await Task.Delay(20);
+        }
+
+        Assert.Equal(0, manager.ActiveCount);
+    }
+
+    [Fact]
+    public async Task TheBusyCap_RenewsOnActivity_SoALongTurnThatKeepsProgressingIsNotCut()
+    {
+        var (manager, _, _, factory) = Build(Opts(idleMs: 40, busyCapMs: 150));
+        manager.TryStart("sat-1");
+        await WaitUntilAsync(() => factory.Session.Started, "the session to start");
+
+        for (int i = 0; i < 15; i++) // 450 ms, three times the cap
+        {
+            factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.Speaking, 1));
+            await Task.Delay(30);
+        }
+
+        Assert.Equal(1, manager.ActiveCount);
+        await WaitUntilAsync(() => manager.ActiveCount == 0, "the call to end once progress stops");
+    }
+
+    [Fact]
+    public async Task AStaleTurnCompleted_FromABargedInTurn_DoesNotMarkTheNewTurnIdle()
+    {
+        var (manager, _, _, factory) = Build(Opts(idleMs: 50));
+        manager.TryStart("sat-1");
+        await WaitUntilAsync(() => factory.Session.Started, "the session to start");
+        factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.Thinking, 2));
+        factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.TurnCompleted, 1)); // stale
+
+        await Task.Delay(300);
+
+        Assert.Equal(1, manager.ActiveCount); // turn 2 is still thinking
+        factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.TurnCompleted, 2));
+        await WaitUntilAsync(() => manager.ActiveCount == 0, "the call to end after the real completion");
+    }
+
+    [Fact]
+    public async Task AHungStatusSend_DoesNotPreventDisposalOrCompletion()
+    {
+        var (manager, claims, link, factory) = Build(Opts(drainMs: 100));
+        link.HangStatuses = true;
+        manager.TryStart("sat-1");
+        await WaitUntilAsync(() => factory.Session.Started, "the session to start");
+        factory.Session.Raise(new SatelliteSessionEvent(SatelliteSessionEventKind.Thinking));
+
+        await manager.StopAllAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(factory.Session.Disposed);
+        Assert.Equal(1, claims.Count("Release"));
     }
 
     [Fact]
