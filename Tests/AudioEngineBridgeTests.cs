@@ -171,37 +171,55 @@ public class AudioEngineBridgeTests
     public async Task FreeMemory_SettlesThePendingIdleTimer()
     {
         // A free-memory request from outside leaves nothing for the idle timer to release, so it is cancelled.
-        IdleModelReleaser idle = AudioEngineBridge.IdleRelease;
+        // Uses its own releaser, so no process-wide state is involved.
+        IdleModelReleaser idle = new(() => null, () => true);
         idle.Configure(TimeSpan.FromMinutes(3));
         using (await idle.BeginAsync(CancellationToken.None))
         {
         }
         Task pending = idle.PendingTimer;
         Assert.False(pending.IsCompleted);
-        try
+
+        AudioEngineBridge.FreeMemory(idle);
+
+        Assert.Same(pending, await Task.WhenAny(pending, Task.Delay(TimeSpan.FromSeconds(30))));
+    }
+
+    [Theory]
+    [InlineData(int.MaxValue, 43200)]
+    [InlineData(43201, 43200)]
+    [InlineData(5, 5)]
+    public async Task ConfigureIdle_MapsTheSettingToThePeriod_ClampingTheTop(int minutes, int expectedMinutes)
+    {
+        List<TimeSpan> spans = [];
+        IdleModelReleaser idle = new(() => null, () => true, delay: (span, _) =>
         {
-            AudioEngineBridge.FreeMemory();
-            Task done = await Task.WhenAny(pending, Task.Delay(TimeSpan.FromSeconds(30)));
-            Assert.Same(pending, done);
-        }
-        finally
+            spans.Add(span);
+            return new TaskCompletionSource().Task;
+        });
+        AudioEngineBridge.ConfigureIdle(idle, minutes);
+
+        using (await idle.BeginAsync(CancellationToken.None))
         {
-            idle.Configure(TimeSpan.FromMinutes(AudioEngineBridge.DefaultIdleUnloadMinutes));
         }
+
+        Assert.Equal(TimeSpan.FromMinutes(expectedMinutes), Assert.Single(spans));
     }
 
     [Fact]
-    public void RequestIdleUnload_AcceptsAnAbsurdlyLargeSetting_WithoutThrowing()
+    public async Task ConfigureIdle_ZeroOrNegative_TurnsItOff()
     {
-        try
+        int delays = 0;
+        IdleModelReleaser idle = new(() => null, () => true, delay: (_, _) =>
         {
-            AudioEngineBridge.RequestIdleUnload(int.MaxValue);
-            AudioEngineBridge.RequestIdleUnload(-5);
-        }
-        finally
+            delays++;
+            return new TaskCompletionSource().Task;
+        });
+        AudioEngineBridge.ConfigureIdle(idle, -5);
+        using (await idle.BeginAsync(CancellationToken.None))
         {
-            AudioEngineBridge.RequestIdleUnload(AudioEngineBridge.DefaultIdleUnloadMinutes);
         }
+        Assert.Equal(0, delays);
     }
 
     [Fact]
