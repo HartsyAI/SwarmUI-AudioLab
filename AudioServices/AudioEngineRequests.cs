@@ -78,7 +78,10 @@ public static class AudioEngineRequests
         string prompt = AudioIo.Str(args, "prompt");
         string genre = AudioIo.Str(args, "genre");
         // ACE-Step puts the style in genre and (optional) lyrics in prompt, so either alone is enough.
-        if (string.IsNullOrWhiteSpace(prompt) && string.IsNullOrWhiteSpace(genre))
+        // ControlFoley scores a video or follows a reference clip with no prompt at all (the official demo's default).
+        bool conditioned = !string.IsNullOrEmpty(AudioIo.Str(args, "video_data"))
+            || !string.IsNullOrEmpty(AudioIo.Str(args, "controlfoley_reference_audio"));
+        if (string.IsNullOrWhiteSpace(prompt) && string.IsNullOrWhiteSpace(genre) && !conditioned)
         {
             throw new ArgumentException("No prompt supplied to generate music.");
         }
