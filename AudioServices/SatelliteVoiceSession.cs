@@ -151,7 +151,8 @@ internal sealed class SatelliteVoiceSessionManager
 
     /// <summary>Claims the device and starts a session for it. Returns true when a session now owns the device's
     /// turns (including when one already did: a detection that was already in flight when the claim was taken
-    /// is not a second turn). Returns false when the claim could not be taken -- the caller then runs the
+    /// is not a second turn, and neither is a device another host already claimed: that detection is left to
+    /// its owner). Returns false only when there was no live connection to claim -- the caller then runs the
     /// Legacy turn for this detection.</summary>
     public bool TryStart(string deviceId)
     {
@@ -178,7 +179,11 @@ internal sealed class SatelliteVoiceSessionManager
         }
         catch (InvalidOperationException ex)
         {
-            failure = ex.Message;
+            // Another host already owns this device's audio. Running the Legacy turn on top of it would be a
+            // second voice on the same speaker, so the detection is consumed, not answered.
+            _calls.TryRemove(new KeyValuePair<string, SatelliteVoiceCall>(deviceId, call));
+            Logs.Warning($"[AudioLab][Session] '{deviceId}': {ex.Message} Leaving this detection to its owner.");
+            return true;
         }
         catch (Exception ex)
         {
@@ -218,7 +223,7 @@ internal sealed class SatelliteVoiceCall
     private readonly List<float[]> _pending = [];
     private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private WakeDeviceClaim _claim;
+    private volatile WakeDeviceClaim _claim;
     private ISatelliteVoiceSession _session;
     private int _pendingSamples;
     private bool _frameClosed;
@@ -453,9 +458,13 @@ internal sealed class SatelliteVoiceCall
                     break;
                 case SatelliteSessionEventKind.TurnCompleted:
                     InterlockedMax(ref _completedTurn, ev.TurnId);
+                    _busy = false;
                     Touch();
                     break;
                 case SatelliteSessionEventKind.Error:
+                    // Not busy any more either: an error mid-turn must not hold the claim open forever.
+                    _busy = false;
+                    Touch();
                     Logs.Warning($"[AudioLab][Session] '{_deviceId}': {ev.Text}");
                     Enqueue(WakeStatus.Error, ev.Text);
                     break;
