@@ -66,6 +66,14 @@ public class IdleModelReleaserTests
         }
     }
 
+    /// <summary>Awaits <paramref name="task"/> for at most 30 s, so a regression fails the test instead of hanging it.</summary>
+    private static async Task Bounded(Task task)
+    {
+        Task done = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(30)));
+        Assert.True(ReferenceEquals(done, task), "the timer never finished");
+        await task;
+    }
+
     private sealed class Harness
     {
         public int Releases;
@@ -75,12 +83,12 @@ public class IdleModelReleaserTests
         public ManualDelays Delays { get; }
         public IdleModelReleaser Releaser { get; }
 
-        public Harness(ManualDelays delays = null, Action release = null)
+        public Harness(ManualDelays delays = null, Func<bool> release = null)
         {
             Delays = delays ?? new ManualDelays();
             Releaser = new IdleModelReleaser(
                 inUse: () => Busy,
-                release: release ?? (() => Interlocked.Increment(ref Releases)),
+                release: release ?? (() => { Interlocked.Increment(ref Releases); return true; }),
                 delay: Delays.Delay,
                 log: Log.Add,
                 logDetail: Detail.Add);
@@ -97,7 +105,7 @@ public class IdleModelReleaserTests
         {
             Task pending = Releaser.PendingTimer;
             Delays.Fire(index);
-            await pending;
+            await Bounded(pending);
         }
     }
 
@@ -214,6 +222,7 @@ public class IdleModelReleaserTests
             {
                 order.Add("release finished");
             }
+            return true;
         });
         h.Releaser.Configure(Idle);
         await h.RunRequestAsync();
@@ -249,6 +258,7 @@ public class IdleModelReleaserTests
         {
             releaseStarted.Set();
             finishRelease.Wait();
+            return true;
         });
         h.Releaser.Configure(Idle);
         await h.RunRequestAsync();
@@ -280,7 +290,7 @@ public class IdleModelReleaserTests
         Task pending = h.Releaser.PendingTimer;
 
         h.Releaser.Configure(TimeSpan.FromMinutes(-1)); // negative is off, too
-        await pending;
+        await Bounded(pending);
         h.Delays.Fire(0);
         Assert.Equal(0, h.Releases);
     }
@@ -320,7 +330,7 @@ public class IdleModelReleaserTests
         int releases = 0;
         IdleModelReleaser releaser = new(
             inUse: () => ++checks == 1 ? throw new InvalidOperationException("boom") : (string)null,
-            release: () => releases++,
+            release: () => { releases++; return true; },
             delay: delays.Delay);
         releaser.Configure(Idle);
         using (IDisposable activity = await releaser.BeginAsync(CancellationToken.None))
@@ -339,7 +349,7 @@ public class IdleModelReleaserTests
     }
 
     [Fact]
-    public async Task AFailingRelease_IsLogged_AndTheNextIdlePeriodTriesAgain()
+    public async Task AFailingRelease_IsLogged_AndRetriedOnePeriodLater_UntilItSucceeds()
     {
         int attempts = 0;
         Harness h = new(release: () =>
@@ -348,15 +358,235 @@ public class IdleModelReleaserTests
             {
                 throw new InvalidOperationException("device lost");
             }
+            return attempts > 2;
         });
         h.Releaser.Configure(Idle);
         await h.RunRequestAsync();
 
         await h.FireAsync(0);
         Assert.Contains("device lost", Assert.Single(h.Log));
+        // No request in between: the retry is scheduled by the failure itself, a full period out.
+        Assert.Equal(2, h.Delays.Count);
+        Assert.Equal(Idle, h.Delays.SpanOf(1));
 
-        await h.RunRequestAsync();
+        // A release that reports false (could not free) is a failure too.
         await h.FireAsync(1);
         Assert.Equal(2, attempts);
+        Assert.Equal(2, h.Log.Count);
+        Assert.Contains("could not free", h.Log[1]);
+        Assert.Equal(3, h.Delays.Count);
+
+        await h.FireAsync(2);
+        Assert.Equal(3, attempts);
+        Assert.Contains("Released the resident audio models", h.Log[2]);
+        // Succeeded: nothing resident, nothing more scheduled.
+        Assert.Equal(3, h.Delays.Count);
+    }
+
+    [Fact]
+    public async Task AFailedRelease_KeepsTheUsedFlag_SoAReconfigureStillSchedules()
+    {
+        Harness h = new(release: () => false);
+        h.Releaser.Configure(Idle);
+        await h.RunRequestAsync();
+        await h.FireAsync(0);
+        int before = h.Delays.Count;
+
+        h.Releaser.Configure(Idle);
+
+        Assert.Equal(before + 1, h.Delays.Count);
+    }
+
+    [Fact]
+    public async Task AfterASuccessfulRelease_ReconfiguringSchedulesNothing()
+    {
+        Harness h = new();
+        h.Releaser.Configure(Idle);
+        await h.RunRequestAsync();
+        await h.FireAsync(0);
+        Assert.Equal(1, h.Releases);
+
+        h.Releaser.Configure(Idle);
+
+        Assert.Equal(1, h.Delays.Count);
+    }
+
+    [Fact]
+    public async Task ATimerPastItsDelay_StandsDown_WhenIdleReleaseWasTurnedOffMeanwhile()
+    {
+        // Cancellation lost the race: the wait still completes after Configure(0).
+        Harness h = new(new ManualDelays(honourCancel: false));
+        h.Releaser.Configure(Idle);
+        await h.RunRequestAsync();
+        Task pending = h.Releaser.PendingTimer;
+
+        h.Releaser.Configure(TimeSpan.Zero);
+        h.Delays.Fire(0);
+        await Bounded(pending);
+
+        Assert.Equal(0, h.Releases);
+    }
+
+    [Fact]
+    public async Task ASupersededTimer_DoesNotRelease_EvenWithNoActivityAndReleaseOn()
+    {
+        // Reconfiguring bumps the epoch via a fresh timer; the earlier one, whose cancellation lost the race,
+        // fires with nothing active and release on, and must still not act for itself.
+        Harness h = new(new ManualDelays(honourCancel: false));
+        h.Releaser.Configure(Idle);
+        await h.RunRequestAsync();
+        Task first = h.Releaser.PendingTimer;
+        h.Releaser.Configure(Idle); // schedules a second timer
+        Assert.Equal(2, h.Delays.Count);
+
+        h.Delays.Fire(0);
+        await Bounded(first);
+        Assert.Equal(0, h.Releases);
+
+        await h.FireAsync(1);
+        Assert.Equal(1, h.Releases);
+    }
+
+    [Fact]
+    public async Task Configure_ClampsAnOverlongIdleTime_ToThirtyDays()
+    {
+        Assert.Equal(TimeSpan.FromMinutes(43200), IdleModelReleaser.MaxIdleAfter);
+        Harness h = new();
+        h.Releaser.Configure(TimeSpan.FromMinutes(43200 * 2));
+        await h.RunRequestAsync();
+        Assert.Equal(IdleModelReleaser.MaxIdleAfter, h.Delays.SpanOf(0));
+
+        Harness exact = new();
+        exact.Releaser.Configure(TimeSpan.FromMinutes(43200));
+        await exact.RunRequestAsync();
+        Assert.Equal(IdleModelReleaser.MaxIdleAfter, exact.Delays.SpanOf(0));
+
+        Harness below = new();
+        below.Releaser.Configure(TimeSpan.FromMinutes(43199));
+        await below.RunRequestAsync();
+        Assert.Equal(TimeSpan.FromMinutes(43199), below.Delays.SpanOf(0));
+    }
+
+    [Fact]
+    public async Task NoteExternalRelease_CancelsThePendingTimer_AndSchedulesNothingUntilTheNextRequest()
+    {
+        Harness h = new();
+        h.Releaser.Configure(Idle);
+        await h.RunRequestAsync();
+        Task pending = h.Releaser.PendingTimer;
+
+        h.Releaser.NoteExternalRelease();
+        await Bounded(pending);
+        h.Delays.Fire(0);
+        Assert.Equal(0, h.Releases);
+
+        // Reconfiguring does not bring it back: nothing has run since.
+        h.Releaser.Configure(Idle);
+        Assert.Equal(1, h.Delays.Count);
+
+        await h.RunRequestAsync();
+        Assert.Equal(2, h.Delays.Count);
+        await h.FireAsync(1);
+        Assert.Equal(1, h.Releases);
+    }
+
+    [Fact]
+    public async Task NoteExternalRelease_IsIgnoredWhileAnActivityIsOpen()
+    {
+        Harness h = new();
+        h.Releaser.Configure(Idle);
+        IDisposable open = await h.Releaser.BeginAsync(CancellationToken.None);
+
+        h.Releaser.NoteExternalRelease();
+        open.Dispose();
+
+        // The activity may have loaded something after the external release, so its end still schedules, and the
+        // release runs.
+        Assert.Equal(1, h.Delays.Count);
+        await h.FireAsync(0);
+        Assert.Equal(1, h.Releases);
+    }
+
+    [Fact]
+    public async Task NoteExternalRelease_DoesNotWaitBehindARunningRelease()
+    {
+        using ManualResetEventSlim releaseStarted = new(false);
+        using ManualResetEventSlim finishRelease = new(false);
+        Harness h = new(release: () =>
+        {
+            releaseStarted.Set();
+            finishRelease.Wait();
+            return true;
+        });
+        h.Releaser.Configure(Idle);
+        await h.RunRequestAsync();
+        Task timer = h.Releaser.PendingTimer;
+        h.Delays.Fire(0);
+        Assert.True(releaseStarted.Wait(TimeSpan.FromSeconds(30)), "the release never started");
+
+        Task call = Task.Run(() =>
+        {
+            h.Releaser.NoteExternalRelease();
+            h.Releaser.Configure(Idle);
+        });
+        Assert.Same(call, await Task.WhenAny(call, Task.Delay(TimeSpan.FromSeconds(10))));
+
+        finishRelease.Set();
+        await Bounded(timer);
+    }
+
+    [Fact]
+    public async Task RunAsync_HoldsAnActivityWhileTheWorkRuns_AndEndsItEvenWhenTheWorkThrows()
+    {
+        Harness h = new();
+        h.Releaser.Configure(Idle);
+        int during = -1;
+
+        string result = await h.Releaser.RunAsync(() =>
+        {
+            during = h.Releaser.ActiveCount;
+            return Task.FromResult("ok");
+        }, CancellationToken.None);
+
+        Assert.Equal("ok", result);
+        Assert.Equal(1, during);
+        Assert.Equal(0, h.Releaser.ActiveCount);
+        Assert.Equal(1, h.Delays.Count); // its end started the timer
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            h.Releaser.RunAsync<int>(() => throw new InvalidOperationException("boom"), CancellationToken.None));
+        Assert.Equal(0, h.Releaser.ActiveCount);
+    }
+
+    [Fact]
+    public async Task RunAsync_WaitsForARunningRelease_BeforeTheWorkStarts()
+    {
+        using ManualResetEventSlim releaseStarted = new(false);
+        using ManualResetEventSlim finishRelease = new(false);
+        Harness h = new(release: () =>
+        {
+            releaseStarted.Set();
+            finishRelease.Wait();
+            return true;
+        });
+        h.Releaser.Configure(Idle);
+        await h.RunRequestAsync();
+        Task timer = h.Releaser.PendingTimer;
+        h.Delays.Fire(0);
+        Assert.True(releaseStarted.Wait(TimeSpan.FromSeconds(30)), "the release never started");
+        bool started = false;
+
+        Task<int> run = h.Releaser.RunAsync(() =>
+        {
+            started = true;
+            return Task.FromResult(1);
+        }, CancellationToken.None);
+        Assert.NotSame(run, await Task.WhenAny(run, Task.Delay(TimeSpan.FromMilliseconds(250))));
+        Assert.False(started);
+
+        finishRelease.Set();
+        await Bounded(timer);
+        Assert.Equal(1, await run);
+        Assert.True(started);
     }
 }

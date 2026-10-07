@@ -155,27 +155,7 @@ public static class WakeWordService
                     return null;
                 }
                 WakeWordSettings settings = GetSettings();
-                WakeService service = new(AudioEngineBridge.Engine, new WakeServiceOptions
-                {
-                    Port = settings.Port,
-                    BindAddress = settings.BindAddress,
-                    ModelRoot = string.IsNullOrWhiteSpace(settings.ModelRoot) ? null : settings.ModelRoot,
-                    TranscribeOnDetection = settings.TranscribeOnDetection,
-            UseEndOfSpeech = settings.UseEndOfSpeech,
-            EndOfSpeechSilenceMs = settings.EndOfSpeechSilenceMs,
-            UtteranceSeconds = settings.UtteranceSeconds,
-                    TranscribeModel = settings.TranscribeModel,
-                    IdentifySpeakers = settings.IdentifySpeakers,
-                    Webhooks = settings.Webhooks ?? [],
-                    EnableTcpListener = settings.EnableTcpListener,
-                    AuthToken = string.IsNullOrWhiteSpace(settings.AuthToken) ? null : settings.AuthToken,
-                    NoiseSuppression = settings.NoiseSuppression,
-                    // Puts "handled":true on the transcript frame, which is the only thing that stops a
-                    // satellite answering the turn itself. It has to be on the frame: Detected is raised after
-                    // the frame is written, so anything the orchestrator sent would arrive at a device that had
-                    // already started its own assistant call, and both replies would play at once.
-                    HostHandlesTurns = settings.ServerSideTurns,
-                });
+                WakeService service = new(AudioEngineBridge.Engine, BuildOptions(settings, AudioEngineBridge.IdleRelease, Program.GlobalProgramCancel));
                 service.Detected += OnDetected;
                 service.Start();
                 _service = service;
@@ -192,6 +172,37 @@ public static class WakeWordService
         {
             Interlocked.Exchange(ref _starting, 0);
         }
+    }
+
+    /// <summary>The engine's wake-service options for <paramref name="settings"/>, with each detection's
+    /// transcription run as an activity of <paramref name="idle"/> so it keeps an idle model release off while it
+    /// runs and waits out one already running.</summary>
+    internal static WakeServiceOptions BuildOptions(WakeWordSettings settings, IdleModelReleaser idle, CancellationToken cancel)
+    {
+        return new WakeServiceOptions
+        {
+            Port = settings.Port,
+            BindAddress = settings.BindAddress,
+            ModelRoot = string.IsNullOrWhiteSpace(settings.ModelRoot) ? null : settings.ModelRoot,
+            TranscribeOnDetection = settings.TranscribeOnDetection,
+            UseEndOfSpeech = settings.UseEndOfSpeech,
+            EndOfSpeechSilenceMs = settings.EndOfSpeechSilenceMs,
+            UtteranceSeconds = settings.UtteranceSeconds,
+            TranscribeModel = settings.TranscribeModel,
+            IdentifySpeakers = settings.IdentifySpeakers,
+            Webhooks = settings.Webhooks ?? [],
+            EnableTcpListener = settings.EnableTcpListener,
+            AuthToken = string.IsNullOrWhiteSpace(settings.AuthToken) ? null : settings.AuthToken,
+            NoiseSuppression = settings.NoiseSuppression,
+            // Puts "handled":true on the transcript frame, which is the only thing that stops a
+            // satellite answering the turn itself. It has to be on the frame: Detected is raised after
+            // the frame is written, so anything the orchestrator sent would arrive at a device that had
+            // already started its own assistant call, and both replies would play at once.
+            HostHandlesTurns = settings.ServerSideTurns,
+            // The transcription reaches the engine without passing through the audio backend, so the idle timer
+            // only sees it through this gate.
+            TranscribeGate = work => idle.RunAsync(work, cancel),
+        };
     }
 
     /// <summary>Stops the listener and releases the port. Idempotent.</summary>

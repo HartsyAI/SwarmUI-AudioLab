@@ -159,4 +159,69 @@ public class AudioEngineBridgeTests
         Assert.Null(plain.EmotionText);
         Assert.Null(plain.EmotionAlpha);
     }
+
+    [Fact]
+    public void TryFreeMemory_WithNoEngineBuilt_ReportsSuccess()
+    {
+        // Nothing is resident, so the idle release counts it as done rather than retrying forever.
+        Assert.True(AudioEngineBridge.TryFreeMemory());
+    }
+
+    [Fact]
+    public async Task FreeMemory_SettlesThePendingIdleTimer()
+    {
+        // A free-memory request from outside leaves nothing for the idle timer to release, so it is cancelled.
+        IdleModelReleaser idle = AudioEngineBridge.IdleRelease;
+        idle.Configure(TimeSpan.FromMinutes(3));
+        using (await idle.BeginAsync(CancellationToken.None))
+        {
+        }
+        Task pending = idle.PendingTimer;
+        Assert.False(pending.IsCompleted);
+        try
+        {
+            AudioEngineBridge.FreeMemory();
+            Task done = await Task.WhenAny(pending, Task.Delay(TimeSpan.FromSeconds(30)));
+            Assert.Same(pending, done);
+        }
+        finally
+        {
+            idle.Configure(TimeSpan.FromMinutes(AudioEngineBridge.DefaultIdleUnloadMinutes));
+        }
+    }
+
+    [Fact]
+    public void RequestIdleUnload_AcceptsAnAbsurdlyLargeSetting_WithoutThrowing()
+    {
+        try
+        {
+            AudioEngineBridge.RequestIdleUnload(int.MaxValue);
+            AudioEngineBridge.RequestIdleUnload(-5);
+        }
+        finally
+        {
+            AudioEngineBridge.RequestIdleUnload(AudioEngineBridge.DefaultIdleUnloadMinutes);
+        }
+    }
+
+    [Fact]
+    public async Task WakeWordBuildOptions_RoutesTranscriptionThroughTheIdleReleaser()
+    {
+        IdleModelReleaser idle = new(() => null, () => true, delay: (_, _) => new TaskCompletionSource().Task);
+        WakeWordSettings settings = new() { Port = 12345 };
+
+        HartsyInference.Engine.Audio.Wake.WakeServiceOptions options = WakeWordService.BuildOptions(settings, idle, CancellationToken.None);
+
+        Assert.Equal(12345, options.Port);
+        Assert.NotNull(options.TranscribeGate);
+        int during = -1;
+        string result = await options.TranscribeGate(() =>
+        {
+            during = idle.ActiveCount;
+            return Task.FromResult("text");
+        });
+        Assert.Equal("text", result);
+        Assert.Equal(1, during);
+        Assert.Equal(0, idle.ActiveCount);
+    }
 }
