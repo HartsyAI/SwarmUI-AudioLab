@@ -153,7 +153,25 @@ public static class AudioEngineRequests
             RepaintEnd = Double(args, "repaint_end", 0d),
             Cover = task.Equals("cover", StringComparison.OrdinalIgnoreCase) ? RequireSource(source, task) : null,
             CoverStrength = Double(args, "cover_strength", 0.5),
+            // ControlFoley: video-to-audio and audio-conditioned generation. A separate reference key keeps ACE-Step's
+            // "reference_audio" (which the Engine's reference-audio field reads as a YuE prompt) out of it.
+            NegativePrompt = AudioIo.Str(args, "negative_prompt"),
+            Video = VideoClipFrom(args),
+            MaskAwayClip = Flag(args, "mask_away_clip", false),
+            ReferenceAudio = Clip(args, "controlfoley_reference_audio"),
         };
+    }
+
+    /// <summary>The source video, from base64 <c>video_data</c> and its container extension <c>video_format</c>; null when absent.</summary>
+    private static VideoClip VideoClipFrom(IReadOnlyDictionary<string, object> args)
+    {
+        string base64 = AudioIo.Str(args, "video_data");
+        if (string.IsNullOrEmpty(base64))
+        {
+            return null;
+        }
+        string format = AudioIo.Str(args, "video_format");
+        return new VideoClip { Data = Convert.FromBase64String(base64), Format = string.IsNullOrWhiteSpace(format) ? null : format.TrimStart('.') };
     }
 
     /// <summary>Builds the voice-conversion request. RVC's remaining retrieval knobs (<c>index_rate</c>,

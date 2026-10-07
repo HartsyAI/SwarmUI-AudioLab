@@ -609,6 +609,14 @@ public static class AudioLabParams
     public static T2IRegisteredParam<int> ControlFoleySteps;
     /// <summary>Classifier-free guidance strength for ControlFoley. Feature flag: <c>controlfoley_sfx_params</c>.</summary>
     public static T2IRegisteredParam<double> ControlFoleyCFG;
+    /// <summary>Source video ControlFoley scores (video-to-audio). Feature flag: <c>controlfoley_sfx_params</c>.</summary>
+    public static T2IRegisteredParam<VideoFile> ControlFoleyVideo;
+    /// <summary>Ignore the video's CLIP stream (official <c>--mask_away_clip</c>). Feature flag: <c>controlfoley_sfx_params</c>.</summary>
+    public static T2IRegisteredParam<bool> ControlFoleyMaskAwayClip;
+    /// <summary>Sounds to steer away from. Feature flag: <c>controlfoley_sfx_params</c>.</summary>
+    public static T2IRegisteredParam<string> ControlFoleyNegativePrompt;
+    /// <summary>Reference clip whose content and timbre the output follows. Feature flag: <c>controlfoley_sfx_params</c>.</summary>
+    public static T2IRegisteredParam<AudioFile> ControlFoleyReferenceAudio;
 
     #endregion
 
@@ -1941,6 +1949,26 @@ public static class AudioLabParams
             "4.5",
             Min: 0.0, Max: 12.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "controlfoley_sfx_params", IsAdvanced: true));
+
+        ControlFoleyVideo = T2IParamTypes.Register<VideoFile>(new("ControlFoley Video",
+            "A video to score: the sound is generated to match its picture and timing, and cut to the clip's length when that is under the duration.\nNeeds ffmpeg on the server.",
+            null,
+            OrderPriority: -12, Group: AudioGenGroup, FeatureFlag: "controlfoley_sfx_params"));
+
+        ControlFoleyMaskAwayClip = T2IParamTypes.Register<bool>(new("ControlFoley Mask Away CLIP",
+            "With a video, ignore its CLIP view and follow only the motion and sync streams, so the prompt describes the sound rather than competing with the picture.",
+            "false",
+            OrderPriority: -11, Group: AudioGenGroup, FeatureFlag: "controlfoley_sfx_params", IsAdvanced: true));
+
+        ControlFoleyNegativePrompt = T2IParamTypes.Register<string>(new("ControlFoley Negative Prompt",
+            "Sounds to steer away from. Empty for none.",
+            "",
+            OrderPriority: -8, Group: AudioGenGroup, FeatureFlag: "controlfoley_sfx_params", IsAdvanced: true));
+
+        ControlFoleyReferenceAudio = T2IParamTypes.Register<AudioFile>(new("ControlFoley Reference Audio",
+            "A clip whose content and timbre the generated sound follows (audio-conditioned mode).\n2 to 4 seconds of the clip set the timbre.",
+            null,
+            OrderPriority: -13, Group: AudioGenGroup, FeatureFlag: "controlfoley_sfx_params"));
 
         #endregion
 
