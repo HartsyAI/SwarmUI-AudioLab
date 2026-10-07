@@ -289,10 +289,11 @@
          and ControlFoley (controlfoley, music service) engine catalog entries these providers bind to. No source change
          needed in AudioEngineRequests; the new providers use its existing instruction / cfg_scale / reference fields.
          -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.268" />
+    <!-- Floating: resolves to the newest published 2.0.0-alpha.N on nuget.org whenever the extension is built (user decision 2026-10-07). Restart with force=true so every extension rebuilds on the same engine. -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.*" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
-    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.268" />
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.*" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
