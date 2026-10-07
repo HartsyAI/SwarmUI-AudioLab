@@ -94,6 +94,15 @@ public static class WakeWordService
     public static WakeAudioStream BeginAudio(string deviceId, int sampleRate)
         => _service?.BeginAudio(deviceId, sampleRate);
 
+    /// <summary>Claims a connected device's turns for a host session; see <see cref="WakeService.Claim"/>.</summary>
+    /// <returns>Null when the listener is not running or the device has no live connection to claim.</returns>
+    /// <exception cref="InvalidOperationException">The device is already claimed.</exception>
+    public static WakeDeviceClaim Claim(string deviceId, WakeInboundFrameHandler onFrame, Action onDisconnected = null)
+        => _service?.Claim(deviceId, onFrame, onDisconnected);
+
+    /// <summary>Releases a claim from <see cref="Claim"/>; a no-op when the listener is not running.</summary>
+    public static void Release(string deviceId, WakeDeviceClaim claim) => _service?.Release(deviceId, claim);
+
     /// <summary>Whether the shared backbone is on disk. The listener fails closed without it, so the UI needs
     /// to tell "not installed yet" apart from a real fault.</summary>
     public static bool BackboneInstalled
@@ -476,6 +485,27 @@ public static class WakeWordService
     }
 }
 
+/// <summary>Which server-side voice turn implementation <see cref="WakeWordSettings.ServerSideTurns"/> runs.
+/// Meaningless while that setting is off: no server-side turn runs in either mode then.</summary>
+public enum SatelliteVoiceMode
+{
+    /// <summary>Today's one-shot turn: a finished transcript in, one loopback call to the assistant, one
+    /// synthesized reply out. Unchanged by <see cref="Session"/>'s addition. The default, and the fallback
+    /// when <see cref="Session"/> cannot claim a device.</summary>
+    Legacy,
+
+    /// <summary>A continuous, VAD-endpointed <c>VoiceAgentSession</c> per satellite instead of one loopback
+    /// call per utterance -- barge-in by voice activity rather than by saying the wake word again, and a call
+    /// that stays open for a follow-up without it.
+    ///
+    /// <para>On a detection the extension claims the device (<c>WakeService.Claim</c>), which suspends the
+    /// engine's own wake scoring, capture and transcription for it and routes its decoded audio to the session;
+    /// the session's reply audio goes back down the same socket. The claim is released when the session ends
+    /// (idle, device gone, engine release, shutdown). If the claim cannot be taken (no live connection, or
+    /// something else holds it) that detection runs <see cref="Legacy"/> instead, with a log line.</para></summary>
+    Session,
+}
+
 /// <summary>Shared wake-word settings. Off by default: a SwarmUI install with no voice satellite should never
 /// bind a port or hold a detection thread.</summary>
 public class WakeWordSettings
@@ -490,6 +520,10 @@ public class WakeWordSettings
     /// its own. Older firmware does not read the mark, so it answers the turn as well and the reply is spoken
     /// twice — turn this on together with firmware that plays <c>audio</c> frames.</para></summary>
     public bool ServerSideTurns { get; set; }
+
+    /// <summary>Which server-side voice turn implementation <see cref="ServerSideTurns"/> runs, when it is on.
+    /// Defaults to <see cref="SatelliteVoiceMode.Legacy"/> -- today's behavior, unchanged.</summary>
+    public SatelliteVoiceMode SatelliteVoiceMode { get; set; } = SatelliteVoiceMode.Legacy;
 
     /// <summary>Assistant the server-side turn asks. Empty means whichever one is active.</summary>
     public string AssistantId { get; set; } = "";
