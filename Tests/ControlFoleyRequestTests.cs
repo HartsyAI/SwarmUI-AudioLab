@@ -41,4 +41,15 @@ public class ControlFoleyRequestTests
         Assert.False(request.MaskAwayClip);
         Assert.Equal("", request.NegativePrompt);
     }
+
+    [Fact]
+    public void Music_AllowsAnEmptyPromptWhenAVideoOrReferenceIsGiven()
+    {
+        Dictionary<string, object> withVideo = new() { ["video_data"] = Convert.ToBase64String([1, 2, 3]) };
+        Dictionary<string, object> withReference = new() { ["controlfoley_reference_audio"] = Convert.ToBase64String([1, 2, 3]) };
+
+        Assert.Equal("", AudioEngineRequests.Music(withVideo).Prompt);
+        Assert.Equal("", AudioEngineRequests.Music(withReference).Prompt);
+        Assert.Throws<ArgumentException>(() => AudioEngineRequests.Music(new Dictionary<string, object>()));
+    }
 }
