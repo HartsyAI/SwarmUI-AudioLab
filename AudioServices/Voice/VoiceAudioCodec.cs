@@ -161,6 +161,16 @@ internal sealed class VoiceInboundResampler
     /// <summary>Feeds more input samples and returns however many whole 16 kHz frames are now ready to push into
     /// <c>VoiceAgentSession.PushInbound</c> -- an empty array when less than one input frame has accumulated yet.
     /// A passthrough instance returns <paramref name="input"/> unchanged.</summary>
+    public float[] Flush()
+    {
+        if (_resampler is null || _pending.Count == 0)
+        {
+            return [];
+        }
+        _pending.AddRange(new float[_frameSize - _pending.Count]);
+        return Push([]);
+    }
+
     public float[] Push(ReadOnlySpan<float> input)
     {
         if (_resampler is null)

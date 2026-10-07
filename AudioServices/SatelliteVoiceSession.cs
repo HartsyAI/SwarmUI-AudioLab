@@ -120,6 +120,18 @@ internal sealed class SatelliteSessionOptions
     /// arrived, so the device is never left holding a reply open.</summary>
     public TimeSpan StreamIdleGap { get; init; } = TimeSpan.FromSeconds(1);
 
+    /// <summary>While the session is thinking or speaking, TTS gaps between sentences are normal, so a reply
+    /// stream is only closed for silence after this much longer.</summary>
+    public TimeSpan BusyStreamGap { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>A turn stuck thinking/speaking this long stops counting as busy, so the idle timer can still
+    /// end the call and release the claim.</summary>
+    public TimeSpan BusyCap { get; init; } = TimeSpan.FromSeconds(90);
+
+    /// <summary>Mean absolute level (of [-1, 1] audio) above which an inbound frame counts as the user still
+    /// talking, which holds the idle timer off.</summary>
+    public float SpeechLevel { get; init; } = 0.02f;
+
     /// <summary>Inbound audio held between the claim and the session being ready (models load, the session
     /// starts), so the start of the user's speech is not lost. Oldest dropped beyond this.</summary>
     public int MaxPendingInboundSamples { get; init; } = 16000 * 5;
@@ -223,7 +235,10 @@ internal sealed class SatelliteVoiceCall
     private readonly List<float[]> _pending = [];
     private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private volatile WakeDeviceClaim _claim;
+    private readonly object _claimLock = new();
+    private WakeDeviceClaim _claim;
+    private long _busySinceTicks;
+    private bool _released;
     private ISatelliteVoiceSession _session;
     private int _pendingSamples;
     private bool _frameClosed;
@@ -255,13 +270,18 @@ internal sealed class SatelliteVoiceCall
     /// <see cref="InvalidOperationException"/> when something else already holds it.</summary>
     public bool Claim()
     {
-        WakeDeviceClaim claim = _claims.Claim(_deviceId, OnFrame, OnDisconnected);
-        if (claim is null)
+        // Under the lock, with the host call inside it: a disconnect callback that lands while this is still
+        // running waits here, so its re-claim is always the later write and is never overwritten by this one.
+        lock (_claimLock)
         {
-            return false;
+            WakeDeviceClaim claim = _claims.Claim(_deviceId, OnFrame, OnDisconnected);
+            if (claim is null)
+            {
+                return false;
+            }
+            _claim = claim;
+            return true;
         }
-        _claim = claim;
-        return true;
     }
 
     public void Start() => _ = Task.Run(RunAsync, CancellationToken.None);
@@ -281,6 +301,15 @@ internal sealed class SatelliteVoiceCall
     {
         try
         {
+            float sum = 0f;
+            for (int i = 0; i < samples.Length; i++)
+            {
+                sum += Math.Abs(samples[i]);
+            }
+            if (samples.Length > 0 && sum / samples.Length > _options.SpeechLevel)
+            {
+                Touch(); // the user is still talking: not idle.
+            }
             lock (_frameLock)
             {
                 if (_frameClosed)
@@ -319,19 +348,21 @@ internal sealed class SatelliteVoiceCall
         MarkFlushed(Volatile.Read(ref _lastSeenTurn));
         try
         {
-            WakeDeviceClaim claim = _claims.Claim(_deviceId, OnFrame, OnDisconnected);
-            if (claim is null)
+            lock (_claimLock)
             {
-                End("the device disconnected");
-                return;
+                if (Volatile.Read(ref _endRequested) != 0 || _released)
+                {
+                    return;
+                }
+                WakeDeviceClaim claim = _claims.Claim(_deviceId, OnFrame, OnDisconnected);
+                if (claim is null)
+                {
+                    End("the device disconnected");
+                    return;
+                }
+                _claim = claim;
             }
-            _claim = claim;
             Logs.Debug($"[AudioLab][Session] '{_deviceId}': the connection ended and was re-claimed.");
-            if (Volatile.Read(ref _endRequested) != 0)
-            {
-                // Ended while re-claiming: RunAsync's release may have run against the old claim.
-                _claims.Release(_deviceId, claim);
-            }
         }
         catch (Exception ex)
         {
@@ -365,7 +396,9 @@ internal sealed class SatelliteVoiceCall
             while (true)
             {
                 await Task.Delay(_options.IdleCheckInterval, cancel).ConfigureAwait(false);
-                if (!_busy && Environment.TickCount64 - Interlocked.Read(ref _activityTicks) > _options.IdleTimeout.TotalMilliseconds)
+                long now = Environment.TickCount64;
+                bool busy = _busy && now - Interlocked.Read(ref _busySinceTicks) < _options.BusyCap.TotalMilliseconds;
+                if (!busy && now - Interlocked.Read(ref _activityTicks) > _options.IdleTimeout.TotalMilliseconds)
                 {
                     End("idle");
                 }
@@ -396,20 +429,29 @@ internal sealed class SatelliteVoiceCall
                 _pending.Clear();
             }
             // First, so the engine resumes its own wake scoring as soon as the call is over.
-            try { _claims.Release(_deviceId, _claim); }
-            catch (Exception ex) { Logs.Debug($"[AudioLab][Session] '{_deviceId}': releasing the claim threw: {ex.Message}"); }
+            lock (_claimLock)
+            {
+                _released = true;
+                try { _claims.Release(_deviceId, _claim); }
+                catch (Exception ex) { Logs.Debug($"[AudioLab][Session] '{_deviceId}': releasing the claim threw: {ex.Message}"); }
+            }
+            // And the device is free for the next wake word from here on: teardown below can be slow (the
+            // session, the model-set release), and a detection in that window must start a new call, not be
+            // swallowed as "already owned".
+            _onFinished(this);
             try { _cts.Cancel(); } catch (ObjectDisposedException) { }
             try { await pump.ConfigureAwait(false); }
             catch (OperationCanceledException) { }
             catch (Exception ex) { Logs.Debug($"[AudioLab][Session] '{_deviceId}': the outbound pump ended on {ex.Message}"); }
+            // The satellite is told it is over before the slow disposal, not after.
+            Enqueue(WakeStatus.Done, null);
+            _statuses.Writer.TryComplete();
+            await statusLoop.ConfigureAwait(false);
             if (session is not null)
             {
                 try { await session.DisposeAsync().ConfigureAwait(false); }
                 catch (Exception ex) { Logs.Debug($"[AudioLab][Session] '{_deviceId}': ending the session threw: {ex.Message}"); }
             }
-            Enqueue(WakeStatus.Done, null);
-            _statuses.Writer.TryComplete();
-            await statusLoop.ConfigureAwait(false);
         }
         finally
         {
@@ -427,15 +469,16 @@ internal sealed class SatelliteVoiceCall
             {
                 case SatelliteSessionEventKind.Listening:
                     _busy = false;
+                    _lastStatus = null; // a later Speaking is a new state to tell the device about.
                     Touch();
                     break;
                 case SatelliteSessionEventKind.Thinking:
-                    _busy = true;
+                    MarkBusy();
                     Touch();
                     EnqueueOnChange(WakeStatus.Thinking);
                     break;
                 case SatelliteSessionEventKind.Speaking:
-                    _busy = true;
+                    MarkBusy();
                     Touch();
                     EnqueueOnChange(WakeStatus.Speaking);
                     break;
@@ -464,6 +507,7 @@ internal sealed class SatelliteVoiceCall
                 case SatelliteSessionEventKind.Error:
                     // Not busy any more either: an error mid-turn must not hold the claim open forever.
                     _busy = false;
+                    _lastStatus = null;
                     Touch();
                     Logs.Warning($"[AudioLab][Session] '{_deviceId}': {ev.Text}");
                     Enqueue(WakeStatus.Error, ev.Text);
@@ -476,6 +520,15 @@ internal sealed class SatelliteVoiceCall
         catch (Exception ex)
         {
             Logs.Debug($"[AudioLab][Session] '{_deviceId}': handling {ev.Kind} threw: {ex.Message}");
+        }
+    }
+
+    private void MarkBusy()
+    {
+        if (!_busy)
+        {
+            Interlocked.Exchange(ref _busySinceTicks, Environment.TickCount64);
+            _busy = true;
         }
     }
 
@@ -537,9 +590,10 @@ internal sealed class SatelliteVoiceCall
         int streamTurn = 0;
         long lastAudio = 0;
 
-        async Task CloseSinkAsync()
+        async Task CloseSinkAsync(bool flushTail)
         {
             ISatelliteAudioSink closing = sink;
+            VoiceInboundResampler closingResampler = resampler;
             sink = null;
             resampler = null;
             if (closing is null)
@@ -548,6 +602,14 @@ internal sealed class SatelliteVoiceCall
             }
             try
             {
+                if (flushTail && closingResampler is not null)
+                {
+                    float[] tail = closingResampler.Flush();
+                    if (tail.Length > 0)
+                    {
+                        await closing.WriteAsync(Pcm16.ToBytes(tail), CancellationToken.None).ConfigureAwait(false);
+                    }
+                }
                 await closing.CompleteAsync(CancellationToken.None).ConfigureAwait(false);
                 await closing.DisposeAsync().ConfigureAwait(false);
             }
@@ -565,15 +627,16 @@ internal sealed class SatelliteVoiceCall
                 int flushed = Volatile.Read(ref _flushedTurn);
                 if (sink is not null && streamTurn <= flushed)
                 {
-                    await CloseSinkAsync().ConfigureAwait(false);
+                    await CloseSinkAsync(false).ConfigureAwait(false);
                 }
                 int read = session.ReadOutbound(buffer, out int turnId);
                 if (read <= 0)
                 {
+                    TimeSpan gap = _busy ? _options.BusyStreamGap : _options.StreamIdleGap;
                     if (sink is not null && (Volatile.Read(ref _completedTurn) >= streamTurn
-                        || Environment.TickCount64 - lastAudio > _options.StreamIdleGap.TotalMilliseconds))
+                        || Environment.TickCount64 - lastAudio > gap.TotalMilliseconds))
                     {
-                        await CloseSinkAsync().ConfigureAwait(false);
+                        await CloseSinkAsync(true).ConfigureAwait(false);
                     }
                     continue;
                 }
@@ -587,7 +650,7 @@ internal sealed class SatelliteVoiceCall
                 }
                 if (sink is not null && turnId != streamTurn)
                 {
-                    await CloseSinkAsync().ConfigureAwait(false);
+                    await CloseSinkAsync(true).ConfigureAwait(false);
                 }
                 if (sink is null)
                 {
@@ -612,7 +675,7 @@ internal sealed class SatelliteVoiceCall
         }
         finally
         {
-            await CloseSinkAsync().ConfigureAwait(false);
+            await CloseSinkAsync(false).ConfigureAwait(false);
         }
     }
 }
@@ -647,16 +710,13 @@ internal sealed class EngineSatelliteVoiceSessionFactory : ISatelliteVoiceSessio
             VoiceSessionStartRequest start = new(null, assistantId, null, null, true, 16000);
             VoiceModelLease lease = await VoiceEngineModels.Shared.AcquireAsync(start, text, cancel).ConfigureAwait(false);
             // Tool dispatch has one owner, LLMAssistant; see VoiceSessionEndpoints.
-            voiceSession = new VoiceAgentSession(lease.Set, text, new ToolRegistry(), lease.SessionOptions);
-            try
+            voiceSession = await LeaseGuard.BuildOrReleaseAsync(async () =>
             {
-                await VoiceEngineModels.Shared.RegisterSession(voiceSession, lease, cancel).ConfigureAwait(false);
-            }
-            catch
-            {
-                await lease.Resource.ReleaseAsync().ConfigureAwait(false);
-                throw;
-            }
+                VoiceAgentSession built = new(lease.Set, text, new ToolRegistry(), lease.SessionOptions);
+                voiceSession = built; // so the outer catch can dispose it if registration fails
+                await VoiceEngineModels.Shared.RegisterSession(built, lease, cancel).ConfigureAwait(false);
+                return built;
+            }, () => lease.Resource.ReleaseAsync()).ConfigureAwait(false);
             return new EngineSatelliteVoiceSession(voiceSession, idleHold);
         }
         catch
@@ -737,6 +797,23 @@ internal sealed class EngineSatelliteVoiceSession : ISatelliteVoiceSession
         if (mapped is SatelliteSessionEvent value)
         {
             _handlers?.Invoke(value);
+        }
+    }
+}
+
+/// <summary>Runs a build step that holds a lease, releasing the lease if the step throws.</summary>
+internal static class LeaseGuard
+{
+    public static async Task<T> BuildOrReleaseAsync<T>(Func<Task<T>> build, Func<Task> release)
+    {
+        try
+        {
+            return await build().ConfigureAwait(false);
+        }
+        catch
+        {
+            await release().ConfigureAwait(false);
+            throw;
         }
     }
 }

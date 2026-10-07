@@ -490,8 +490,9 @@ public enum SatelliteVoiceMode
     /// <para>On a detection the extension claims the device (<c>WakeService.Claim</c>), which suspends the
     /// engine's own wake scoring, capture and transcription for it and routes its decoded audio to the session;
     /// the session's reply audio goes back down the same socket. The claim is released when the session ends
-    /// (idle, device gone, engine release, shutdown). If the claim cannot be taken (no live connection, or
-    /// something else holds it) that detection runs <see cref="Legacy"/> instead, with a log line.</para></summary>
+    /// (idle, device gone, engine release, shutdown). If there is no live connection to claim, that
+    /// detection runs <see cref="Legacy"/> instead, with a log line; if another host already holds the claim, the
+    /// detection is left to it and nothing runs here.</para></summary>
     Session,
 }
 
