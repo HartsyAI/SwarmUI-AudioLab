@@ -103,7 +103,16 @@ public static class VoiceSessionEndpoints
 
         // Said before the wait below, so a caller who arrives while an idle release is running sees the tab warming
         // up rather than nothing.
-        await SendJsonAsync(new JObject { ["state"] = "Warming" }).ConfigureAwait(false);
+        try
+        {
+            await SendJsonAsync(new JObject { ["state"] = "Warming" }).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // A caller who already hung up must not turn into an unhandled error; the hold below still runs and the
+            // model preparation after it reports through its own handler.
+            Logs.Debug($"[AudioLab][Voice] Could not send the Warming state: {ex.Message}");
+        }
 
         // Held for the whole call: an idle release cannot start while the call is open, and one already running
         // finishes before the call loads its models, rather than ending the call a moment after it starts.

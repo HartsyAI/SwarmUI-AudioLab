@@ -589,4 +589,68 @@ public class IdleModelReleaserTests
         Assert.Equal(1, await run);
         Assert.True(started);
     }
+
+    [Fact]
+    public async Task NoteExternalRelease_WithAStaleGeneration_IsIgnored_BecauseARequestBeganDuringTheRelease()
+    {
+        Harness h = new();
+        h.Releaser.Configure(Idle);
+        await h.RunRequestAsync();
+        long before = h.Releaser.Generation;
+
+        // A request begins and ends while the external release was running: it may have loaded models the release
+        // missed, so its timer must survive.
+        await h.RunRequestAsync();
+        h.Releaser.NoteExternalRelease(before);
+
+        Assert.Equal(2, h.Delays.Count);
+        await h.FireAsync(1);
+        Assert.Equal(1, h.Releases);
+    }
+
+    [Fact]
+    public async Task NoteExternalRelease_WithTheCurrentGeneration_StillSettlesTheTimer()
+    {
+        Harness h = new();
+        h.Releaser.Configure(Idle);
+        await h.RunRequestAsync();
+        Task pending = h.Releaser.PendingTimer;
+
+        h.Releaser.NoteExternalRelease(h.Releaser.Generation);
+
+        await Bounded(pending);
+        h.Delays.Fire(0);
+        Assert.Equal(0, h.Releases);
+    }
+
+    [Fact]
+    public async Task ARetryingRelease_StopsWhenIdleReleaseIsTurnedOff()
+    {
+        Harness h = new(release: () => false);
+        h.Releaser.Configure(Idle);
+        await h.RunRequestAsync();
+        await h.FireAsync(0);
+        Assert.Equal(2, h.Delays.Count); // the retry is pending
+        Task retry = h.Releaser.PendingTimer;
+
+        h.Releaser.Configure(TimeSpan.Zero);
+        await Bounded(retry);
+        h.Delays.Fire(1);
+
+        Assert.Equal(2, h.Delays.Count);
+        Assert.Single(h.Log); // no second attempt
+    }
+
+    [Fact]
+    public async Task ATinyPositiveIdleTime_IsRaisedToTheMinimum_SoAFailingReleaseCannotSpin()
+    {
+        Harness h = new(release: () => false);
+        h.Releaser.Configure(TimeSpan.FromMilliseconds(1));
+        await h.RunRequestAsync();
+        Assert.Equal(IdleModelReleaser.MinIdleAfter, h.Delays.SpanOf(0));
+
+        await h.FireAsync(0);
+
+        Assert.Equal(IdleModelReleaser.MinIdleAfter, h.Delays.SpanOf(1));
+    }
 }

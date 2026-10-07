@@ -34,6 +34,11 @@ internal sealed class IdleModelReleaser
     /// longer than anyone wants an idle model resident.</summary>
     internal static readonly TimeSpan MaxIdleAfter = TimeSpan.FromMinutes(43200);
 
+    /// <summary>The shortest idle time <see cref="Configure"/> accepts for a positive setting; anything between zero
+    /// and this is raised to it. A failed release retries one period later, so a tiny period would retry in a tight
+    /// loop.</summary>
+    internal static readonly TimeSpan MinIdleAfter = TimeSpan.FromMinutes(1);
+
     private readonly Func<string> _inUse;
     private readonly Func<bool> _release;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
@@ -48,6 +53,7 @@ internal sealed class IdleModelReleaser
     private TimeSpan _idleAfter;
     private int _active;
     private long _epoch;
+    private long _begins;
     private bool _usedSinceRelease;
     private CancellationTokenSource _timer;
     private Task _pendingTimer = Task.CompletedTask;
@@ -89,7 +95,9 @@ internal sealed class IdleModelReleaser
     {
         lock (_state)
         {
-            _idleAfter = idleAfter <= TimeSpan.Zero ? TimeSpan.Zero : idleAfter > MaxIdleAfter ? MaxIdleAfter : idleAfter;
+            _idleAfter = idleAfter <= TimeSpan.Zero ? TimeSpan.Zero
+                : idleAfter < MinIdleAfter ? MinIdleAfter
+                : idleAfter > MaxIdleAfter ? MaxIdleAfter : idleAfter;
             CancelTimerLocked();
             if (_idleAfter > TimeSpan.Zero && _active == 0 && _usedSinceRelease)
             {
@@ -110,6 +118,7 @@ internal sealed class IdleModelReleaser
             {
                 _active++;
                 _epoch++;
+                _begins++;
                 _usedSinceRelease = true;
                 CancelTimerLocked();
             }
@@ -131,15 +140,31 @@ internal sealed class IdleModelReleaser
         return await work().ConfigureAwait(false);
     }
 
+    /// <summary>Counts activities begun so far. Read it before an external release starts and pass it to
+    /// <see cref="NoteExternalRelease"/>, which then ignores the call if any activity began in between.</summary>
+    internal long Generation
+    {
+        get
+        {
+            lock (_state)
+            {
+                return _begins;
+            }
+        }
+    }
+
     /// <summary>Tells the releaser that something other than its own timer just freed the models (an explicit unload,
     /// the backend's free-memory call). A pending timer would only repeat that release, so it is cancelled and
-    /// nothing is scheduled until a model runs again. Ignored while an activity is open: it may already have loaded
-    /// something since.</summary>
-    public void NoteExternalRelease()
+    /// nothing is scheduled until a model runs again. Ignored while an activity is open, or (when
+    /// <paramref name="generationBefore"/> is given) once one has begun since: it may have loaded something the
+    /// release missed.</summary>
+    public void NoteExternalRelease(long? generationBefore = null)
     {
         lock (_state)
         {
-            if (_active > 0)
+            // An activity began after the caller took its generation: it may have loaded models the release then
+            // missed or freed, so the timer stays.
+            if (_active > 0 || (generationBefore is not null && generationBefore != _begins))
             {
                 return;
             }

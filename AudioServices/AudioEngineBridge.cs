@@ -756,6 +756,7 @@ public static class AudioEngineBridge
         {
             return;
         }
+        long generation = IdleRelease.Generation;
         bool freed = false;
         lock (_releaseLock)
         {
@@ -783,18 +784,22 @@ public static class AudioEngineBridge
         }
         if (freed)
         {
-            IdleRelease.NoteExternalRelease();
+            IdleRelease.NoteExternalRelease(generation);
         }
     }
 
     /// <summary>Releases every loaded audio model and its device memory, leaving the engine usable. Used by the
     /// backend's shutdown / free-memory path. A release asked for from outside also settles the idle timer: nothing
     /// is resident any more, so it does not fire a second, redundant release later.</summary>
-    public static void FreeMemory()
+    public static void FreeMemory() => FreeMemory(IdleRelease);
+
+    /// <summary><see cref="FreeMemory()"/> against a given releaser, so tests need not touch the process-wide one.</summary>
+    internal static void FreeMemory(IdleModelReleaser idle)
     {
+        long generation = idle.Generation;
         if (TryFreeMemory())
         {
-            IdleRelease.NoteExternalRelease();
+            idle.NoteExternalRelease(generation);
         }
     }
 
@@ -866,7 +871,11 @@ public static class AudioEngineBridge
 
     /// <summary>Sets how long AudioLab waits after its last audio request before releasing its models; 0 (or less)
     /// turns it off. Process-wide like the backend's other settings: the last audio backend to initialize decides.</summary>
-    public static void RequestIdleUnload(int minutes) => IdleRelease.Configure(TimeSpan.FromMinutes(Math.Max(0, minutes)));
+    public static void RequestIdleUnload(int minutes) => ConfigureIdle(IdleRelease, minutes);
+
+    /// <summary>The setting-to-period mapping behind <see cref="RequestIdleUnload"/>; the releaser clamps the
+    /// result to its minimum and maximum.</summary>
+    internal static void ConfigureIdle(IdleModelReleaser idle, int minutes) => idle.Configure(TimeSpan.FromMinutes(Math.Max(0, minutes)));
 
     /// <summary>What still needs the resident models even though no request is running, or null when nothing does.</summary>
     private static string IdleReleaseBlocker()
