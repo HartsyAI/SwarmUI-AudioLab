@@ -94,6 +94,67 @@ public static class AudioLabParams
 
     /// <summary>Voice preset for Kokoro TTS. Feature flag: <c>kokoro_tts_params</c>.</summary>
     public static T2IRegisteredParam<string> KokoroVoice;
+    public static T2IRegisteredParam<string> KokoroBlendVoice;
+    public static T2IRegisteredParam<double> KokoroBlendWeight;
+
+    /// <summary>All 54 official Kokoro voices from the model card, as id///label.</summary>
+    private static readonly List<string> KokoroVoices =
+    [
+        "af_heart///American English: Heart (F)",
+        "af_alloy///American English: Alloy (F)",
+        "af_aoede///American English: Aoede (F)",
+        "af_bella///American English: Bella (F)",
+        "af_jessica///American English: Jessica (F)",
+        "af_kore///American English: Kore (F)",
+        "af_nicole///American English: Nicole (F)",
+        "af_nova///American English: Nova (F)",
+        "af_river///American English: River (F)",
+        "af_sarah///American English: Sarah (F)",
+        "af_sky///American English: Sky (F)",
+        "am_adam///American English: Adam (M)",
+        "am_echo///American English: Echo (M)",
+        "am_eric///American English: Eric (M)",
+        "am_fenrir///American English: Fenrir (M)",
+        "am_liam///American English: Liam (M)",
+        "am_michael///American English: Michael (M)",
+        "am_onyx///American English: Onyx (M)",
+        "am_puck///American English: Puck (M)",
+        "am_santa///American English: Santa (M)",
+        "bf_alice///British English: Alice (F)",
+        "bf_emma///British English: Emma (F)",
+        "bf_isabella///British English: Isabella (F)",
+        "bf_lily///British English: Lily (F)",
+        "bm_daniel///British English: Daniel (M)",
+        "bm_fable///British English: Fable (M)",
+        "bm_george///British English: George (M)",
+        "bm_lewis///British English: Lewis (M)",
+        "jf_alpha///Japanese: Alpha (F)",
+        "jf_gongitsune///Japanese: Gongitsune (F)",
+        "jf_nezumi///Japanese: Nezumi (F)",
+        "jf_tebukuro///Japanese: Tebukuro (F)",
+        "jm_kumo///Japanese: Kumo (M)",
+        "zf_xiaobei///Mandarin: Xiaobei (F)",
+        "zf_xiaoni///Mandarin: Xiaoni (F)",
+        "zf_xiaoxiao///Mandarin: Xiaoxiao (F)",
+        "zf_xiaoyi///Mandarin: Xiaoyi (F)",
+        "zm_yunjian///Mandarin: Yunjian (M)",
+        "zm_yunxi///Mandarin: Yunxi (M)",
+        "zm_yunxia///Mandarin: Yunxia (M)",
+        "zm_yunyang///Mandarin: Yunyang (M)",
+        "ef_dora///Spanish: Dora (F)",
+        "em_alex///Spanish: Alex (M)",
+        "em_santa///Spanish: Santa (M)",
+        "ff_siwis///French: Siwis (F)",
+        "hf_alpha///Hindi: Alpha (F)",
+        "hf_beta///Hindi: Beta (F)",
+        "hm_omega///Hindi: Omega (M)",
+        "hm_psi///Hindi: Psi (M)",
+        "if_sara///Italian: Sara (F)",
+        "im_nicola///Italian: Nicola (M)",
+        "pf_dora///Brazilian Portuguese: Dora (F)",
+        "pm_alex///Brazilian Portuguese: Alex (M)",
+        "pm_santa///Brazilian Portuguese: Santa (M)"
+    ];
     /// <summary>Speech speed multiplier for Kokoro. Feature flag: <c>kokoro_tts_params</c>.</summary>
     public static T2IRegisteredParam<double> KokoroSpeed;
 
@@ -105,6 +166,55 @@ public static class AudioLabParams
     public static T2IRegisteredParam<string> PiperVoice;
     /// <summary>Speech speed multiplier for Piper. Feature flag: <c>piper_tts_params</c>.</summary>
     public static T2IRegisteredParam<double> PiperSpeed;
+
+    /// <summary>All 37 English voices from Piper's official VOICES.md, as (id, display label) pairs. Each id
+    /// is exactly <c>&lt;lang_REGION&gt;-&lt;name&gt;-&lt;quality&gt;</c> -- the format
+    /// <c>PiperPipeline.VoiceRepoPath</c> (Engine side) splits on '-' to build the real
+    /// <c>rhasspy/piper-voices</c> path, e.g. <c>en_US-amy-low</c> -&gt;
+    /// <c>en/en_US/amy/low/en_US-amy-low(.onnx|.onnx.json)</c>. A static field (not inline in
+    /// <see cref="RegisterAll"/>'s <c>GetValues</c> lambda below) so a test can read the same list the UI
+    /// offers and check every entry actually resolves -- <c>RegisterAll</c> needs a SwarmUI host init the test
+    /// project does not have, but a plain array does not.</summary>
+    public static readonly (string Id, string Label)[] PiperVoices =
+    [
+        ("en_US-amy-low", "US amy (low)"),
+        ("en_US-amy-medium", "US amy (medium)"),
+        ("en_US-arctic-medium", "US arctic (medium)"),
+        ("en_US-bryce-medium", "US bryce (medium)"),
+        ("en_US-danny-low", "US danny (low)"),
+        ("en_US-hfc_female-medium", "US hfc female (medium)"),
+        ("en_US-hfc_male-medium", "US hfc male (medium)"),
+        ("en_US-joe-medium", "US joe (medium)"),
+        ("en_US-john-medium", "US john (medium)"),
+        ("en_US-kathleen-low", "US kathleen (low)"),
+        ("en_US-kristin-medium", "US kristin (medium)"),
+        ("en_US-kusal-medium", "US kusal (medium)"),
+        ("en_US-l2arctic-medium", "US l2arctic (medium)"),
+        ("en_US-lessac-low", "US lessac (low)"),
+        ("en_US-lessac-medium", "US lessac (medium)"),
+        ("en_US-lessac-high", "US lessac (high)"),
+        ("en_US-libritts-high", "US libritts (high)"),
+        ("en_US-libritts_r-medium", "US libritts r (medium)"),
+        ("en_US-ljspeech-medium", "US ljspeech (medium)"),
+        ("en_US-ljspeech-high", "US ljspeech (high)"),
+        ("en_US-norman-medium", "US norman (medium)"),
+        ("en_US-reza_ibrahim-medium", "US reza ibrahim (medium)"),
+        ("en_US-ryan-low", "US ryan (low)"),
+        ("en_US-ryan-medium", "US ryan (medium)"),
+        ("en_US-ryan-high", "US ryan (high)"),
+        ("en_US-sam-medium", "US sam (medium)"),
+        ("en_GB-alan-low", "GB alan (low)"),
+        ("en_GB-alan-medium", "GB alan (medium)"),
+        ("en_GB-alba-medium", "GB alba (medium)"),
+        ("en_GB-aru-medium", "GB aru (medium)"),
+        ("en_GB-cori-medium", "GB cori (medium)"),
+        ("en_GB-cori-high", "GB cori (high)"),
+        ("en_GB-jenny_dioco-medium", "GB jenny dioco (medium)"),
+        ("en_GB-northern_english_male-medium", "GB northern english male (medium)"),
+        ("en_GB-semaine-medium", "GB semaine (medium)"),
+        ("en_GB-southern_english_female-low", "GB southern english female (low)"),
+        ("en_GB-vctk-medium", "GB vctk (medium)"),
+    ];
 
     #endregion
 
@@ -160,6 +270,28 @@ public static class AudioLabParams
     public static T2IRegisteredParam<double> ZipVoiceSpeed;
     /// <summary>Classifier-free guidance scale for ZipVoice. Feature flag: <c>zipvoice_tts_params</c>.</summary>
     public static T2IRegisteredParam<double> ZipVoiceCFG;
+
+    #endregion
+
+    #region TTS — AuK (flag: auk_tts_params)
+
+    /// <summary>Sampling step count for AuK. Ignored by the Flash variant (fixed 4 steps). Feature flag: <c>auk_tts_params</c>.</summary>
+    public static T2IRegisteredParam<int> AukSteps;
+    /// <summary>Classifier-free guidance scale for AuK. Ignored by the Flash variant (no CFG). Feature flag: <c>auk_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> AukCFG;
+    /// <summary>Target output length in seconds for AuK; 0 means automatic. Feature flag: <c>auk_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> AukDuration;
+    /// <summary>Natural-language instruction for AuK: a voice description with no reference clip, or a full edit command with one. Feature flag: <c>auk_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> AukInstruction;
+
+    #endregion
+
+    #region TTS — IndexTTS-2 (flag: indextts2_tts_params)
+
+    /// <summary>Free-text description of the wanted emotion for IndexTTS-2; empty keeps the speaker's own emotion. Feature flag: <c>indextts2_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> IndexTts2EmotionText;
+    /// <summary>Strength of the IndexTTS-2 text emotion, 0-1. Feature flag: <c>indextts2_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> IndexTts2EmotionAlpha;
 
     #endregion
 
@@ -462,6 +594,24 @@ public static class AudioLabParams
 
     #endregion
 
+    #region TTS — Breeze (flag: breeze_tts_params)
+
+    /// <summary>Written voice description for Breeze voice design. Feature flag: <c>breeze_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> BreezeInstruction;
+    /// <summary>Classifier-free guidance scale for Breeze. Feature flag: <c>breeze_tts_params</c>.</summary>
+    public static T2IRegisteredParam<double> BreezeCFG;
+
+    #endregion
+
+    #region Music — ControlFoley (flag: controlfoley_sfx_params)
+
+    /// <summary>Flow-matching steps for ControlFoley. Feature flag: <c>controlfoley_sfx_params</c>.</summary>
+    public static T2IRegisteredParam<int> ControlFoleySteps;
+    /// <summary>Classifier-free guidance strength for ControlFoley. Feature flag: <c>controlfoley_sfx_params</c>.</summary>
+    public static T2IRegisteredParam<double> ControlFoleyCFG;
+
+    #endregion
+
     #region Music — Stable Audio (flag: stableaudio_music_params)
 
     /// <summary>Diffusion steps for Stable Audio Open Small. Feature flag: <c>stableaudio_music_params</c>.</summary>
@@ -743,8 +893,10 @@ public static class AudioLabParams
             OrderPriority: -10, Group: VoiceRefGroup, FeatureFlag: "tts_voice_ref"));
 
         ReferenceText = T2IParamTypes.Register<string>(new("Reference Text",
-            "Transcript of the reference audio.\nOptional but improves quality when provided.",
+            "Approximate transcript of what is spoken in Reference Audio, in plain text (no special formatting).\n"
+            + "Optional, but several models, including AuK, use its length compared to the Prompt's to estimate how long the generated speech should be when no explicit duration is set.",
             "",
+            ViewType: ParamViewType.PROMPT,
             OrderPriority: -9, Group: VoiceRefGroup, FeatureFlag: "tts_voice_ref"));
 
         #endregion
@@ -799,63 +951,20 @@ public static class AudioLabParams
         KokoroVoice = T2IParamTypes.Register<string>(new("Kokoro Voice",
             "Voice to synthesize with. The first letter is the language (a=American, b=British, j=Japanese, z=Mandarin, e=Spanish, f=French, h=Hindi, i=Italian, p=Portuguese); the second is f=female / m=male.\nAll 54 official voices from the model card are listed.",
             "af_heart",
-            GetValues: _ => [
-                "af_heart///American English: Heart (F)",
-                "af_alloy///American English: Alloy (F)",
-                "af_aoede///American English: Aoede (F)",
-                "af_bella///American English: Bella (F)",
-                "af_jessica///American English: Jessica (F)",
-                "af_kore///American English: Kore (F)",
-                "af_nicole///American English: Nicole (F)",
-                "af_nova///American English: Nova (F)",
-                "af_river///American English: River (F)",
-                "af_sarah///American English: Sarah (F)",
-                "af_sky///American English: Sky (F)",
-                "am_adam///American English: Adam (M)",
-                "am_echo///American English: Echo (M)",
-                "am_eric///American English: Eric (M)",
-                "am_fenrir///American English: Fenrir (M)",
-                "am_liam///American English: Liam (M)",
-                "am_michael///American English: Michael (M)",
-                "am_onyx///American English: Onyx (M)",
-                "am_puck///American English: Puck (M)",
-                "am_santa///American English: Santa (M)",
-                "bf_alice///British English: Alice (F)",
-                "bf_emma///British English: Emma (F)",
-                "bf_isabella///British English: Isabella (F)",
-                "bf_lily///British English: Lily (F)",
-                "bm_daniel///British English: Daniel (M)",
-                "bm_fable///British English: Fable (M)",
-                "bm_george///British English: George (M)",
-                "bm_lewis///British English: Lewis (M)",
-                "jf_alpha///Japanese: Alpha (F)",
-                "jf_gongitsune///Japanese: Gongitsune (F)",
-                "jf_nezumi///Japanese: Nezumi (F)",
-                "jf_tebukuro///Japanese: Tebukuro (F)",
-                "jm_kumo///Japanese: Kumo (M)",
-                "zf_xiaobei///Mandarin: Xiaobei (F)",
-                "zf_xiaoni///Mandarin: Xiaoni (F)",
-                "zf_xiaoxiao///Mandarin: Xiaoxiao (F)",
-                "zf_xiaoyi///Mandarin: Xiaoyi (F)",
-                "zm_yunjian///Mandarin: Yunjian (M)",
-                "zm_yunxi///Mandarin: Yunxi (M)",
-                "zm_yunxia///Mandarin: Yunxia (M)",
-                "zm_yunyang///Mandarin: Yunyang (M)",
-                "ef_dora///Spanish: Dora (F)",
-                "em_alex///Spanish: Alex (M)",
-                "em_santa///Spanish: Santa (M)",
-                "ff_siwis///French: Siwis (F)",
-                "hf_alpha///Hindi: Alpha (F)",
-                "hf_beta///Hindi: Beta (F)",
-                "hm_omega///Hindi: Omega (M)",
-                "hm_psi///Hindi: Psi (M)",
-                "if_sara///Italian: Sara (F)",
-                "im_nicola///Italian: Nicola (M)",
-                "pf_dora///Brazilian Portuguese: Dora (F)",
-                "pm_alex///Brazilian Portuguese: Alex (M)",
-                "pm_santa///Brazilian Portuguese: Santa (M)"
-            ],
+            GetValues: _ => KokoroVoices,
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "kokoro_tts_params"));
+
+        KokoroBlendVoice = T2IParamTypes.Register<string>(new("Kokoro Blend Voice",
+            "Blend a second voice into the Kokoro Voice, as Kokoro's own pipeline mixes voices (the style vectors are averaged).\nThe language still follows the main Kokoro Voice.",
+            "af_bella",
+            GetValues: _ => KokoroVoices,
+            OrderPriority: -4.8, Group: TTSGroup, FeatureFlag: "kokoro_tts_params", Toggleable: true, IsAdvanced: true));
+
+        KokoroBlendWeight = T2IParamTypes.Register<double>(new("Kokoro Blend Weight",
+            "How much of the Kokoro Blend Voice to mix in.\n0 = only the main voice, 0.5 = an even mix, 1 = only the blend voice.",
+            "0.5",
+            Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -4.7, Group: TTSGroup, FeatureFlag: "kokoro_tts_params", IsAdvanced: true));
 
         KokoroSpeed = T2IParamTypes.Register<double>(new("Kokoro Speed",
             "Speech speed multiplier.\n1.0 = normal, 0.5 = half, 2.0 = double.",
@@ -869,45 +978,7 @@ public static class AudioLabParams
         PiperVoice = T2IParamTypes.Register<string>(new("Piper Voice",
             "Piper voice. Each voice is a separate download, named language-speaker-quality.\nAll 37 English voices from the official VOICES.md are listed; higher quality is larger and slower.",
             "en_US-amy-medium",
-            GetValues: _ => [
-                "en_US-amy-low///US amy (low)",
-                "en_US-amy-medium///US amy (medium)",
-                "en_US-arctic-medium///US arctic (medium)",
-                "en_US-bryce-medium///US bryce (medium)",
-                "en_US-danny-low///US danny (low)",
-                "en_US-hfc_female-medium///US hfc female (medium)",
-                "en_US-hfc_male-medium///US hfc male (medium)",
-                "en_US-joe-medium///US joe (medium)",
-                "en_US-john-medium///US john (medium)",
-                "en_US-kathleen-low///US kathleen (low)",
-                "en_US-kristin-medium///US kristin (medium)",
-                "en_US-kusal-medium///US kusal (medium)",
-                "en_US-l2arctic-medium///US l2arctic (medium)",
-                "en_US-lessac-low///US lessac (low)",
-                "en_US-lessac-medium///US lessac (medium)",
-                "en_US-lessac-high///US lessac (high)",
-                "en_US-libritts-high///US libritts (high)",
-                "en_US-libritts_r-medium///US libritts r (medium)",
-                "en_US-ljspeech-medium///US ljspeech (medium)",
-                "en_US-ljspeech-high///US ljspeech (high)",
-                "en_US-norman-medium///US norman (medium)",
-                "en_US-reza_ibrahim-medium///US reza ibrahim (medium)",
-                "en_US-ryan-low///US ryan (low)",
-                "en_US-ryan-medium///US ryan (medium)",
-                "en_US-ryan-high///US ryan (high)",
-                "en_US-sam-medium///US sam (medium)",
-                "en_GB-alan-low///GB alan (low)",
-                "en_GB-alan-medium///GB alan (medium)",
-                "en_GB-alba-medium///GB alba (medium)",
-                "en_GB-aru-medium///GB aru (medium)",
-                "en_GB-cori-medium///GB cori (medium)",
-                "en_GB-cori-high///GB cori (high)",
-                "en_GB-jenny_dioco-medium///GB jenny dioco (medium)",
-                "en_GB-northern_english_male-medium///GB northern english male (medium)",
-                "en_GB-semaine-medium///GB semaine (medium)",
-                "en_GB-southern_english_female-low///GB southern english female (low)",
-                "en_GB-vctk-medium///GB vctk (medium)"
-            ],
+            GetValues: _ => [.. PiperVoices.Select(v => $"{v.Id}///{v.Label}")],
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "piper_tts_params"));
 
         PiperSpeed = T2IParamTypes.Register<double>(new("Piper Speed",
@@ -1014,6 +1085,55 @@ public static class AudioLabParams
             "1.0",
             Min: 0.0, Max: 10.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -3, Group: TTSGroup, FeatureFlag: "zipvoice_tts_params", IsAdvanced: true));
+
+        #endregion
+
+        #region TTS — IndexTTS-2
+        IndexTts2EmotionText = T2IParamTypes.Register<string>(new("IndexTTS-2 Emotion",
+            "Describe the emotion you want in words and IndexTTS-2 speaks the Prompt that way, in the Reference Audio's voice. Example: \"I am absolutely furious about this!\".\n"
+            + "Empty keeps the emotion of the Reference Audio itself.\n"
+            + "A small classifier reads this text on first use, which downloads about 1.2 GB once and takes a moment to load.",
+            "",
+            ViewType: ParamViewType.PROMPT,
+            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "indextts2_tts_params"));
+
+        IndexTts2EmotionAlpha = T2IParamTypes.Register<double>(new("IndexTTS-2 Emotion Strength",
+            "How strongly the Emotion text applies, from 0 (none) to 1 (full). Ignored when Emotion is empty.",
+            "1.0",
+            Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -3, Group: TTSGroup, FeatureFlag: "indextts2_tts_params", IsAdvanced: true));
+
+        #endregion
+
+        #region TTS — AuK
+        AukSteps = T2IParamTypes.Register<int>(new("AuK Steps",
+            "Sampling steps.\nThe AuK base model defaults to 32. The Flash variant is fixed at 4 steps and ignores this.",
+            "32",
+            Min: 1, Max: 100, Step: 1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "auk_tts_params", IsAdvanced: true));
+
+        AukCFG = T2IParamTypes.Register<double>(new("AuK CFG",
+            "Classifier-free guidance scale.\nThe AuK base model defaults to 2.0. The Flash variant has no CFG and ignores this.",
+            "2.0",
+            Min: 0.0, Max: 10.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "auk_tts_params", IsAdvanced: true));
+
+        AukDuration = T2IParamTypes.Register<double>(new("AuK Duration",
+            "Target length of the generated speech in seconds.\n"
+            + "0 = automatic, which needs Reference Audio: it matches the reference clip's own length, or scales from it by the ratio of Prompt length to Reference Text length when both of those are filled in.\n"
+            + "With no Reference Audio (voice design from AuK Instruction alone), this must be a positive number.",
+            "0",
+            Min: 0.0, Max: 60.0, Step: 0.5, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -3, Group: TTSGroup, FeatureFlag: "auk_tts_params"));
+
+        AukInstruction = T2IParamTypes.Register<string>(new("AuK Instruction",
+            "What AuK does with this and the Prompt depends on Reference Audio.\n"
+            + "No Reference Audio: this is the voice description, Prompt is the line to speak. Example: \"A calm young woman speaking softly\".\n"
+            + "Reference Audio, this left empty: Prompt is cloned verbatim in the reference voice.\n"
+            + "Reference Audio, this filled in: it replaces Prompt entirely and must be a full command, not just a description. Examples: \"Change the emotion to happy.\", \"Raise the pitch by 2 semitones.\", \"Adjust the speech speed to 1.5x.\", \"Replace 'old text' with 'new text'.\", \"Convert this speech into a soft whisper while preserving the speaker and content.\", \"Remove the background noise, preserve everything else, and output audio of the same length.\"",
+            "",
+            ViewType: ParamViewType.PROMPT,
+            OrderPriority: -2, Group: TTSGroup, FeatureFlag: "auk_tts_params"));
 
         #endregion
 
@@ -1794,6 +1914,36 @@ public static class AudioLabParams
 
         #endregion
 
+        #region TTS — Breeze
+        BreezeInstruction = T2IParamTypes.Register<string>(new("Breeze Instruction",
+            "Voice design: describe the voice and Breeze invents it, for example \"A warm, thoughtful young woman with a calm, reflective delivery\".\nLeave empty when you supply Reference Audio to clone a voice instead.",
+            "",
+            ViewType: ParamViewType.PROMPT,
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "breeze_tts_params"));
+
+        BreezeCFG = T2IParamTypes.Register<double>(new("Breeze CFG",
+            "Classifier-free guidance scale.\n1 disables guidance; voice design works best around 4.",
+            "1.0",
+            Min: 1.0, Max: 8.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "breeze_tts_params", IsAdvanced: true));
+
+        #endregion
+
+        #region Music — ControlFoley
+        ControlFoleySteps = T2IParamTypes.Register<int>(new("ControlFoley Steps",
+            "Flow-matching steps.\nThe reference demo uses 25; fewer steps are faster and noisier.",
+            "25",
+            Min: 1, Max: 100, Step: 1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -10, Group: AudioGenGroup, FeatureFlag: "controlfoley_sfx_params", IsAdvanced: true));
+
+        ControlFoleyCFG = T2IParamTypes.Register<double>(new("ControlFoley CFG",
+            "Classifier-free guidance strength.\nThe reference demo uses 4.5.",
+            "4.5",
+            Min: 0.0, Max: 12.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "controlfoley_sfx_params", IsAdvanced: true));
+
+        #endregion
+
         #region Music — Stable Audio
         StableAudioSteps = T2IParamTypes.Register<int>(new("Stable Audio Steps",
             "Diffusion steps.\nThe official example uses 8; this is a distilled small model tuned for few steps.",
@@ -1886,7 +2036,7 @@ public static class AudioLabParams
             OrderPriority: -7, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
 
         Yue2Guidance = T2IParamTypes.Register<double>(new("Song Guidance",
-            "Classifier-free guidance. YuE2 runs at or just above 1.0 — the release uses 1.01 with planning off\n"
+            "Classifier-free guidance. YuE2 runs at or just above 1.0; the release uses 1.01 with planning off\n"
             + "and 1.0 otherwise. Anything much higher distorts rather than sharpens.",
             "1.0",
             Min: 1.0, Max: 3.0, Step: 0.01, ViewType: ParamViewType.SLIDER,
@@ -1899,7 +2049,7 @@ public static class AudioLabParams
             OrderPriority: -5, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
 
         Yue2Temperature = T2IParamTypes.Register<double>(new("Song Temperature",
-            "Sampling temperature for the pass that emits codec tokens — the audio you actually hear.",
+            "Sampling temperature for the pass that emits codec tokens: the audio you actually hear.",
             "1.0",
             Min: 0.1, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
             OrderPriority: -4, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
@@ -1934,7 +2084,7 @@ public static class AudioLabParams
             OrderPriority: 1, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
 
         Yue2ScoreTemperature = T2IParamTypes.Register<double>(new("Score Temperature",
-            "Temperature for the score planner. It runs far cooler than the codec pass — the release uses 0.7.",
+            "Temperature for the score planner. It runs far cooler than the codec pass; the release uses 0.7.",
             "0.7",
             Min: 0.1, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
             OrderPriority: 2, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
@@ -1950,7 +2100,7 @@ public static class AudioLabParams
             OrderPriority: 4, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));
 
         Yue2ScoreRepetitionPenalty = T2IParamTypes.Register<double>(new("Score Repetition Penalty",
-            "Penalty on repeated tokens in the score planner. The release uses 1.005 — a score repeats by nature.",
+            "Penalty on repeated tokens in the score planner. The release uses 1.005; a score repeats by nature.",
             "1.005",
             Min: 1.0, Max: 2.0, Step: 0.005, ViewType: ParamViewType.SLIDER,
             OrderPriority: 5, Group: AudioGenGroup, FeatureFlag: "yue2_music_params", IsAdvanced: true));

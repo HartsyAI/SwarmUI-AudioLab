@@ -113,13 +113,44 @@ effect):
 - **VRAM Mode** — how hard the engine works to fit audio models in VRAM (`Auto`/`Performance`/`Balanced`/
   `Aggressive`/`Maximum`).
 - **Evict Below Gb** — free host RAM, in GB, below which loading a new audio model unloads every other one. `0`
-  leaves the engine's own default (14 GB).
+  leaves the engine's own value (`vram.audioEvictBelowGb` in `~/.config/hartsyinference/settings.json`, else
+  14 GB); any other value overrides that file.
 - **Keep Tts Stt Resident** — keep the last-used TTS model and the last-used STT model resident instead of
   letting the Evict Below Gb sweep unload whichever one isn't about to run. Off by default: without it, switching
   back and forth between a TTS and an STT model under low free RAM reloads one of them from disk on every switch,
   since the sweep still evicts the idle one even while protecting the one about to run. On, both stay warm as
   long as the box has room for both — this trades some RAM/VRAM headroom for that warm-switch latency, and uses
   the engine's `OpenSynthesizerAsync`/`OpenTranscriberAsync` leases rather than a coarser unload-everything step.
+- **Coordinate Vram On Out Of Memory** — on by default. AudioLab's engine is its own process-wide instance with
+  no coordination against SwarmUI's other backends (ComfyUI, HartsyInference image/video, ...) sharing the same
+  card, so a backend that still holds weights resident after a generation can leave an audio model with nowhere
+  to fit, even though that memory is just sitting idle. When a model load or a generation hits an out-of-VRAM
+  error, this reserves — exclusively, so two overlapping AudioLab recoveries (or an existing reservation from
+  elsewhere) can never both free the same backend at once — every OTHER local backend that is currently idle
+  (never one mid-generation, and never one a reservation catches picking up new work in the meantime) to free
+  its memory — the same action Server > Backends > Free Memory Now triggers — waits a moment for that to
+  actually land, then retries once. A second failure is reported as-is: the request genuinely does not fit.
+  This reacts to the error rather than predicting it ahead of a load. A remote SwarmUI backend is never a
+  candidate: its idle state can't be verified from here, and freeing it would hit that remote machine's own
+  `/API/FreeBackendMemory`, which frees unconditionally. AudioLab's own resident models are the engine's job,
+  inside the lock its generations hold: switching to a model that is not loaded yet unloads the others first when
+  free VRAM is under what the incoming model needs, and an out-of-VRAM error inside the engine unloads every other
+  unpinned audio model and retries once there before it reaches this retry. A model pinned by Keep Tts Stt
+  Resident is never evicted by either. Off restores the previous behavior (an out-of-VRAM error fails
+  immediately); either way, a backend asked to free memory simply reloads its own models on its next
+  generation, so nothing already running is ever interrupted.
+- **Unload Idle Models After Minutes** — `3` by default; `0` turns it off. After this many minutes with no audio
+  request, AudioLab releases its resident models and their device memory, the same release Server > Backends > Free
+  Memory Now triggers.
+  - *Why.* Audio models otherwise stay loaded after a generation. On a card shared with SwarmUI's image backend, that
+    can leave an image generation no room until SwarmUI's own idle VRAM clear runs. The next audio request reloads
+    its model, which costs that one request a few seconds.
+  - *What is never released.* The timer starts only once every audio request has finished; a stream counts until it
+    stops. Each new request resets it. A model pinned by Keep Tts Stt Resident, an open Voice Agent call or a
+    wake-word training run holds it off until it ends.
+  - *Timing with new requests.* A request that arrives while a release is running waits for it, then loads afresh.
+  - *Wake listener.* Its transcriptions reach the engine directly and are covered by the engine's own generation
+    lock: one that is running finishes before the release, and one that starts after it reloads its model.
 
 ### Installing engines
 
@@ -152,10 +183,11 @@ Generated from the running server, so this is what the extension actually offers
 whether the engine downloads on first use or exposes per model installs.
 
 
-#### Text to Speech (20 engines, 25 models)
+#### Text to Speech (21 engines, 27 models)
 
 | Engine | Models | VRAM | License | Weights |
 | --- | --- | --- | --- | --- |
+| [AuK](https://huggingface.co/tencent/AuK) | 2 | ~10GB | MIT (text encoder: Qwen Research License) | on first use |
 | [Bark TTS](https://huggingface.co/suno/bark) | 1 | ~5GB | MIT | on first use |
 | [Chatterbox TTS](https://github.com/resemble-ai/chatterbox) | 1 | ~4GB | MIT | on first use |
 | [CosyVoice TTS](https://huggingface.co/FunAudioLLM/CosyVoice2-0.5B) | 1 | ~8GB | Apache 2.0 | on first use |
@@ -176,6 +208,8 @@ whether the engine downloads on first use or exposes per model installs.
 | [VibeVoice TTS](https://huggingface.co/vibevoice/VibeVoice-1.5B) | 1 | ~7GB | MIT | on first use |
 | [ZipVoice](https://huggingface.co/k2-fsa/ZipVoice) | 1 | ~2GB | Apache 2.0 | on first use |
 | [Zonos TTS](https://huggingface.co/Zyphra/Zonos-v0.1-transformer) | 2 | ~4GB | Apache 2.0 | on first use |
+
+**AuK** (Tencent; variants `flash` and `base`) is unverified: there is no parity run against the reference implementation yet. AuK itself is MIT, but it also downloads the Qwen2.5-Omni-3B text encoder (~10GB), which is under the Qwen Research License. Flash uses a fixed 4 steps with no CFG, so the AuK Steps and AuK CFG settings only affect the base variant.
 
 #### Speech to Text (7 engines, 18 models)
 
@@ -231,9 +265,13 @@ The short version as of the most recent passes:
 - **Speech to text is uniformly solid.** Every Whisper, Distil-Whisper, Moonshine and streaming variant transcribes
   on GPU at speeds in the faster-whisper reference range, with Moonshine tiny the fastest measured.
 - **Most text to speech engines work and are word correct.** Kokoro, Chatterbox, Fish Speech, Kyutai TTS, Pocket
-  TTS, Spark-TTS, StyleTTS 2 and Dia all produce intelligible, matching speech.
+  TTS, Spark-TTS and StyleTTS 2 all produce intelligible, matching speech.
 - **A few have caveats worth knowing** before you rely on them: Bark sounds staticy, F5-TTS is correct but slow,
-  VibeVoice is a long form model that destabilizes on short prompts, and NeuTTS can append a garbled tail.
+  VibeVoice is a long form model that destabilizes on short prompts, NeuTTS can append a garbled tail, and Dia
+  is a dialogue model, not a single-sentence narrator — start with `[S1]` and alternate `[S1]`/`[S2]` per speaker
+  turn, and give it roughly 5-20 seconds of speech worth of text; a short single sentence often comes back as
+  non-speech rather than silence, confirmed as upstream Dia's own behavior (same input through the reference
+  implementation fails the same way), not an engine bug.
 - **Some are gated on engine work** and refuse cleanly with a specific reason rather than failing at generation
   time: Piper, Zonos, MeloTTS and CosyVoice each need front end pieces the engine does not have yet.
 - **Music generation works** across ACE-Step, MusicGen, AudioGen, HeartLib, YuE and YuE2, though the large
@@ -688,6 +726,7 @@ Known and planned, so you can tell missing from broken:
 - **Cloud API engines.** All 20 provider definitions exist but none are tested, so all are disabled. They get
   re-enabled per provider as each is verified.
 - **RealtimeSTT** needs a C# engine implementation.
+- **AuK editing.** Only AuK text-to-speech ships; a separate AuK editing provider is not built yet.
 - **Engine side gates.** Piper, Zonos, MeloTTS and CosyVoice are wired up and waiting on front end pieces from the
   engine. They light up on their own once those land.
 - **Voice cloning for a few engines** (Chatterbox, NeuTTS, Spark-TTS) is waiting on encoder support; the default
@@ -711,6 +750,13 @@ own unless you launch with a `launch-dev` script; otherwise run the `update` scr
 
 **Out of memory when switching between large models.** AudioLab evicts other providers under memory pressure, but
 host RAM, not VRAM, is usually the limit with multi gigabyte models. Close other heavy processes.
+
+**Out of VRAM right after generating an image or video.** An image/video backend sharing the card can still hold
+its weights resident. With **Coordinate Vram On Out Of Memory** on (the default), AudioLab retries automatically —
+see that setting above — so this should recover on its own; check the log for "Asking other idle backends to
+free memory" to confirm it did. If it still fails, the retry's one extra free was not enough: the other
+backend's model and the audio model you asked for do not fit on the card at the same time, and one of them
+needs to not be resident — close the other generation's tab/session, or use a smaller audio model.
 
 ## License and credits
 

@@ -44,6 +44,13 @@ public static class AudioEngineRequests
             Exaggeration = Number(args, "exaggeration"),
             NfeStep = Integer(args, "nfe_step"),
             CfgScale = Number(args, "cfg_scale"),
+            // AuK: voice-design instruction and target length. These two fields exist only on the engine release that
+            // adds AuK, so this file does not compile against the currently pinned HartsyInference package.
+            Instruction = AudioIo.Str(args, "instruction"),
+            DurationSeconds = Number(args, "duration_seconds"),
+            // IndexTTS-2: free-text emotion (classified by the engine's bundled QwenEmotion model) and its strength.
+            EmotionText = AudioIo.Str(args, "emotion_text") is { Length: > 0 } emotionText ? emotionText : null,
+            EmotionAlpha = Number(args, "emotion_alpha"),
             Seed = Seed(args),
         };
     }

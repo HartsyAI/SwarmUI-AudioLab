@@ -185,11 +185,114 @@
          StateChanged-event approximation the first version of this PR shipped before this overload was
          published. Otherwise only adds the VoiceHost exe and its deploy files, which this extension does not
          reference. Verified hartsyinference and hartsyinference.voice are both indexed on nuget.org at this
-         version before bumping. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.238" />
+         version before bumping.
+         2.0.0-alpha.241 = 2026-10-02 (alpha.238 -> alpha.241). Dia's decode self-attention is GPU-resident (warm
+         generation about 3.6x faster, bit-identical output); HeartMuLa's quantized GGUF cache resolves under
+         modelsRoot/audio instead of ~/.cache; a bare `piper` request falls back to Piper's default voice instead
+         of 404ing on piper.onnx (alpha.240); the TTS samplers stop sorting the whole vocabulary every token
+         (Kyutai TTS -63 %, FishSpeech -37 %; alpha.239); ApplyRope's combined q+k overload is safe for GQA; LLM
+         uploads fail fast on a retired CUDA stream. Voice gains opt-in prefix-KV reuse
+         (TextRequest.PrefixCacheKey). Verified hartsyinference and hartsyinference.voice are both indexed on
+         nuget.org at this version before bumping.
+         2.0.0-alpha.242 = 2026-10-02 (alpha.241 -> alpha.242). A switch between audio models sizes the incoming
+         model and evicts the others when free VRAM is under what it needs, instead of only under a fixed 3 GiB, and
+         an out-of-VRAM failure unloads every other unpinned audio model and retries once inside the engine (Dia no
+         longer fails and Orpheus no longer streams its weights after a long sweep; floor knob
+         vram.audioEvictFreeVramFloorMb, default 3072). cuDNN skips nondeterministic engines by default, so
+         Chatterbox, CosyVoice 2 and Piper repeat their output on identical calls; a short Dia prompt fails in seconds;
+         Kokoro and the synthesizer lease stop a cancelled synthesis at the next stage; a cancelled LLM prefill frees
+         the GPU within about two layers; prefix-KV reuse is bounded; the wake listener gains a per-device
+         Claim/Release handoff. Verified hartsyinference and hartsyinference.voice are both indexed on nuget.org at
+         this version before bumping.
+         2.0.0-alpha.243 = 2026-10-02 (alpha.242 -> alpha.243). Carries HartsyInference#243: every CUDA op runs in
+         its own backend's context, whatever another engine copy left bound on the thread. SwarmUI loads one private
+         engine copy per extension, all on one thread pool, and each copy cached "this thread is bound to my
+         context" for itself. AudioLab's Whisper on the 4090 trusted that cache on a thread LLMAssistant's copy had
+         bound to the 3060, so its device calls went to the 3060's context. The sticky CUDA 700 that followed also
+         took down the image backend's generations on the 4090 until a restart. The fix only protects the process
+         when every engine copy in it has it, so LLMAssistant takes alpha.243 at the same time. Verified
+         hartsyinference and hartsyinference.voice are both indexed on nuget.org at this version before bumping.
+         2.0.0-alpha.244 = 2026-10-02 (alpha.243 -> alpha.244). REQUIRED by this extension's source: carries
+         HartsyInference#245 (AuK / AuK-Flash), which adds SpeechRequest.Instruction/DurationSeconds that
+         AudioEngineRequests.Speech sets unconditionally (PR #45, auk_tts provider) — this extension does not
+         compile against alpha.243. Verified hartsyinference and hartsyinference.voice are both indexed on
+         nuget.org at this version before bumping.
+         2.0.0-alpha.245 = 2026-10-02 (alpha.244 -> alpha.245). Carries HartsyInference#248: AuK only frees and
+         reloads every stage's weights between calls when the device doesn't actually have room to keep them
+         resident, instead of always evicting. Cuts the fixed per-call overhead the previous version paid on every
+         AuK/AuK-Flash generation regardless of free VRAM. Verified hartsyinference and hartsyinference.voice are
+         both indexed on nuget.org at this version before bumping.
+         2.0.0-alpha.246 = 2026-10-03 (alpha.245 -> alpha.246). REQUIRED by this extension's source: carries
+         HartsyInference#249 (IndexTTS-1.5, zero-shot voice cloning), which adds the "indextts" Engine catalog
+         entry IndexTtsProvider.cs/AudioEngineBridge's new indextts_tts binding resolve to — this extension does
+         not compile against alpha.245 (ModelSpec.Requested = "indextts:v1_5" has nothing to resolve to before
+         this version). Verified hartsyinference and hartsyinference.voice are both indexed on nuget.org at this
+         version before bumping.
+         2.0.0-alpha.247 = 2026-10-04 (alpha.246 -> alpha.247). Carries HartsyInference#250: IndexTtsPipeline's
+         ToF32 helper was unconditionally casting every tensor in the loaded weight dictionaries to F32, which
+         crashed loading the real gpt.pth checkpoint's non-floating-point buffers (GPT-2-style integer position
+         ids / boolean causal mask) with "Unsupported dtype conversion: I64 -> F32." — found via a real deploy of
+         alpha.246 on swarm.hartsy.ai (AudioLabInstallEngine + GenerateText2Image against the real
+         IndexTeam/IndexTTS-1.5 checkpoint), not by this extension's own code. No source change needed here; this
+         bump exists only so a fresh install pulls the fixed engine. Verified hartsyinference and
+         hartsyinference.voice are both indexed on nuget.org at this version before bumping.
+         2.0.0-alpha.248 = 2026-10-04 (alpha.247 -> alpha.248). Carries HartsyInference#251: an audit of the
+         IndexTTS-1.5 port against the real index-tts Python source found it was missing top-p (nucleus) sampling
+         (only top-k + temperature were applied) and the reference's unconditional 20ms tail fade-out (stochastic
+         stop-token sampling can land early, leaving an audible click at the end of a clip). Both fixed in the
+         engine; no source change needed here. Verified hartsyinference and hartsyinference.voice are both indexed
+         on nuget.org at this version before bumping.
+         2.0.0-alpha.249 = 2026-10-04 (alpha.248 -> alpha.249). Carries HartsyInference#252: Kokoro output now
+         matches the official model. The F0/energy predictor read the wrong features (pitch off by ~74 Hz), the
+         voice-pack style row was two rows late, the English G2P is now a misaki port (Kokoro's training
+         phonemizer; 44% -> 98.7% word agreement), and text over 510 phonemes is chunked instead of throwing.
+         The engine fetches misaki's two pinned dictionaries into the shared audio folder on first Kokoro load,
+         beside cmudict. No source change needed here: this extension reaches Kokoro only through the engine's
+         speech service. Verified hartsyinference and hartsyinference.voice are both indexed on nuget.org at
+         this version before bumping.
+         2.0.0-alpha.253 = CORRECTION, 2026-10-06: the above was pinned ahead of HartsyInference#259 (Kokoro
+         Japanese/Mandarin front-ends + voice blending), expecting that PR's own version bump to land as
+         alpha.253 once its base branch merged to main. It never did: #259 reports "merged" on GitHub, but
+         its commits landed on a side branch (hartsy/kokoro-ja-zh-mix, based on a pre-main branch of #258)
+         that was never itself merged into main, so none of that work (KokoroJapaneseG2P/KokoroMandarinG2P/
+         the engine-side blend-string parsing KokoroVoiceSpec above relies on) is in HartsyInference main or
+         published under any version. What actually published as alpha.253 is HartsyInference#264 (IndexTTS
+         2.5, emotion-controllable zero-shot voice cloning, unrelated to Kokoro): confirmed by downloading
+         the real nupkgs from nuget.org and finding IndexTts2Pipeline/IndexTts2Model in them, not
+         KokoroJapaneseG2P. This PR (#53) merged to this repo's main anyway, despite the explicit "do not
+         merge until both packages are indexed" warning that was already here, so AudioLab's main currently
+         ships Kokoro Japanese/Mandarin/blend-voice UI params (AudioLabParams.cs's KokoroBlendVoice etc.) that
+         call into engine behavior that does not exist at this pin, or any currently-published version. Real
+         generation with those voices/params will fail at runtime until #259's branch is actually merged to
+         HartsyInference main and published under its own (higher) version number, and this pin is bumped
+         again to match. Not fixed here: out of scope for the IndexTTS-2.5 provider this version bump is
+         actually for; flagging so the next person pinning this file doesn't trust the paragraph above.
+         2.0.0-alpha.254 = 2026-10-06 (alpha.253 -> alpha.254). Resolves the correction above: the Kokoro work
+         from the lost #259 re-landed on HartsyInference main as #266 and published as alpha.254. Checked by
+         downloading the real nupkgs from nuget.org: hartsyinference.audio and hartsyinference.engine at
+         2.0.0-alpha.254 both contain KokoroJapaneseG2P, KokoroMandarinG2P and KokoroVoiceMix, and
+         hartsyinference and hartsyinference.voice are both indexed at this version. Kokoro now picks its front-end
+         from the voice's first letter (j Japanese, z Mandarin, b British, e/f/h/i/p espeak languages) and accepts
+         blended voices such as af_heart:0.7,af_bella:0.3, so the Kokoro Blend Voice / Kokoro Blend Weight params
+         and the j/z voices in KokoroVoices now have an engine to call. No source change needed here.
+         2.0.0-alpha.255 = 2026-10-06 (alpha.254 -> alpha.255). Carries HartsyInference#267: IndexTTS-2.0
+         (indextts2:2.0) next to 2.5, and emotion control for both. SpeechRequest gains EmotionText and EmotionAlpha
+         (plus EmotionReference/EmotionFromText, not used here), which AudioEngineRequests now reads, so this change does
+         not compile against alpha.254. Verified hartsyinference and hartsyinference.voice are both indexed on nuget.org
+         at this version, and that hartsyinference.engine/.audio are too.
+         2.0.0-alpha.261 = 2026-10-06 (alpha.255 -> alpha.261). Carries HartsyInference#271: IndexTTS-2 accuracy pass against
+         the PyTorch reference (w2v-bert feature scaling, conformer positions, decode positions, 2.0 prompt condition,
+         resampling, segmentation, text normalization), the S2Mel DiT/WaveNet on backend ops (no per-op device-to-host round
+         trips), a per-generation timing log, and the streaming indextts2 runner with a reference cache. No source change
+         needed here. Verified hartsyinference.engine is indexed on nuget.org at this version.
+         2.0.0-alpha.264 = 2026-10-06 (alpha.261 -> alpha.264). Adds the Breeze TTS 2 (breeze), Fish Audio S2 Pro (fishaudio)
+         and ControlFoley (controlfoley, music service) engine catalog entries these providers bind to. No source change
+         needed in AudioEngineRequests; the new providers use its existing instruction / cfg_scale / reference fields.
+         -->
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.264" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
-    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.238" />
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.264" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak

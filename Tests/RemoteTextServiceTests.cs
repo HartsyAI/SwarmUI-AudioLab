@@ -76,6 +76,32 @@ public class RemoteTextServiceTests
     }
 
     [Fact]
+    public async Task StreamAsync_PrefixCacheKey_IsSentAsTheConversationId()
+    {
+        // VoiceAgentSession puts one key per call on its priming request and every turn; LLMAssistant's
+        // LLMAssistantVoiceTurnWS scopes its prefix-KV reuse by conversationId, so each call keeps its own entry.
+        await using FakeVoiceTurnServer server = FakeVoiceTurnServer.Start();
+        TextRequest request = SimpleRequest() with { PrefixCacheKey = "voice:0f9d6c3b2a1e" };
+        (JObject serverRequest, _, _) = await RunScriptedTurnAsync(server, [new JObject { ["done"] = true, ["full_text"] = "ok" }], request);
+        Assert.Equal("voice:0f9d6c3b2a1e", serverRequest["conversationId"]!.ToString());
+        Assert.Equal("sess-123", serverRequest["session_id"]!.ToString());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task StreamAsync_NoPrefixCacheKey_LeavesConversationIdOut(string prefixCacheKey)
+    {
+        // No key (EnablePrefixCache off, or a caller that never sets one) sends no conversationId at all, so
+        // LLMAssistant scopes the turn by session_id, as it did before this field existed.
+        await using FakeVoiceTurnServer server = FakeVoiceTurnServer.Start();
+        TextRequest request = SimpleRequest() with { PrefixCacheKey = prefixCacheKey };
+        (JObject serverRequest, _, _) = await RunScriptedTurnAsync(server, [new JObject { ["done"] = true, ["full_text"] = "ok" }], request);
+        Assert.False(serverRequest.ContainsKey("conversationId"));
+    }
+
+    [Fact]
     public async Task StreamAsync_ToolMessages_SerializeToolCallIdNameAndToolCalls()
     {
         await using FakeVoiceTurnServer server = FakeVoiceTurnServer.Start();

@@ -65,6 +65,41 @@ public static class AudioConfiguration
     /// <summary>Default voice identifier for TTS.</summary>
     public static readonly string DefaultVoice = "default";
 
+    /// <summary>Piper's own sensible default voice, for a request that names none. Mirrors the Engine's
+    /// <c>PiperModel.DefaultVoice</c> ("en_US-lessac-medium") -- kept as a literal here (not read off the
+    /// Engine) because this id is a stable, documented part of the <c>rhasspy/piper-voices</c> repo, the same
+    /// way <see cref="DefaultLanguage"/> is a literal rather than something probed.
+    ///
+    /// <para>Piper needs this, and the generic <see cref="DefaultVoice"/> placeholder is not enough, because
+    /// Piper's weights ARE the voice -- there is no model-level default download the way Kokoro or VibeVoice
+    /// have one. Left as "default"/empty/null, the request reaches the Engine with no real voice named; the
+    /// Engine's own selector then falls back to its bare catalog token ("piper") instead of a real voice name,
+    /// and "piper" is not a file in <c>rhasspy/piper-voices</c> -- it 404s on <c>piper.onnx</c>. See
+    /// <see cref="ResolveVoice"/>.</para></summary>
+    public const string DefaultPiperVoice = "en_US-lessac-medium";
+
+    /// <summary>Resolves the voice value to actually send to <paramref name="providerId"/>'s Engine request,
+    /// substituting <see cref="DefaultPiperVoice"/> when the provider is Piper and the caller named no real
+    /// voice (null, empty, or the generic <see cref="DefaultVoice"/> placeholder). Every other provider's
+    /// placeholder is returned unchanged -- the zero-shot providers (VibeVoice, Dia, F5, ...) pick their own
+    /// speaker from it and must keep seeing the placeholder, not a Piper voice name.
+    ///
+    /// <para>The one place this substitution happens, so every caller that can receive an unparameterized TTS
+    /// request (<c>AudioLabAPI.ProcessTTS</c>/<c>AudioLabSpeakRaw</c>, <c>SpeakStreamRoute</c>,
+    /// <c>VoiceTurnOrchestrator</c>) agrees on the same default voice instead of four copies of the same
+    /// literal.</para></summary>
+    public static string ResolveVoice(string requestedVoice, string providerId)
+    {
+        bool named = !string.IsNullOrWhiteSpace(requestedVoice) && !requestedVoice.Equals(DefaultVoice, StringComparison.OrdinalIgnoreCase);
+        if (named)
+        {
+            return requestedVoice;
+        }
+        return providerId is not null && providerId.Equals("piper_tts", StringComparison.OrdinalIgnoreCase)
+            ? DefaultPiperVoice
+            : DefaultVoice;
+    }
+
     /// <summary>Supported language codes for audio processing.</summary>
     public static readonly string[] SupportedLanguages =
     [
