@@ -170,10 +170,28 @@ public class RemoteTextServiceTests
         Assert.Equal("call-1", result.ToolCall!.Id);
         Assert.Equal("{\"time\":\"noon\"}", result.Text);
 
-        // Never a ToolCall stop: that is what would send VoiceAgentSession's ToolLoop looking for a dispatch
-        // through the (intentionally empty) local ToolRegistry, even though the real dispatch already happened,
-        // remotely, by the time `done` arrived.
+        // The result in the same stream is what makes the engine's ToolLoop treat the call as pre-resolved and not
+        // dispatch it again through the voice session's (intentionally empty) local ToolRegistry; the stop stays
+        // a normal finish either way.
         Assert.DoesNotContain(chunks, c => c.Kind == TextChunkKind.StopReason && c.Stop == StopReason.ToolCall);
+    }
+
+    [Fact]
+    public async Task StreamAsync_ToolResults_CountTheirOwnIndexApartFromTheCalls()
+    {
+        await using FakeVoiceTurnServer server = FakeVoiceTurnServer.Start();
+        (_, List<TextChunk> chunks, _) = await RunScriptedTurnAsync(server,
+        [
+            new JObject { ["native_tool_call"] = new JObject { ["id"] = "call-1", ["name"] = "get_time", ["arguments"] = new JObject() } },
+            new JObject { ["tool_result"] = new JObject { ["id"] = "call-1", ["name"] = "get_time", ["result"] = new JObject { ["time"] = "noon" } } },
+            new JObject { ["native_tool_call"] = new JObject { ["id"] = "call-2", ["name"] = "get_date", ["arguments"] = new JObject() } },
+            new JObject { ["tool_result"] = new JObject { ["id"] = "call-2", ["name"] = "get_date", ["result"] = new JObject { ["date"] = "today" } } },
+            new JObject { ["done"] = true, ["full_text"] = "" },
+        ]);
+
+        Assert.Equal([0, 1], chunks.Where(c => c.Kind == TextChunkKind.NativeToolCall).Select(c => c.ToolCallIndex!.Value));
+        Assert.Equal([0, 1], chunks.Where(c => c.Kind == TextChunkKind.ToolResult).Select(c => c.ToolCallIndex!.Value));
+        Assert.Equal(["call-1", "call-2"], chunks.Where(c => c.Kind == TextChunkKind.ToolResult).Select(c => c.ToolCall!.Id));
     }
 
     [Theory]

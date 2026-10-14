@@ -288,6 +288,16 @@
          2.0.0-alpha.268 = 2026-10-06 (alpha.261 -> alpha.264). Adds the Breeze TTS 2 (breeze), Fish Audio S2 Pro (fishaudio)
          and ControlFoley (controlfoley, music service) engine catalog entries these providers bind to. No source change
          needed in AudioEngineRequests; the new providers use its existing instruction / cfg_scale / reference fields.
+         2.0.0-alpha.360 = 2026-10-14 (alpha.270 -> alpha.360; to move to the first version that publishes
+         HartsyInference#410). REQUIRED by this extension's source: carries HartsyInference#378 (ToolLoop v2: typed
+         ToolResult chunks, host dispatcher, deny hook), whose TextChunkKind.ToolResult is what RemoteTextService now
+         relays a remote LLMAssistant tool result as; this extension does not compile against alpha.270. Needs
+         HartsyInference#410 at runtime: before it, ToolLoop dispatched every relayed call again through the voice
+         session's empty ToolRegistry ("Unknown tool"), recorded a second result for it and asked the remote assistant
+         again; from it, a call whose result arrives in the same round is pre-resolved and not dispatched.
+         RemoteTextService changes with it: the relayed call-then-result order is kept, and result chunks count their
+         own index apart from the calls'. Not yet verified that hartsyinference and hartsyinference.voice are indexed
+         on nuget.org at the #410 version, since it is not published yet.
          -->
     <!-- Exact pin on purpose: a floating alpha.* resolves to the stale alpha.NNN-local.M builds in the hartsy-local feed (NuGet ranks the alphanumeric label above numeric ones), which broke every extension build on 2026-10-07. -->
     <PackageReference Include="HartsyInference" Version="2.0.0-alpha.360" />

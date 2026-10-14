@@ -20,12 +20,17 @@ namespace Hartsy.Extensions.AudioLab.AudioServices.Voice;
 /// <para><b>Tool calls have exactly one owner: LLMAssistant.</b> It dispatches tools through its own registry and
 /// reports both halves back over the wire (<c>native_tool_call</c> then <c>tool_result</c>); this class re-emits
 /// them as the exact <see cref="TextChunk"/> shapes <see cref="HartsyInference.Tools.ToolLoop"/> itself produces
-/// (<see cref="TextChunkKind.NativeToolCall"/>, then a <see cref="TextChunkKind.ToolResult"/> chunk) so <c>VoiceAgentSession</c>'s own turn code records the exchange in its
-/// conversation and raises its own <c>ToolCall</c>/<c>ToolResult</c> events -- exactly as it would for a tool a
-/// local engine called. The stream this class yields never ends with <see cref="StopReason.ToolCall"/>, under any
-/// wire <c>stopReason</c>, which is what keeps <c>ToolLoop</c> from ever trying to dispatch through the empty
-/// <see cref="ToolRegistry"/> the voice session is built with -- dispatch already happened, remotely, by the time
-/// a <c>done</c> frame arrives. The one wire event with nowhere to land in that chunk vocabulary is
+/// (<see cref="TextChunkKind.NativeToolCall"/>, then a <see cref="TextChunkKind.ToolResult"/> chunk) so
+/// <c>VoiceAgentSession</c>'s own turn code records the exchange in its conversation and raises its own
+/// <c>ToolCall</c>/<c>ToolResult</c> events -- exactly as it would for a tool a local engine called. What keeps
+/// <c>ToolLoop</c> from dispatching those calls again through the empty <see cref="ToolRegistry"/> the voice session
+/// is built with is the relayed result itself: the engine's loop treats a call whose
+/// <see cref="TextChunkKind.ToolResult"/> arrives in the same round as pre-resolved (matched by the call's id),
+/// records it with that result instead of dispatching it, and ends the run after that round instead of asking this
+/// service again, because the remote turn already holds the final answer. A wire <c>stopReason</c> of
+/// <c>tool_call</c> (LLMAssistant's own round limit) is reported as <see cref="StopReason.Stop"/>. Result chunks
+/// carry their own zero-based index, counted separately from the calls', as the engine's loop numbers its own
+/// results. The one wire event with nowhere to land in that chunk vocabulary is
 /// <c>notice</c> (no <see cref="TextChunkKind"/> for it, and an unmatched <see cref="TextChunkKind.Status"/> phase
 /// is silently dropped by the session's own switch): it is raised on <see cref="Notice"/> instead, which
 /// <see cref="VoiceSessionEndpoints"/> subscribes to directly.</para></summary>
@@ -108,7 +113,8 @@ internal sealed class RemoteTextService : ITextService
             yield break;
         }
         Dictionary<string, NativeToolCall> pendingCalls = new(StringComparer.Ordinal);
-        int toolIndex = 0;
+        int callIndex = 0;
+        int resultIndex = 0;
         while (true)
         {
             JObject frame = null;
@@ -161,7 +167,7 @@ internal sealed class RemoteTextService : ITextService
                 {
                     pendingCalls[call.Id] = call;
                 }
-                yield return new TextChunk { Kind = TextChunkKind.NativeToolCall, ToolCall = call, ToolCallIndex = toolIndex++ };
+                yield return new TextChunk { Kind = TextChunkKind.NativeToolCall, ToolCall = call, ToolCallIndex = callIndex++ };
                 continue;
             }
             if (frame["tool_result"] is JObject resultFrame)
@@ -178,7 +184,7 @@ internal sealed class RemoteTextService : ITextService
                     // ParseJsonOrEmpty(...), not a bare string).
                     Text = JsonFieldAsCompactString(resultFrame, "result"),
                     ToolCall = call,
-                    ToolCallIndex = toolIndex++,
+                    ToolCallIndex = resultIndex++,
                 };
                 continue;
             }
@@ -326,7 +332,8 @@ internal sealed class RemoteTextService : ITextService
         _ => "user",
     };
 
-    /// <summary>Never <see cref="StopReason.ToolCall"/>, whatever the wire says -- see the class remarks. Anything
+    /// <summary>Never <see cref="StopReason.ToolCall"/>: the wire's <c>tool_call</c> is LLMAssistant's own round
+    /// limit, which ends the remote turn (see the class remarks). Anything
     /// unrecognized (including null, absent, or anything tool-shaped) maps to the safe default, <see cref="StopReason.Stop"/>.</summary>
     private static StopReason MapStopReason(string wire) => wire?.ToLowerInvariant() switch
     {
