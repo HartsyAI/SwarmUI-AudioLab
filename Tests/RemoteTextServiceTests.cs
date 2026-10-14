@@ -166,10 +166,9 @@ public class RemoteTextServiceTests
         Assert.Equal("get_time", call.ToolCall!.Name);
         Assert.Equal("{}", call.ToolCall!.Arguments); // compact, not JToken.ToString()'s indented default.
 
-        TextChunk result = Assert.Single(chunks, c => c.Kind == TextChunkKind.Status && c.Status?.Phase == ToolLoop.ToolResultPhase);
+        TextChunk result = Assert.Single(chunks, c => c.Kind == TextChunkKind.ToolResult);
         Assert.Equal("call-1", result.ToolCall!.Id);
-        Assert.StartsWith("tool_result:", result.Text);
-        Assert.Equal("tool_result:" + "{\"time\":\"noon\"}", result.Text);
+        Assert.Equal("{\"time\":\"noon\"}", result.Text);
 
         // Never a ToolCall stop: that is what would send VoiceAgentSession's ToolLoop looking for a dispatch
         // through the (intentionally empty) local ToolRegistry, even though the real dispatch already happened,

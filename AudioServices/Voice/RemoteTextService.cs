@@ -20,8 +20,7 @@ namespace Hartsy.Extensions.AudioLab.AudioServices.Voice;
 /// <para><b>Tool calls have exactly one owner: LLMAssistant.</b> It dispatches tools through its own registry and
 /// reports both halves back over the wire (<c>native_tool_call</c> then <c>tool_result</c>); this class re-emits
 /// them as the exact <see cref="TextChunk"/> shapes <see cref="HartsyInference.Tools.ToolLoop"/> itself produces
-/// (<see cref="TextChunkKind.NativeToolCall"/>, then a <see cref="TextChunkKind.Status"/> chunk phased
-/// <see cref="ToolResultPhase"/>) so <c>VoiceAgentSession</c>'s own turn code records the exchange in its
+/// (<see cref="TextChunkKind.NativeToolCall"/>, then a <see cref="TextChunkKind.ToolResult"/> chunk) so <c>VoiceAgentSession</c>'s own turn code records the exchange in its
 /// conversation and raises its own <c>ToolCall</c>/<c>ToolResult</c> events -- exactly as it would for a tool a
 /// local engine called. The stream this class yields never ends with <see cref="StopReason.ToolCall"/>, under any
 /// wire <c>stopReason</c>, which is what keeps <c>ToolLoop</c> from ever trying to dispatch through the empty
@@ -32,11 +31,6 @@ namespace Hartsy.Extensions.AudioLab.AudioServices.Voice;
 /// <see cref="VoiceSessionEndpoints"/> subscribes to directly.</para></summary>
 internal sealed class RemoteTextService : ITextService
 {
-    // Wire format of a tool-result status chunk, kept from the pre-ToolLoop-v2 engine (ToolLoop.ToolResultPrefix/Phase
-    // were removed in the v2 rewrite). The remote LLMAssistant client matches these exact strings.
-    private const string ToolResultPrefix = "tool_result:";
-    private const string ToolResultPhase = "tool_result";
-
     private readonly string _wsUrl;
     private readonly string _sessionId;
     private readonly string _model;
@@ -179,11 +173,10 @@ internal sealed class RemoteTextService : ITextService
                 pendingCalls.Remove(id);
                 yield return new TextChunk
                 {
-                    Kind = TextChunkKind.Status,
-                    Status = new TextStatus(ToolResultPhase),
+                    Kind = TextChunkKind.ToolResult,
                     // Same nested-JSON-value shape as "arguments" above (LLMAssistant's result is also
                     // ParseJsonOrEmpty(...), not a bare string).
-                    Text = ToolResultPrefix + JsonFieldAsCompactString(resultFrame, "result"),
+                    Text = JsonFieldAsCompactString(resultFrame, "result"),
                     ToolCall = call,
                     ToolCallIndex = toolIndex++,
                 };
