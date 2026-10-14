@@ -168,8 +168,8 @@ public class RemoteTextServiceTests
 
         TextChunk result = Assert.Single(chunks, c => c.Kind == TextChunkKind.Status && c.Status?.Phase == ToolLoop.ToolResultPhase);
         Assert.Equal("call-1", result.ToolCall!.Id);
-        Assert.StartsWith(ToolLoop.ToolResultPrefix, result.Text);
-        Assert.Equal(ToolLoop.ToolResultPrefix + "{\"time\":\"noon\"}", result.Text);
+        Assert.StartsWith("tool_result:", result.Text);
+        Assert.Equal("tool_result:" + "{\"time\":\"noon\"}", result.Text);
 
         // Never a ToolCall stop: that is what would send VoiceAgentSession's ToolLoop looking for a dispatch
         // through the (intentionally empty) local ToolRegistry, even though the real dispatch already happened,

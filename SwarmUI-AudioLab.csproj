@@ -290,10 +290,10 @@
          needed in AudioEngineRequests; the new providers use its existing instruction / cfg_scale / reference fields.
          -->
     <!-- Exact pin on purpose: a floating alpha.* resolves to the stale alpha.NNN-local.M builds in the hartsy-local feed (NuGet ranks the alphanumeric label above numeric ones), which broke every extension build on 2026-10-07. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.270" />
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.360" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
-    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.270" />
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.360" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
