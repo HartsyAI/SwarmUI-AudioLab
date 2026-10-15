@@ -194,12 +194,67 @@ public class RemoteTextServiceTests
         Assert.Equal(["call-1", "call-2"], chunks.Where(c => c.Kind == TextChunkKind.ToolResult).Select(c => c.ToolCall!.Id));
     }
 
+    [Fact]
+    public async Task StreamAsync_ACallWithoutAResult_IsNeverYielded()
+    {
+        // An LLMAssistant before its own fix forwards its round-limit call unrun: yielded, it would be an open call
+        // that the engine's ToolLoop dispatches through the voice session's empty registry.
+        await using FakeVoiceTurnServer server = FakeVoiceTurnServer.Start();
+        (_, List<TextChunk> chunks, _) = await RunScriptedTurnAsync(server,
+        [
+            new JObject { ["native_tool_call"] = new JObject { ["id"] = "call-1", ["name"] = "get_time", ["arguments"] = new JObject() } },
+            new JObject { ["tool_result"] = new JObject { ["id"] = "call-1", ["name"] = "get_time", ["result"] = new JObject { ["time"] = "noon" } } },
+            new JObject { ["native_tool_call"] = new JObject { ["id"] = "call-2", ["name"] = "get_date", ["arguments"] = new JObject() } },
+            new JObject { ["done"] = true, ["full_text"] = "It is noon.", ["stopReason"] = "tool_call" },
+        ]);
+
+        Assert.Equal(["call-1"], chunks.Where(c => c.Kind == TextChunkKind.NativeToolCall).Select(c => c.ToolCall!.Id));
+        Assert.Equal(["call-1"], chunks.Where(c => c.Kind == TextChunkKind.ToolResult).Select(c => c.ToolCall!.Id));
+        Assert.Equal(StopReason.Stop, Assert.Single(chunks, c => c.Kind == TextChunkKind.StopReason).Stop);
+    }
+
+    [Fact]
+    public async Task StreamAsync_EachCallIsYieldedRightBeforeItsResult_InResultOrder()
+    {
+        await using FakeVoiceTurnServer server = FakeVoiceTurnServer.Start();
+        (_, List<TextChunk> chunks, _) = await RunScriptedTurnAsync(server,
+        [
+            new JObject { ["native_tool_call"] = new JObject { ["id"] = "dup", ["name"] = "first", ["arguments"] = new JObject { ["n"] = 1 } } },
+            new JObject { ["native_tool_call"] = new JObject { ["id"] = "dup", ["name"] = "second", ["arguments"] = new JObject { ["n"] = 2 } } },
+            new JObject { ["tool_result"] = new JObject { ["id"] = "dup", ["name"] = "first", ["result"] = new JObject { ["r"] = 1 } } },
+            new JObject { ["tool_result"] = new JObject { ["id"] = "dup", ["name"] = "second", ["result"] = new JObject { ["r"] = 2 } } },
+            new JObject { ["done"] = true, ["full_text"] = "" },
+        ]);
+
+        List<TextChunk> tool = chunks.Where(c => c.Kind is TextChunkKind.NativeToolCall or TextChunkKind.ToolResult).ToList();
+        Assert.Equal([TextChunkKind.NativeToolCall, TextChunkKind.ToolResult, TextChunkKind.NativeToolCall, TextChunkKind.ToolResult], tool.Select(c => c.Kind));
+        Assert.Equal(["first", "first", "second", "second"], tool.Select(c => c.ToolCall!.Name));
+        Assert.Equal("{\"n\":1}", tool[0].ToolCall!.Arguments);
+        Assert.Equal("{\"r\":2}", tool[3].Text);
+    }
+
+    [Fact]
+    public async Task StreamAsync_AResultWithNoWaitingCall_IsDropped()
+    {
+        await using FakeVoiceTurnServer server = FakeVoiceTurnServer.Start();
+        (_, List<TextChunk> chunks, _) = await RunScriptedTurnAsync(server,
+        [
+            new JObject { ["tool_result"] = new JObject { ["id"] = "ghost", ["name"] = "get_time", ["result"] = new JObject() } },
+            new JObject { ["chunk"] = "Hi." },
+            new JObject { ["done"] = true, ["full_text"] = "Hi." },
+        ]);
+
+        Assert.DoesNotContain(chunks, c => c.Kind is TextChunkKind.NativeToolCall or TextChunkKind.ToolResult);
+        Assert.Equal("Hi.", Assert.Single(chunks, c => c.Kind == TextChunkKind.Result).Text);
+    }
+
     [Theory]
     [InlineData("stop", StopReason.Stop)]
     [InlineData("length", StopReason.Length)]
     [InlineData("cancelled", StopReason.Cancelled)]
     [InlineData("canceled", StopReason.Cancelled)]
     [InlineData("tool_call", StopReason.Stop)] // never ToolCall, whatever the wire says -- see the class remarks.
+    [InlineData("tool_round_limit", StopReason.Stop)]
     [InlineData("something_unexpected", StopReason.Stop)]
     [InlineData(null, StopReason.Stop)]
     public async Task StreamAsync_Done_MapsStopReason_AndNeverToolCall(string wireStopReason, StopReason expected)
