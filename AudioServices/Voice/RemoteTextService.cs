@@ -20,13 +20,19 @@ namespace Hartsy.Extensions.AudioLab.AudioServices.Voice;
 /// <para><b>Tool calls have exactly one owner: LLMAssistant.</b> It dispatches tools through its own registry and
 /// reports both halves back over the wire (<c>native_tool_call</c> then <c>tool_result</c>); this class re-emits
 /// them as the exact <see cref="TextChunk"/> shapes <see cref="HartsyInference.Tools.ToolLoop"/> itself produces
-/// (<see cref="TextChunkKind.NativeToolCall"/>, then a <see cref="TextChunkKind.Status"/> chunk phased
-/// <see cref="ToolLoop.ToolResultPhase"/>) so <c>VoiceAgentSession</c>'s own turn code records the exchange in its
-/// conversation and raises its own <c>ToolCall</c>/<c>ToolResult</c> events -- exactly as it would for a tool a
-/// local engine called. The stream this class yields never ends with <see cref="StopReason.ToolCall"/>, under any
-/// wire <c>stopReason</c>, which is what keeps <c>ToolLoop</c> from ever trying to dispatch through the empty
-/// <see cref="ToolRegistry"/> the voice session is built with -- dispatch already happened, remotely, by the time
-/// a <c>done</c> frame arrives. The one wire event with nowhere to land in that chunk vocabulary is
+/// (<see cref="TextChunkKind.NativeToolCall"/>, then a <see cref="TextChunkKind.ToolResult"/> chunk) so
+/// <c>VoiceAgentSession</c>'s own turn code records the exchange in its conversation and raises its own
+/// <c>ToolCall</c>/<c>ToolResult</c> events -- exactly as it would for a tool a local engine called. What keeps
+/// <c>ToolLoop</c> from dispatching those calls again through the empty <see cref="ToolRegistry"/> the voice session
+/// is built with is the relayed result itself: the engine's loop treats a call whose
+/// <see cref="TextChunkKind.ToolResult"/> arrives in the same round as pre-resolved (matched by the call's id),
+/// records it with that result instead of dispatching it, and ends the run after that round instead of asking this
+/// service again, because the remote turn already holds the final answer. A call is yielded only together with its
+/// result, so a call the assistant announced but never ran (its round limit) never reaches that loop as an open call.
+/// A wire <c>stopReason</c> of <c>tool_round_limit</c> (LLMAssistant's round limit) or <c>tool_call</c> (what
+/// LLMAssistant sent for it before) is reported as <see cref="StopReason.Stop"/>. Result chunks
+/// carry their own zero-based index, counted separately from the calls', as the engine's loop numbers its own
+/// results. The one wire event with nowhere to land in that chunk vocabulary is
 /// <c>notice</c> (no <see cref="TextChunkKind"/> for it, and an unmatched <see cref="TextChunkKind.Status"/> phase
 /// is silently dropped by the session's own switch): it is raised on <see cref="Notice"/> instead, which
 /// <see cref="VoiceSessionEndpoints"/> subscribes to directly.</para></summary>
@@ -108,8 +114,13 @@ internal sealed class RemoteTextService : ITextService
             yield return new TextChunk { Kind = TextChunkKind.StopReason, Stop = StopReason.Error, Text = $"Could not reach the assistant at {_wsUrl}: {connectError}" };
             yield break;
         }
-        Dictionary<string, NativeToolCall> pendingCalls = new(StringComparer.Ordinal);
-        int toolIndex = 0;
+        // Calls announced but not yet answered, per wire id in arrival order. A call is only yielded together with
+        // its result (call chunk, then result chunk): one yielded without a result would be an open call to the
+        // engine's ToolLoop, which would dispatch it through the voice session's empty registry. LLMAssistant before
+        // its own fix forwarded its round-limit call this way, unrun; calls still pending at `done` are dropped.
+        Dictionary<string, Queue<NativeToolCall>> pendingCalls = new(StringComparer.Ordinal);
+        int callIndex = 0;
+        int resultIndex = 0;
         while (true)
         {
             JObject frame = null;
@@ -158,29 +169,34 @@ internal sealed class RemoteTextService : ITextService
                     // (documented as a raw JSON string) a multi-line one.
                     Arguments = JsonFieldAsCompactString(callFrame, "arguments"),
                 };
-                if (!string.IsNullOrEmpty(call.Id))
+                string callId = call.Id ?? "";
+                if (!pendingCalls.TryGetValue(callId, out Queue<NativeToolCall> queue))
                 {
-                    pendingCalls[call.Id] = call;
+                    pendingCalls[callId] = queue = new Queue<NativeToolCall>();
                 }
-                yield return new TextChunk { Kind = TextChunkKind.NativeToolCall, ToolCall = call, ToolCallIndex = toolIndex++ };
+                queue.Enqueue(call);
                 continue;
             }
             if (frame["tool_result"] is JObject resultFrame)
             {
                 string id = Str(resultFrame, "id");
-                NativeToolCall call = id.Length > 0 && pendingCalls.TryGetValue(id, out NativeToolCall found)
-                    ? found
-                    : new NativeToolCall { Id = id, Name = Str(resultFrame, "name") };
-                pendingCalls.Remove(id);
+                if (!pendingCalls.TryGetValue(id, out Queue<NativeToolCall> waiting) || waiting.Count == 0)
+                {
+                    // The engine's loop resolves a result only against a call of the same round, so one without its
+                    // call has nowhere to land; say so here rather than let it vanish downstream.
+                    Logs.Warning($"[AudioLab][Voice] Dropped a remote tool result for id '{id}' ({Str(resultFrame, "name")}): no call with that id is waiting for a result.");
+                    continue;
+                }
+                NativeToolCall call = waiting.Dequeue();
+                yield return new TextChunk { Kind = TextChunkKind.NativeToolCall, ToolCall = call, ToolCallIndex = callIndex++ };
                 yield return new TextChunk
                 {
-                    Kind = TextChunkKind.Status,
-                    Status = new TextStatus(ToolLoop.ToolResultPhase),
+                    Kind = TextChunkKind.ToolResult,
                     // Same nested-JSON-value shape as "arguments" above (LLMAssistant's result is also
                     // ParseJsonOrEmpty(...), not a bare string).
-                    Text = ToolLoop.ToolResultPrefix + JsonFieldAsCompactString(resultFrame, "result"),
+                    Text = JsonFieldAsCompactString(resultFrame, "result"),
                     ToolCall = call,
-                    ToolCallIndex = toolIndex++,
+                    ToolCallIndex = resultIndex++,
                 };
                 continue;
             }
@@ -196,6 +212,11 @@ internal sealed class RemoteTextService : ITextService
                 // completing the WebSocket close handshake. A browser's WebSocket does this on its own;
                 // ClientWebSocket does not unless asked, and the `using` above would otherwise TCP-abort, which
                 // surfaces there as a logged error for what was actually a clean finish.
+                int unrun = pendingCalls.Values.Sum(q => q.Count);
+                if (unrun > 0)
+                {
+                    Logs.Debug($"[AudioLab][Voice] Dropped {unrun} remote tool call(s) the assistant announced but never ran.");
+                }
                 await CloseGracefullyAsync(socket).ConfigureAwait(false);
                 yield return new TextChunk { Kind = TextChunkKind.Result, Text = Str(frame, "full_text") };
                 yield return new TextChunk { Kind = TextChunkKind.StopReason, Stop = MapStopReason(frame["stopReason"]?.ToString()) };
@@ -328,7 +349,8 @@ internal sealed class RemoteTextService : ITextService
         _ => "user",
     };
 
-    /// <summary>Never <see cref="StopReason.ToolCall"/>, whatever the wire says -- see the class remarks. Anything
+    /// <summary>Never <see cref="StopReason.ToolCall"/>: the wire's <c>tool_round_limit</c> (and the older
+    /// <c>tool_call</c>) is LLMAssistant's own round limit, which ends the remote turn (see the class remarks). Anything
     /// unrecognized (including null, absent, or anything tool-shaped) maps to the safe default, <see cref="StopReason.Stop"/>.</summary>
     private static StopReason MapStopReason(string wire) => wire?.ToLowerInvariant() switch
     {
