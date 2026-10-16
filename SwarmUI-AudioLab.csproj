@@ -302,7 +302,9 @@
          2.0.0-alpha.373 = 2026-10-16 (alpha.368 -> alpha.373). REQUIRED by this extension's source: carries HartsyAI/HartsyInference#431
          (Fish Audio Drama 3, engine id fishaudio-drama3), whose SpeechRequest.References / History and AudioResult.Turns
          (SpeechTurn) AudioEngineRequests and SpeechTurnJson now read and write; this extension does not compile against
-         alpha.372. Also carries FLUX.3 Klein (alpha.372) and the espeak spelling fixes.
+         alpha.372. Also carries FLUX.3 Klein (alpha.372) and the espeak spelling fixes. Verified hartsyinference and
+         hartsyinference.voice are indexed on nuget.org at this version, and that a Release build and the test suite
+         (362 tests) pass against it.
          -->
     <!-- Exact pin on purpose: a floating alpha.* resolves to the stale alpha.NNN-local.M builds in the hartsy-local feed (NuGet ranks the alphanumeric label above numeric ones), which broke every extension build on 2026-10-07. -->
     <PackageReference Include="HartsyInference" Version="2.0.0-alpha.373" />
