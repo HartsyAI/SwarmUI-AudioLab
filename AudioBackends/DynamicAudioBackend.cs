@@ -14,6 +14,7 @@ using HartsyInference.Audio.Streaming;
 using HartsyInference.Core.Configuration;
 using HartsyInference.Cuda;
 using HartsyInference.Engine;
+using HartsyInference.Engine.Requests;
 using HartsyInference.Vulkan;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Backends;
@@ -783,7 +784,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     };
                     ReportTruncation(result, takeOutput, user_input, provider.Id);
                     RecordPlannedScore(result, user_input);
-                    RecordSpeechTurns(result, user_input);
+                    RecordSpeechTurns(result["turns"], user_input);
                     AudioFile audio = new(audioBytes, mediaType);
                     takeOutput(audio);
                 }
@@ -1009,10 +1010,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
         int channels = 1;
         double totalDuration = 0;
         int chunkIndex = 0;
+        IReadOnlyList<SpeechTurn> turns = null;
 
         try
         {
-            await foreach (AudioChunk chunk in AudioEngineBridge.ProcessStreamAsync(provider.Id, args, user_input.InterruptToken))
+            await foreach (AudioChunk chunk in AudioEngineBridge.ProcessStreamAsync(provider.Id, args, user_input.InterruptToken, produced => turns = produced))
             {
                 if (user_input.InterruptToken.IsCancellationRequested)
                 {
@@ -1063,6 +1065,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
         if (pcmChunks.Count > 0)
         {
             byte[] finalWav = BuildWavFromPcm(pcmChunks, sampleRate, channels, bitsPerSample: 16);
+            // Before the output: its metadata is captured as it is taken.
+            RecordSpeechTurns(turns is null ? null : SpeechTurnJson.ToJson(turns), user_input);
             takeOutput(new AudioFile(finalWav, MediaType.AudioWav));
             meta.LastUsed = DateTime.UtcNow;
             Logs.Info($"[AudioLab] Native streaming TTS complete: {totalDuration:F2}s total via {provider.Name}");
@@ -1884,15 +1888,15 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
     }
 
-    /// <summary>Keeps the turns a speech model that revises takes returned (Fish Audio Drama 3) with the output: each chunk's text and
-    /// codes, which go back in through 'Drama 3 History' (or an API call's <c>history</c>) to revise the take with a new cue. Like the
-    /// YuE2 score, they ride in <see cref="T2IParamInput.ExtraMeta"/> rather than back onto the param, so "Reuse Parameters" never
-    /// re-sends an old take as history by accident.</summary>
-    private static void RecordSpeechTurns(JObject result, T2IParamInput input)
+    /// <summary>Keeps the turns a speech model that revises takes returned (Fish Audio Drama 3) with the output, streamed or not: each
+    /// chunk's text and codes (<see cref="SpeechTurnJson"/>), which go back in through 'Drama 3 History' (or an API call's
+    /// <c>history</c>) to revise the take with a new cue. Like the YuE2 score, they ride in <see cref="T2IParamInput.ExtraMeta"/> rather
+    /// than back onto the param, so "Reuse Parameters" never re-sends an old take as history by accident.</summary>
+    private static void RecordSpeechTurns(JToken turns, T2IParamInput input)
     {
-        if (result["turns"] is JArray { Count: > 0 } turns)
+        if (turns is JArray { Count: > 0 } entries)
         {
-            input.ExtraMeta["speech_turns"] = turns.ToString(Newtonsoft.Json.Formatting.None);
+            input.ExtraMeta["speech_turns"] = entries.ToString(Newtonsoft.Json.Formatting.None);
         }
     }
 

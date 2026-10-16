@@ -615,9 +615,10 @@ public static class AudioEngineBridge
     /// progresses. Callers MUST check <see cref="SupportsNativeStreaming"/> first; this throws for anything else
     /// (unlike <see cref="ProcessAsync"/>, which converts every failure into a JObject error — there is no
     /// per-chunk JObject shape here for a raw <see cref="AudioChunk"/> stream, so the caller owns catching and
-    /// reporting exceptions the way <c>DynamicAudioBackend.GenerateLiveNativeStreaming</c> does).</summary>
+    /// reporting exceptions the way <c>DynamicAudioBackend.GenerateLiveNativeStreaming</c> does). A model that revises takes (Fish
+    /// Audio Drama 3) hands the take's turns to <paramref name="onTurns"/> before the stream ends.</summary>
     public static async IAsyncEnumerable<AudioChunk> ProcessStreamAsync(string providerId,
-        IReadOnlyDictionary<string, object> args, [EnumeratorCancellation] CancellationToken cancel)
+        IReadOnlyDictionary<string, object> args, [EnumeratorCancellation] CancellationToken cancel, Action<IReadOnlyList<SpeechTurn>> onTurns = null)
     {
         if (!_bindings.TryGetValue(providerId ?? "", out AudioEngineBinding binding) || binding.Service != AudioEngineService.Speech)
         {
@@ -627,7 +628,7 @@ public static class AudioEngineBridge
         using IDisposable idleHold = await IdleRelease.BeginAsync(cancel).ConfigureAwait(false);
         ModelSpec spec = BuildSpec(providerId, binding, args);
         await MaybeKeepResidentAsync(AudioEngineService.Speech, spec, cancel).ConfigureAwait(false);
-        await foreach (AudioChunk chunk in Engine.Speech.SynthesizeStreamAsync(spec, AudioEngineRequests.Speech(args), cancel).ConfigureAwait(false))
+        await foreach (AudioChunk chunk in Engine.Speech.SynthesizeStreamAsync(spec, AudioEngineRequests.Speech(args), onTurns, cancel).ConfigureAwait(false))
         {
             yield return chunk;
         }
