@@ -28,6 +28,9 @@ public static class AudioEngineRequests
             Text = text,
             RefText = AudioIo.Str(args, "ref_text"),
             Reference = Clip(args, "reference_audio"),
+            // Fish Audio Drama 3: more voice references, and earlier turns to revise (a take's returned "turns").
+            References = SpeechTurnJson.Parse(args, "references"),
+            History = SpeechTurnJson.Parse(args, "history"),
             // "default" is the API layer's placeholder (ProcessTTS's voice default), not a real voice name.
             Voice = string.IsNullOrEmpty(voice) || voice.Equals("default", StringComparison.OrdinalIgnoreCase) ? null : voice,
             Speed = Number(args, "speed"),

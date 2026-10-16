@@ -22,6 +22,7 @@ const AudioLabConfig = {
         pockettts_tts: { category: 'audiolab_tts', providerFlag: 'pockettts_tts_params', extraFlags: ['tts_voice_ref'] },
         kyutaitts_tts: { category: 'audiolab_tts', providerFlag: 'kyutaitts_tts_params', extraFlags: ['tts_voice_ref', 'tts_streaming'] },
         fishspeech_tts: { category: 'audiolab_tts', providerFlag: 'fishspeech_tts_params', extraFlags: ['tts_voice_ref'] },
+        fishaudio_drama3_tts: { category: 'audiolab_tts', providerFlag: 'fishaudio_drama3_tts_params', extraFlags: ['tts_voice_ref', 'tts_streaming'] },
         qwen3_tts_clone: { category: 'audiolab_tts', providerFlag: 'qwen3tts_tts_params', extraFlags: ['tts_voice_ref'] },
         qwen3_tts_custom: { category: 'audiolab_tts', providerFlag: 'qwen3tts_tts_params', extraFlags: ['qwen3tts_speaker_params', 'qwen3tts_instruct_params'] },
         qwen3_tts_design: { category: 'audiolab_tts', providerFlag: 'qwen3tts_tts_params', extraFlags: ['qwen3tts_instruct_params'] },

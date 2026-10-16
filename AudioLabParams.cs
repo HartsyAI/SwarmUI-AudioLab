@@ -352,6 +352,15 @@ public static class AudioLabParams
 
     #endregion
 
+    #region TTS — Fish Audio Drama 3 (flag: fishaudio_drama3_tts_params)
+
+    /// <summary>Most frames each text chunk may generate; 0 keeps the model's own cap. Feature flag: <c>fishaudio_drama3_tts_params</c>.</summary>
+    public static T2IRegisteredParam<int> Drama3MaxFrames;
+    /// <summary>Earlier turns to revise, as a take's "turns" metadata (JSON). Feature flag: <c>fishaudio_drama3_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> Drama3History;
+
+    #endregion
+
     #region TTS — Qwen3-TTS extras
 
     /// <summary>Faster clone mode that conditions on the speaker vector only, at some prosody cost.</summary>
@@ -1199,6 +1208,24 @@ public static class AudioLabParams
             "true",
             GetValues: _ => ["true///Yes (Recommended)", "false///No"],
             OrderPriority: -3, Group: TTSGroup, FeatureFlag: "fishspeech_tts_params", IsAdvanced: true));
+
+        #endregion
+
+        #region TTS — Fish Audio Drama 3
+        Drama3MaxFrames = T2IParamTypes.Register<int>(new("Drama 3 Max Frames",
+            "Most audio frames (about 21.5 per second) each text chunk may generate.\n"
+            + "0 keeps the model's own cap (600 per chunk). Long text is split into chunks of about 300 bytes, so this caps each chunk, not the whole take.",
+            "0",
+            Min: 0, Max: 2048, Step: 16, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "fishaudio_drama3_tts_params", IsAdvanced: true));
+
+        Drama3History = T2IParamTypes.Register<string>(new("Drama 3 History",
+            "Earlier turns to revise: paste the 'speech_turns' metadata of a take here, then change the [cue] in the prompt and generate again.\n"
+            + "Each turn is {\"text\": ..., \"codes\": [[...], ...]}. Leave empty for a fresh take.",
+            "",
+            IgnoreIf: "",
+            ViewType: ParamViewType.BIG,
+            OrderPriority: -4, Group: TTSGroup, FeatureFlag: "fishaudio_drama3_tts_params", IsAdvanced: true));
 
         #endregion
 

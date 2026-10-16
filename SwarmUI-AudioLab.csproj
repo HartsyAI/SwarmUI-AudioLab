@@ -299,12 +299,16 @@
          #408, #399, #412-#414, #416, #418: CosyVoice 2, GPT-SoVITS, Chatterbox, Spark-TTS and IndexTTS frontends,
          sampling and conditioning matched to upstream, plus the GPU residency race fix). No further source change
          needed here. Verified hartsyinference and hartsyinference.voice are indexed on nuget.org at this version.
+         2.0.0-alpha.373 = 2026-10-16 (alpha.368 -> alpha.373). REQUIRED by this extension's source: carries HartsyAI/HartsyInference#431
+         (Fish Audio Drama 3, engine id fishaudio-drama3), whose SpeechRequest.References / History and AudioResult.Turns
+         (SpeechTurn) AudioEngineRequests and SpeechTurnJson now read and write; this extension does not compile against
+         alpha.372. Also carries FLUX.3 Klein (alpha.372) and the espeak spelling fixes.
          -->
     <!-- Exact pin on purpose: a floating alpha.* resolves to the stale alpha.NNN-local.M builds in the hartsy-local feed (NuGet ranks the alphanumeric label above numeric ones), which broke every extension build on 2026-10-07. -->
-    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.368" />
+    <PackageReference Include="HartsyInference" Version="2.0.0-alpha.373" />
     <!-- Kept at the exact same version as the HartsyInference pin above, since both come from the same engine
          repo tag and must never skew. -->
-    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.368" />
+    <PackageReference Include="HartsyInference.Voice" Version="2.0.0-alpha.373" />
   </ItemGroup>
 
   <!-- LOCAL ENGINE DEBUGGING: prebuilt engine DLLs, not ProjectReferences (a ProjectReference would leak
