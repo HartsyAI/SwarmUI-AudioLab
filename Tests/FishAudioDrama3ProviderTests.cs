@@ -1,3 +1,4 @@
+using Hartsy.Extensions.AudioLab.AudioAPI;
 using Hartsy.Extensions.AudioLab.AudioProviders;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using Hartsy.Extensions.AudioLab.AudioServices;
@@ -81,6 +82,33 @@ public class FishAudioDrama3ProviderTests
         IReadOnlyList<SpeechTurn> history = SpeechTurnJson.Parse(new Dictionary<string, object> { ["history"] = json.ToString() }, "history")!;
         Assert.Equal(take.Select(static t => t.Text), history.Select(static t => t.Text));
         Assert.Equal(take.Select(static t => t.Codes), history.Select(static t => t.Codes));
+    }
+
+    [Fact]
+    public async Task ProcessAudio_RefusesAnOversizedClipNestedInTurns()
+    {
+        AudioProviderRegistry.Clear();
+        try
+        {
+            AudioProviderDefinitions.RegisterAll();
+            JObject input = new()
+            {
+                ["provider_id"] = "fishaudio_drama3_tts",
+                ["args"] = new JObject
+                {
+                    ["text"] = "<|speaker:1|> Come closer.",
+                    ["references"] = new JArray(new JObject { ["text"] = "<|speaker:1|> Hello there.", ["audio"] = new string('A', AudioLabAPI.MaxArgStringLength + 1) }),
+                },
+            };
+            JObject result = await AudioLabAPI.ProcessAudio(null, input);
+            Assert.False(result["success"]!.Value<bool>());
+            Assert.Equal("arg_too_large", result["error_code"]!.ToString());
+            Assert.StartsWith("args.references[0].audio ", result["error"]!.ToString());
+        }
+        finally
+        {
+            AudioProviderRegistry.Clear();
+        }
     }
 
     [Theory]
