@@ -14,6 +14,7 @@ using HartsyInference.Audio.Streaming;
 using HartsyInference.Core.Configuration;
 using HartsyInference.Cuda;
 using HartsyInference.Engine;
+using HartsyInference.Engine.Requests;
 using HartsyInference.Vulkan;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Backends;
@@ -783,6 +784,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     };
                     ReportTruncation(result, takeOutput, user_input, provider.Id);
                     RecordPlannedScore(result, user_input);
+                    RecordSpeechTurns(result["turns"], user_input);
                     AudioFile audio = new(audioBytes, mediaType);
                     takeOutput(audio);
                 }
@@ -1008,10 +1010,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
         int channels = 1;
         double totalDuration = 0;
         int chunkIndex = 0;
+        IReadOnlyList<SpeechTurn> turns = null;
 
         try
         {
-            await foreach (AudioChunk chunk in AudioEngineBridge.ProcessStreamAsync(provider.Id, args, user_input.InterruptToken))
+            await foreach (AudioChunk chunk in AudioEngineBridge.ProcessStreamAsync(provider.Id, args, user_input.InterruptToken, produced => turns = produced))
             {
                 if (user_input.InterruptToken.IsCancellationRequested)
                 {
@@ -1062,6 +1065,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
         if (pcmChunks.Count > 0)
         {
             byte[] finalWav = BuildWavFromPcm(pcmChunks, sampleRate, channels, bitsPerSample: 16);
+            // Before the output: its metadata is captured as it is taken.
+            RecordSpeechTurns(turns is null ? null : SpeechTurnJson.ToJson(turns), user_input);
             takeOutput(new AudioFile(finalWav, MediaType.AudioWav));
             meta.LastUsed = DateTime.UtcNow;
             Logs.Info($"[AudioLab] Native streaming TTS complete: {totalDuration:F2}s total via {provider.Name}");
@@ -1883,6 +1888,18 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
     }
 
+    /// <summary>Keeps the turns a speech model that revises takes returned (Fish Audio Drama 3) with the output, streamed or not: each
+    /// chunk's text and codes (<see cref="SpeechTurnJson"/>), which go back in through 'Drama 3 History' (or an API call's
+    /// <c>history</c>) to revise the take with a new cue. Like the YuE2 score, they ride in <see cref="T2IParamInput.ExtraMeta"/> rather
+    /// than back onto the param, so "Reuse Parameters" never re-sends an old take as history by accident.</summary>
+    private static void RecordSpeechTurns(JToken turns, T2IParamInput input)
+    {
+        if (turns is JArray { Count: > 0 } entries)
+        {
+            input.ExtraMeta["speech_turns"] = entries.ToString(Newtonsoft.Json.Formatting.None);
+        }
+    }
+
     /// <summary>The clip length a request asked for, resolved exactly as the request itself resolves it. Kept in
     /// one place because a message ABOUT the duration that reads a different param than the one that was SENT is
     /// worse than no message — a user on the core param was told the generic story while their real ceiling went
@@ -1988,6 +2005,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 {
                     // CosyVoice 2 aligns the clip against its transcript and fails without it, after loading the model.
                     throw new SwarmReadableErrorException("[AudioLab] CosyVoice needs the transcript of the Reference Audio clip in 'Reference Text'.");
+                }
+                if (provider.Id == "fishaudio_drama3_tts" && args.ContainsKey("reference_audio") && !args.ContainsKey("ref_text"))
+                {
+                    // Drama 3 puts each reference in the prompt as its transcript followed by its codes; the engine refuses one
+                    // without, after a 20-40 GB load.
+                    throw new SwarmReadableErrorException("[AudioLab] Fish Audio Drama 3 clones a voice from its clip and the exact transcript: "
+                        + "add the transcript of the Reference Audio clip in 'Reference Text'.");
                 }
                 // Seed for reproducibility (pipelines that accept one). SwarmUI resolves -1 to a concrete value upstream.
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long ttsSeed) ? ttsSeed : -1L;
@@ -2163,6 +2187,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["chunk_length"] = input.TryGet(AudioLabParams.FishSpeechChunkLength, out int fsChunk) ? fsChunk : 200;
                 args["normalize_loudness"] = input.TryGet(AudioLabParams.FishSpeechNormalize, out string fsNorm) ? fsNorm == "true" : true;
                 args["seed"] = input.TryGet(T2IParamTypes.Seed, out long fsSeed) ? fsSeed : -1L;
+                break;
+
+            case "fishaudio_drama3_tts":
+                if (input.TryGet(AudioLabParams.Drama3MaxFrames, out int drama3Frames) && drama3Frames > 0)
+                    args["max_new_tokens"] = drama3Frames;
+                if (input.TryGet(AudioLabParams.Drama3History, out string drama3History) && !string.IsNullOrWhiteSpace(drama3History))
+                    args["history"] = drama3History;
                 break;
 
             case "qwen3_tts":

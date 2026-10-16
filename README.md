@@ -186,7 +186,7 @@ Generated from the running server, so this is what the extension actually offers
 whether the engine downloads on first use or exposes per model installs.
 
 
-#### Text to Speech (21 engines, 27 models)
+#### Text to Speech (22 engines, 29 models)
 
 | Engine | Models | VRAM | License | Weights |
 | --- | --- | --- | --- | --- |
@@ -197,6 +197,7 @@ whether the engine downloads on first use or exposes per model installs.
 | [CSM Conversational](https://huggingface.co/sesame/csm-1b) | 1 | ~4.5GB | Apache 2.0 | on first use |
 | [Dia TTS](https://huggingface.co/nari-labs/Dia-1.6B-0626) | 1 | ~10GB | Apache 2.0 | on first use |
 | [F5-TTS](https://huggingface.co/SWivid/F5-TTS) | 1 | ~4GB | CC-BY-NC-4.0 | on first use |
+| [Fish Audio Drama 3](https://huggingface.co/fishaudio/drama-3) | 2 | ~40GB, ~22GB (int4); experts offload on smaller GPUs | Fish Audio Research License (non-commercial) | on first use |
 | [Fish Speech TTS](https://huggingface.co/fishaudio/fish-speech-1.5) | 1 | ~4GB | CC-BY-NC-SA-4.0 | on first use |
 | [Kokoro TTS](https://huggingface.co/hexgrad/Kokoro-82M) | 1 | ~1GB (or CPU) | Apache 2.0 | on first use |
 | [Kyutai TTS](https://huggingface.co/kyutai/tts-1.6b-en_fr) | 1 | ~8 GB | CC-BY 4.0 | on first use |
@@ -649,6 +650,12 @@ curl -s -H "Content-Type: application/json" -X POST http://localhost:7801/API/Pr
 
 Voice cloning engines take `reference_audio` (base64 WAV) and, where the model needs it, `ref_text` alongside the
 usual `ProcessTTS` fields.
+
+Fish Audio Drama 3 (`fishaudio_drama3_tts`) also takes, through `ProcessAudio` args, a `references` list for several voices
+(one per `<|speaker:N|>`, in order) and a `history` of earlier turns. Each entry is `{"text": ..., "audio": "<base64 wav>"}`
+(a reference: its exact transcript and clip) or `{"text": ..., "codes": [[...], ...]}`. Its result carries the take's `turns`
+in the second form: send them back as `history` with a changed `[cue]` in the text to revise the take. On the Generate tab the
+same turns are saved in the output's `speech_turns` metadata, and the "Drama 3 History" parameter takes them back.
 
 ### Routes
 

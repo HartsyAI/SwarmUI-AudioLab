@@ -42,7 +42,7 @@ public static class AudioLabAPI
 {
     /// <summary>Cap on any single string arg to ProcessAudio: 64 MB of base64 (~48 MB decoded), well above any
     /// realistic reference clip while still rejecting a runaway payload.</summary>
-    private const int MaxArgStringLength = 64 * 1024 * 1024;
+    public const int MaxArgStringLength = 64 * 1024 * 1024;
 
     /// <summary>Registers all API endpoints.</summary>
     public static void Register()
@@ -367,16 +367,15 @@ public static class AudioLabAPI
             foreach (JProperty prop in argsObj.Properties())
             {
                 // This endpoint is a generic passthrough, so it can't validate per-provider shapes — but an
-                // oversized base64 blob must be rejected before it reaches a provider or an upstream API.
-                if (prop.Value?.Type == JTokenType.String)
+                // oversized base64 blob must be rejected before it reaches a provider or an upstream API, at any
+                // depth: a multi-speaker call nests its reference clips in an array of turns.
+                IEnumerable<JToken> values = prop.Value is JContainer container ? container.DescendantsAndSelf() : [prop.Value];
+                JToken oversized = values.FirstOrDefault(static t => t?.Type == JTokenType.String && ((string)t).Length > MaxArgStringLength);
+                if (oversized is not null)
                 {
-                    string value = prop.Value.ToString();
-                    if (value.Length > MaxArgStringLength)
-                    {
-                        return AudioLab.CreateErrorResponse(
-                            $"args.{prop.Name} is {value.Length / (1024 * 1024)} MB, over the {MaxArgStringLength / (1024 * 1024)} MB limit for a single argument.",
-                            "arg_too_large");
-                    }
+                    return AudioLab.CreateErrorResponse(
+                        $"{oversized.Path} is {((string)oversized).Length / (1024 * 1024)} MB, over the {MaxArgStringLength / (1024 * 1024)} MB limit for a single argument.",
+                        "arg_too_large");
                 }
                 args[prop.Name] = prop.Value?.ToObject<object>();
             }
