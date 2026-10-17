@@ -197,7 +197,7 @@ whether the engine downloads on first use or exposes per model installs.
 | [CSM Conversational](https://huggingface.co/sesame/csm-1b) | 1 | ~4.5GB | Apache 2.0 | on first use |
 | [Dia TTS](https://huggingface.co/nari-labs/Dia-1.6B-0626) | 1 | ~10GB | Apache 2.0 | on first use |
 | [F5-TTS](https://huggingface.co/SWivid/F5-TTS) | 1 | ~4GB | CC-BY-NC-4.0 | on first use |
-| [Fish Audio Drama 3](https://huggingface.co/fishaudio/drama-3) | 2 | ~40GB, ~22GB (int4); experts offload on smaller GPUs | Fish Audio Research License (non-commercial) | on first use |
+| [Fish Audio Drama 3](https://huggingface.co/fishaudio/drama-3) | 2 | ~40GB, ~22GB (int4); experts offload on smaller GPUs | Fish Audio Community License v1.0 (commercial use below USD 500k annual revenue) | on first use |
 | [Fish Speech TTS](https://huggingface.co/fishaudio/fish-speech-1.5) | 1 | ~4GB | CC-BY-NC-SA-4.0 | on first use |
 | [Kokoro TTS](https://huggingface.co/hexgrad/Kokoro-82M) | 1 | ~1GB (or CPU) | Apache 2.0 | on first use |
 | [Kyutai TTS](https://huggingface.co/kyutai/tts-1.6b-en_fr) | 1 | ~8 GB | CC-BY 4.0 | on first use |
@@ -748,8 +748,8 @@ Known and planned, so you can tell missing from broken:
 - **AuK editing.** Only AuK text-to-speech ships; a separate AuK editing provider is not built yet.
 - **Engine side gates.** Piper, Zonos, MeloTTS and CosyVoice are wired up and waiting on front end pieces from the
   engine. They light up on their own once those land.
-- **Voice cloning for a few engines** (Chatterbox, NeuTTS, Spark-TTS) is waiting on encoder support; the default
-  voice works meanwhile.
+- **Voice cloning for a few engines** (Chatterbox, Fish Speech, NeuTTS, Spark-TTS) is waiting on encoder support; the
+  default voice works meanwhile. Fish Speech refuses a reference clip rather than ignoring it.
 - **Performance.** The large autoregressive music models are slow on consumer GPUs and are an active optimization
   target. See BENCHMARKS.md for measured numbers.
 - **LLM assisted music metadata.** ACE-Step's planner parameters exist but wait on SwarmUI's `AbstractLLMBackend`.
