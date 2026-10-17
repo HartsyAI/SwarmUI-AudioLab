@@ -115,13 +115,6 @@ public static class AudioEngineBridge
         ["resemble_enhance_fx"] = new AudioEngineBinding("resemble-enhance", AudioEngineService.Enhance, true),
     };
 
-    /// <summary>Speech providers that take no voice reference, mapped to the refusal a request carrying one gets. Refused here,
-    /// before any load, so every engine release answers the same way (older ones ignore the clip and use the default voice).</summary>
-    private static readonly Dictionary<string, string> _referenceRejections = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["fishspeech_tts"] = "Fish Speech cannot clone a voice yet (the engine has no Firefly encoder). Remove the voice reference, or use a cloning model.",
-    };
-
     /// <summary>Engine-managed providers whose weights the Engine fetches from a HuggingFace repo that the
     /// provider's <c>SourceUrl</c> does not name (SourceUrl is a human "learn more" link, usually GitHub).
     /// Without this the repo can't be resolved, <see cref="GetWeightLocations"/> returns nothing, and
@@ -245,10 +238,6 @@ public static class AudioEngineBridge
         {
             return AudioIo.Error($"Provider '{providerId}' is not supported by the in-process audio engine yet.");
         }
-        if (ReferenceRejection(providerId, args) is string rejection)
-        {
-            return AudioIo.Error(rejection);
-        }
         try
         {
             using IDisposable idleHold = await IdleRelease.BeginAsync(cancel).ConfigureAwait(false);
@@ -269,27 +258,6 @@ public static class AudioEngineBridge
             Logs.Error($"[AudioLab] Audio provider '{providerId}' failed: {ex}");
             return AudioIo.Error(ex.Message);
         }
-    }
-
-    /// <summary>The refusal for a request that carries a voice reference its provider cannot take, or null when it may run.</summary>
-    internal static string ReferenceRejection(string providerId, IReadOnlyDictionary<string, object> args)
-        => _referenceRejections.TryGetValue(providerId ?? "", out string rejection) && HasVoiceReference(args) ? rejection : null;
-
-    /// <summary>True when the args carry a voice reference: a <c>reference_audio</c> clip or a non-empty <c>references</c> list.</summary>
-    private static bool HasVoiceReference(IReadOnlyDictionary<string, object> args)
-    {
-        if (!string.IsNullOrWhiteSpace(AudioIo.Str(args, "reference_audio")))
-        {
-            return true;
-        }
-        return args.TryGetValue("references", out object references) && references switch
-        {
-            null => false,
-            JArray list => list.Count > 0,
-            JToken token => token.Type != JTokenType.Null && !string.IsNullOrWhiteSpace(token.ToString()),
-            string text => !string.IsNullOrWhiteSpace(text),
-            _ => true,
-        };
     }
 
     /// <summary>The actual per-service Engine dispatch -- split out of <see cref="ProcessAsync"/> so
