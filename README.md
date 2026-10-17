@@ -186,7 +186,7 @@ Generated from the running server, so this is what the extension actually offers
 whether the engine downloads on first use or exposes per model installs.
 
 
-#### Text to Speech (22 engines, 29 models)
+#### Text to Speech (22 engines, 30 models)
 
 | Engine | Models | VRAM | License | Weights |
 | --- | --- | --- | --- | --- |
@@ -198,7 +198,7 @@ whether the engine downloads on first use or exposes per model installs.
 | [Dia TTS](https://huggingface.co/nari-labs/Dia-1.6B-0626) | 1 | ~10GB | Apache 2.0 | on first use |
 | [F5-TTS](https://huggingface.co/SWivid/F5-TTS) | 1 | ~4GB | CC-BY-NC-4.0 | on first use |
 | [Fish Audio Drama 3](https://huggingface.co/fishaudio/drama-3) | 2 | ~40GB, ~22GB (int4); experts offload on smaller GPUs | Fish Audio Community License v1.0 (commercial use below USD 500k annual revenue) | on first use |
-| [Fish Speech TTS](https://huggingface.co/fishaudio/fish-speech-1.5) | 1 | ~4GB | CC-BY-NC-SA-4.0 | on first use |
+| [Fish Speech TTS](https://huggingface.co/fishaudio/fish-speech-1.5) | 2 | ~4GB | CC-BY-NC-SA-4.0 | on first use |
 | [Kokoro TTS](https://huggingface.co/hexgrad/Kokoro-82M) | 1 | ~1GB (or CPU) | Apache 2.0 | on first use |
 | [Kyutai TTS](https://huggingface.co/kyutai/tts-1.6b-en_fr) | 1 | ~8 GB | CC-BY 4.0 | on first use |
 | [MeloTTS](https://huggingface.co/myshell-ai/MeloTTS-English-v3) | 1 | ~1GB (or CPU) | MIT | on first use |
