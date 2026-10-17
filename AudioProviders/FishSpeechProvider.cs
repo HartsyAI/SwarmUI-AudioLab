@@ -3,7 +3,7 @@ using Hartsy.Extensions.AudioLab.WebAPI.Models;
 
 namespace Hartsy.Extensions.AudioLab.AudioProviders;
 
-/// <summary>Fish Speech TTS provider -- dual-autoregressive TTS with inline prosody control supporting 80+ languages and voice cloning.</summary>
+/// <summary>Fish Speech TTS provider -- dual-autoregressive TTS with inline prosody control supporting 80+ languages.</summary>
 public sealed class FishSpeechProvider : IAudioProviderSource
 {
     /// <summary>Singleton instance of the Fish Speech provider.</summary>
@@ -18,7 +18,7 @@ public sealed class FishSpeechProvider : IAudioProviderSource
         .WithModelClass("fishspeech_tts", "Fish Speech TTS")
         .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("fishspeech_tts_params")
-        .AddFeatureFlag("tts_voice_ref")
+        // No tts_voice_ref: the engine does not port the Firefly encoder, so Fish Speech cannot clone a voice.
         .AddModels(Models)
         .WithEngineGroup("main")
         .Build();
@@ -33,7 +33,7 @@ public sealed class FishSpeechProvider : IAudioProviderSource
         {
             Id = "fish-speech-1.5",
             Name = "Fish Speech 1.5",
-            Description = "DualAR text-to-semantic (Llama-style backbone + depth transformer over 8 codebooks) decoded by firefly-gan-vq to 44.1 kHz. Multilingual, voice cloning. ~4GB VRAM.",
+            Description = "DualAR text-to-semantic (Llama-style backbone + depth transformer over 8 codebooks) decoded by firefly-gan-vq to 44.1 kHz. Multilingual, in the model's own voice (no voice cloning yet). ~4GB VRAM.",
             SourceUrl = "https://huggingface.co/fishaudio/fish-speech-1.5",
             License = "CC-BY-NC-SA-4.0",
             EstimatedSize = "~2GB",
