@@ -14,6 +14,8 @@ public class FishSpeechProviderTests
         Assert.Equal("fishspeech_tts", def.Id);
         Assert.Contains("fishspeech_tts_params", def.FeatureFlags, StringComparer.OrdinalIgnoreCase);
         Assert.DoesNotContain("tts_voice_ref", def.FeatureFlags, StringComparer.OrdinalIgnoreCase);
-        Assert.Equal(new[] { "fish-speech-1.5" }, def.Models.Select(m => m.Id).ToArray());
+        // Each id reaches the engine as fishspeech:{id}, which selects that checkpoint's layout.
+        Assert.Equal(new[] { "fish-speech-1.5", "fish-speech-1.4" }, def.Models.Select(m => m.Id).ToArray());
+        Assert.Equal("https://huggingface.co/fishaudio/fish-speech-1.4", def.Models.Single(m => m.Id == "fish-speech-1.4").SourceUrl);
     }
 }
