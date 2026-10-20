@@ -1366,6 +1366,7 @@ const AudioDaw = (() => {
         if (mixerContent) {
             if (typeof AudioDawMixer !== 'undefined') {
                 AudioDawMixer.render(mixerContent, state, (prop, val) => {
+                    if (prop !== 'grab' && prop !== 'release') scheduleAutosave();
                     if (prop === 'masterVolume') { state.masterVolume = val; updatePlaybackGains(); }
                     else if (prop === 'pan') { automationInput(val, 'pan'); updatePlaybackGains(); }
                     else if (prop === 'volume') {
@@ -7326,6 +7327,7 @@ const AudioDaw = (() => {
         if (mixer) {
             for (const id of [...mixer.chains.keys()]) dropChain(id);
         }
+        updatePlaybackGains(); // the restored master and fader levels reach the live graph, even when stopped
         resyncPlayback();
         // Inputs follow the restored arm/monitor state; tracks that no longer exist lose theirs
         const live = new Set(state.tracks.map(t => t.id));
@@ -8313,11 +8315,14 @@ const AudioDaw = (() => {
             track.midiClips = (ts.midiClips || []).map(c => ({ ...c, notes: c.notes.map(n => ({ ...n })), cc: (c.cc || []).map(e => ({ ...e })) }));
             const sampleKey = track.instrument?.sampleKey;
             if (sampleKey && blobs.has(sampleKey) && !blobStore.has(sampleKey)) {
+                // Kept even when this browser cannot decode it, so the next save still carries the file
+                let decodedBuffer = null;
                 try {
-                    blobStore.set(sampleKey, { blob: blobs.get(sampleKey), decodedBuffer: await AudioLabCore.decodeToBuffer(blobs.get(sampleKey)) });
+                    decodedBuffer = await AudioLabCore.decodeToBuffer(blobs.get(sampleKey));
                 } catch (err) {
                     console.warn('[AudioDaw] Sampler sample did not decode:', err);
                 }
+                blobStore.set(sampleKey, { blob: blobs.get(sampleKey), decodedBuffer });
             }
             track.fx = (ts.fx || []).filter(f => typeof AudioDawFx === 'undefined' || AudioDawFx.FX_DEFS[f.type])
                 .map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));

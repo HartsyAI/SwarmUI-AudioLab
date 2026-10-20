@@ -79,8 +79,22 @@ public class DawProjectAudioTests : IDisposable
         {
             await DawProjectAudio.Write(dir, key, [9]);
         }
+        // Unreferenced audio is only pruned once it is an hour old
+        File.SetLastWriteTimeUtc(DawProjectAudio.AudioPath(dir, "b"), DateTime.UtcNow.AddHours(-2));
         Assert.Equal(1, DawProjectAudio.Prune(dir, new HashSet<string> { "a", "c" }));
         Assert.Equal(new[] { "a", "c" }, DawProjectAudio.List(dir).Keys.Order().ToArray());
+    }
+
+    [Fact]
+    public async Task PruneKeepsAFreshUploadThatNoSaveReferencesYet()
+    {
+        string dir = DawProjectAudio.AudioDir(Root, "song");
+        await DawProjectAudio.Write(dir, "fresh", [1]);
+        Assert.Equal(0, DawProjectAudio.Prune(dir, new HashSet<string>()));
+        Assert.Single(DawProjectAudio.List(dir));
+        File.SetLastWriteTimeUtc(DawProjectAudio.AudioPath(dir, "fresh"), DateTime.UtcNow.AddHours(-2));
+        Assert.Equal(1, DawProjectAudio.Prune(dir, new HashSet<string>()));
+        Assert.Empty(DawProjectAudio.List(dir));
     }
 
     [Fact]

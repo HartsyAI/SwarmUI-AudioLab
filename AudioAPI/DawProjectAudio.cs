@@ -66,8 +66,9 @@ public static class DawProjectAudio
         return File.Exists(path) ? await File.ReadAllBytesAsync(path) : null;
     }
 
-    /// <summary>Deletes every audio file whose key is not in keep, plus temp files left by a write that crashed (an hour
-    /// old, so another tab's upload in progress is never touched). Returns how many went.</summary>
+    /// <summary>Deletes audio that no project references, and temp files from a crashed write, once they are an hour old.
+    /// Anything newer is kept, so a save that has uploaded audio but not yet written its JSON cannot lose it to a
+    /// concurrent save. Returns how many went.</summary>
     public static int Prune(string audioDir, ISet<string> keep)
     {
         if (!Directory.Exists(audioDir))
@@ -77,14 +78,11 @@ public static class DawProjectAudio
         int removed = 0;
         foreach (string path in Directory.EnumerateFiles(audioDir))
         {
-            if (path.EndsWith(".bin", StringComparison.Ordinal))
+            if (DateTime.UtcNow - File.GetLastWriteTimeUtc(path) < TimeSpan.FromHours(1))
             {
-                if (keep.Contains(Path.GetFileNameWithoutExtension(path)))
-                {
-                    continue;
-                }
+                continue;
             }
-            else if (DateTime.UtcNow - File.GetLastWriteTimeUtc(path) < TimeSpan.FromHours(1))
+            if (path.EndsWith(".bin", StringComparison.Ordinal) && keep.Contains(Path.GetFileNameWithoutExtension(path)))
             {
                 continue;
             }
