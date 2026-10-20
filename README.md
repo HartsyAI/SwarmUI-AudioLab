@@ -521,8 +521,10 @@ Audio get the tempo in their description.
 Categories are Text to Speech, Music, Sound FX and Speech to Text. Speech to Text transcribes the selected clip with
 the model you pick, which is also how a voice clone's transcript field fills itself.
 
-Generation runs through SwarmUI's Audio Backend. On a server without one, the tab says so and links to Server >
-Backends instead of failing.
+Generation runs through SwarmUI's Audio Backend, plus any audio model another backend serves natively: ACE-Step 1.5
+checkpoints run by HartsyInference appear as their own engine, with lyrics, style, BPM and meter. On a server with
+neither, the tab says so and links to Server > Backends instead of failing. Engine options you leave untouched are
+not sent, so each engine keeps its own defaults.
 
 ### Export
 

@@ -38,6 +38,9 @@ from parameter ids, so `Text2Audio Style` is `textaudiostyle`.
 | 17 | Loop region | Handles never appeared and did not follow zoom | The stylesheet hides handles, and clearing the inline display kept them hidden | 8785951 |
 | 18 | Overlapping clips | Every overlapping take played at once | No layering | 278f511 |
 | 19 | Speech to Text | The Language and Task options did nothing | The DAW sent neither, and ProcessSTT dropped `task` | 144a00e |
+| 20 | Instrument notes | A note no longer than the synth's attack was silent; a note released during its attack lost the attack | Note-off canceled the whole attack ramp | d3bba9b |
+| 21 | Engine options | Untouched options were sent, so every ACE-Step request asked for C major | Values were compared against the param default, which for core's Key/Scale is not one of its values | d3bba9b |
+| 22 | Music engines | No ACE-Step on servers where HartsyInference serves it natively, the live site included | Only the Audio Backend's engine list was read | d3bba9b |
 
 ## Mics and instruments (the input gap), now closed
 
@@ -112,9 +115,12 @@ Tested in Chromium through the proxy below, against the live site for everything
 Not verified: a real microphone, interface or MIDI keyboard (synthetic streams and the computer keyboard stood in),
 Firefox and Safari, the Demucs install flow on a server without weights, and a SwarmUI restart loading the new
 script registrations in `AudioLab.cs` (compile-checked only; the proxy injected them in the same order). YuE, YuE2
-and MiniMax take the same request path as HeartLib but were not generated. The BPM and meter params only go to
-ACE-Step, which the live site does not offer: nine of its variants have weights on disk, but the Audio Backend has
-not registered it, so no `Audio Models/ACE-Step/...` name exists and the DAW hides it.
+and MiniMax take the same request path as HeartLib but were not generated.
+
+ACE-Step on the live site is served natively by HartsyInference (`AceStep15/...`), not by the Audio Backend, which
+is why the Audio Backend never listed it. The DAW now offers those checkpoints. Verified live: a 10 s turbo request
+with Match project tempo sent BPM 120 and meter 4, and the result's onsets fall on a 0.5 s grid (autocorrelation
+peaks at 0.25, 0.5 and 1.0 s).
 
 ## Testing without restarting shared servers
 
