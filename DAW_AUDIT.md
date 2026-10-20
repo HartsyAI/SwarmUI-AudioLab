@@ -153,6 +153,8 @@ Checked on this branch head, also in Chromium through the proxy:
 - Crossfade undo: F with no boundary to cross shows its notice and leaves redo intact (add a bus, undo, select all, F,
   redo brings the bus back).
 - MIDI keyboard, simulated: software Web MIDI input recorded pitches, velocities and sustain pedal events into a clip.
+- Reopen decode: a 40 MB clip decodes in about 0.5 s, down from 4.3 s with the per-byte callback (fixed in 354acac).
+  A synthetic 140 MB decode crashed the test tab, so 140 MB is unverified in a browser.
   No hardware was involved.
 - Storage: the 17 project-audio unit tests pass again, re-run in an isolated copy of the current C#.
 
