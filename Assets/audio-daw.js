@@ -176,9 +176,14 @@ const AudioDaw = (() => {
      * UNCLEAN end (crash, page nav) — never for junk sessions.
      */
     function close() {
-        const hasContent = state && state.tracks.some(t => t.clips.length > 0);
-        if (!hasContent) { finishClose(); return; }
+        if (!sessionHasContent()) { finishClose(); return; }
         showCloseDialog();
+    }
+
+    /** Anything worth keeping: audio clips, MIDI clips or drum machine pads. */
+    function sessionHasContent() {
+        return !!state && (state.tracks.some(t => t.clips.length > 0 || t.midiClips?.length > 0)
+            || state.beatPattern?.lanes?.length > 0);
     }
 
     function showCloseDialog() {
@@ -5112,7 +5117,7 @@ const AudioDaw = (() => {
 
     // ===== EDIT OPERATIONS (range, clipboard, layering, nudge) =====
 
-    let clipboard = null; // { items: [{trackOffset, clip: serialized}], length }
+    let clipboard = null; // { items: [{trackOffset, rel, clip} or {trackOffset, rel, midi, instrument}], length }
 
     /** Copy of a clip sharing its audio, with the given window (no undo, no render). */
     function cloneClip(c, overrides = {}) {
@@ -5161,6 +5166,9 @@ const AudioDaw = (() => {
                 }
                 const left = clipPortion(clip, cs, sel.start);
                 const right = clipPortion(clip, sel.end, ce);
+                // One surviving piece keeps the clip's score metadata, as with split (copies never carry it)
+                const keeper = left || right;
+                if (keeper && clip.meta) keeper.meta = JSON.parse(JSON.stringify(clip.meta));
                 if (left) kept.push(left);
                 if (right) kept.push(right);
             }
@@ -5170,7 +5178,12 @@ const AudioDaw = (() => {
                 }
             }
             track.clips = kept;
-            // Instrument clips: notes starting inside the range go; Shuffle pulls later notes and clips in
+            // Instrument clips: a clip wholly inside the range goes, as audio does; otherwise the notes starting
+            // inside it go. Shuffle pulls later notes and clips in.
+            if (track.midiClips) {
+                track.midiClips = track.midiClips.filter(mc => mc.startTime < sel.start - 1e-6
+                    || mc.startTime + AudioDawInstruments.midiClipLength(mc) > sel.end + 1e-6);
+            }
             for (const mc of track.midiClips || []) {
                 const cs = mc.startTime;
                 mc.notes = mc.notes.filter(n => cs + n.start < sel.start || cs + n.start >= sel.end);
@@ -5183,6 +5196,7 @@ const AudioDaw = (() => {
             }
         }
         if (findClipById(state.selectedClipId) === null) state.selectedClipId = null;
+        if (state.selectedMidiClipId && !findMidiClip(state.selectedMidiClipId)) state.selectedMidiClipId = null;
         updateTotalDuration();
         renderAllTracks();
         updateBottomPanel();
@@ -5216,6 +5230,27 @@ const AudioDaw = (() => {
         resyncPlayback();
     }
 
+    /**
+     * The notes of a MIDI clip that start inside [start, end), as a clip-shaped copy (null when there are none).
+     * Matches deleteRange, which removes exactly these notes. `startTime` is absolute.
+     */
+    function midiPortion(mc, start, end) {
+        const len = AudioDawInstruments.midiClipLength(mc);
+        const s = Math.max(mc.startTime, start);
+        const e = Math.min(mc.startTime + len, end);
+        if (e - s < 0.001) return null;
+        const notes = mc.notes
+            .filter(n => n.start < len && mc.startTime + n.start >= s && mc.startTime + n.start < e)
+            .map(n => ({ pitch: n.pitch, start: mc.startTime + n.start - s, dur: Math.min(n.dur, len - n.start), vel: n.vel }));
+        if (!notes.length) return null;
+        return { name: mc.name, startTime: s, length: e - s, notes, muted: !!mc.muted, color: mc.color || null };
+    }
+
+    /** A track's instrument as it is now, so editing the track later does not change what gets pasted. */
+    function snapshotInstrument(track) {
+        return track.instrument ? JSON.parse(JSON.stringify(track.instrument)) : null;
+    }
+
     /** Copy the selection (the parts of clips inside it, per track) or else the selected clip. */
     function copySelection() {
         const sel = state.selection;
@@ -5228,8 +5263,18 @@ const AudioDaw = (() => {
                     const piece = clipPortion(clip, sel.start, sel.end);
                     if (piece) items.push({ trackOffset: offset, clip: piece, rel: piece.startTime - sel.start });
                 }
+                for (const mc of track.midiClips || []) {
+                    const midi = midiPortion(mc, sel.start, sel.end);
+                    if (midi) items.push({ trackOffset: offset, midi, instrument: snapshotInstrument(track), rel: midi.startTime - sel.start });
+                }
             });
             clipboard = { items, length: sel.end - sel.start };
+        }
+        else if (state.selectedMidiClipId) {
+            const found = findMidiClip(state.selectedMidiClipId);
+            const midi = found ? midiPortion(found.clip, found.clip.startTime, found.clip.startTime + AudioDawInstruments.midiClipLength(found.clip)) : null;
+            if (!midi) return false;
+            clipboard = { items: [{ trackOffset: 0, midi, instrument: snapshotInstrument(found.track), rel: 0 }], length: midi.length };
         }
         else {
             const found = findClipById(state.selectedClipId);
@@ -5250,6 +5295,11 @@ const AudioDaw = (() => {
             clearSelection();
             return;
         }
+        if (state.selectedMidiClipId) {
+            const midiFound = findMidiClip(state.selectedMidiClipId);
+            if (midiFound && copySelection()) deleteMidiClip(midiFound.clip, midiFound.track);
+            return;
+        }
         const found = findClipById(state.selectedClipId);
         if (found && copySelection()) doDeleteClip(found.clip, found.track);
     }
@@ -5264,18 +5314,41 @@ const AudioDaw = (() => {
         const at = state.currentTime;
         const base = Math.max(0, state.tracks.findIndex(t => t.id === state.selectedTrackId));
         const touched = new Set();
+        const madeInstrument = new Map(); // trackOffset -> instrument track made for MIDI that landed on an audio track
         for (const item of clipboard.items) {
             let track = state.tracks[base + item.trackOffset];
+            if (item.midi && track?.kind !== 'instrument') {
+                // MIDI only plays on an instrument track: make one with the copied instrument
+                track = madeInstrument.get(item.trackOffset);
+                if (!track) {
+                    const inst = item.instrument ? JSON.parse(JSON.stringify(item.instrument)) : AudioDawInstruments.createInstrument('synth', 'Soft Keys');
+                    track = addTrack({ kind: 'instrument', instrument: inst, name: nextTrackName(inst.type === 'sampler' ? translate('Sampler') : (inst.preset || translate('Synth'))) });
+                    madeInstrument.set(item.trackOffset, track);
+                }
+            }
             if (!track) track = addTrack();
             if (state.editMode === 'shuffle' && !touched.has(track.id)) {
                 for (const c of track.clips) {
                     if (c.startTime >= at - 1e-6) c.startTime += clipboard.length;
                 }
+                for (const mc of track.midiClips || []) {
+                    if (mc.startTime >= at - 1e-6) mc.startTime += clipboard.length;
+                }
             }
             touched.add(track.id);
-            const nc = cloneClip(item.clip, { startTime: at + item.rel });
-            track.clips.push(nc);
-            state.selectedClipId = nc.id;
+            if (item.midi) {
+                const mc = newMidiClip(track, at + item.rel, item.midi.length, item.midi.notes, item.midi.name);
+                mc.muted = item.midi.muted;
+                mc.color = item.midi.color;
+                state.selectedMidiClipId = mc.id;
+                state.selectedClipId = null;
+            }
+            else {
+                const nc = cloneClip(item.clip, { startTime: at + item.rel });
+                track.clips.push(nc);
+                state.selectedClipId = nc.id;
+                state.selectedMidiClipId = null;
+            }
         }
         updateTotalDuration();
         renderAllTracks();
@@ -6073,7 +6146,10 @@ const AudioDaw = (() => {
         }
         // Drum pads and the clipboard hold their audio in the same store
         for (const lane of state.beatPattern.lanes) referenced.add(lane.blobKey);
-        for (const item of clipboard?.items || []) referenced.add(item.clip.blobKey);
+        for (const item of clipboard?.items || []) {
+            if (item.clip) referenced.add(item.clip.blobKey);
+            if (item.instrument?.sampleKey) referenced.add(item.instrument.sampleKey);
+        }
         for (const t of state.tracks) {
             if (t.instrument?.sampleKey) referenced.add(t.instrument.sampleKey);
         }
@@ -7270,7 +7346,7 @@ const AudioDaw = (() => {
     function flushAutosave() {
         if (typeof AudioDawStore === 'undefined' || !state) return;
         if (autosaveTimer) { clearTimeout(autosaveTimer); autosaveTimer = null; }
-        if (!state.tracks.some(t => t.clips.length > 0)) return;
+        if (!sessionHasContent()) return;
         const project = serializeProject();
         const blobs = collectProjectBlobs();
         AudioDawStore.saveProject(AUTOSAVE_SLOT, project, blobs)
@@ -7294,7 +7370,7 @@ const AudioDaw = (() => {
     async function maybeShowStartScreen() {
         const body = document.getElementById('daw_container');
         if (!body || body.querySelector('.daw-resume-bar, .daw-start-screen')) return;
-        if (!state || state.tracks.some(t => t.clips.length > 0)) return;
+        if (!state || sessionHasContent()) return;
         let names = [];
         try {
             const result = await AudioLabAPI.callAPI('AudioLabListProjects');
@@ -7302,7 +7378,7 @@ const AudioDaw = (() => {
         } catch (_) {}
         if (!names.length) return;
         // Re-check after the await — the user may have started working meanwhile
-        if (!state || state.tracks.some(t => t.clips.length > 0)) return;
+        if (!state || sessionHasContent()) return;
         if (body.querySelector('.daw-resume-bar, .daw-start-screen')) return;
 
         const card = createDiv(null, 'daw-resume-bar daw-start-screen');
@@ -7467,7 +7543,7 @@ const AudioDaw = (() => {
                 }
             }},
             { label: translate('New Project'), action: () => {
-                if (state.tracks.some(t => t.clips.length > 0) && !confirm(translate('Start a new empty project? Unsaved changes are kept only in the autosave slot.'))) {
+                if (sessionHasContent() && !confirm(translate('Start a new empty project? Unsaved changes are kept only in the autosave slot.'))) {
                     return;
                 }
                 flushAutosave();

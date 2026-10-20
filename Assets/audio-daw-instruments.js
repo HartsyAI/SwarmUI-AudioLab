@@ -622,19 +622,30 @@ const AudioDawInstruments = (() => {
         const pitchAt = (y) => Math.max(LOW, Math.min(HIGH, HIGH - Math.floor(y / ROW)));
         let seq = clip.notes.reduce((n, x) => Math.max(n, x.id || 0), 0);
 
+        const noteEls = new Map(); // note id -> element, rebuilt by draw()
+        const place = (el, n) => {
+            el.style.left = (n.start * zoomX) + 'px';
+            el.style.top = yOf(n.pitch) + 'px';
+            el.style.width = Math.max(4, n.dur * zoomX - 1) + 'px';
+            el.classList.toggle('outside', n.start >= len);
+        };
+        const paintSelection = () => {
+            for (const [id, el] of noteEls) el.classList.toggle('selected', selected.has(id));
+        };
+
         function draw() {
             grid.querySelectorAll('.daw-proll-note').forEach(n => n.remove());
+            noteEls.clear();
             for (const n of clip.notes) {
-                const el = createDiv(null, 'daw-proll-note' + (selected.has(n.id) ? ' selected' : '') + (n.start >= len ? ' outside' : ''));
-                el.style.left = (n.start * zoomX) + 'px';
-                el.style.top = yOf(n.pitch) + 'px';
-                el.style.width = Math.max(4, n.dur * zoomX - 1) + 'px';
+                const el = createDiv(null, 'daw-proll-note' + (selected.has(n.id) ? ' selected' : ''));
+                place(el, n);
                 el.style.height = (ROW - 1) + 'px';
                 el.style.opacity = String(0.45 + 0.55 * (n.vel / 127));
                 el.title = `${noteName(n.pitch)} · ${translate('velocity')} ${n.vel}`;
                 const edge = createDiv(null, 'daw-proll-note-edge');
                 el.appendChild(edge);
                 grid.appendChild(el);
+                noteEls.set(n.id, el);
                 const startDrag = (e, mode) => {
                     if (e.button !== 0) return;
                     e.stopPropagation();
@@ -642,12 +653,14 @@ const AudioDawInstruments = (() => {
                     if (!selected.has(n.id)) {
                         if (!e.shiftKey) selected.clear();
                         selected.add(n.id);
+                        paintSelection();
                     }
                     vel.value = String(n.vel);
-                    el.setPointerCapture(e.pointerId);
+                    try { el.setPointerCapture(e.pointerId); } catch (_) {}
                     const x0 = e.clientX, y0 = e.clientY;
                     const moving = clip.notes.filter(x => selected.has(x.id)).map(x => ({ n: x, start: x.start, dur: x.dur, pitch: x.pitch }));
                     let moved = false;
+                    // Notes move in place and redraw on release: rebuilding mid-gesture detaches the element holding the pointer
                     const onMove = (me) => {
                         const dx = (me.clientX - x0) / zoomX;
                         const dy = Math.round((y0 - me.clientY) / ROW);
@@ -661,18 +674,20 @@ const AudioDawInstruments = (() => {
                             else {
                                 m.n.dur = Math.max(0.02, callbacks.snap(m.start + m.dur + dx) - m.start);
                             }
+                            const mel = noteEls.get(m.n.id);
+                            if (mel) place(mel, m.n);
                         }
-                        draw();
                     };
                     const onUp = (ue) => {
                         try { el.releasePointerCapture(ue.pointerId); } catch (_) {}
-                        el.removeEventListener('pointermove', onMove);
-                        el.removeEventListener('pointerup', onUp);
-                        if (moved) callbacks.onChanged();
-                        else draw();
+                        window.removeEventListener('pointermove', onMove);
+                        window.removeEventListener('pointerup', onUp);
+                        window.removeEventListener('pointercancel', onUp);
+                        if (moved) commit();
                     };
-                    el.addEventListener('pointermove', onMove);
-                    el.addEventListener('pointerup', onUp);
+                    window.addEventListener('pointermove', onMove);
+                    window.addEventListener('pointerup', onUp);
+                    window.addEventListener('pointercancel', onUp);
                 };
                 el.addEventListener('pointerdown', (e) => startDrag(e, e.target === edge ? 'resize' : 'move'));
                 el.addEventListener('dblclick', (e) => {
