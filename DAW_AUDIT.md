@@ -37,6 +37,7 @@ from parameter ids, so `Text2Audio Style` is `textaudiostyle`.
 | 16 | Effects | A compressor reacted to fader moves | Inserts sat after the fader | ebcfcc0 |
 | 17 | Loop region | Handles never appeared and did not follow zoom | The stylesheet hides handles, and clearing the inline display kept them hidden | 8785951 |
 | 18 | Overlapping clips | Every overlapping take played at once | No layering | 278f511 |
+| 19 | Speech to Text | The Language and Task options did nothing | The DAW sent neither, and ProcessSTT dropped `task` | 144a00e |
 
 ## Mics and instruments (the input gap), now closed
 
