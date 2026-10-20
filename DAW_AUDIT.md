@@ -41,6 +41,9 @@ from parameter ids, so `Text2Audio Style` is `textaudiostyle`.
 | 20 | Instrument notes | A note no longer than the synth's attack was silent; a note released during its attack lost the attack | Note-off canceled the whole attack ramp | d3bba9b |
 | 21 | Engine options | Untouched options were sent, so every ACE-Step request asked for C major | Values were compared against the param default, which for core's Key/Scale is not one of its values | d3bba9b |
 | 22 | Music engines | No ACE-Step on servers where HartsyInference serves it natively, the live site included | Only the Audio Backend's engine list was read | d3bba9b |
+| 23 | Exports | Every mix came out 6 ms late and 0.5 dB louder than its tracks, with nothing near the limiter's threshold | The master limiter is a compressor node: look-ahead delay plus automatic makeup gain | 7d5499e |
+| 24 | Automation lane | Dragging a line segment stopped after the first step | The drag re-rendered the lane under the pointer | 7d5499e |
+| 25 | Undo | The crash-recovery autosave kept the state from before an undo | Undo and redo did not mark the session dirty | 7d5499e |
 
 ## Mics and instruments (the input gap), now closed
 
@@ -73,18 +76,19 @@ Score tab. Now:
 | Clips | Fade handles, crossfades, clip gain | Numeric fades in the Clip Editor | On-clip fade handles with shapes, draggable clip gain, short seams between layered takes |
 | Takes | Playlists and comping | None | Layered takes, newest on top; bring to front or send to back |
 | Signal flow | Inserts pre-fader | FX after the fader | Inserts pre-fader |
+| Routing | Sends, aux buses, groups, VCAs | None | Sends (level, pre or post, mute) to aux buses with their own inserts; stems include bus returns |
+| Automation | Read, Touch, Latch, Write, Off | Volume and pan breakpoints, drawn by hand | Read, Touch, Latch, Write and Off for volume and pan, written from the faders during playback |
 | Export | Bounce a range, stems, 24-bit, 32-bit float | Full mixdown, 16-bit | Song, selection or loop; 16, 24 or 32-bit float at 44.1 or 48 kHz; stems as one ZIP |
 | MIDI | Instrument tracks, piano roll | None | Instrument tracks, MIDI clips, piano roll, `.mid` import and export |
 
 ## Remaining gaps
 
-- Sends, aux buses, groups and VCAs.
-- Automation write modes (Touch, Latch, Write) and parameters beyond volume and pan.
+- Groups and VCAs.
+- Automation of parameters beyond volume and pan (send levels, effect parameters).
 - Tempo map and tempo ruler; the session has one BPM and meter.
 - Crossfades you can shape; layered takes only get short automatic seams.
 - Take comping across playlists.
-- MIDI: sustain pedal and CC, a velocity lane, and note chase (a note that started before the playhead stays
-  silent when playback starts inside it).
+- MIDI: sustain pedal and CC, and a velocity lane.
 - Very long sessions: every clip still decodes its own WaveSurfer copy.
 - Server-side projects cap at 40 MB of audio (64 MB of JSON, audio inlined as base64). Lossless takes reach that
   after about 3.5 minutes of mono recording; autosave and local saves are unaffected. Storing project audio as

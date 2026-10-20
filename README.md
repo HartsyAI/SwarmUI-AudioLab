@@ -358,6 +358,19 @@ first time.
 
 Edits undo with Ctrl+Z, and trims and splits never touch the source audio.
 
+### Automation
+
+A on a track header opens its automation lane: click to add a point, drag points or whole line segments, and
+double-click a point to remove it. Volume automation scales the fader (x0 to x2) and pan automation offsets it, so
+the fader stays where you set it. The lane head picks the parameter and the mode:
+
+- **Read** plays the envelope. **Off** keeps it but ignores it, in playback and exports.
+- **Touch** writes while you hold the fader or pan knob during playback, then hands back to the existing envelope.
+- **Latch** writes from the first touch and keeps the last value going until you stop.
+- **Write** overwrites the whole pass with the controls as they stand, then switches the track to Touch.
+
+Each pass is one undo step.
+
 ### Sessions
 
 DAW work is saved three ways, and they are independent:
@@ -384,6 +397,16 @@ Delete and Mute. Track level volume stays in the Mixer, so clip gain and track g
 One strip per track plus a master strip, each with pan, fader, level meter, mute and solo. Effects are inserts before
 the fader, as on a console, so a compressor does not react to fader moves. The track headers carry the same
 controls and stay in step with the strips.
+
+**Aux buses and sends.** Add Track > Aux bus creates a return track with its own inserts, fader, pan, mute and solo;
+Aux bus with reverb comes with a fully wet reverb, the usual send and return setup. Send a track to a bus from its
+right-click menu (Send to a new reverb bus does both steps at once) or with + Send on its mixer strip. Each send has
+a level knob, a PRE button for a pre-fader send, and mutes with a click on its name. A bus stays audible while a
+soloed track feeds it. Stem exports keep each track dry and give each bus's return its own stem, so the stems still
+sum to the mix.
+
+The master limiter only acts on peaks: its look-ahead delay is trimmed from exports and its built-in makeup gain is
+undone, so a mix lines up with the timeline and matches its stems.
 
 ![The mixer](Assets/readme/daw-mixer.png)
 
