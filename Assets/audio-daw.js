@@ -671,23 +671,28 @@ const AudioDaw = (() => {
         return tempo().bpmAt(Math.max(0, t));
     }
 
+    /** Quarter-note beats in a bar, which the tempo map counts: 4/4 is 4, 6/8 is 3, 7/8 is 3.5. */
+    function beatsPerBar() {
+        return (state.timeSignature[0] || 4) * 4 / (state.timeSignature[1] || 4);
+    }
+
     /** Seconds from t to n bars later, through the tempo map. */
     function barsSecondsFrom(t, n = 1) {
         const tm = tempo();
-        return tm.timeAtBeat(tm.beatsAt(t) + n * (state.timeSignature[0] || 4)) - t;
+        return tm.timeAtBeat(tm.beatsAt(t) + n * beatsPerBar()) - t;
     }
 
     /** Seconds of the fewest whole bars (at least one) from t that cover `seconds`. */
     function wholeBarsFrom(t, seconds) {
         const tm = tempo();
         const beats = tm.beatsAt(t + seconds) - tm.beatsAt(t);
-        return barsSecondsFrom(t, Math.max(1, Math.ceil(beats / (state.timeSignature[0] || 4) - 1e-6)));
+        return barsSecondsFrom(t, Math.max(1, Math.ceil(beats / beatsPerBar() - 1e-6)));
     }
 
     /** The grid in beats when it is musical (null for a seconds grid). Auto follows the zoom at the tempo around `at`. */
     function gridBeats(at) {
         const g = GRID_VALUES.find(x => x.id === state.gridValue);
-        if (g && g.bars) return g.bars * (state.timeSignature[0] || 4);
+        if (g && g.bars) return g.bars * beatsPerBar();
         if (g && g.beats) return g.beats;
         if (g && g.seconds) return null;
         if (state.rulerMode === 'beats') {
@@ -2585,6 +2590,26 @@ const AudioDaw = (() => {
      * @param {Object} [opts] - { start, end, exact (no tail), trackIds: stems, render only these tracks, as if soloed,
      *   without the master limiter so the stems sum back to the mix }
      */
+    /** Seconds an export must run past its last note so the enabled effects finish: a reverb's impulse and predelay,
+     *  or a delay's decay to -60 dB. */
+    function fxTailSeconds(tracks) {
+        let tail = 0.1;
+        for (const t of tracks) {
+            for (const f of t.fx || []) {
+                if (!f.enabled) continue;
+                if (f.type === 'reverb') {
+                    tail = Math.max(tail, 9); // impulse up to 8 s, plus up to 200 ms predelay
+                }
+                else if (f.type === 'delay') {
+                    const fb = Math.min(0.95, Math.max(0.01, f.params.feedback ?? 0.35));
+                    const time = f.params.sync ? 4 : (f.params.time ?? 0.35);
+                    tail = Math.max(tail, Math.min(30, 60 * time / (-20 * Math.log10(fb))));
+                }
+            }
+        }
+        return tail;
+    }
+
     async function renderMixdownBuffer({ start = 0, end = state.contentDuration, exact = false, trackIds = null } = {}) {
         const stems = !!trackIds;
         const tracks = stems ? state.tracks.filter(t => trackIds.includes(t.id)) : state.tracks;
@@ -2602,7 +2627,7 @@ const AudioDaw = (() => {
                 instTail = Math.max(instTail, tail);
             }
         }
-        const renderLen = (end - start) + (exact ? 0 : Math.max(hasTails ? 5 : 0.1, instTail));
+        const renderLen = (end - start) + (exact ? 0 : Math.max(hasTails ? fxTailSeconds(tracks) : 0.1, instTail));
         const totalSamples = Math.max(1, Math.ceil(renderLen * sampleRate));
         // The limiter's look-ahead is rendered past the end and trimmed off the front, so the mix lines up with
         // the timeline (and with the stems, which skip the limiter)
@@ -4661,7 +4686,7 @@ const AudioDaw = (() => {
         if (!playback || !mixer || !state.metronome) return;
         const ctx = playback.ctx;
         const tm = tempo();
-        const perBar = state.timeSignature[0] || 4;
+        const perBar = beatsPerBar();
         const now = ctx.currentTime;
         const horizon = now + 0.2;
         const passes = [{ baseCtx: playback.baseCtxTime, baseTl: playback.baseTimelineTime, end: playback.loop ? state.loopEnd : Infinity }];
@@ -4824,7 +4849,7 @@ const AudioDaw = (() => {
     /** Bar|beat|tick (960 ticks per beat), the way a pro DAW's counter reads; a length counts from zero. */
     function formatBBT(t, { length = false, from = 0 } = {}) {
         const tm = tempo();
-        const perBar = state.timeSignature[0] || 4;
+        const perBar = beatsPerBar();
         // A length counts the beats it spans from where it starts (tempo changes make that differ by position)
         const beats = length ? tm.beatsAt(from + Math.max(0, t)) - tm.beatsAt(from) : tm.beatsAt(Math.max(0, t));
         const totalTicks = Math.round(beats * TICKS_PER_BEAT);
@@ -4880,7 +4905,7 @@ const AudioDaw = (() => {
             // One pair of repeating layers per tempo segment, each starting on that segment's first bar or beat
             const majorColor = 'color-mix(in srgb, var(--text-soft) 22%, transparent)';
             const minorColor = 'color-mix(in srgb, var(--text-soft) 9%, transparent)';
-            const perBar = state.timeSignature[0] || 4;
+            const perBar = beatsPerBar();
             const end = Math.max(state.totalDuration, state.contentDuration || 0) + 60;
             const images = [], positions = [], sizes = [];
             tm.segments.forEach((seg, i) => {
@@ -4905,7 +4930,7 @@ const AudioDaw = (() => {
         }
         if (state.rulerMode === 'beats') {
             minor = 60 / state.bpm;
-            major = minor * (state.timeSignature[0] || 4);
+            major = minor * beatsPerBar();
         } else {
             if (state.zoom >= 100) { minor = 0.5; major = 5; }
             else if (state.zoom >= 50) { minor = 1; major = 5; }
@@ -6071,6 +6096,15 @@ const AudioDaw = (() => {
                 if (state.editMode === 'shuffle') {
                     if (cs >= sel.end - 1e-6) mc.startTime -= len;
                     else {
+                        if (cs < sel.start) {
+                            const cEnd = cs + AudioDawInstruments.midiClipLength(mc);
+                            if (cEnd > sel.start) {
+                                mc.length = Math.max(0.05, (cEnd >= sel.end ? cEnd - len : sel.start) - cs);
+                            }
+                        }
+                        for (const n of mc.notes) {
+                            if (cs + n.start < sel.start && cs + n.start + n.dur > sel.start) n.dur = sel.start - (cs + n.start);
+                        }
                         for (const n of mc.notes) {
                             if (cs + n.start >= sel.end) n.start -= len;
                         }
@@ -6091,7 +6125,7 @@ const AudioDaw = (() => {
 
     /** Split every clip on the selected tracks at the selection's edges. */
     function splitAtSelection(sel) {
-        pushUndo();
+        let undoPushed = false; // taken at the first real split, so a range with nothing to split keeps redo
         for (const id of sel.trackIds) {
             const track = state.tracks.find(t => t.id === id);
             if (!track) continue;
@@ -6102,8 +6136,16 @@ const AudioDaw = (() => {
                     const next = [];
                     for (const p of pieces) {
                         const rel = at - p.startTime;
-                        if (rel > 0.001 && rel < visibleDur(p) - 0.001) next.push(...splitClipAt(p, rel));
-                        else next.push(p);
+                        if (rel > 0.001 && rel < visibleDur(p) - 0.001) {
+                            if (!undoPushed) {
+                                pushUndo();
+                                undoPushed = true;
+                            }
+                            next.push(...splitClipAt(p, rel));
+                        }
+                        else {
+                            next.push(p);
+                        }
                     }
                     pieces = next;
                 }
@@ -6372,7 +6414,7 @@ const AudioDaw = (() => {
         let t;
         if (beats) {
             const [bar, beat = '1', tick = '0'] = val.trim().split(/[.|:]/);
-            const perBar = state.timeSignature[0] || 4;
+            const perBar = beatsPerBar();
             t = tempo().timeAtBeat((parseInt(bar) - 1) * perBar + (parseInt(beat) - 1) + (parseInt(tick) || 0) / TICKS_PER_BEAT);
         }
         else {
@@ -6925,7 +6967,7 @@ const AudioDaw = (() => {
     function scheduleCountIn(ctx, t0, seconds, bpm = state.bpm) {
         if (!mixer || seconds <= 0) return;
         const beat = 60 / bpm;
-        const perBar = state.timeSignature[0] || 4;
+        const perBar = beatsPerBar();
         const beats = Math.round(seconds / beat);
         for (let i = 0; i < beats; i++) {
             const when = t0 - (beats - i) * beat;
@@ -6977,7 +7019,7 @@ const AudioDaw = (() => {
         const punch = state.punchEnabled && state.loopEnd > state.loopStart ? { in: state.loopStart, out: state.loopEnd } : null;
         // Count-in and post-roll run at the tempo where the take starts
         const startTempo = bpmAt(punch ? punch.in : state.currentTime);
-        const barDur = (60 / startTempo) * (state.timeSignature[0] || 4);
+        const barDur = (60 / startTempo) * beatsPerBar();
         const rec = { takes: [], placeholders: [], punch, postRoll: punch ? barDur / 2 : 0, stopping: false, startP: 0, startCtx: 0 };
         recording = rec;
 

@@ -219,7 +219,7 @@ const AudioDawTimeline = (() => {
 
         // Row 1: Bars|Beats, through the tempo map (the fastest tempo in view sets how sparse the labels get)
         const tm = state.tempoMap;
-        const perBar = state.timeSig[0] || 4;
+        const perBar = (state.timeSig[0] || 4) * 4 / (state.timeSig[1] || 4);
         const inView = tm.segments.filter((g, i) => g.t <= t1 && (i === tm.segments.length - 1 || tm.segments[i + 1].t > t0));
         const fastest = Math.max(...inView.map(g => g.bpm));
         const secPerBar = 60 / fastest * perBar;

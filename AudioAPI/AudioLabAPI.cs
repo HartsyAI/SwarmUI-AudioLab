@@ -173,6 +173,9 @@ public static class AudioLabAPI
     /// <summary>Max serialized project size accepted (base64 audio inflates ~1.33x).</summary>
     private const int MaxProjectBytes = 64 * 1024 * 1024;
 
+    /// <summary>One upload at a time per project audio folder, so each quota check sees the files the others have written.</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> ProjectAudioGates = new();
+
     /// <summary>Per-user legacy-project migration, run once and awaited by every project call so none races it.</summary>
     private static readonly ConcurrentDictionary<string, Lazy<Task>> ProjectMigrations = new();
 
@@ -376,12 +379,21 @@ public static class AudioLabAPI
                 return AudioLab.CreateErrorResponse($"One clip's audio is over {DawProjectAudio.MaxFileBytes / (1024 * 1024)} MB", "audio_too_large");
             }
             byte[] data = Convert.FromBase64String(b64);
-            long others = DawProjectAudio.List(dir).Where(kv => kv.Key != key).Sum(kv => kv.Value);
-            if (others + data.Length > DawProjectAudio.MaxProjectBytes)
+            SemaphoreSlim gate = ProjectAudioGates.GetOrAdd(dir, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync();
+            try
             {
-                return AudioLab.CreateErrorResponse($"The project's audio would pass {DawProjectAudio.MaxProjectBytes / (1024 * 1024 * 1024)} GB", "project_too_large");
+                long others = DawProjectAudio.List(dir).Where(kv => kv.Key != key).Sum(kv => kv.Value);
+                if (others + data.Length > DawProjectAudio.MaxProjectBytes)
+                {
+                    return AudioLab.CreateErrorResponse($"The project's audio would pass {DawProjectAudio.MaxProjectBytes / (1024 * 1024 * 1024)} GB", "project_too_large");
+                }
+                await DawProjectAudio.Write(dir, key, data);
             }
-            await DawProjectAudio.Write(dir, key, data);
+            finally
+            {
+                gate.Release();
+            }
             return AudioLab.CreateSuccessResponse(new JObject() { ["key"] = key, ["size"] = data.Length });
         }
         catch (FormatException)
