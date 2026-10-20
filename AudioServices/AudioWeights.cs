@@ -122,6 +122,84 @@ public static class AudioWeights
         return true;
     }
 
+    /// <summary>Downloads only the registered files of one model that are on disk under no spelling of the provider's
+    /// folder: the gaps a Hartsy install leaves (YuE's cards do not carry the X-Codec).</summary>
+    public static async Task EnsureMissingModelWeightsAsync(AudioProviderDefinition provider, string modelId, Func<string, Task> onProgress, CancellationToken cancel = default)
+    {
+        AudioWeightsRegistry.DownloadSpec[] specs = AudioWeightsRegistry.SpecsFor(provider.Id, modelId);
+        // Into the folder the checkpoint was found in, since the engine reads a config or latent beside it.
+        string dir = WeightsDirectory(provider);
+        if (specs.Length > 0 && FindPlacedFile(provider, specs[0].FileName) is string primary)
+        {
+            string relative = specs[0].FileName.Replace('/', Path.DirectorySeparatorChar);
+            if (primary.EndsWith(relative, StringComparison.Ordinal))
+            {
+                dir = primary[..^relative.Length].TrimEnd(Path.DirectorySeparatorChar);
+            }
+        }
+        foreach (AudioWeightsRegistry.DownloadSpec spec in specs)
+        {
+            cancel.ThrowIfCancellationRequested();
+            if (FindPlacedFile(provider, spec) is not null)
+            {
+                continue;
+            }
+            Directory.CreateDirectory(dir);
+            await EnsureWeightAsync(spec, dir, onProgress, cancel);
+        }
+    }
+
+    /// <summary>Where a spec, or anything in its fallback chain, is on disk under any spelling of the provider's
+    /// folder, or null.</summary>
+    public static string FindPlacedFile(AudioProviderDefinition provider, AudioWeightsRegistry.DownloadSpec spec)
+    {
+        for (AudioWeightsRegistry.DownloadSpec s = spec; s is not null; s = s.Fallback)
+        {
+            string found = FindPlacedFile(provider, s.FileName);
+            if (found is not null)
+            {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>A file under the provider's weights folder in any spelling of the folder's name. The engine places
+    /// checkpoints under its lowercase family id ("music/acestep") and a Hartsy repack's link lands there, which on a
+    /// case-sensitive filesystem is a different directory from AudioLab's "music/AceStep".</summary>
+    public static string FindPlacedFile(AudioProviderDefinition provider, string fileName)
+    {
+        try
+        {
+            string category = Path.Combine(Path.GetFullPath(AudioConfiguration.ModelRoot), CategorySubfolder(provider.Category));
+            string canonical = Path.Combine(category, provider.ModelPrefix, fileName);
+            if (File.Exists(canonical))
+            {
+                return canonical;
+            }
+            if (!Directory.Exists(category))
+            {
+                return null;
+            }
+            foreach (string dir in Directory.EnumerateDirectories(category))
+            {
+                if (string.Equals(Path.GetFileName(dir), provider.ModelPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    string candidate = Path.Combine(dir, fileName);
+                    if (File.Exists(candidate))
+                    {
+                        return candidate;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logs.Debug($"[AudioLab] Probe for '{fileName}' under '{provider.ModelPrefix}' threw: {ex.Message}");
+        }
+        return null;
+    }
+
     /// <summary>A .safetensors/checkpoint smaller than this is treated as truncated/corrupt when there is no
     /// canonical hash to verify against. Catches the common "interrupted download left a stub" failure.</summary>
     private const long MinPlausibleCheckpointBytes = 1_000_000;
@@ -154,7 +232,8 @@ public static class AudioWeights
     /// (.tmp stage + move) so an interrupted download never masquerades as complete. An already-present file
     /// is integrity-checked (hash when the spec has one, else a size floor); a bad file is deleted and
     /// re-downloaded rather than silently accepted.</summary>
-    public static async Task EnsureWeightAsync(AudioWeightsRegistry.DownloadSpec spec, string dir, Func<string, Task> onProgress, CancellationToken cancel = default)
+    /// <param name="headers">Extra request headers for the primary source (a Hartsy API key); never sent to the fallback.</param>
+    public static async Task EnsureWeightAsync(AudioWeightsRegistry.DownloadSpec spec, string dir, Func<string, Task> onProgress, CancellationToken cancel = default, Dictionary<string, string> headers = null)
     {
         string targetPath = Path.Combine(dir, spec.FileName);
         if (File.Exists(targetPath))
@@ -209,7 +288,7 @@ public static class AudioWeights
                     _ = Report(onProgress, $"{spec.FileName}: {pct * 100:0.0}% ({bytes / (1024.0 * 1024.0):F0}/{total / (1024.0 * 1024.0):F0} MB, {perSec / (1024.0 * 1024.0):F1} MB/s)");
                     nextLoggedPct = Math.Round(pct / 0.05) * 0.05 + 0.05;
                 }
-            }, cancel: cts, verifyHash: spec.HasHash ? spec.Sha256 : null);
+            }, cancel: cts, verifyHash: spec.HasHash ? spec.Sha256 : null, headers: headers is null ? null : new(headers));
             File.Move(tmpPath, targetPath);
             await Report(onProgress, $"{spec.FileName} download complete.");
             Logs.Info($"[AudioLab] Audio checkpoint '{spec.FileName}' downloaded to {targetPath}");

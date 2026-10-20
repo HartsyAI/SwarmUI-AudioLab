@@ -221,6 +221,8 @@ internal sealed class VoiceEngineModels
             await WakeWordService.InstallVadAsync(_ => Task.CompletedTask, cancel).ConfigureAwait(false);
         }
         await RnnoiseInstaller.EnsureAsync(wakeRoot, cancel, RnnoisePrecision.Int8).ConfigureAwait(false);
+        // Kokoro comes from its Hartsy card when it is not on disk yet; whisper-small.en has no card, so the engine fetches it.
+        await HartsyInstaller.EnsureOnFirstUseAsync("kokoro_tts", "default", cancel).ConfigureAwait(false);
         VoiceAgentOptions options = new()
         {
             // Inert locally: RemoteTextService ignores both the resolved ModelSpec and TextRequest.Device, so
