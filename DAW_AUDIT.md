@@ -89,7 +89,9 @@ Tested in Chromium through the proxy below, against the live site for everything
 
 - Generate: Kokoro TTS with engine options (voice and speed), MusicGen (with Match project tempo), Stable Audio,
   AudioGen, Whisper STT with a chosen model, Pocket TTS voice cloning from the selected clip with its transcript
-  filled automatically, placement on the selected track.
+  filled automatically, placement on the selected track. HeartLib for the lyric engines: the request carried the
+  lyrics as Prompt and the description as Text2Audio Style, and 10 s of tonal, rhythmic audio came back (Whisper
+  heard one word of the lyric, so sung lyrics are not confirmed).
 - No Audio Backend: the setup card, against a server without one; Open Backends lands on Server > Backends.
 - Palette loops and variations, stems (Karaoke on a split clip exports exactly its piece), drum pads (generate,
   steps, undo, render, survive cleanup and project load), conform 100 to 120 BPM (6 s to 5 s).
@@ -105,7 +107,10 @@ Tested in Chromium through the proxy below, against the live site for everything
 
 Not verified: a real microphone, interface or MIDI keyboard (synthetic streams and the computer keyboard stood in),
 Firefox and Safari, the Demucs install flow on a server without weights, and a SwarmUI restart loading the new
-script registrations in `AudioLab.cs` (compile-checked only; the proxy injected them).
+script registrations in `AudioLab.cs` (compile-checked only; the proxy injected them in the same order). YuE, YuE2
+and MiniMax take the same request path as HeartLib but were not generated. The BPM and meter params only go to
+ACE-Step, which the live site does not offer: nine of its variants have weights on disk, but the Audio Backend has
+not registered it, so no `Audio Models/ACE-Step/...` name exists and the DAW hides it.
 
 ## Testing without restarting shared servers
 
