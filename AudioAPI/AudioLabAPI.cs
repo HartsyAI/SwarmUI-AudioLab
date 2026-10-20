@@ -415,6 +415,11 @@ public static class AudioLabAPI
                 ["audio_data"] = request.AudioData,
                 ["language"] = request.Language
             };
+            // Whisper's task (transcribe or translate), under the key the generate path sends it as
+            if (input["task"]?.ToString() is string sttTask && !string.IsNullOrWhiteSpace(sttTask))
+            {
+                args["task"] = sttTask;
+            }
             // A requested model used to be read off the request and then dropped on the floor: whatever the
             // caller asked for, the engine got no variant and loaded the provider's default. Tiny and turbo are
             // a factor of twenty apart in cost, so silently ignoring the choice is not a small thing — it is

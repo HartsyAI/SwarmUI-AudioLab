@@ -1780,8 +1780,10 @@ const AudioDaw = (() => {
     }
 
     // Params the DAW form sets itself, or that take media the DAW supplies from clips.
+    // Whisper beam size and initial prompt are skipped: the engine's transcription request reads only language and task
     const ENGINE_OPTION_SKIP = new Set(['textaudioduration', 'textaudiostyle', 'textaudiobpm', 'textaudiotimesignature',
-        'audioformat', 'audiooutputformat', 'audioquality', 'streamchunksize', 'referenceaudio', 'referencetext']);
+        'audioformat', 'audiooutputformat', 'audioquality', 'streamchunksize', 'referenceaudio', 'referencetext',
+        'whisperbeamsize', 'whisperinitialprompt']);
     const ENGINE_OPTION_SKIP_TYPES = new Set(['audio', 'video', 'image', 'audio_list', 'video_list', 'image_list', 'model']);
 
     /** Core param definitions that belong to an engine: any of its feature flags, minus what the DAW drives. */
@@ -2039,7 +2041,12 @@ const AudioDaw = (() => {
                 sideCol.appendChild(busy);
                 try {
                     const b64 = await AudioLabCore.readAsBase64(await clipAudioBlob(sel.clip));
-                    const result = await AudioLabAPI.processSTT(b64, { providerId: currentEngine().id, model: modelSelect.value || null });
+                    // The engine's own options (Language, and Whisper's Task) go with the request
+                    const opts = engineOptions.read();
+                    const result = await AudioLabAPI.processSTT(b64, {
+                        providerId: currentEngine().id, model: modelSelect.value || null,
+                        language: opts.language, task: opts.whispertask
+                    });
                     if (!result.success || !result.transcription) throw new Error(result.error || 'No transcription returned');
                     resultArea.value = result.transcription.trim();
                 } catch (err) {
@@ -4626,7 +4633,10 @@ const AudioDaw = (() => {
             liveVoices.get(key)?.stop(ctx.currentTime);
             liveVoices.set(key, AudioDawInstruments.startVoice(ctx, chainFor(track).input, track.instrument, pitch, vel, ctx.currentTime, null, instrumentSample(track)));
             const take = midiRecording?.takes.find(t => t.track === track);
-            if (take) take.open.set(pitch, { start: heardTimelineNow(), vel });
+            // Heard time against the capture start, with a little slack for notes played just ahead of the downbeat
+            if (take && ctx.currentTime - outputLatency(ctx) >= midiRecording.startCtx - 0.05) {
+                take.open.set(pitch, { start: heardTimelineNow(), vel });
+            }
         }
         kickMeters();
         document.querySelectorAll(`.daw-keys-key[data-midi="${pitch}"]`).forEach(k => k.classList.add('pressed'));
@@ -4690,8 +4700,9 @@ const AudioDaw = (() => {
     }
 
     /** Start capturing live notes for the armed instrument tracks (called once the transport runs). */
-    function beginMidiRecording(tracks, startP, punch) {
-        midiRecording = tracks.length ? { startP, punch, takes: tracks.map(track => ({ track, notes: [], open: new Map() })) } : null;
+    /** startCtx: the audio-clock time capture begins, so notes played during a count-in are not kept. */
+    function beginMidiRecording(tracks, startP, punch, startCtx = 0) {
+        midiRecording = tracks.length ? { startP, punch, startCtx, takes: tracks.map(track => ({ track, notes: [], open: new Map() })) } : null;
     }
 
     /** Close held notes and turn each instrument take into a MIDI clip. Returns the clips made (not rendered). */
@@ -4747,6 +4758,7 @@ const AudioDaw = (() => {
             pushUndo();
             const bar = (60 / state.bpm) * (state.timeSignature[0] || 4);
             const clip = newMidiClip(track, snapTime(state.currentTime), bar * 4);
+            updateTotalDuration();
             selectMidiClip(clip, track, true);
         }});
         items.push({ label: translate('Import MIDI file…'), action: () => importMidiFile(track) });
@@ -4796,6 +4808,7 @@ const AudioDaw = (() => {
             { label: translate('Duplicate'), action: () => {
                 pushUndo();
                 const copy = newMidiClip(track, clip.startTime + AudioDawInstruments.midiClipLength(clip), clip.length, clip.notes, clip.name);
+                updateTotalDuration(); // the copy can end past the old song end
                 selectMidiClip(copy, track);
                 resyncPlayback();
             }},
@@ -5966,18 +5979,21 @@ const AudioDaw = (() => {
 
         const startFrame = Math.round(rec.startCtx * sr);
         for (const { track, entry } of inputs) {
-            const latency = Math.max(0, entry.latency + outputLatency(ctx) + recordSettings.offsetMs / 1000);
+            // Positive compensation trims the take's head (it lands earlier); a negative manual offset beyond the
+            // measured latency places the take later instead
+            const comp = entry.latency + outputLatency(ctx) + recordSettings.offsetMs / 1000;
+            const latency = Math.max(0, comp);
             entry.capture.start(startFrame);
-            const take = { track, entry, latency, stopFrame: undefined };
-            // A punch stops itself at the out point (plus the latency the take is shifted by)
+            const take = { track, entry, latency, late: Math.max(0, -comp), stopFrame: undefined };
+            // A punch stops itself at the out point (shifted by the same compensation)
             if (punch) {
-                take.stopFrame = Math.round((rec.startCtx + (punch.out - rec.startP) + latency) * sr);
+                take.stopFrame = Math.round((rec.startCtx + (punch.out - rec.startP) + comp) * sr);
                 entry.capture.stop(take.stopFrame);
             }
             rec.takes.push(take);
             rec.placeholders.push(createRecordingPlaceholder(track, rec.startP));
         }
-        beginMidiRecording(midiArmed, rec.startP, punch);
+        beginMidiRecording(midiArmed, rec.startP, punch, rec.startCtx);
         for (const track of midiArmed) rec.placeholders.push(createRecordingPlaceholder(track, rec.startP));
         state.isRecording = true;
         updateRecordButton(true);
@@ -6015,7 +6031,7 @@ const AudioDaw = (() => {
             res.channels.forEach((c, ch) => buf.copyToChannel(c.subarray(drop, drop + len), ch));
             // The worklet may have begun a few frames after the planned start (message latency): place the take
             // where its first kept sample really falls
-            const start = rec.startP + (res.firstFrame / res.sampleRate - rec.startCtx);
+            const start = rec.startP + (res.firstFrame / res.sampleRate - rec.startCtx) + take.late;
             made.push({ track: take.track, blob: audioBufferToWav(buf, { bitDepth: 32 }), start, peak: maxAbs(res.channels) });
         });
         if (!made.length && !midiMade.length) {
@@ -6300,6 +6316,10 @@ const AudioDaw = (() => {
 
         updateTotalDuration();
         renderAllTracks();
+        // Restored tracks reuse their ids, so a cached chain would keep the pre-undo effect settings: rebuild them all
+        if (mixer) {
+            for (const id of [...mixer.chains.keys()]) dropChain(id);
+        }
         resyncPlayback();
         // Inputs follow the restored arm/monitor state; tracks that no longer exist lose theirs
         const live = new Set(state.tracks.map(t => t.id));
