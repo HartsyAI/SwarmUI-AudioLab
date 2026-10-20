@@ -85,6 +85,8 @@ const AudioDawInstruments = (() => {
             attackEnd = when + atk;
             envAt = (t) => level * Math.max(0, Math.min(1, (t - when) / atk));
             releaseTime = Math.max(0.01, inst.release || 0.2);
+            // Set before the voice is held: a note held past the sample's end still frees its amp node
+            src.onended = () => { for (const n of nodes) { try { n.disconnect(); } catch (_) {} } };
             src.start(when);
         }
         else {
@@ -610,10 +612,12 @@ const AudioDawInstruments = (() => {
                     try { target.releasePointerCapture(ue.pointerId); } catch (_) {}
                     target.removeEventListener('pointermove', onMove);
                     target.removeEventListener('pointerup', onUp);
+                    target.removeEventListener('pointercancel', onUp);
                     if (moved) callbacks.onChanged();
                 };
                 target.addEventListener('pointermove', onMove);
                 target.addEventListener('pointerup', onUp);
+                target.addEventListener('pointercancel', onUp);
             });
             drag(el, 'move');
             drag(trimR, 'length');
@@ -909,7 +913,7 @@ const AudioDawInstruments = (() => {
         };
         draw();
         // Scroll the notes (or middle C) into view
-        const focusPitch = clip.notes.length ? Math.max(...clip.notes.map(n => n.pitch)) + 4 : 72;
+        const focusPitch = clip.notes.length ? clip.notes.reduce((m, n) => Math.max(m, n.pitch), 0) + 4 : 72;
         wrap.scrollTop = Math.max(0, yOf(Math.min(HIGH, focusPitch)) - 20);
     }
 

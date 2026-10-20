@@ -203,8 +203,10 @@ const AudioDaw = (() => {
             const name = prompt(translate('Project name:'), currentProjectName || 'My Project');
             if (!name || !name.trim()) return; // keep dialog open — treat as cancel
             dlg.remove();
-            await saveProjectToServer(name.trim());
-            finishClose();
+            const saved = await saveProjectToServer(name.trim());
+            if (saved) {
+                finishClose();
+            }
         }, ' basic-button btn-primary', translate('Save the project to the server, then close'));
         quickAppendButton(row, translate('Discard'), () => {
             dlg.remove();
@@ -1018,7 +1020,8 @@ const AudioDaw = (() => {
                     label: n,
                     action: () => {
                         pushUndo();
-                        track.fx = chains[n].map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));
+                        track.fx = chains[n].filter(f => typeof AudioDawFx === 'undefined' || AudioDawFx.FX_DEFS[f.type])
+                            .map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));
                         rebuildTrackFx(track);
                         updateBottomPanel();
                     }
@@ -2987,14 +2990,23 @@ const AudioDaw = (() => {
         return track;
     }
 
+    /** Blob keys of clips still decoding: no track holds them yet, so the store's cleanup must leave them alone. */
+    const pendingBlobKeys = new Set();
+
     async function addClipToTrack(track, blob, opts = {}) {
         const clip = AudioDawTrack.createClip(blob, opts);
 
         // Store in blob store
         blobStore.set(clip.blobKey, { blob, decodedBuffer: null });
+        pendingBlobKeys.add(clip.blobKey);
 
         // Decode audio
-        await AudioDawTrack.decodeClip(clip);
+        try {
+            await AudioDawTrack.decodeClip(clip);
+        }
+        finally {
+            pendingBlobKeys.delete(clip.blobKey);
+        }
 
         // Update blob store with decoded buffer
         const stored = blobStore.get(clip.blobKey);
@@ -5509,7 +5521,13 @@ const AudioDaw = (() => {
             }
         }
         if (playback.voices.length > 512) playback.voices.splice(0, playback.voices.length - 512);
-        if (playback.noteSeen.size > 4096) playback.noteSeen.clear(); // keys carry their pass, so a clear only risks a re-check
+        if (playback.noteSeen.size > 4096) {
+            // Keep the keys of the passes still in the lookahead: a clear would schedule their queued notes twice
+            const live = passes.map(p => `${p.baseCtx.toFixed(4)}|`);
+            for (const k of playback.noteSeen) {
+                if (!live.some(prefix => k.startsWith(prefix))) playback.noteSeen.delete(k);
+            }
+        }
     }
 
     function killPlaybackVoices() {
@@ -5544,7 +5562,7 @@ const AudioDaw = (() => {
             const notes = take.notes.filter(n => n.start >= lo - 0.02 && n.start < hi)
                 .map(n => ({ pitch: n.pitch, start: Math.max(0, n.start - lo), dur: n.dur, vel: n.vel }));
             if (!notes.length) continue;
-            const last = Math.max(...notes.map(n => n.start + n.dur));
+            const last = notes.reduce((m, n) => Math.max(m, n.start + n.dur), 0);
             const cc = take.cc.filter(c => c.t >= lo - 0.02 && c.t < hi).map(c => ({ t: Math.max(0, c.t - lo), n: c.n, v: c.v }));
             made.push({ track: take.track, start: lo, length: rec.punch ? rec.punch.out - rec.punch.in : wholeBarsFrom(lo, last), notes, cc });
         }
@@ -5701,7 +5719,7 @@ const AudioDaw = (() => {
                     refreshTempoViews();
                 }
                 const target = track || addInstrumentTrack('synth', 'Soft Keys', { snapshot: false });
-                const last = Math.max(...parsed.notes.map(n => n.start + n.dur));
+                const last = parsed.notes.reduce((m, n) => Math.max(m, n.start + n.dur), 0);
                 const clipStart = snapTime(state.currentTime);
                 if (empty && parsed.tempos?.length) {
                     // and its later tempo changes, placed where the clip lands
@@ -7013,10 +7031,13 @@ const AudioDaw = (() => {
         const nowFrame = Math.round(ctx.currentTime * sr);
         // Keep capturing for the latency the take will be shifted by, so the last notes played are kept
         const midiMade = finishMidiRecording(); // before the transport stops: note-offs read its clock
+        // A stop that never settles (a suspended context) must not wedge the session: the take is dropped at the limit
+        const stopLimit = new Promise(r => setTimeout(() => r(null), 3000));
         const results = await Promise.all(rec.takes.map(t => {
             const want = nowFrame + Math.round(t.latency * sr);
             // A punch never runs past its own out point, even when Stop comes during the post-roll
-            return t.entry.capture.stop(t.stopFrame !== undefined ? Math.min(t.stopFrame, want) : want).catch(() => null);
+            const stopping = t.entry.capture.stop(t.stopFrame !== undefined ? Math.min(t.stopFrame, want) : want).catch(() => null);
+            return Promise.race([stopping, stopLimit]);
         }));
         stopPlayback();
         if (recording === rec) recording = null;
@@ -7181,7 +7202,7 @@ const AudioDaw = (() => {
             }
         }
         for (const key of [...blobStore.keys()]) {
-            if (!referenced.has(key)) blobStore.delete(key);
+            if (!referenced.has(key) && !pendingBlobKeys.has(key)) blobStore.delete(key);
         }
     }
 
@@ -8500,6 +8521,7 @@ const AudioDaw = (() => {
      * blob key never changes its audio), then the arrangement JSON lists them under "audio".
      */
     async function saveProjectToServer(name) {
+        let saved = false;
         const overlay = showDawLoadingOverlay(translate('Saving project...'));
         const say = (text) => {
             const el = overlay?.querySelector('.daw-loading-text');
@@ -8535,12 +8557,14 @@ const AudioDaw = (() => {
             });
             if (!result.success) throw new Error(result.error || 'Save failed');
             currentProjectName = name;
+            saved = true;
             if (typeof doNoticePopover === 'function') doNoticePopover(translate('Project saved:') + ` "${name}"`, 'notice-pop-green');
         } catch (err) {
             console.error('[AudioDaw] Save project failed:', err);
             if (typeof doNoticePopover === 'function') doNoticePopover(translate('Save failed:') + ' ' + err.message, 'notice-pop-red');
         }
         hideDawLoadingOverlay(overlay);
+        return saved;
     }
 
     async function openProjectFromServer(name) {

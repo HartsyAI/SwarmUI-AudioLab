@@ -326,6 +326,9 @@ const AudioDawTrack = (() => {
         // Grab and release bracket an automation write (Touch, Latch, Write)
         volSlider.addEventListener('pointerdown', () => callbacks.onFaderGrab?.(track, 'volume'));
         volSlider.addEventListener('change', () => callbacks.onFaderRelease?.(track, 'volume'));
+        // A press with no movement, or a double-click reset, fires no change event: release on pointer up as well
+        volSlider.addEventListener('pointerup', () => callbacks.onFaderRelease?.(track, 'volume'));
+        volSlider.addEventListener('pointercancel', () => callbacks.onFaderRelease?.(track, 'volume'));
 
         // Live stereo meter (OBS-style: zone gradient lights up to the level, L/R bars)
         const meter = createDiv(null, 'daw-meter-hpair daw-track-meter-pair');

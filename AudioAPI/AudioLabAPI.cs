@@ -263,10 +263,11 @@ public static class AudioLabAPI
             {
                 return AudioLab.CreateErrorResponse("Project name has no usable characters", "invalid_name");
             }
+            // Parsed before anything is written, so a malformed body leaves the saved project as it was
+            JObject parsed = JObject.Parse(json);
             await MigrateLegacyProjects(session.User);
             await WriteProjectFile(ProjectPath(session.User, stem), json);
             // Audio stored beside the project that this version no longer uses goes (projects with inline audio keep none)
-            JObject parsed = JObject.Parse(json);
             if (parsed["audio"] is JObject audioRefs)
             {
                 HashSet<string> keep = [.. audioRefs.Properties().Select(p => p.Name)];

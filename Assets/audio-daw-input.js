@@ -71,7 +71,7 @@ const AudioDawInput = (() => {
                 entry.stream = await entry.promise;
             }
             catch (err) {
-                streams.delete(key);
+                if (streams.get(key) === entry) streams.delete(key);
                 throw err;
             }
         }
@@ -88,7 +88,8 @@ const AudioDawInput = (() => {
                 entry.refs--;
                 if (entry.refs <= 0) {
                     entry.stream.getTracks().forEach(t => t.stop());
-                    streams.delete(key);
+                    // A stale handle must not evict a newer stream that opened under the same key
+                    if (streams.get(key) === entry) streams.delete(key);
                 }
             }
         };
@@ -249,6 +250,12 @@ const AudioDawInput = (() => {
         };
         handle.dispose = () => {
             node.port.onmessage = null;
+            // A stop still waiting for the worklet's done message would never settle now: settle it with what it has
+            if (pending) {
+                const waiting = pending;
+                pending = null;
+                waiting.resolve(lastResult);
+            }
             try { source.disconnect(node); } catch (_) {}
             try { node.disconnect(); } catch (_) {}
             try { sink.disconnect(); } catch (_) {}
