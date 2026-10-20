@@ -68,6 +68,31 @@ Found by the review bot on the open pull request, and by the tests that followed
 Rounds 1 to 3 of the same review (13 findings) were fixed in aa65437, 144a00e and d3bba9b. Each thread on the pull request names its fix.
 Round 7 is rows 37 and 38.
 
+| 39 | Save & Close | Save & Close discarded the session even when the server save failed | The save swallowed its errors, and the close went on regardless | 0f04baa |
+| 40 | Clip import | Undo during a clip's decode deleted the clip's audio | The blob cleanup ignored clips that were still decoding | 0f04baa |
+| 41 | Project save | A malformed save body overwrote the saved project | The file was written before the body was parsed | 0f04baa |
+| 42 | Recording stop | Stopping a take could wedge recording when its capture was disposed | Disposing the capture dropped the pending stop | 0f04baa |
+| 43 | Header fader | A press with no movement left an automation write open | The release came only from the change event | 0f04baa |
+| 44 | Automation | A Touch grab after a Read-mode fader move used the pass-start level | The base was not refreshed when no write was open | d1d5cbd |
+| 45 | Bounce | A bounce cut its release and reverb tails | The bounce rendered with exact, which skips the tail length | d1d5cbd |
+| 46 | Note scheduling | Clearing the note cache started queued notes twice | The clear forgot the keys of notes still in the lookahead | 0f04baa |
+| 47 | Big takes and imports | A take or import with about 125,000 notes threw | Math.max spread every note into one call | 0f04baa |
+| 48 | Stream handles | A stale handle could evict a newer stream for the same device | Release deleted the entry by key, without checking identity | 0f04baa |
+| 49 | Clip drag | A cancelled touch drag left its move listener attached | The drag listened for pointer up but not pointer cancel | 0f04baa |
+| 50 | Sampler voices | A note held past its sample's end kept its gain node | The end handler was attached only at release | 0f04baa |
+| 51 | Effects | A stored chain with an unknown effect shifted the later effects | Stored chains loaded without the known-type filter | 0f04baa |
+| 52 | Codex round 8 | A saved sampler's file was dropped when this browser could not decode it | A decode failure skipped the store | 8b75be2 |
+| 53 | Codex round 8 | Pruning could delete audio a save had just uploaded | Pruning had no grace period | 8b75be2 |
+| 54 | Codex round 8 | Undo left the master level stale | The restore did not refresh the master gain | 8b75be2 |
+| 55 | Codex round 8 | Mixer changes did not autosave | The mixer callback never scheduled a save | 8b75be2 |
+| 56 | Codex round 9 | A split cleared the redo history with nothing to split | The undo step came before the split check | 52f0b14 |
+| 57 | Codex round 9 | 6/8 and 7/8 bars counted the numerator as quarter notes | Bar math ignored the denominator | 52f0b14 |
+| 58 | Codex round 9 | Exports cut effect tails at 5 s | The tail was a fixed five seconds | 52f0b14 |
+| 59 | Codex round 9 | A shuffle delete inside a MIDI clip left the clip too long | The clip length was never reduced | 52f0b14 |
+| 60 | Codex round 9 | Concurrent uploads could exceed the project quota | The quota check and the write were not serialized | 52f0b14 |
+
+Rows 39 to 51 are the verified findings of this review. Rounds 8 and 9 of the Codex review are rows 45 and 52 to 60.
+
 ## Mics and instruments (the input gap), now closed
 
 Before: MediaRecorder (lossy Opus), takes placed at the button press with no latency compensation, only the first
