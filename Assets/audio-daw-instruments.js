@@ -200,6 +200,17 @@ const AudioDawInstruments = (() => {
         return Math.max(dur, Math.min(up ? up.t : len, len) - n.start);
     }
 
+    /** A note's sounding length, cut where a later clip starts over it (layering, as for audio clips). */
+    function soundingDur(clips, i, n) {
+        const on = clips[i].startTime + n.start;
+        let dur = sustainedDur(clips[i], n);
+        for (let j = i + 1; j < clips.length; j++) {
+            const gap = clips[j].startTime - on;
+            if (!clips[j].muted && gap > 0 && gap < dur) dur = gap;
+        }
+        return dur;
+    }
+
     /**
      * Every note of a track that starts inside [from, to) on the timeline, with its absolute timeline start.
      * Layering matches audio clips: a later clip covers earlier ones, and covered notes do not sound.
@@ -218,7 +229,7 @@ const AudioDawInstruments = (() => {
                 const t = cs + n.start;
                 if (t < from || t >= to || n.start >= midiClipLength(clip)) continue;
                 if (covered(t)) continue;
-                out.push({ key: `${clip.id}:${n.id}`, time: t, dur: sustainedDur(clip, n), pitch: n.pitch, vel: n.vel });
+                out.push({ key: `${clip.id}:${n.id}`, time: t, dur: soundingDur(clips, i, n), pitch: n.pitch, vel: n.vel });
             }
         }
         return out;
@@ -241,7 +252,7 @@ const AudioDawInstruments = (() => {
             for (const n of clip.notes) {
                 if (n.start >= len) continue;
                 const on = cs + n.start;
-                const end = cs + n.start + sustainedDur(clip, n);
+                const end = cs + n.start + soundingDur(clips, i, n);
                 if (on >= t - 0.005 || end <= t + 0.005) continue;
                 out.push({ key: `${clip.id}:${n.id}`, time: t, dur: end - t, pitch: n.pitch, vel: n.vel, chased: true });
             }
@@ -440,7 +451,7 @@ const AudioDawInstruments = (() => {
         let usPerBeat = 500000;
         let lastTick = 0;
         let lastSec = 0;
-        let firstTempo = null;
+        let baseTempo = null;
         const open = new Map();
         const notes = [];
         const cc = [];
@@ -451,8 +462,9 @@ const AudioDawInstruments = (() => {
             lastTick = ev.tick;
             if (ev.type === 'tempo') {
                 usPerBeat = ev.us;
-                if (firstTempo === null) firstTempo = ev.us;
-                else if (sec > 0.0005) tempos.push({ t: sec, bpm: 60e6 / ev.us });
+                // A tempo at the start sets the base; a later one is a change (until it, the 120 BPM default holds)
+                if (sec <= 0.0005) baseTempo = ev.us;
+                else tempos.push({ t: sec, bpm: 60e6 / ev.us });
                 continue;
             }
             if (ev.type === 'cc') {
@@ -470,7 +482,7 @@ const AudioDawInstruments = (() => {
             }
         }
         notes.sort((a, b) => a.start - b.start);
-        return { notes, cc, tempos, bpm: firstTempo ? 60e6 / firstTempo : null };
+        return { notes, cc, tempos, bpm: baseTempo ? 60e6 / baseTempo : (tempos.length ? 120 : null) };
     }
 
     /**

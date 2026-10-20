@@ -2624,9 +2624,12 @@ const AudioDaw = (() => {
         const stemBus = stems && tracks.length === 1 && tracks[0].kind === 'bus' ? tracks[0] : null;
         const busChains = new Map();
         for (const bus of state.tracks.filter(t => t.kind === 'bus')) {
-            if (stems ? bus !== stemBus : (bus.muted || computeTrackGain(bus) === 0)) continue;
+            if (stems ? bus !== stemBus : (bus.muted || !soloAudible(bus))) continue;
             const chain = buildTrackChain(offlineCtx, bus, masterGain);
-            if (stems) chain.trackGain.gain.value = bus.volume;
+            if (stems) {
+                chain.trackGain.gain.value = bus.volume;
+                chain.soloGain.gain.value = 1;
+            }
             scheduleTrackAutomation(chain, bus, { ...origin, fresh: true });
             scheduleTempoDelays(chain, bus, origin);
             busChains.set(bus.id, chain);
@@ -2635,9 +2638,15 @@ const AudioDaw = (() => {
             ? state.tracks.filter(t => t.kind !== 'bus' && !t.muted && (t.sends || []).some(sd => sd.busId === stemBus.id && !sd.muted))
             : tracks.filter(t => t.kind !== 'bus');
         for (const track of renderSet) {
-            if (track.muted || (soloActive && !track.soloed)) continue; // no point rendering silence
+            // A track silent by solo still renders when its sends reach a soloed bus
+            const feedsSoloedBus = (track.sends || []).some(sd => !sd.muted && state.tracks.some(b => b.id === sd.busId && b.soloed));
+            if (track.muted || (soloActive && !track.soloed && !feedsSoloedBus)) continue; // no point rendering silence
             const chain = buildTrackChain(offlineCtx, track, stemBus ? null : masterGain);
-            if (stems) chain.trackGain.gain.value = track.volume; // another track's solo must not silence its stem
+            if (stems) {
+                // another track's solo must not silence its stem
+                chain.trackGain.gain.value = track.volume;
+                chain.soloGain.gain.value = 1;
+            }
             if (!stems || stemBus) {
                 connectSends(offlineCtx, chain, track, (busId) => busChains.get(busId)?.input || null, { ignoreSolo: stems });
             }
@@ -3329,17 +3338,17 @@ const AudioDaw = (() => {
         return state.tracks.some(t => t.soloed && t.kind !== 'bus' && (t.sends || []).some(sd => sd.busId === bus.id && !sd.muted));
     }
 
-    /** Effective gain for a track's chain given mute/solo state. */
-    function computeTrackGain(track) {
-        const soloActive = hasSoloTracks();
-        const audible = !track.muted && (!soloActive || track.soloed || (track.kind === 'bus' && busFedBySolo(track)));
-        return audible ? track.volume : 0;
+    /** Whether a track's direct output is heard under solo: soloed itself, or a bus that a soloed track feeds. */
+    function soloAudible(track) {
+        return !hasSoloTracks() || !!track.soloed || (track.kind === 'bus' && busFedBySolo(track));
     }
 
-    /** One send's gain: its level, silent with its source (a pre-fader send skips the fader, never the mute). */
+    /** One send's gain: its level, silent with its source (a pre-fader send skips the fader, never the mute). Under
+     *  solo a send still speaks when its aux bus is soloed, so soloing a return hears what feeds it. */
     function sendGain(track, send, { ignoreSolo = false } = {}) {
         if (send.muted || track.muted) return 0;
-        if (!ignoreSolo && hasSoloTracks() && !track.soloed) return 0;
+        const bus = state.tracks.find(t => t.id === send.busId);
+        if (!ignoreSolo && hasSoloTracks() && !track.soloed && !bus?.soloed) return 0;
         return send.level;
     }
 
@@ -3358,14 +3367,14 @@ const AudioDaw = (() => {
 
     /**
      * Create a track's persistent node chain, in pro signal-flow order:
-     * input (clips, live input) -> inserts (pre-fader) -> trackGain (fader, mute/solo) -> volAuto -> trackPan
+     * input (clips, live input) -> inserts (pre-fader) -> trackGain (fader, mute) -> volAuto -> trackPan -> soloGain
      * -> masterGain, plus an analyser tap for meters. volAuto carries the volume envelope so live fader moves
      * and automation ramps never fight over one AudioParam.
      */
     function buildTrackChain(ctx, track, masterGain) {
         const input = ctx.createGain();
         const trackGain = ctx.createGain();
-        trackGain.gain.value = computeTrackGain(track);
+        trackGain.gain.value = track.muted ? 0 : track.volume;
         const fxChain = (typeof AudioDawFx !== 'undefined')
             ? AudioDawFx.buildFxChain(ctx, track.fx, { bpm: bpmAt(state.currentTime) }) : null;
         if (fxChain) {
@@ -3377,34 +3386,39 @@ const AudioDaw = (() => {
         const volAuto = ctx.createGain();
         volAuto.gain.value = 1;
         trackGain.connect(volAuto);
+        // Solo sits after the pan, so post-fader sends are not solo-muted: a soloed bus hears the sends into it
+        const soloGain = ctx.createGain();
+        soloGain.gain.value = soloAudible(track) ? 1 : 0;
         let trackPan = null;
         if (ctx.createStereoPanner) {
             trackPan = ctx.createStereoPanner();
             trackPan.pan.value = track.pan || 0;
             volAuto.connect(trackPan);
-            if (masterGain) trackPan.connect(masterGain);
-        } else if (masterGain) {
-            volAuto.connect(masterGain);
+            trackPan.connect(soloGain);
+        } else {
+            volAuto.connect(soloGain);
         }
+        if (masterGain) soloGain.connect(masterGain);
         let analysers = null;
         let meterSplitter = null;
         if (typeof OfflineAudioContext === 'undefined' || !(ctx instanceof OfflineAudioContext)) {
             // Per-channel L/R taps for OBS-style stereo metering
             meterSplitter = ctx.createChannelSplitter(2);
-            (trackPan || volAuto).connect(meterSplitter);
+            soloGain.connect(meterSplitter);
             analysers = [ctx.createAnalyser(), ctx.createAnalyser()];
             analysers.forEach((a, i) => { a.fftSize = 512; meterSplitter.connect(a, i); });
         }
         // Send taps: pre-fader after the inserts, post-fader after the pan
         const preTap = fxChain ? fxChain.output : input;
         const postTap = trackPan || volAuto;
-        return { input, trackGain, fxChain, volAuto, trackPan, analysers, meterSplitter, preTap, postTap, sendGains: new Map() };
+        return { input, trackGain, fxChain, volAuto, trackPan, soloGain, analysers, meterSplitter, preTap, postTap, sendGains: new Map() };
     }
 
     /** Fully disconnect one track chain (incl. FX feedback loops, which otherwise persist). */
     function disposeChain(chain) {
         try { chain.input.disconnect(); } catch (_) {}
         try { chain.trackGain.disconnect(); } catch (_) {}
+        try { chain.soloGain.disconnect(); } catch (_) {}
         if (typeof AudioDawFx !== 'undefined') AudioDawFx.disposeFxChain(chain.fxChain);
         try { chain.volAuto.disconnect(); } catch (_) {}
         if (chain.trackPan) { try { chain.trackPan.disconnect(); } catch (_) {} }
@@ -3829,10 +3843,10 @@ const AudioDaw = (() => {
     function setAutomationMode(track, mode) {
         const was = track.automationMode || 'read';
         if (was === mode) return;
-        // Leaving a write mode mid-pass commits what was written
+        // A mode change mid-pass commits what the old mode wrote: Touch, Latch and Write each hold differently
         for (const param of ['volume', 'pan']) {
             const w = autoWrite.active.get(writeKey(track, param));
-            if (w && !isWriteMode(mode)) {
+            if (w) {
                 commitAutomationWrite(w, { returnToOld: true });
                 autoWrite.active.delete(writeKey(track, param));
             }
@@ -4051,8 +4065,8 @@ const AudioDaw = (() => {
                 handle.release();
                 throw err;
             }
-            // The track may have been disarmed or removed while the device opened
-            if (!state || !state.tracks.includes(track) || !(track.armed || track.monitor)) {
+            // The track may have been disarmed or removed while the device opened, or the DAW hidden meanwhile
+            if (!state || !state.tracks.includes(track) || !(track.armed || track.monitor) || (!recording && dawHidden())) {
                 capture.dispose();
                 route.dispose();
                 handle.release();
@@ -4105,9 +4119,14 @@ const AudioDaw = (() => {
     }
 
     /** Never leave the microphone hot while the DAW is hidden. Showing the DAW again re-opens what is armed or monitored. */
-    function releaseInputsIfHidden() {
+    /** True while the DAW's tab is off screen. */
+    function dawHidden() {
         const el = document.getElementById('daw_container');
-        if (!recording && el && el.offsetParent === null) closeAllInputs();
+        return !!el && el.offsetParent === null;
+    }
+
+    function releaseInputsIfHidden() {
+        if (!recording && dawHidden()) closeAllInputs();
     }
 
     function reportInputError(track, err) {
@@ -4429,7 +4448,8 @@ const AudioDaw = (() => {
         for (const track of state.tracks) {
             const chain = mixer.chains.get(track.id);
             if (!chain) continue;
-            chain.trackGain.gain.setTargetAtTime(computeTrackGain(track), now, 0.015);
+            chain.trackGain.gain.setTargetAtTime(track.muted ? 0 : track.volume, now, 0.015);
+            chain.soloGain.gain.setTargetAtTime(soloAudible(track) ? 1 : 0, now, 0.015);
             for (const send of track.sends || []) {
                 chain.sendGains?.get(send.busId)?.gain.setTargetAtTime(sendGain(track, send), now, 0.015);
             }
@@ -6206,18 +6226,27 @@ const AudioDaw = (() => {
      * the edges), and they fade across the overlap. Without spare audio both sides fade at the boundary instead.
      */
     function crossfadeSelection(sel) {
-        const made = [];
-        let dipped = false;
-        pushUndo();
+        const endOf = (c) => c.startTime + visibleDur(c);
+        // Find the pairs before any undo step: a range with no boundary to cross leaves the redo history alone
+        const pairs = [];
         for (const id of sel.trackIds) {
             const track = state.tracks.find(t => t.id === id);
             if (!track || !track.clips.length) continue;
-            const endOf = (c) => c.startTime + visibleDur(c);
             const left = track.clips.filter(c => !c.muted && c.startTime < sel.start && endOf(c) > sel.start - 1e-3 && endOf(c) <= sel.end + 1e-3)
                 .sort((a, b) => endOf(b) - endOf(a))[0];
             const right = track.clips.filter(c => !c.muted && c.startTime >= sel.start - 1e-3 && c.startTime < sel.end && endOf(c) > sel.end)
                 .sort((a, b) => a.startTime - b.startTime)[0];
             if (!left || !right || left === right) continue;
+            pairs.push({ track, left, right });
+        }
+        if (!pairs.length) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Select across the boundary between two clips to crossfade them'), 'notice-pop-yellow');
+            return;
+        }
+        pushUndo();
+        const made = [];
+        let dipped = false;
+        for (const { track, left, right } of pairs) {
             // Extend each clip into the range as far as its source audio allows
             const growL = Math.max(0, Math.min(sel.end - endOf(left), left.trimEnd || 0));
             left.trimEnd = (left.trimEnd || 0) - growL;
@@ -6238,11 +6267,6 @@ const AudioDaw = (() => {
                 dipped = true;
             }
             made.push(track.name);
-        }
-        if (!made.length) {
-            state.undoStack.pop(); // nothing changed, so no undo step
-            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Select across the boundary between two clips to crossfade them'), 'notice-pop-yellow');
-            return;
         }
         updateTotalDuration();
         renderAllTracks();
@@ -8266,8 +8290,11 @@ const AudioDaw = (() => {
             }
         }
 
+        const restored = [];
+        const trackIdMap = new Map(); // saved track id -> the id this session gave it
         for (const ts of project.tracks || []) {
             const track = AudioDawTrack.createTrack({ name: ts.name, color: ts.color, height: ts.height });
+            trackIdMap.set(ts.id, track.id);
             track.volume = ts.volume ?? 0.8;
             track.pan = ts.pan || 0;
             track.muted = !!ts.muted;
@@ -8322,6 +8349,11 @@ const AudioDaw = (() => {
                 track.clips.push(clip);
             }
             state.tracks.push(track);
+            restored.push(track);
+        }
+        // A send to a bus the project does not have is dropped
+        for (const t of restored) {
+            t.sends = (t.sends || []).filter(sd => trackIdMap.has(sd.busId)).map(sd => ({ ...sd, busId: trackIdMap.get(sd.busId) }));
         }
         if (state.tracks.length === 0) addTrack();
         state.selectedTrackId = state.tracks[0]?.id || null;
