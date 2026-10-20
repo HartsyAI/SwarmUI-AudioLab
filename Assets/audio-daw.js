@@ -6634,9 +6634,9 @@ const AudioDaw = (() => {
         }
     }
 
-    // Instrument browser: the drum machine ships today; the rest are planned
-    // slots (clicking one explains what's coming). New instruments plug in by
-    // flipping ready:true and rendering their UI in renderBeatsPanel.
+    // Instrument browser. A planned slot can be listed with ready:false (clicking
+    // it explains it is on the roadmap); it ships by flipping ready:true and
+    // rendering its UI in renderBeatsPanel.
     const DAW_INSTRUMENTS = [
         { id: 'drums', name: 'Drum Machine', desc: '16/32-step sample sequencer', ready: true },
         { id: 'keys', name: 'Keys to Score', desc: 'Play a phrase into the score', ready: true },
