@@ -342,6 +342,9 @@ const AudioDaw = (() => {
         document.getElementById('daw_bbar_tabs')?.addEventListener('click', (e) => {
             if (bottomBarShut && e.target.closest('.nav-link')) setBottomBarShut(false);
         });
+        document.getElementById('daw_bbar_tabs')?.addEventListener('shown.bs.tab', (e) => {
+            if (state && e.target.dataset.tab === 'pianoroll') renderPianoRollPane();
+        });
         applyBottomBarLayout();
     }
 
@@ -1261,33 +1264,36 @@ const AudioDaw = (() => {
             AudioDawFx.renderFxPanel(fxContent, getSelectedTrack(), fxPanelCallbacks());
         }
 
-        // Piano roll for the selected MIDI clip
-        const prPane = bottomPanelEl.querySelector('.daw-bottom-tab-content[data-tab="pianoroll"]');
-        if (prPane) {
-            const found = findMidiClip(state.selectedMidiClipId);
-            AudioDawInstruments.renderPianoRoll(prPane, found?.clip || null, found?.track || null, {
-                zoom: Math.max(80, Math.min(400, state.zoom * 1.5)),
-                gridStep: () => gridStep(),
-                snap: (t) => found ? snapTime(found.clip.startTime + t) - found.clip.startTime : t,
-                bpm: () => state.bpm,
-                play: (pitch, vel) => {
-                    if (!found) return;
-                    const ctx = getAudioContext();
-                    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
-                    AudioDawInstruments.startVoice(ctx, chainFor(found.track).input, found.track.instrument, pitch, vel, ctx.currentTime, 0.3, instrumentSample(found.track));
-                    kickMeters();
-                },
-                onGestureStart: () => pushUndo(),
-                onChanged: () => {
-                    updateTotalDuration();
-                    renderAllTracks();
-                    resyncPlayback();
-                }
-            });
-        }
+        renderPianoRollPane();
 
         // Selection only — the Score pane itself is built once, so an in-progress edit is never wiped.
         if (typeof AudioDawScore !== 'undefined') AudioDawScore.onSelection(findClipById(state.selectedClipId));
+    }
+
+    /** Piano roll for the selected MIDI clip. Also re-run when its tab is shown, since a hidden pane drops the scroll to the notes. */
+    function renderPianoRollPane() {
+        const prPane = bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="pianoroll"]');
+        if (!prPane) return;
+        const found = findMidiClip(state.selectedMidiClipId);
+        AudioDawInstruments.renderPianoRoll(prPane, found?.clip || null, found?.track || null, {
+            zoom: Math.max(80, Math.min(400, state.zoom * 1.5)),
+            gridStep: () => gridStep(),
+            snap: (t) => found ? snapTime(found.clip.startTime + t) - found.clip.startTime : t,
+            bpm: () => state.bpm,
+            play: (pitch, vel) => {
+                if (!found) return;
+                const ctx = getAudioContext();
+                if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
+                AudioDawInstruments.startVoice(ctx, chainFor(found.track).input, found.track.instrument, pitch, vel, ctx.currentTime, 0.3, instrumentSample(found.track));
+                kickMeters();
+            },
+            onGestureStart: () => pushUndo(),
+            onChanged: () => {
+                updateTotalDuration();
+                renderAllTracks();
+                resyncPlayback();
+            }
+        });
     }
 
     /** Simple inline mixer fallback when AudioDawMixer module isn't loaded. */
