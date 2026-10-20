@@ -2795,3 +2795,35 @@ input[type="range"].daw-transport-zoom { width: 90px; }
 .daw-track-btn.auto-writing { color: var(--red); border-color: var(--red); }
 .daw-automation-mode { margin-left: 0.3rem; }
 .daw-automation-mode.writing { color: var(--red); border-color: var(--red); }
+
+/* Piano roll velocity lane */
+.daw-proll { height: calc(100% - 2.6rem - 52px); }
+.daw-proll-velrow {
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    height: 48px;
+    margin-top: 4px;
+    border: 1px solid var(--border-color);
+    border-radius: 0.4rem;
+    overflow: hidden;
+}
+.daw-proll-velhead {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    color: var(--text-soft);
+    border-right: 1px solid var(--border-color);
+}
+.daw-proll-velscroll { position: relative; overflow: hidden; }
+.daw-proll-vellane { position: relative; height: 100%; background: var(--background-soft); cursor: ns-resize; touch-action: none; }
+.daw-proll-velbar {
+    position: absolute;
+    bottom: 0;
+    width: 4px;
+    margin-left: -1px;
+    background: var(--emphasis);
+    border-radius: 1px 1px 0 0;
+    pointer-events: none;
+}
+.daw-proll-velbar.selected { background: var(--text); }

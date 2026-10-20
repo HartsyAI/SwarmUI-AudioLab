@@ -1077,7 +1077,7 @@ const AudioDawTrack = (() => {
             takeCount: track.takeCount || 0,
             kind: track.kind || 'audio',
             instrument: track.instrument ? JSON.parse(JSON.stringify(track.instrument)) : null,
-            midiClips: (track.midiClips || []).map(c => ({ ...c, notes: c.notes.map(n => ({ ...n })) })),
+            midiClips: (track.midiClips || []).map(c => ({ ...c, notes: c.notes.map(n => ({ ...n })), cc: (c.cc || []).map(e => ({ ...e })) })),
             color: track.color,
             height: track.height,
             // Deep copies: undo snapshots must never alias the live objects

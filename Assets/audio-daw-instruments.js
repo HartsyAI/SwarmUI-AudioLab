@@ -176,6 +176,30 @@ const AudioDawInstruments = (() => {
         return Math.max(0.05, clip.length || 0);
     }
 
+    // Sustain pedal: a clip's controller events are {t (seconds from the clip start), n (CC number), v}; CC 64 at
+    // 64 or above holds every note released while it is down until the pedal comes up (or the clip ends).
+
+    function pedalDownAt(clip, t) {
+        let down = false;
+        for (const e of clip.cc || []) {
+            if (e.n !== 64) continue;
+            if (e.t > t + 1e-6) break;
+            down = e.v >= 64;
+        }
+        return down;
+    }
+
+    /** A note's sounding length in its clip, with the sustain pedal applied. */
+    function sustainedDur(clip, n) {
+        const len = midiClipLength(clip);
+        const dur = Math.min(n.dur, len - n.start);
+        if (!clip.cc?.length) return dur;
+        const off = n.start + dur;
+        if (!pedalDownAt(clip, off)) return dur;
+        const up = (clip.cc || []).find(e => e.n === 64 && e.t > off && e.v < 64);
+        return Math.max(dur, Math.min(up ? up.t : len, len) - n.start);
+    }
+
     /**
      * Every note of a track that starts inside [from, to) on the timeline, with its absolute timeline start.
      * Layering matches audio clips: a later clip covers earlier ones, and covered notes do not sound.
@@ -194,8 +218,7 @@ const AudioDawInstruments = (() => {
                 const t = cs + n.start;
                 if (t < from || t >= to || n.start >= midiClipLength(clip)) continue;
                 if (covered(t)) continue;
-                const dur = Math.min(n.dur, midiClipLength(clip) - n.start);
-                out.push({ key: `${clip.id}:${n.id}`, time: t, dur, pitch: n.pitch, vel: n.vel });
+                out.push({ key: `${clip.id}:${n.id}`, time: t, dur: sustainedDur(clip, n), pitch: n.pitch, vel: n.vel });
             }
         }
         return out;
@@ -218,7 +241,7 @@ const AudioDawInstruments = (() => {
             for (const n of clip.notes) {
                 if (n.start >= len) continue;
                 const on = cs + n.start;
-                const end = cs + n.start + Math.min(n.dur, len - n.start);
+                const end = cs + n.start + sustainedDur(clip, n);
                 if (on >= t - 0.005 || end <= t + 0.005) continue;
                 out.push({ key: `${clip.id}:${n.id}`, time: t, dur: end - t, pitch: n.pitch, vel: n.vel, chased: true });
             }
@@ -349,6 +372,8 @@ const AudioDawInstruments = (() => {
                 const cmd = status & 0xf0;
                 if (cmd === 0x90 && velocity > 0) live.handler?.noteOn(note, velocity);
                 else if (cmd === 0x80 || (cmd === 0x90 && velocity === 0)) live.handler?.noteOff(note);
+                else if (cmd === 0xb0) live.handler?.control?.(note, velocity); // controller number, value
+
             };
         }
     }
@@ -405,6 +430,7 @@ const AudioDawInstruments = (() => {
                     const d1 = data.getUint8(pos++);
                     const d2 = (cmd === 0xc0 || cmd === 0xd0) ? 0 : data.getUint8(pos++);
                     if (cmd === 0x90 || cmd === 0x80) events.push({ tick, type: cmd === 0x90 && d2 > 0 ? 'on' : 'off', pitch: d1, vel: d2, ch, track: t });
+                    else if (cmd === 0xb0 && d1 === 64) events.push({ tick, type: 'cc', n: 64, v: d2 });
                 }
             }
             pos = end;
@@ -417,6 +443,7 @@ const AudioDawInstruments = (() => {
         let firstTempo = null;
         const open = new Map();
         const notes = [];
+        const cc = [];
         for (const ev of events) {
             const sec = lastSec + (ev.tick - lastTick) / division * usPerBeat / 1e6;
             lastSec = sec;
@@ -424,6 +451,10 @@ const AudioDawInstruments = (() => {
             if (ev.type === 'tempo') {
                 usPerBeat = ev.us;
                 if (firstTempo === null) firstTempo = ev.us;
+                continue;
+            }
+            if (ev.type === 'cc') {
+                cc.push({ t: sec, n: ev.n, v: ev.v });
                 continue;
             }
             const k = `${ev.track}:${ev.ch}:${ev.pitch}`;
@@ -437,14 +468,17 @@ const AudioDawInstruments = (() => {
             }
         }
         notes.sort((a, b) => a.start - b.start);
-        return { notes, bpm: firstTempo ? 60e6 / firstTempo : null };
+        return { notes, cc, bpm: firstTempo ? 60e6 / firstTempo : null };
     }
 
-    /** Write notes (seconds) as a single-track SMF at the given tempo. */
-    function writeMidiFile(notes, bpm = 120) {
+    /** Write notes (seconds) and controller events (sustain pedal) as a single-track SMF at the given tempo. */
+    function writeMidiFile(notes, bpm = 120, cc = []) {
         const ppq = 480;
         const secToTick = (s) => Math.round(s * bpm / 60 * ppq);
         const evs = [];
+        for (const e of cc) {
+            evs.push({ tick: secToTick(e.t), data: [0xb0, e.n & 0x7f, Math.max(0, Math.min(127, Math.round(e.v)))] });
+        }
         for (const n of notes) {
             evs.push({ tick: secToTick(n.start), data: [0x90, n.pitch & 0x7f, Math.max(1, Math.min(127, Math.round(n.vel || 100)))] });
             evs.push({ tick: secToTick(n.start + n.dur), data: [0x80, n.pitch & 0x7f, 0] });
@@ -650,11 +684,77 @@ const AudioDawInstruments = (() => {
         wrap.appendChild(keys);
         wrap.appendChild(grid);
         container.appendChild(wrap);
+
+        // Velocity lane: a bar per note under the grid. Drag across it to paint velocities (only the selected
+        // notes, when some are selected).
+        const VEL_H = 44;
+        const velRow = createDiv(null, 'daw-proll-velrow');
+        const velHead = createDiv(null, 'daw-proll-velhead');
+        velHead.textContent = translate('Vel');
+        const velScroll = createDiv(null, 'daw-proll-velscroll');
+        const velLane = createDiv(null, 'daw-proll-vellane');
+        velScroll.appendChild(velLane);
+        velRow.appendChild(velHead);
+        velRow.appendChild(velScroll);
+        container.appendChild(velRow);
+        wrap.addEventListener('scroll', () => { velScroll.scrollLeft = wrap.scrollLeft; });
+        const velBars = new Map();
+        const velTitle = (n) => `${noteName(n.pitch)} · ${translate('velocity')} ${n.vel}`;
+        function drawVel() {
+            velLane.innerHTML = '';
+            velBars.clear();
+            for (const n of clip.notes) {
+                const b = createDiv(null, 'daw-proll-velbar' + (selected.has(n.id) ? ' selected' : ''));
+                b.style.left = (n.start * zoomX) + 'px';
+                b.style.height = Math.max(2, Math.round(n.vel / 127 * VEL_H)) + 'px';
+                b.title = velTitle(n);
+                velLane.appendChild(b);
+                velBars.set(n.id, b);
+            }
+        }
+        velLane.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            const rect = velLane.getBoundingClientRect();
+            let started = false;
+            const paint = (pe) => {
+                const x = pe.clientX - rect.left;
+                const v = Math.max(1, Math.min(127, Math.round((1 - (pe.clientY - rect.top) / VEL_H) * 127)));
+                const hit = clip.notes.filter(n => Math.abs(n.start * zoomX - x) <= 4 && (!selected.size || selected.has(n.id)));
+                if (!hit.length) return;
+                if (!started) {
+                    started = true;
+                    callbacks.onGestureStart();
+                }
+                for (const n of hit) {
+                    n.vel = v;
+                    const b = velBars.get(n.id);
+                    if (b) {
+                        b.style.height = Math.max(2, Math.round(v / 127 * VEL_H)) + 'px';
+                        b.title = velTitle(n);
+                    }
+                    const ne = noteEls.get(n.id);
+                    if (ne) ne.style.opacity = String(0.45 + 0.55 * (v / 127));
+                }
+            };
+            paint(e);
+            const onMove = (me) => paint(me);
+            const onUp = () => {
+                window.removeEventListener('pointermove', onMove);
+                window.removeEventListener('pointerup', onUp);
+                window.removeEventListener('pointercancel', onUp);
+                if (started) commit();
+            };
+            window.addEventListener('pointermove', onMove);
+            window.addEventListener('pointerup', onUp);
+            window.addEventListener('pointercancel', onUp);
+        });
         const height = (HIGH - LOW + 1) * ROW;
         keys.style.height = height + 'px';
         grid.style.height = height + 'px';
         const width = Math.max(len * zoomX + 80, 400);
         grid.style.width = width + 'px';
+        velLane.style.width = width + 'px';
         for (let m = HIGH; m >= LOW; m--) {
             const k = createDiv(null, 'daw-proll-key' + ([1, 3, 6, 8, 10].includes(m % 12) ? ' black' : '') + (m % 12 === 0 ? ' c' : ''));
             k.style.height = ROW + 'px';
@@ -687,11 +787,13 @@ const AudioDawInstruments = (() => {
         };
         const paintSelection = () => {
             for (const [id, el] of noteEls) el.classList.toggle('selected', selected.has(id));
+            for (const [id, b] of velBars) b.classList.toggle('selected', selected.has(id));
         };
 
         function draw() {
             grid.querySelectorAll('.daw-proll-note').forEach(n => n.remove());
             noteEls.clear();
+            drawVel();
             for (const n of clip.notes) {
                 const el = createDiv(null, 'daw-proll-note' + (selected.has(n.id) ? ' selected' : ''));
                 place(el, n);

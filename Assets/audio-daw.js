@@ -124,7 +124,7 @@ const AudioDaw = (() => {
         sizeDawContainer();
         resetState();
         AudioDawInstruments.setSampleResolver((key) => blobStore.get(key)?.decodedBuffer || null);
-        AudioDawInstruments.setLiveHandler({ noteOn: liveNoteOn, noteOff: liveNoteOff });
+        AudioDawInstruments.setLiveHandler({ noteOn: liveNoteOn, noteOff: liveNoteOff, control: liveControl });
         initLayout();
         renderAllTracks();
         updateTimeDisplay();
@@ -4133,11 +4133,22 @@ const AudioDaw = (() => {
         const out = new Map();
         const clips = track.clips;
         const spans = clips.map(c => [c.startTime, c.startTime + visibleDur(c)]);
+        const fades = clips.map(c => {
+            const vis = visibleDur(c);
+            const fi = Math.min(c.fadeIn || 0, vis);
+            return { fi, fo: Math.min(c.fadeOut || 0, vis - fi) };
+        });
         for (let i = 0; i < clips.length; i++) {
             let segs = [spans[i]];
             for (let j = i + 1; j < clips.length && segs.length; j++) {
                 if (clips[j].muted) continue; // a muted clip on top lets the one below through
-                const [cs, ce] = spans[j];
+                let [cs, ce] = spans[j];
+                // A crossfade: where this clip ends inside the upper one's fade-in while fading out over the overlap
+                // (or starts inside its fade-out while fading in), both play there instead of the upper one covering
+                const [is, ie] = spans[i];
+                if (ie > cs && ie <= cs + fades[j].fi + 1e-6 && fades[i].fo > 0 && ie - fades[i].fo <= cs + 1e-3) cs = ie;
+                if (is < ce && is >= ce - fades[j].fo - 1e-6 && fades[i].fi > 0 && is + fades[i].fi >= ce - 1e-3) ce = is;
+                if (ce - cs <= 0.002) continue;
                 const next = [];
                 for (const [s, e] of segs) {
                     if (ce <= s || cs >= e) {
@@ -5045,7 +5056,7 @@ const AudioDaw = (() => {
         copy.kind = ts.kind;
         copy.instrument = ts.instrument;
         for (const mc of ts.midiClips) {
-            const nc = newMidiClip(copy, mc.startTime, mc.length, mc.notes, mc.name);
+            const nc = newMidiClip(copy, mc.startTime, mc.length, mc.notes, mc.name, mc.cc);
             nc.muted = !!mc.muted;
             nc.color = mc.color || null;
         }
@@ -5127,13 +5138,14 @@ const AudioDaw = (() => {
         return key ? blobStore.get(key)?.decodedBuffer || null : null;
     }
 
-    function newMidiClip(track, startTime, length, notes = [], name = null) {
+    function newMidiClip(track, startTime, length, notes = [], name = null, cc = []) {
         const clip = {
             id: `midi-${Date.now().toString(36)}-${++midiClipSeq}`,
             name: name || `${track.name} MIDI`,
             startTime: Math.max(0, startTime),
             length: Math.max(0.05, length),
             notes: notes.map((n, i) => ({ id: i + 1, pitch: n.pitch, start: n.start, dur: n.dur, vel: n.vel ?? 100 })),
+            cc: (cc || []).map(e => ({ t: e.t, n: e.n, v: e.v })).sort((a, b) => a.t - b.t), // sustain pedal (CC 64)
             muted: false,
             color: null
         };
@@ -5174,6 +5186,28 @@ const AudioDaw = (() => {
         return Math.max(0, currentTimelineTime() - outputLatency(getAudioContext()));
     }
 
+    // Sustain pedal (CC 64) from a MIDI keyboard: while it is down, released keys keep sounding until it comes up
+    let liveSustain = false;
+    const sustainedVoices = new Map(); // `${trackId}:${pitch}` -> voice held by the pedal
+
+    function liveControl(num, value) {
+        if (num !== 64) return;
+        const down = value >= 64;
+        if (down === liveSustain) return;
+        liveSustain = down;
+        if (midiRecording && audioCtx) {
+            const ctx = getAudioContext();
+            if (ctx.currentTime - outputLatency(ctx) >= midiRecording.startCtx - 0.05) {
+                for (const take of midiRecording.takes) take.cc.push({ t: heardTimelineNow(), n: 64, v: value });
+            }
+        }
+        if (!down) {
+            const ctx = getAudioContext();
+            for (const voice of sustainedVoices.values()) voice.stop(ctx.currentTime);
+            sustainedVoices.clear();
+        }
+    }
+
     function liveNoteOn(pitch, vel) {
         // While the Keys to Score card records, the keyboard writes into the score instead
         if (keysState.recording) {
@@ -5194,6 +5228,8 @@ const AudioDaw = (() => {
         for (const track of targets) {
             const key = `${track.id}:${pitch}`;
             liveVoices.get(key)?.stop(ctx.currentTime);
+            sustainedVoices.get(key)?.stop(ctx.currentTime);
+            sustainedVoices.delete(key);
             liveVoices.set(key, AudioDawInstruments.startVoice(ctx, chainFor(track).input, track.instrument, pitch, vel, ctx.currentTime, null, instrumentSample(track)));
             const take = midiRecording?.takes.find(t => t.track === track);
             // Heard time against the capture start, with a little slack for notes played just ahead of the downbeat
@@ -5210,7 +5246,9 @@ const AudioDaw = (() => {
         const ctx = getAudioContext();
         for (const [key, voice] of liveVoices) {
             if (key.endsWith(':' + pitch)) {
-                voice.stop(ctx.currentTime);
+                // The pedal holds a released key until it comes up
+                if (liveSustain) sustainedVoices.set(key, voice);
+                else voice.stop(ctx.currentTime);
                 liveVoices.delete(key);
             }
         }
@@ -5265,7 +5303,11 @@ const AudioDaw = (() => {
     /** Start capturing live notes for the armed instrument tracks (called once the transport runs). */
     /** startCtx: the audio-clock time capture begins, so notes played during a count-in are not kept. */
     function beginMidiRecording(tracks, startP, punch, startCtx = 0) {
-        midiRecording = tracks.length ? { startP, punch, startCtx, takes: tracks.map(track => ({ track, notes: [], open: new Map() })) } : null;
+        midiRecording = tracks.length ? { startP, punch, startCtx, takes: tracks.map(track => ({ track, notes: [], open: new Map(), cc: [] })) } : null;
+        // A pedal held as recording starts is down from the first moment of the take
+        if (midiRecording && liveSustain) {
+            for (const take of midiRecording.takes) take.cc.push({ t: punch ? punch.in : startP, n: 64, v: 127 });
+        }
     }
 
     /** Close held notes and turn each instrument take into a MIDI clip. Returns the clips made (not rendered). */
@@ -5284,7 +5326,8 @@ const AudioDaw = (() => {
             if (!notes.length) continue;
             const bar = (60 / state.bpm) * (state.timeSignature[0] || 4);
             const last = Math.max(...notes.map(n => n.start + n.dur));
-            made.push({ track: take.track, start: lo, length: rec.punch ? rec.punch.out - rec.punch.in : Math.max(bar, Math.ceil(last / bar) * bar), notes });
+            const cc = take.cc.filter(c => c.t >= lo - 0.02 && c.t < hi).map(c => ({ t: Math.max(0, c.t - lo), n: c.n, v: c.v }));
+            made.push({ track: take.track, start: lo, length: rec.punch ? rec.punch.out - rec.punch.in : Math.max(bar, Math.ceil(last / bar) * bar), notes, cc });
         }
         return made;
     }
@@ -5370,7 +5413,7 @@ const AudioDaw = (() => {
             { label: translate('Open in the piano roll'), action: () => selectMidiClip(clip, track, true) },
             { label: translate('Duplicate'), action: () => {
                 pushUndo();
-                const copy = newMidiClip(track, clip.startTime + AudioDawInstruments.midiClipLength(clip), clip.length, clip.notes, clip.name);
+                const copy = newMidiClip(track, clip.startTime + AudioDawInstruments.midiClipLength(clip), clip.length, clip.notes, clip.name, clip.cc);
                 copy.muted = !!clip.muted;
                 copy.color = clip.color || null;
                 updateTotalDuration(); // the copy can end past the old song end
@@ -5390,7 +5433,7 @@ const AudioDaw = (() => {
                 renderAllTracks();
             }},
             { label: translate('Export as MIDI file'), action: () => {
-                downloadBlob(AudioDawInstruments.writeMidiFile(clip.notes, state.bpm), `${(clip.name || 'clip').replace(/[\\/:*?"<>|]+/g, '_')}.mid`);
+                downloadBlob(AudioDawInstruments.writeMidiFile(clip.notes, state.bpm, clip.cc), `${(clip.name || 'clip').replace(/[\\/:*?"<>|]+/g, '_')}.mid`);
             }},
             { label: translate('Delete'), action: () => deleteMidiClip(clip, track) }
         ]);
@@ -5435,7 +5478,7 @@ const AudioDaw = (() => {
                 }
                 const target = track || addInstrumentTrack('synth', 'Soft Keys', { snapshot: false });
                 const last = Math.max(...parsed.notes.map(n => n.start + n.dur));
-                const clip = newMidiClip(target, snapTime(state.currentTime), last + 0.05, parsed.notes, file.name.replace(/\.[^.]+$/, ''));
+                const clip = newMidiClip(target, snapTime(state.currentTime), last + 0.05, parsed.notes, file.name.replace(/\.[^.]+$/, ''), parsed.cc);
                 updateTotalDuration();
                 selectMidiClip(clip, target);
                 resyncPlayback();
@@ -5772,10 +5815,16 @@ const AudioDaw = (() => {
             for (const mc of track.midiClips || []) {
                 const cs = mc.startTime;
                 mc.notes = mc.notes.filter(n => cs + n.start < sel.start || cs + n.start >= sel.end);
+                mc.cc = (mc.cc || []).filter(c => cs + c.t < sel.start || cs + c.t >= sel.end);
                 if (state.editMode === 'shuffle') {
                     if (cs >= sel.end - 1e-6) mc.startTime -= len;
-                    else for (const n of mc.notes) {
-                        if (cs + n.start >= sel.end) n.start -= len;
+                    else {
+                        for (const n of mc.notes) {
+                            if (cs + n.start >= sel.end) n.start -= len;
+                        }
+                        for (const c of mc.cc) {
+                            if (cs + c.t >= sel.end) c.t -= len;
+                        }
                     }
                 }
             }
@@ -5828,7 +5877,12 @@ const AudioDaw = (() => {
             .filter(n => n.start < len && mc.startTime + n.start >= s && mc.startTime + n.start < e)
             .map(n => ({ pitch: n.pitch, start: mc.startTime + n.start - s, dur: Math.min(n.dur, len - n.start), vel: n.vel }));
         if (!notes.length) return null;
-        return { name: mc.name, startTime: s, length: e - s, notes, muted: !!mc.muted, color: mc.color || null };
+        const cc = (mc.cc || []).filter(c => mc.startTime + c.t >= s && mc.startTime + c.t < e)
+            .map(c => ({ t: mc.startTime + c.t - s, n: c.n, v: c.v }));
+        // A pedal already down where the piece starts stays down in the copy
+        const pedal = (mc.cc || []).filter(c => c.n === 64 && mc.startTime + c.t < s).pop();
+        if (pedal && pedal.v >= 64) cc.unshift({ t: 0, n: 64, v: pedal.v });
+        return { name: mc.name, startTime: s, length: e - s, notes, cc, muted: !!mc.muted, color: mc.color || null };
     }
 
     /** A track's instrument as it is now, so editing the track later does not change what gets pasted. */
@@ -5922,7 +5976,7 @@ const AudioDaw = (() => {
             }
             touched.add(track.id);
             if (item.midi) {
-                const mc = newMidiClip(track, at + item.rel, item.midi.length, item.midi.notes, item.midi.name);
+                const mc = newMidiClip(track, at + item.rel, item.midi.length, item.midi.notes, item.midi.name, item.midi.cc);
                 mc.muted = item.midi.muted;
                 mc.color = item.midi.color;
                 state.selectedMidiClipId = mc.id;
@@ -5939,6 +5993,106 @@ const AudioDaw = (() => {
         renderAllTracks();
         updateBottomPanel();
         resyncPlayback();
+    }
+
+    /**
+     * Crossfade at the clip boundaries inside a selection: on each selected track, the clip ending in the range
+     * runs on to its end and the clip starting in it starts at its beginning (as far as their audio reaches past
+     * the edges), and they fade across the overlap. Without spare audio both sides fade at the boundary instead.
+     */
+    function crossfadeSelection(sel) {
+        const made = [];
+        let dipped = false;
+        pushUndo();
+        for (const id of sel.trackIds) {
+            const track = state.tracks.find(t => t.id === id);
+            if (!track || !track.clips.length) continue;
+            const endOf = (c) => c.startTime + visibleDur(c);
+            const left = track.clips.filter(c => !c.muted && c.startTime < sel.start && endOf(c) > sel.start - 1e-3 && endOf(c) <= sel.end + 1e-3)
+                .sort((a, b) => endOf(b) - endOf(a))[0];
+            const right = track.clips.filter(c => !c.muted && c.startTime >= sel.start - 1e-3 && c.startTime < sel.end && endOf(c) > sel.end)
+                .sort((a, b) => a.startTime - b.startTime)[0];
+            if (!left || !right || left === right) continue;
+            // Extend each clip into the range as far as its source audio allows
+            const growL = Math.max(0, Math.min(sel.end - endOf(left), left.trimEnd || 0));
+            left.trimEnd = (left.trimEnd || 0) - growL;
+            const growR = Math.max(0, Math.min(right.startTime - sel.start, right.offset || 0));
+            right.offset = (right.offset || 0) - growR;
+            right.startTime -= growR;
+            const xs = right.startTime;
+            const xe = endOf(left);
+            if (xe - xs >= 0.005) {
+                left.fadeOut = xe - xs;
+                right.fadeIn = xe - xs;
+            }
+            else {
+                // No audio past the edges: fade each side at the boundary
+                const half = Math.max(0.005, (sel.end - sel.start) / 2);
+                left.fadeOut = Math.min(half, visibleDur(left));
+                right.fadeIn = Math.min(half, visibleDur(right));
+                dipped = true;
+            }
+            made.push(track.name);
+        }
+        if (!made.length) {
+            state.undoStack.pop(); // nothing changed, so no undo step
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Select across the boundary between two clips to crossfade them'), 'notice-pop-yellow');
+            return;
+        }
+        updateTotalDuration();
+        renderAllTracks();
+        resyncPlayback();
+        if (typeof doNoticePopover === 'function') {
+            doNoticePopover(dipped
+                ? translate('No audio past the clip edges, so both sides fade at the boundary')
+                : `${translate('Crossfaded')}: ${made.join(', ')}`, dipped ? 'notice-pop-yellow' : 'notice-pop-green');
+        }
+    }
+
+    /** Comping: the part of a take inside the selection goes on top of the track, so that take plays there. */
+    function useTakeForSelection(clip, track) {
+        const sel = state.selection;
+        if (!sel) return;
+        const piece = clipPortion(clip, sel.start, sel.end);
+        if (!piece) return;
+        pushUndo();
+        piece.name = clip.name;
+        piece.meta = null;
+        track.clips.push(piece);
+        state.selectedClipId = piece.id;
+        renderAllTracks();
+        resyncPlayback();
+    }
+
+    /** Every take under a timeline time on a track, top first (what a comp chooses between). */
+    function takesAt(track, t) {
+        return track.clips.filter(c => t >= c.startTime && t < c.startTime + visibleDur(c)).reverse();
+    }
+
+    /** Timeline time under a pointer x over the lanes. */
+    function timelineTimeAtClientX(clientX) {
+        const rect = clipLanesEl.getBoundingClientRect();
+        return Math.max(0, (clientX - rect.left + clipLanesEl.scrollLeft) / state.zoom);
+    }
+
+    /** Clip menu entries for comping: this take for the selection, and every take stacked under the click. */
+    function compMenuItems(e, clip, track) {
+        const sel = state.selection;
+        const items = [];
+        const inSel = !!sel && sel.trackIds.includes(track.id)
+            && clip.startTime < sel.end && clip.startTime + visibleDur(clip) > sel.start;
+        if (inSel) items.push({ label: translate('Use this take for the selection'), action: () => useTakeForSelection(clip, track) });
+        const stack = clipLanesEl ? takesAt(track, timelineTimeAtClientX(e.clientX)) : [];
+        if (stack.length > 1) {
+            items.push({ heading: inSel ? translate('Use for the selection') : translate('Takes here (top plays)') });
+            stack.forEach((c, k) => items.push({
+                label: c.name + (c.muted ? ` (${translate('muted')})` : ''),
+                checked: k === 0,
+                action: () => inSel ? useTakeForSelection(c, track) : reorderClip(c, track, 1)
+            }));
+            items.push({ heading: '' });
+        }
+        return items;
     }
 
     /** Layering: move a clip to the top (1) or bottom (-1) of its track, which changes what is heard. */
@@ -6007,6 +6161,7 @@ const AudioDaw = (() => {
                 renderAllTracks();
                 resyncPlayback(); // a muted clip stops covering the one below it
             }},
+            ...compMenuItems(e, clip, track),
             { label: translate('Bring to front (play this take)'), disabled: !covered && idx === track.clips.length - 1, action: () => reorderClip(clip, track, 1) },
             { label: translate('Send to back'), disabled: idx === 0, action: () => reorderClip(clip, track, -1) },
             { label: translate('Spot to time…'), action: () => spotClip(clip) },
@@ -6652,7 +6807,7 @@ const AudioDaw = (() => {
         pushUndo();
         for (const m of midiMade) {
             m.track.takeCount = (m.track.takeCount || 0) + 1;
-            const clip = newMidiClip(m.track, m.start, m.length, m.notes, `${m.track.name} ${translate('take')} ${m.track.takeCount}`);
+            const clip = newMidiClip(m.track, m.start, m.length, m.notes, `${m.track.name} ${translate('take')} ${m.track.takeCount}`, m.cc);
             state.selectedMidiClipId = clip.id;
         }
         for (const m of made) {
@@ -6893,7 +7048,7 @@ const AudioDaw = (() => {
             track.takeCount = ts.takeCount || 0;
             track.kind = ts.kind || 'audio';
             track.instrument = ts.instrument ? JSON.parse(JSON.stringify(ts.instrument)) : null;
-            track.midiClips = (ts.midiClips || []).map(c => ({ ...c, notes: c.notes.map(n => ({ ...n })) }));
+            track.midiClips = (ts.midiClips || []).map(c => ({ ...c, notes: c.notes.map(n => ({ ...n })), cc: (c.cc || []).map(e => ({ ...e })) }));
             track.fx = (ts.fx || []).filter(f => typeof AudioDawFx === 'undefined' || AudioDawFx.FX_DEFS[f.type])
                 .map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));
             track.automation = {
@@ -7910,7 +8065,7 @@ const AudioDaw = (() => {
             track.takeCount = ts.takeCount || 0;
             track.kind = ts.kind || 'audio';
             track.instrument = ts.instrument ? JSON.parse(JSON.stringify(ts.instrument)) : null;
-            track.midiClips = (ts.midiClips || []).map(c => ({ ...c, notes: c.notes.map(n => ({ ...n })) }));
+            track.midiClips = (ts.midiClips || []).map(c => ({ ...c, notes: c.notes.map(n => ({ ...n })), cc: (c.cc || []).map(e => ({ ...e })) }));
             const sampleKey = track.instrument?.sampleKey;
             if (sampleKey && blobs.has(sampleKey) && !blobStore.has(sampleKey)) {
                 try {
@@ -8491,7 +8646,11 @@ const AudioDaw = (() => {
         else if (key === 'y' && !mod) { setTool('range'); }
         else if (key === 'z' && !mod) { zoomToFit(); }
         else if (key === 'b' && !mod) { switchBottomTab('beats'); }
-        else if (key === 'f' && !mod) { switchBottomTab('fx'); }
+        else if (key === 'f' && !mod) {
+            // With a selection, F crossfades the clips meeting inside it; otherwise it opens the FX tab
+            if (sel) crossfadeSelection(sel);
+            else switchBottomTab('fx');
+        }
         else if (key === '+' || key === '=') { e.preventDefault(); setZoom(state.zoom * 1.25); }
         else if (key === '-') { e.preventDefault(); setZoom(state.zoom / 1.25); }
         else if (key === 'home') { e.preventDefault(); seekTo(0); }
@@ -8522,6 +8681,7 @@ const AudioDaw = (() => {
             ['Ctrl+C / X / V', 'Copy / cut / paste at the playhead'],
             ['Delete', 'Delete the selection or the selected clip'],
             ['T', 'Split at the playhead (or at the selection edges)'],
+            ['F', 'Crossfade the clips meeting in the selection (no selection: FX tab)'],
             [', / .', 'Nudge the selected clip by one grid step'],
             ['Ctrl+D', 'Duplicate the selected clip'],
             ['M / S', 'Mute / solo the selected track'],
@@ -8654,8 +8814,11 @@ const AudioDaw = (() => {
                         resyncAllInputs(); // armed and monitored tracks get their inputs back
                     }
                 } else {
-                    // Held computer-keyboard notes end here (before a take is kept, so they close cleanly)
-                    if (initialized && typeof AudioDawInstruments !== 'undefined') AudioDawInstruments.releaseAll();
+                    // Held notes and the sustain pedal end here (before a take is kept, so they close cleanly)
+                    if (initialized && typeof AudioDawInstruments !== 'undefined') {
+                        AudioDawInstruments.releaseAll();
+                        liveControl(64, 0);
+                    }
                     if (recording) {
                         // Never leave the microphone hot while the DAW is hidden; inputs close once the take is kept
                         stopRecordingFlow();
