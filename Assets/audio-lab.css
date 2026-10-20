@@ -2854,3 +2854,25 @@ input[type="range"].daw-proll-vel::-moz-range-thumb {
     border-radius: 50%;
     background: var(--emphasis);
 }
+
+/* Tempo ruler row */
+.daw-ruler-name-tempo { height: 18px; background: var(--background-soft); }
+.daw-ruler-tempo { position: absolute; left: 0; z-index: 4; }
+.daw-tempo-flag {
+    position: absolute;
+    top: 1px;
+    height: 15px;
+    padding: 0 0.35rem 0 0.3rem;
+    border-left: 2px solid var(--emphasis);
+    background: color-mix(in srgb, var(--emphasis) 18%, var(--background));
+    color: var(--text);
+    font-size: 0.65rem;
+    line-height: 15px;
+    white-space: nowrap;
+    border-radius: 0 3px 3px 0;
+    cursor: grab;
+    user-select: none;
+}
+.daw-tempo-flag::before { content: '\2669 '; opacity: 0.8; }
+.daw-tempo-flag.base { cursor: default; }
+.daw-tempo-flag:hover { background: color-mix(in srgb, var(--emphasis) 34%, var(--background)); }

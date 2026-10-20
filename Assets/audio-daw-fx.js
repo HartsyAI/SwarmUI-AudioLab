@@ -362,12 +362,15 @@ const AudioDawFx = (() => {
         setEffectEnabled(chain, index, fx, when);
     }
 
-    /** Retune all tempo-synced delays after a BPM change. */
-    function syncDelayTimes(chain, fxArray, bpm, when) {
+    /** Retune all tempo-synced delays to a BPM at `when` (fresh: drop retunes queued from then on first). */
+    function syncDelayTimes(chain, fxArray, bpm, when, fresh = false) {
         if (!chain) return;
         chain.effects.forEach((e, i) => {
             const fx = fxArray[i];
             if (e.type === 'delay' && fx?.params.sync) {
+                if (fresh) {
+                    try { e.inst.delay.delayTime.cancelScheduledValues(when); } catch (_) {}
+                }
                 setParam(e.inst.delay.delayTime, syncedDelayTime(fx.params.division, bpm), when);
             }
         });

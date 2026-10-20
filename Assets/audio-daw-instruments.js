@@ -444,6 +444,7 @@ const AudioDawInstruments = (() => {
         const open = new Map();
         const notes = [];
         const cc = [];
+        const tempos = []; // tempo changes after the first, in seconds
         for (const ev of events) {
             const sec = lastSec + (ev.tick - lastTick) / division * usPerBeat / 1e6;
             lastSec = sec;
@@ -451,6 +452,7 @@ const AudioDawInstruments = (() => {
             if (ev.type === 'tempo') {
                 usPerBeat = ev.us;
                 if (firstTempo === null) firstTempo = ev.us;
+                else if (sec > 0.0005) tempos.push({ t: sec, bpm: 60e6 / ev.us });
                 continue;
             }
             if (ev.type === 'cc') {
@@ -468,14 +470,22 @@ const AudioDawInstruments = (() => {
             }
         }
         notes.sort((a, b) => a.start - b.start);
-        return { notes, cc, bpm: firstTempo ? 60e6 / firstTempo : null };
+        return { notes, cc, tempos, bpm: firstTempo ? 60e6 / firstTempo : null };
     }
 
-    /** Write notes (seconds) and controller events (sustain pedal) as a single-track SMF at the given tempo. */
-    function writeMidiFile(notes, bpm = 120, cc = []) {
+    /**
+     * Write notes (seconds) and controller events (sustain pedal) as a single-track SMF, at the given tempo plus
+     * any later tempo changes [{t (seconds), bpm}].
+     */
+    function writeMidiFile(notes, bpm = 120, cc = [], tempos = []) {
         const ppq = 480;
-        const secToTick = (s) => Math.round(s * bpm / 60 * ppq);
+        const tm = AudioDawTimeline.makeTempoMap(bpm, tempos);
+        const secToTick = (s) => Math.round(tm.beatsAt(s) * ppq);
         const evs = [];
+        for (const seg of tm.segments.slice(1)) {
+            const us = Math.round(60e6 / seg.bpm);
+            evs.push({ tick: Math.round(seg.beat * ppq), data: [0xff, 0x51, 0x03, (us >> 16) & 0xff, (us >> 8) & 0xff, us & 0xff] });
+        }
         for (const e of cc) {
             evs.push({ tick: secToTick(e.t), data: [0xb0, e.n & 0x7f, Math.max(0, Math.min(127, Math.round(e.v)))] });
         }
@@ -483,7 +493,9 @@ const AudioDawInstruments = (() => {
             evs.push({ tick: secToTick(n.start), data: [0x90, n.pitch & 0x7f, Math.max(1, Math.min(127, Math.round(n.vel || 100)))] });
             evs.push({ tick: secToTick(n.start + n.dur), data: [0x80, n.pitch & 0x7f, 0] });
         }
-        evs.sort((a, b) => a.tick - b.tick || (a.data[0] === 0x80 ? -1 : 1));
+        // Same tick: tempo first, then note-offs, controllers, note-ons
+        const rank = (d) => ({ 0xff: 0, 0x80: 1, 0xb0: 2, 0x90: 3 }[d[0]] ?? 4);
+        evs.sort((a, b) => a.tick - b.tick || rank(a.data) - rank(b.data));
         const bytes = [];
         const vlq = (v) => { const out = [v & 0x7f]; while ((v >>= 7) > 0) out.unshift((v & 0x7f) | 0x80); bytes.push(...out); };
         const us = Math.round(60e6 / bpm);

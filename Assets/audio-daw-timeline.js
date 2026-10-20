@@ -1,6 +1,6 @@
 /**
  * AudioDawTimeline: the stacked rulers above the arrangement, the way a pro DAW shows them:
- * Bars|Beats, Min:Secs and a Markers row, plus the loop/punch range, the selection and the playhead.
+ * Bars|Beats, Min:Secs, Tempo and Markers rows, plus the loop/punch range, the selection and the playhead.
  * Only the visible slice is drawn (one viewport-wide canvas that follows the scroll), so a long session at a
  * high zoom never exceeds the browser's canvas size limit.
  * Reuses SwarmUI utilities: createDiv().
@@ -10,8 +10,50 @@ const AudioDawTimeline = (() => {
 
     const ROW_BARS = 18;
     const ROW_TIME = 16;
+    const ROW_TEMPO = 18;
     const ROW_MARKERS = 18;
-    const HEIGHT = ROW_BARS + ROW_TIME + ROW_MARKERS;
+    const HEIGHT = ROW_BARS + ROW_TIME + ROW_TEMPO + ROW_MARKERS;
+
+    /**
+     * A tempo map: the session tempo from zero plus later changes [{t (seconds), bpm}]. Beats are counted from
+     * zero through every change, so bars follow the tempo while anything placed in seconds stays put.
+     * @returns {{beatsAt(t): number, timeAtBeat(b): number, bpmAt(t): number, segments: Array}}
+     */
+    function makeTempoMap(bpm, changes = []) {
+        const segments = [{ t: 0, bpm: Math.max(1, bpm || 120), beat: 0 }];
+        for (const c of [...(changes || [])].filter(c => c.t > 1e-6 && c.bpm > 0).sort((a, b) => a.t - b.t)) {
+            const prev = segments[segments.length - 1];
+            segments.push({ t: c.t, bpm: c.bpm, beat: prev.beat + (c.t - prev.t) * prev.bpm / 60 });
+        }
+        const segAtTime = (t) => {
+            let seg = segments[0];
+            for (const x of segments) {
+                if (x.t <= t) seg = x;
+                else break;
+            }
+            return seg;
+        };
+        const segAtBeat = (b) => {
+            let seg = segments[0];
+            for (const x of segments) {
+                if (x.beat <= b) seg = x;
+                else break;
+            }
+            return seg;
+        };
+        return {
+            segments,
+            beatsAt: (t) => {
+                const seg = segAtTime(t);
+                return seg.beat + (t - seg.t) * seg.bpm / 60;
+            },
+            timeAtBeat: (b) => {
+                const seg = segAtBeat(b);
+                return seg.t + (b - seg.beat) * 60 / seg.bpm;
+            },
+            bpmAt: (t) => segAtTime(t).bpm
+        };
+    }
 
     /**
      * Create a timeline ruler instance.
@@ -36,6 +78,8 @@ const AudioDawTimeline = (() => {
             mode: opts.mode || 'time', // which row the grid follows; both rows always draw
             bpm: opts.bpm || 120,
             timeSig: opts.timeSig || [4, 4],
+            tempoChanges: [],         // [{id, t, bpm}] after the session tempo
+            tempoMap: makeTempoMap(opts.bpm || 120),
             snapper: null,
             callbacks: {}
         };
@@ -58,13 +102,19 @@ const AudioDawTimeline = (() => {
         container.appendChild(playheadMarker);
         state.playheadMarker = playheadMarker;
 
+        const tempoLayer = createDiv(null, 'daw-ruler-tempo');
+        tempoLayer.style.top = (ROW_BARS + ROW_TIME) + 'px';
+        tempoLayer.style.height = ROW_TEMPO + 'px';
+        container.appendChild(tempoLayer);
+        state.tempoLayer = tempoLayer;
+
         const markerLayer = createDiv(null, 'daw-ruler-markers');
-        markerLayer.style.top = (ROW_BARS + ROW_TIME) + 'px';
+        markerLayer.style.top = (ROW_BARS + ROW_TIME + ROW_TEMPO) + 'px';
         markerLayer.style.height = ROW_MARKERS + 'px';
         container.appendChild(markerLayer);
         state.markerLayer = markerLayer;
 
-        // Scrub on the Bars and Min:Secs rows; the marker row adds and edits markers instead.
+        // Scrub on the Bars and Min:Secs rows; the tempo and marker rows add and edit their events instead.
         const timeAt = (clientX) => {
             const rect = container.getBoundingClientRect();
             return Math.max(0, Math.min((clientX - rect.left + container.scrollLeft) / state.zoom, state.totalDuration));
@@ -73,7 +123,7 @@ const AudioDawTimeline = (() => {
         canvas.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
             const rect = container.getBoundingClientRect();
-            if (e.clientY - rect.top >= ROW_BARS + ROW_TIME) return; // marker row: handled by markerLayer
+            if (e.clientY - rect.top >= ROW_BARS + ROW_TIME) return; // tempo and marker rows: their own layers
             e.preventDefault();
             canvas.setPointerCapture(e.pointerId);
             fire(state, 'scrub', timeAt(e.clientX));
@@ -94,6 +144,13 @@ const AudioDawTimeline = (() => {
             fire(state, 'markerAdd', t);
         });
         markerLayer.title = translate('Markers: double-click to add, drag to move, click to jump, right-click for options');
+        tempoLayer.addEventListener('dblclick', (e) => {
+            if (e.target !== tempoLayer) return;
+            let t = timeAt(e.clientX);
+            if (state.snapper) t = state.snapper(t);
+            fire(state, 'tempoAdd', t);
+        });
+        tempoLayer.title = translate('Tempo: double-click to add a change, drag one to move it, double-click it to set its BPM, right-click for options');
 
         // Loop/punch region handles
         const loopStartHandle = createDiv(null, 'daw-loop-handle daw-loop-start');
@@ -126,6 +183,7 @@ const AudioDawTimeline = (() => {
         state.canvas.style.left = state.scrollLeft + 'px';
         updateLoopHandles(state);
         renderMarkers(state);
+        renderTempo(state);
         draw(state);
         positionPlayhead(state);
     }
@@ -152,35 +210,37 @@ const AudioDawTimeline = (() => {
         ctx.fillStyle = bgColor;
         ctx.fillRect(0, 0, viewW, ROW_BARS + ROW_TIME);
         ctx.fillStyle = softBg;
-        ctx.fillRect(0, ROW_BARS + ROW_TIME, viewW, ROW_MARKERS);
+        ctx.fillRect(0, ROW_BARS + ROW_TIME, viewW, ROW_TEMPO + ROW_MARKERS);
         const X = (t) => Math.round(t * zoom - x0) + 0.5;
 
         ctx.font = '10px var(--font-monospace, monospace)';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
 
-        // Row 1: Bars|Beats
-        const secPerBeat = 60 / state.bpm;
+        // Row 1: Bars|Beats, through the tempo map (the fastest tempo in view sets how sparse the labels get)
+        const tm = state.tempoMap;
         const perBar = state.timeSig[0] || 4;
-        const secPerBar = secPerBeat * perBar;
+        const inView = tm.segments.filter((g, i) => g.t <= t1 && (i === tm.segments.length - 1 || tm.segments[i + 1].t > t0));
+        const fastest = Math.max(...inView.map(g => g.bpm));
+        const secPerBar = 60 / fastest * perBar;
         let labelEvery = 1;
         while (secPerBar * zoom * labelEvery < 44) labelEvery *= 2;
-        ctx.strokeStyle = lineColor;
         ctx.lineWidth = 1;
-        if (secPerBeat * zoom >= 6) {
-            const firstBeat = Math.floor(t0 / secPerBeat);
-            for (let b = firstBeat; b * secPerBeat <= t1; b++) {
-                if (b % perBar === 0) continue;
-                const x = X(b * secPerBeat);
+        const firstBeat = Math.floor(tm.beatsAt(t0));
+        for (let b = firstBeat; ; b++) {
+            const t = tm.timeAtBeat(b);
+            if (t > t1) break;
+            const x = X(t);
+            if (b % perBar !== 0) {
+                if (60 / tm.bpmAt(t) * zoom < 6) continue;
+                ctx.strokeStyle = lineColor;
                 ctx.beginPath();
                 ctx.moveTo(x, ROW_BARS - 4);
                 ctx.lineTo(x, ROW_BARS);
                 ctx.stroke();
+                continue;
             }
-        }
-        const firstBar = Math.floor(t0 / secPerBar);
-        for (let bar = firstBar; bar * secPerBar <= t1; bar++) {
-            const x = X(bar * secPerBar);
+            const bar = b / perBar;
             ctx.strokeStyle = textColor;
             ctx.beginPath();
             ctx.moveTo(x, bar % labelEvery === 0 ? 2 : ROW_BARS - 7);
@@ -235,7 +295,7 @@ const AudioDawTimeline = (() => {
 
         // Row separators
         ctx.strokeStyle = lineColor;
-        for (const y of [ROW_BARS, ROW_BARS + ROW_TIME, HEIGHT]) {
+        for (const y of [ROW_BARS, ROW_BARS + ROW_TIME, ROW_BARS + ROW_TIME + ROW_TEMPO, HEIGHT]) {
             ctx.beginPath();
             ctx.moveTo(0, y - 0.5);
             ctx.lineTo(viewW, y - 0.5);
@@ -296,6 +356,62 @@ const AudioDawTimeline = (() => {
                 e.preventDefault();
                 e.stopPropagation();
                 fire(state, 'markerContext', m.id, e);
+            });
+            layer.appendChild(flag);
+        }
+    }
+
+    /** Tempo row: the session tempo at zero, then a flag per change (drag, double-click and right-click on each). */
+    function renderTempo(state) {
+        const layer = state.tempoLayer;
+        layer.style.width = Math.max(state.totalDuration * state.zoom, state.container.clientWidth) + 'px';
+        layer.innerHTML = '';
+        const base = createDiv(null, 'daw-tempo-flag base');
+        base.style.left = '0px';
+        base.textContent = `${Math.round(state.bpm * 100) / 100}`;
+        base.title = translate('Session tempo. Double-click to set it');
+        base.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            fire(state, 'tempoEdit', null);
+        });
+        layer.appendChild(base);
+        for (const c of state.tempoChanges) {
+            const flag = createDiv(null, 'daw-tempo-flag');
+            flag.style.left = (c.t * state.zoom) + 'px';
+            flag.textContent = `${Math.round(c.bpm * 100) / 100}`;
+            flag.title = `${Math.round(c.bpm * 100) / 100} BPM ${translate('from')} ${formatRulerTime(c.t)}. ${translate('Drag to move, double-click to set the tempo, right-click for options')}`;
+            flag.addEventListener('pointerdown', (e) => {
+                if (e.button !== 0) return;
+                e.preventDefault();
+                e.stopPropagation();
+                flag.setPointerCapture(e.pointerId);
+                const startX = e.clientX;
+                let moved = false;
+                let t = c.t;
+                const onMove = (me) => {
+                    if (!moved && Math.abs(me.clientX - startX) < 3) return;
+                    moved = true;
+                    t = Math.max(0.01, c.t + (me.clientX - startX) / state.zoom);
+                    if (state.snapper) t = Math.max(0.01, state.snapper(t));
+                    flag.style.left = (t * state.zoom) + 'px';
+                };
+                const onUp = (ue) => {
+                    try { flag.releasePointerCapture(ue.pointerId); } catch (_) {}
+                    flag.removeEventListener('pointermove', onMove);
+                    flag.removeEventListener('pointerup', onUp);
+                    if (moved) fire(state, 'tempoMove', c.id, t);
+                };
+                flag.addEventListener('pointermove', onMove);
+                flag.addEventListener('pointerup', onUp);
+            });
+            flag.addEventListener('dblclick', (e) => {
+                e.stopPropagation();
+                fire(state, 'tempoEdit', c.id);
+            });
+            flag.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                fire(state, 'tempoContext', c.id, e);
             });
             layer.appendChild(flag);
         }
@@ -438,10 +554,13 @@ const AudioDawTimeline = (() => {
             /** Get current zoom level. */
             getZoom() { return state.zoom; },
 
-            /** Set tempo + time signature. */
-            setTempo(bpm, timeSig) {
+            /** Set the session tempo, time signature and (optionally) the later tempo changes [{id, t, bpm}]. */
+            setTempo(bpm, timeSig, changes) {
                 state.bpm = bpm || state.bpm;
                 if (timeSig) state.timeSig = timeSig;
+                if (changes) state.tempoChanges = changes.slice().sort((a, b) => a.t - b.t);
+                state.tempoMap = makeTempoMap(state.bpm, state.tempoChanges);
+                renderTempo(state);
                 draw(state);
             },
 
@@ -457,7 +576,7 @@ const AudioDawTimeline = (() => {
             setSnapper(fn) { state.snapper = fn; },
 
             /** Subscribe: 'seek', 'scrub', 'loopChange', 'markerAdd', 'markerMove', 'markerClick',
-             *  'markerRename', 'markerContext'. */
+             *  'markerRename', 'markerContext', 'tempoAdd', 'tempoMove', 'tempoEdit', 'tempoContext'. */
             on(event, callback) {
                 if (!state.callbacks[event]) state.callbacks[event] = [];
                 state.callbacks[event].push(callback);
@@ -481,5 +600,5 @@ const AudioDawTimeline = (() => {
         };
     }
 
-    return { create, formatRulerTime, HEIGHT };
+    return { create, formatRulerTime, makeTempoMap, HEIGHT };
 })();

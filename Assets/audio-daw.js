@@ -59,6 +59,7 @@ const AudioDaw = (() => {
             masterLimiterEnabled: true,
             beatPattern: { steps: 16, swing: 0, lanes: [] },
             bpm: 120,
+            tempoMap: [],          // later tempo changes [{id, t (seconds), bpm}]; bpm runs from zero
             timeSignature: [4, 4],
             currentTime: 0,
             isPlaying: false,
@@ -375,7 +376,7 @@ const AudioDaw = (() => {
 
     /** One bar (bars ruler) or five seconds (time ruler): the rewind / fast-forward step. */
     function transportStep() {
-        return state.rulerMode === 'beats' ? (60 / state.bpm) * (state.timeSignature[0] || 4) : 5;
+        return state.rulerMode === 'beats' ? barsSecondsFrom(state.currentTime) : 5;
     }
 
     function buildTransport() {
@@ -514,16 +515,7 @@ const AudioDaw = (() => {
         bpmInputEl.addEventListener('change', (e) => {
             pushUndo();
             state.bpm = Math.max(20, Math.min(300, parseInt(e.target.value) || 120));
-            bpmInputEl.value = state.bpm;
-            if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
-            updateLaneGrid();
-            updateTimeDisplay();
-            if (mixer && typeof AudioDawFx !== 'undefined') {
-                for (const [id, chain] of mixer.chains) {
-                    const tr = state.tracks.find(t => t.id === id);
-                    if (tr) AudioDawFx.syncDelayTimes(chain.fxChain, tr.fx, state.bpm, mixer.ctx.currentTime);
-                }
-            }
+            refreshTempoViews();
         });
         const sigSelect = document.createElement('select');
         sigSelect.className = 'daw-transport-timesig';
@@ -545,9 +537,7 @@ const AudioDaw = (() => {
         sigSelect.addEventListener('change', () => {
             pushUndo();
             state.timeSignature = sigSelect.value.split('/').map(Number);
-            if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
-            updateLaneGrid();
-            updateTimeDisplay();
+            refreshTempoViews();
         });
         tempoGroup.appendChild(bpmLabel);
         tempoGroup.appendChild(bpmInputEl);
@@ -660,18 +650,60 @@ const AudioDaw = (() => {
         { id: '10ms', label: '10 ms', seconds: 0.01 }
     ];
 
-    /** Seconds per grid step. Auto follows the zoom: the finest musical (or round-second) step >= ~12 px. */
-    function gridStep() {
-        const g = GRID_VALUES.find(x => x.id === state.gridValue);
-        const secPerBeat = 60 / state.bpm;
-        if (g && g.bars) return g.bars * secPerBeat * (state.timeSignature[0] || 4);
-        if (g && g.beats) return g.beats * secPerBeat;
-        if (g && g.seconds) return g.seconds;
-        if (state.rulerMode === 'beats') {
-            let grid = secPerBeat;
-            while ((grid / 2) * state.zoom >= 12 && grid > secPerBeat / 4 + 1e-9) grid /= 2;
-            return grid;
+    // ===== TEMPO MAP =====
+    // state.bpm runs from zero and state.tempoMap holds later changes [{id, t, bpm}]. Clips and MIDI live in
+    // seconds, so a tempo change moves the bars (ruler, grid, snapping, counters, click), never the audio.
+
+    let tempoCache = null;
+
+    /** The session's tempo map ({beatsAt, timeAtBeat, bpmAt, segments}), rebuilt only when the tempo changes. */
+    function tempo() {
+        const key = state.bpm + '|' + (state.tempoMap || []).map(c => `${c.t}:${c.bpm}`).join(',');
+        if (!tempoCache || tempoCache.key !== key) {
+            tempoCache = { key, map: AudioDawTimeline.makeTempoMap(state.bpm, state.tempoMap || []) };
         }
+        return tempoCache.map;
+    }
+
+    function bpmAt(t) {
+        return tempo().bpmAt(Math.max(0, t));
+    }
+
+    /** Seconds from t to n bars later, through the tempo map. */
+    function barsSecondsFrom(t, n = 1) {
+        const tm = tempo();
+        return tm.timeAtBeat(tm.beatsAt(t) + n * (state.timeSignature[0] || 4)) - t;
+    }
+
+    /** Seconds of the fewest whole bars (at least one) from t that cover `seconds`. */
+    function wholeBarsFrom(t, seconds) {
+        const tm = tempo();
+        const beats = tm.beatsAt(t + seconds) - tm.beatsAt(t);
+        return barsSecondsFrom(t, Math.max(1, Math.ceil(beats / (state.timeSignature[0] || 4) - 1e-6)));
+    }
+
+    /** The grid in beats when it is musical (null for a seconds grid). Auto follows the zoom at the tempo around `at`. */
+    function gridBeats(at) {
+        const g = GRID_VALUES.find(x => x.id === state.gridValue);
+        if (g && g.bars) return g.bars * (state.timeSignature[0] || 4);
+        if (g && g.beats) return g.beats;
+        if (g && g.seconds) return null;
+        if (state.rulerMode === 'beats') {
+            const secPerBeat = 60 / bpmAt(at);
+            let beats = 1;
+            while ((beats / 2) * secPerBeat * state.zoom >= 12 && beats > 1 / 4 + 1e-9) beats /= 2;
+            return beats;
+        }
+        return null;
+    }
+
+    /** Seconds per grid step around `at` (the playhead by default). Auto follows the zoom: the finest musical
+     *  (or round-second) step >= ~12 px. */
+    function gridStep(at = state?.currentTime || 0) {
+        const gb = gridBeats(at);
+        if (gb !== null) return gb * 60 / bpmAt(at);
+        const g = GRID_VALUES.find(x => x.id === state.gridValue);
+        if (g && g.seconds) return g.seconds;
         let grid = 5;
         for (const step of [5, 1, 0.5, 0.1]) {
             if (step * state.zoom >= 12) grid = step;
@@ -679,11 +711,91 @@ const AudioDaw = (() => {
         return grid;
     }
 
-    /** Quantize a timeline position to the grid. No-op in Slip mode. */
+    /** Quantize a timeline position to the grid (musical grids through the tempo map). No-op in Slip mode. */
     function snapTime(t) {
         if (!state || state.editMode === 'slip') return t;
-        const grid = gridStep();
+        const gb = gridBeats(t);
+        if (gb !== null) {
+            const tm = tempo();
+            return tm.timeAtBeat(Math.round(tm.beatsAt(t) / gb) * gb);
+        }
+        const grid = gridStep(t);
         return Math.round(t / grid) * grid;
+    }
+
+    /** Push the tempo to every view that shows bars. */
+    function refreshTempoViews() {
+        if (timeline) timeline.setTempo(state.bpm, state.timeSignature, state.tempoMap || []);
+        if (bpmInputEl) bpmInputEl.value = state.bpm;
+        updateLaneGrid();
+        updateTimeDisplay();
+        retuneTempoDelays();
+    }
+
+    let tempoSeq = 0;
+
+    /** A tempo change at t (snapped to the grid); at zero it sets the session tempo instead. */
+    function addTempoChange(t) {
+        t = Math.max(0, snapTime(t));
+        if (t < 0.01) {
+            editTempo(null);
+            return;
+        }
+        if ((state.tempoMap || []).some(c => Math.abs(c.t - t) < 0.001)) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('There is already a tempo change here'), 'notice-pop-yellow');
+            return;
+        }
+        const val = prompt(translate('Tempo from here (BPM):'), String(Math.round(bpmAt(t) * 100) / 100));
+        if (val === null) return;
+        const bpm = parseFloat(val);
+        if (!(bpm >= 20 && bpm <= 400)) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Tempo must be between 20 and 400 BPM'), 'notice-pop-yellow');
+            return;
+        }
+        pushUndo();
+        state.tempoMap = [...(state.tempoMap || []), { id: `tempo-${Date.now().toString(36)}-${++tempoSeq}`, t, bpm }]
+            .sort((a, b) => a.t - b.t);
+        refreshTempoViews();
+    }
+
+    /** Set a tempo change's BPM, or the session tempo (id null). */
+    function editTempo(id) {
+        const c = id ? (state.tempoMap || []).find(x => x.id === id) : null;
+        if (id && !c) return;
+        const val = prompt(c ? translate('Tempo from here (BPM):') : translate('Session tempo (BPM):'), String(c ? c.bpm : state.bpm));
+        if (val === null) return;
+        const bpm = parseFloat(val);
+        if (!(bpm >= 20 && bpm <= 400)) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Tempo must be between 20 and 400 BPM'), 'notice-pop-yellow');
+            return;
+        }
+        pushUndo();
+        if (c) c.bpm = bpm;
+        else state.bpm = bpm;
+        refreshTempoViews();
+    }
+
+    function moveTempo(id, t) {
+        const c = (state.tempoMap || []).find(x => x.id === id);
+        if (!c || Math.abs(c.t - t) < 1e-4) return;
+        pushUndo();
+        c.t = Math.max(0.01, t);
+        state.tempoMap.sort((a, b) => a.t - b.t);
+        refreshTempoViews();
+    }
+
+    function deleteTempo(id) {
+        if (!(state.tempoMap || []).some(x => x.id === id)) return;
+        pushUndo();
+        state.tempoMap = state.tempoMap.filter(x => x.id !== id);
+        refreshTempoViews();
+    }
+
+    function showTempoMenu(id, e) {
+        dawMenu(e, [
+            { label: translate('Set tempo…'), action: () => editTempo(id) },
+            { label: translate('Delete tempo change'), action: () => deleteTempo(id) }
+        ]);
     }
 
     // ===== TIMELINE =====
@@ -697,6 +809,11 @@ const AudioDaw = (() => {
             bpm: state.bpm,
             timeSig: state.timeSignature
         });
+        timeline.setTempo(state.bpm, state.timeSignature, state.tempoMap || []);
+        timeline.on('tempoAdd', (t) => addTempoChange(t));
+        timeline.on('tempoMove', (id, t) => moveTempo(id, t));
+        timeline.on('tempoEdit', (id) => editTempo(id));
+        timeline.on('tempoContext', (id, e) => showTempoMenu(id, e));
         document.getElementById('daw_main')?.style.setProperty('--daw-ruler-h', timeline.getHeight() + 'px');
         timeline.setSnapper(snapTime);
         timeline.on('seek', (time) => {
@@ -747,7 +864,7 @@ const AudioDaw = (() => {
         const corner = document.querySelector('#daw_main .daw-ruler-corner');
         if (!corner) return;
         corner.innerHTML = '';
-        for (const [name, cls] of [[translate('Bars|Beats'), 'bars'], [translate('Min:Secs'), 'time'], [translate('Markers'), 'markers']]) {
+        for (const [name, cls] of [[translate('Bars|Beats'), 'bars'], [translate('Min:Secs'), 'time'], [translate('Tempo'), 'tempo'], [translate('Markers'), 'markers']]) {
             const row = createDiv(null, 'daw-ruler-name daw-ruler-name-' + cls);
             row.textContent = name;
             corner.appendChild(row);
@@ -758,6 +875,12 @@ const AudioDaw = (() => {
         add.title = translate('Add a marker at the playhead (Enter)');
         add.addEventListener('click', () => addMarker(state.currentTime));
         corner.querySelector('.daw-ruler-name-markers')?.appendChild(add);
+        const addTempo = document.createElement('button');
+        addTempo.className = 'daw-marker-add';
+        addTempo.textContent = '+';
+        addTempo.title = translate('Add a tempo change at the playhead');
+        addTempo.addEventListener('click', () => addTempoChange(state.currentTime));
+        corner.querySelector('.daw-ruler-name-tempo')?.appendChild(addTempo);
     }
 
     // ===== MARKERS =====
@@ -906,7 +1029,8 @@ const AudioDaw = (() => {
                 const chain = mixer?.chains.get(track.id);
                 if (chain?.fxChain) {
                     AudioDawFx.applyEffectParams(chain.fxChain, index, fx, mixer.ctx.currentTime,
-                        { bpm: state.bpm, ctx: mixer.ctx });
+                        { bpm: bpmAt(currentTimelineTime()), ctx: mixer.ctx });
+                    if (fx.type === 'delay' && fx.params.sync && state.tempoMap?.length) retuneTempoDelays();
                 }
             },
             onToggle: (track, fx, index) => {
@@ -1003,8 +1127,7 @@ const AudioDaw = (() => {
                     }
                     sig.value = want;
                 }
-                if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
-                updateLaneGrid();
+                refreshTempoViews();
             },
             /** A recording dropped on the Score sheet lands as a track like any other import. */
             importClip: async (file) => {
@@ -1295,7 +1418,7 @@ const AudioDaw = (() => {
             zoom: Math.max(80, Math.min(400, state.zoom * 1.5)),
             gridStep: () => gridStep(),
             snap: (t) => found ? snapTime(found.clip.startTime + t) - found.clip.startTime : t,
-            bpm: () => state.bpm,
+            bpm: () => found ? bpmAt(found.clip.startTime) : state.bpm,
             play: (pitch, vel) => {
                 if (!found) return;
                 const ctx = getAudioContext();
@@ -1802,13 +1925,13 @@ const AudioDaw = (() => {
         else {
             prompt = description;
             if (tempoHints && !TEMPO_PARAM_ENGINES.has(engineId) && !/\bbpm\b/i.test(description)) {
-                prompt += `, ${state.bpm} BPM`;
+                prompt += `, ${Math.round(bpmAt(state.currentTime))} BPM`;
             }
         }
         if (duration > 0) params.textaudioduration = Math.max(1, Math.min(1000, duration));
         if (seed >= 0) params.seed = seed;
         if (tempoHints && TEMPO_PARAM_ENGINES.has(engineId)) {
-            params.textaudiobpm = Math.max(10, Math.min(300, Math.round(state.bpm)));
+            params.textaudiobpm = Math.max(10, Math.min(300, Math.round(bpmAt(state.currentTime))));
             const beats = String(state.timeSignature[0]);
             if (CORE_BEATS_PER_BAR.includes(beats)) params.textaudiotimesignature = beats;
         }
@@ -2191,7 +2314,7 @@ const AudioDaw = (() => {
                 const tempoLbl = document.createElement('label');
                 tempoLbl.htmlFor = 'daw_gen_tempo_hints';
                 tempoLbl.className = 'daw-stems-ctl-label';
-                tempoLbl.textContent = translate('Match project tempo') + ` (${state.bpm} BPM, ${state.timeSignature.join('/')})`;
+                tempoLbl.textContent = translate('Match project tempo') + ` (${Math.round(bpmAt(state.currentTime))} BPM, ${state.timeSignature.join('/')})`;
                 tempoRow.appendChild(tempoCheck);
                 tempoRow.appendChild(tempoLbl);
                 sideCol.appendChild(tempoRow);
@@ -2505,6 +2628,7 @@ const AudioDaw = (() => {
             const chain = buildTrackChain(offlineCtx, bus, masterGain);
             if (stems) chain.trackGain.gain.value = bus.volume;
             scheduleTrackAutomation(chain, bus, { ...origin, fresh: true });
+            scheduleTempoDelays(chain, bus, origin);
             busChains.set(bus.id, chain);
         }
         const renderSet = stemBus
@@ -2518,6 +2642,7 @@ const AudioDaw = (() => {
                 connectSends(offlineCtx, chain, track, (busId) => busChains.get(busId)?.input || null, { ignoreSolo: stems });
             }
             scheduleTrackAutomation(chain, track, { ...origin, fresh: true });
+            scheduleTempoDelays(chain, track, origin);
             const plan = trackAudibleSegments(track);
             for (const clip of track.clips) {
                 if (clip.muted) continue;
@@ -3242,7 +3367,7 @@ const AudioDaw = (() => {
         const trackGain = ctx.createGain();
         trackGain.gain.value = computeTrackGain(track);
         const fxChain = (typeof AudioDawFx !== 'undefined')
-            ? AudioDawFx.buildFxChain(ctx, track.fx, { bpm: state.bpm }) : null;
+            ? AudioDawFx.buildFxChain(ctx, track.fx, { bpm: bpmAt(state.currentTime) }) : null;
         if (fxChain) {
             input.connect(fxChain.input);
             fxChain.output.connect(trackGain);
@@ -3780,7 +3905,8 @@ const AudioDaw = (() => {
         }
     }
 
-    /** Stopped transport: hold each envelope at its value under the playhead, so monitoring hears that level. */
+    /** Stopped transport: hold each envelope at its value under the playhead, so monitoring hears that level (and
+     *  tempo-synced delays at the tempo there). */
     function holdTrackAutomation(chain, track, at) {
         const now = chain.volAuto.context.currentTime;
         const hasFx = typeof AudioDawFx !== 'undefined' && track.automationMode !== 'off';
@@ -3793,6 +3919,42 @@ const AudioDaw = (() => {
             try { chain.trackPan.pan.cancelScheduledValues(now); } catch (_) {}
             chain.trackPan.pan.setValueAtTime(pan?.length && hasFx
                 ? Math.max(-1, Math.min(1, base + AudioDawFx.envelopeValueAt(pan, at))) : base, now);
+        }
+        if (chain.fxChain && typeof AudioDawFx !== 'undefined') {
+            AudioDawFx.syncDelayTimes(chain.fxChain, track.fx || [], bpmAt(at), now, true);
+        }
+    }
+
+    /** Tempo-synced delays follow the tempo map: the tempo where the window starts, then each change inside it. */
+    function scheduleTempoDelays(chain, track, { t0Ctx, t0Timeline, windowEnd = Infinity, fresh = true }) {
+        if (!chain.fxChain || typeof AudioDawFx === 'undefined') return;
+        AudioDawFx.syncDelayTimes(chain.fxChain, track.fx || [], bpmAt(t0Timeline), t0Ctx, fresh);
+        for (const c of state.tempoMap || []) {
+            if (c.t > t0Timeline && c.t < windowEnd) {
+                AudioDawFx.syncDelayTimes(chain.fxChain, track.fx || [], c.bpm, t0Ctx + (c.t - t0Timeline));
+            }
+        }
+    }
+
+    /** After a tempo or delay edit: live delays held at the playhead when stopped, re-queued from it when playing. */
+    function retuneTempoDelays() {
+        if (!mixer || !state) return;
+        for (const track of state.tracks) {
+            const chain = mixer.chains.get(track.id);
+            if (!chain?.fxChain) continue;
+            if (!playback) {
+                holdTrackAutomation(chain, track, state.currentTime);
+                continue;
+            }
+            scheduleTempoDelays(chain, track, {
+                t0Ctx: playback.ctx.currentTime, t0Timeline: currentTimelineTime(),
+                windowEnd: playback.loop ? state.loopEnd : Infinity, fresh: true
+            });
+            if (playback.loop?.nextIterScheduled) {
+                scheduleTempoDelays(chain, track, {
+                    t0Ctx: playback.loop.nextWrapCtxTime, t0Timeline: state.loopStart, windowEnd: state.loopEnd, fresh: false
+                });
+            }
         }
     }
 
@@ -4242,6 +4404,7 @@ const AudioDaw = (() => {
         for (const track of state.tracks) {
             const chain = chainFor(track);
             scheduleTrackAutomation(chain, track, { t0Ctx, t0Timeline: P, windowEnd, fresh: iteration === 0 });
+            scheduleTempoDelays(chain, track, { t0Ctx, t0Timeline: P, windowEnd, fresh: iteration === 0 });
             const plan = trackAudibleSegments(track);
             for (const clip of track.clips) {
                 const nodes = scheduleClip(ctx, chain.input, clip, { t0Ctx, t0Timeline: P, windowEnd }, plan.get(clip.id));
@@ -4459,7 +4622,7 @@ const AudioDaw = (() => {
     function scheduleClicks() {
         if (!playback || !mixer || !state.metronome) return;
         const ctx = playback.ctx;
-        const beat = 60 / state.bpm;
+        const tm = tempo();
         const perBar = state.timeSignature[0] || 4;
         const now = ctx.currentTime;
         const horizon = now + 0.2;
@@ -4469,8 +4632,10 @@ const AudioDaw = (() => {
         for (const pass of passes) {
             const tlFrom = pass.baseTl + Math.max(0, now - pass.baseCtx);
             const tlTo = Math.min(pass.end, pass.baseTl + (horizon - pass.baseCtx));
-            for (let k = Math.ceil((tlFrom - 1e-6) / beat); k * beat <= tlTo + 1e-9 && k * beat < pass.end - 1e-6; k++) {
-                const when = pass.baseCtx + (k * beat - pass.baseTl);
+            for (let k = Math.ceil(tm.beatsAt(tlFrom) - 1e-6); ; k++) {
+                const bt = tm.timeAtBeat(k);
+                if (bt > tlTo + 1e-9 || bt >= pass.end - 1e-6) break;
+                const when = pass.baseCtx + (bt - pass.baseTl);
                 if (when < now - 0.005) continue;
                 const key = Math.round(when * 1000);
                 if (playback.clickSeen.has(key)) continue;
@@ -4619,10 +4784,12 @@ const AudioDaw = (() => {
     const TICKS_PER_BEAT = 960;
 
     /** Bar|beat|tick (960 ticks per beat), the way a pro DAW's counter reads; a length counts from zero. */
-    function formatBBT(t, { length = false } = {}) {
-        const secPerBeat = 60 / state.bpm;
+    function formatBBT(t, { length = false, from = 0 } = {}) {
+        const tm = tempo();
         const perBar = state.timeSignature[0] || 4;
-        const totalTicks = Math.round(Math.max(0, t) / secPerBeat * TICKS_PER_BEAT);
+        // A length counts the beats it spans from where it starts (tempo changes make that differ by position)
+        const beats = length ? tm.beatsAt(from + Math.max(0, t)) - tm.beatsAt(from) : tm.beatsAt(Math.max(0, t));
+        const totalTicks = Math.round(beats * TICKS_PER_BEAT);
         const ticksPerBar = perBar * TICKS_PER_BEAT;
         const bar = Math.floor(totalTicks / ticksPerBar);
         const beat = Math.floor((totalTicks % ticksPerBar) / TICKS_PER_BEAT);
@@ -4644,7 +4811,7 @@ const AudioDaw = (() => {
     function updateTimeDisplay() {
         if (!transportEl || !state) return;
         const beats = state.rulerMode === 'beats';
-        const fmt = (t, length = false) => beats ? formatBBT(t, { length }) : formatMinSec(t);
+        const fmt = (t, length = false, from = 0) => beats ? formatBBT(t, { length, from }) : formatMinSec(t);
         const set = (sel, text) => {
             const el = transportEl.querySelector(sel);
             if (el && el.textContent !== text) el.textContent = text;
@@ -4657,7 +4824,7 @@ const AudioDaw = (() => {
         const sel = state.selection;
         set('.daw-lcd-sel-start', fmt(sel ? sel.start : t));
         set('.daw-lcd-sel-end', fmt(sel ? sel.end : t));
-        set('.daw-lcd-sel-len', fmt(sel ? sel.end - sel.start : 0, true));
+        set('.daw-lcd-sel-len', fmt(sel ? sel.end - sel.start : 0, true, sel ? sel.start : t));
     }
 
     /**
@@ -4667,6 +4834,37 @@ const AudioDaw = (() => {
     function updateLaneGrid() {
         if (!clipLanesEl) return;
         let minor, major;
+        clipLanesEl.style.backgroundPosition = '';
+        clipLanesEl.style.backgroundSize = '';
+        clipLanesEl.style.backgroundRepeat = '';
+        const tm = tempo();
+        if (state.rulerMode === 'beats' && tm.segments.length > 1) {
+            // One pair of repeating layers per tempo segment, each starting on that segment's first bar or beat
+            const majorColor = 'color-mix(in srgb, var(--text-soft) 22%, transparent)';
+            const minorColor = 'color-mix(in srgb, var(--text-soft) 9%, transparent)';
+            const perBar = state.timeSignature[0] || 4;
+            const end = Math.max(state.totalDuration, state.contentDuration || 0) + 60;
+            const images = [], positions = [], sizes = [];
+            tm.segments.forEach((seg, i) => {
+                const segEnd = i + 1 < tm.segments.length ? tm.segments[i + 1].t : end;
+                const beatPx = 60 / seg.bpm * state.zoom;
+                const layer = (firstT, stepPx, color) => {
+                    const x = firstT * state.zoom;
+                    const w = segEnd * state.zoom - x;
+                    if (w <= 0) return;
+                    images.push(`repeating-linear-gradient(90deg, ${color} 0 1px, transparent 1px ${stepPx}px)`);
+                    positions.push(`${x}px 0`);
+                    sizes.push(`${w}px 100%`);
+                };
+                layer(tm.timeAtBeat(Math.ceil(seg.beat / perBar - 1e-9) * perBar), beatPx * perBar, majorColor);
+                if (beatPx >= 8) layer(tm.timeAtBeat(Math.ceil(seg.beat - 1e-9)), beatPx, minorColor);
+            });
+            clipLanesEl.style.backgroundImage = images.join(', ');
+            clipLanesEl.style.backgroundPosition = positions.join(', ');
+            clipLanesEl.style.backgroundSize = sizes.join(', ');
+            clipLanesEl.style.backgroundRepeat = images.map(() => 'no-repeat').join(', ');
+            return;
+        }
         if (state.rulerMode === 'beats') {
             minor = 60 / state.bpm;
             major = minor * (state.timeSignature[0] || 4);
@@ -5324,10 +5522,9 @@ const AudioDaw = (() => {
             const notes = take.notes.filter(n => n.start >= lo - 0.02 && n.start < hi)
                 .map(n => ({ pitch: n.pitch, start: Math.max(0, n.start - lo), dur: n.dur, vel: n.vel }));
             if (!notes.length) continue;
-            const bar = (60 / state.bpm) * (state.timeSignature[0] || 4);
             const last = Math.max(...notes.map(n => n.start + n.dur));
             const cc = take.cc.filter(c => c.t >= lo - 0.02 && c.t < hi).map(c => ({ t: Math.max(0, c.t - lo), n: c.n, v: c.v }));
-            made.push({ track: take.track, start: lo, length: rec.punch ? rec.punch.out - rec.punch.in : Math.max(bar, Math.ceil(last / bar) * bar), notes, cc });
+            made.push({ track: take.track, start: lo, length: rec.punch ? rec.punch.out - rec.punch.in : wholeBarsFrom(lo, last), notes, cc });
         }
         return made;
     }
@@ -5362,8 +5559,8 @@ const AudioDaw = (() => {
         items.push({ heading: translate('Clips') });
         items.push({ label: translate('New MIDI clip at the playhead (4 bars)'), action: () => {
             pushUndo();
-            const bar = (60 / state.bpm) * (state.timeSignature[0] || 4);
-            const clip = newMidiClip(track, snapTime(state.currentTime), bar * 4);
+            const start = snapTime(state.currentTime);
+            const clip = newMidiClip(track, start, barsSecondsFrom(start, 4));
             updateTotalDuration();
             selectMidiClip(clip, track, true);
         }});
@@ -5433,7 +5630,10 @@ const AudioDaw = (() => {
                 renderAllTracks();
             }},
             { label: translate('Export as MIDI file'), action: () => {
-                downloadBlob(AudioDawInstruments.writeMidiFile(clip.notes, state.bpm, clip.cc), `${(clip.name || 'clip').replace(/[\\/:*?"<>|]+/g, '_')}.mid`);
+                const len = AudioDawInstruments.midiClipLength(clip);
+                const tempos = (state.tempoMap || []).filter(c => c.t > clip.startTime && c.t < clip.startTime + len)
+                    .map(c => ({ t: c.t - clip.startTime, bpm: c.bpm }));
+                downloadBlob(AudioDawInstruments.writeMidiFile(clip.notes, bpmAt(clip.startTime), clip.cc, tempos), `${(clip.name || 'clip').replace(/[\\/:*?"<>|]+/g, '_')}.mid`);
             }},
             { label: translate('Delete'), action: () => deleteMidiClip(clip, track) }
         ]);
@@ -5470,15 +5670,20 @@ const AudioDaw = (() => {
                 pushUndo();
                 const empty = !state.tracks.some(t => t.clips.length || t.midiClips?.length);
                 // An empty project takes the file's tempo so the notes land on the grid
-                if (empty && parsed.bpm && Math.abs(parsed.bpm - state.bpm) > 0.01) {
-                    state.bpm = Math.round(parsed.bpm);
-                    if (bpmInputEl) bpmInputEl.value = state.bpm;
-                    if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
-                    updateLaneGrid();
+                if (empty && parsed.bpm) {
+                    state.bpm = Math.round(parsed.bpm * 100) / 100;
+                    state.tempoMap = [];
+                    refreshTempoViews();
                 }
                 const target = track || addInstrumentTrack('synth', 'Soft Keys', { snapshot: false });
                 const last = Math.max(...parsed.notes.map(n => n.start + n.dur));
-                const clip = newMidiClip(target, snapTime(state.currentTime), last + 0.05, parsed.notes, file.name.replace(/\.[^.]+$/, ''), parsed.cc);
+                const clipStart = snapTime(state.currentTime);
+                if (empty && parsed.tempos?.length) {
+                    // and its later tempo changes, placed where the clip lands
+                    state.tempoMap = parsed.tempos.filter(x => x.t > 0.001).map(x => ({ id: `tempo-${Date.now().toString(36)}-${++tempoSeq}`, t: clipStart + x.t, bpm: x.bpm }));
+                    refreshTempoViews();
+                }
+                const clip = newMidiClip(target, clipStart, last + 0.05, parsed.notes, file.name.replace(/\.[^.]+$/, ''), parsed.cc);
                 updateTotalDuration();
                 selectMidiClip(clip, target);
                 resyncPlayback();
@@ -6117,7 +6322,7 @@ const AudioDaw = (() => {
         if (beats) {
             const [bar, beat = '1', tick = '0'] = val.trim().split(/[.|:]/);
             const perBar = state.timeSignature[0] || 4;
-            t = ((parseInt(bar) - 1) * perBar + (parseInt(beat) - 1) + (parseInt(tick) || 0) / TICKS_PER_BEAT) * (60 / state.bpm);
+            t = tempo().timeAtBeat((parseInt(bar) - 1) * perBar + (parseInt(beat) - 1) + (parseInt(tick) || 0) / TICKS_PER_BEAT);
         }
         else {
             t = parseFloat(val);
@@ -6168,7 +6373,7 @@ const AudioDaw = (() => {
             { label: translate('Select clip range'), action: () => setSelection({ start: clip.startTime, end: clip.startTime + visibleDur(clip), trackIds: [track.id] }) },
             { label: translate('Copy'), action: () => { state.selectedClipId = clip.id; copySelection(); } },
             { label: translate('Separate Stems… (Demucs)'), action: () => openStemsForClip(clip, track) },
-            { label: translate('Conform to') + ` ${state.bpm} BPM…`, action: () => conformClipToBpm(clip, track) }
+            { label: translate('Conform to') + ` ${Math.round(bpmAt(clip.startTime) * 100) / 100} BPM…`, action: () => conformClipToBpm(clip, track) }
         ]);
     }
 
@@ -6666,9 +6871,9 @@ const AudioDaw = (() => {
 
 
     /** Count-in clicks ending at ctx time t0 (the downbeat recording starts on). */
-    function scheduleCountIn(ctx, t0, seconds) {
+    function scheduleCountIn(ctx, t0, seconds, bpm = state.bpm) {
         if (!mixer || seconds <= 0) return;
-        const beat = 60 / state.bpm;
+        const beat = 60 / bpm;
         const perBar = state.timeSignature[0] || 4;
         const beats = Math.round(seconds / beat);
         for (let i = 0; i < beats; i++) {
@@ -6718,8 +6923,10 @@ const AudioDaw = (() => {
         const ctx = getAudioContext();
         if (ctx.state === 'suspended') { try { await ctx.resume(); } catch (_) {} }
         const sr = ctx.sampleRate;
-        const barDur = (60 / state.bpm) * (state.timeSignature[0] || 4);
         const punch = state.punchEnabled && state.loopEnd > state.loopStart ? { in: state.loopStart, out: state.loopEnd } : null;
+        // Count-in and post-roll run at the tempo where the take starts
+        const startTempo = bpmAt(punch ? punch.in : state.currentTime);
+        const barDur = (60 / startTempo) * (state.timeSignature[0] || 4);
         const rec = { takes: [], placeholders: [], punch, postRoll: punch ? barDur / 2 : 0, stopping: false, startP: 0, startCtx: 0 };
         recording = rec;
 
@@ -6740,7 +6947,7 @@ const AudioDaw = (() => {
                 return;
             }
             rec.startCtx = pb.baseCtxTime + preRoll;
-            if (countIn > 0) scheduleCountIn(ctx, pb.baseCtxTime, countIn);
+            if (countIn > 0) scheduleCountIn(ctx, pb.baseCtxTime, countIn, startTempo);
         }
 
         const startFrame = Math.round(rec.startCtx * sr);
@@ -6957,6 +7164,7 @@ const AudioDaw = (() => {
             selectedClipId: state.selectedClipId,
             masterVolume: state.masterVolume,
             bpm: state.bpm,
+            tempoMap: (state.tempoMap || []).map(c => ({ ...c })),
             timeSignature: [...state.timeSignature],
             markers: (state.markers || []).map(m => ({ ...m })),
             beatPattern: {
@@ -7010,13 +7218,13 @@ const AudioDaw = (() => {
         state.selectedClipId = snapshot.selectedClipId;
         state.masterVolume = snapshot.masterVolume;
         state.bpm = snapshot.bpm;
-        if (bpmInputEl) bpmInputEl.value = state.bpm;
+        state.tempoMap = (snapshot.tempoMap || []).map(c => ({ ...c }));
         if (snapshot.timeSignature) {
             state.timeSignature = [...snapshot.timeSignature];
             const sig = transportEl?.querySelector('.daw-transport-timesig');
             if (sig) sig.value = state.timeSignature.join('/');
         }
-        if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
+        refreshTempoViews();
         if (snapshot.markers) state.markers = snapshot.markers.map(m => ({ ...m }));
         if (snapshot.beatPattern) {
             state.beatPattern = {
@@ -7140,23 +7348,25 @@ const AudioDaw = (() => {
      */
     async function conformClipToBpm(clip, track) {
         const guess = clip.decodedBuffer ? detectBpm(clip.decodedBuffer) : null;
+        // The tempo where the clip starts (the session tempo unless a tempo change comes first)
+        const target = Math.round(bpmAt(clip.startTime) * 100) / 100;
         const src = prompt(
             translate('Source BPM of this clip? It will be stretched to the project tempo (pitch preserved).') +
-            `\n\n"${clip.name}" → ${state.bpm} BPM` +
+            `\n\n"${clip.name}" → ${target} BPM` +
             (guess ? `\n\n${translate('Detected:')} ~${guess} BPM` : ''),
-            guess || state.bpm);
+            guess || target);
         if (!src) return;
         const srcBpm = parseFloat(src);
         if (!srcBpm || srcBpm < 20 || srcBpm > 400) {
             if (typeof doNoticePopover === 'function') doNoticePopover('Enter a BPM between 20 and 400', 'notice-pop-yellow');
             return;
         }
-        const rate = state.bpm / srcBpm;
+        const rate = target / srcBpm;
         if (Math.abs(rate - 1) < 0.001) {
             if (typeof doNoticePopover === 'function') doNoticePopover('Clip is already at project tempo', 'notice-pop-green');
             return;
         }
-        const overlay = showDawLoadingOverlay(translate('Stretching') + ` ${srcBpm} → ${state.bpm} BPM...`);
+        const overlay = showDawLoadingOverlay(translate('Stretching') + ` ${srcBpm} → ${target} BPM...`);
         try {
             const base64 = await AudioLabCore.readAsBase64(await clipAudioBlob(clip));
             const result = await AudioLabAPI.callAPI('AudioLabTimeStretch', { audio_data: base64, rate });
@@ -7164,7 +7374,7 @@ const AudioDaw = (() => {
             const blob = AudioLabCore.base64ToBlob(result.audio_data, 'audio/wav');
             pushUndo();
             const newClip = AudioDawTrack.createClip(blob, {
-                name: clip.name + ` @${state.bpm}bpm`,
+                name: clip.name + ` @${target}bpm`,
                 startTime: clip.startTime,
                 color: clip.color
             });
@@ -7217,7 +7427,7 @@ const AudioDaw = (() => {
     /** Render the pattern offline. Length = repeats x pattern + 1s tail, BPM-locked by construction. */
     async function renderBeatPatternBuffer(repeats = 1) {
         const p = state.beatPattern;
-        const stepDur = 60 / state.bpm / 4; // 16th notes
+        const stepDur = 60 / bpmAt(state.currentTime) / 4; // 16th notes, at the tempo where the pattern lands
         const patternDur = stepDur * p.steps;
         const sr = 44100;
         const ctx = new OfflineAudioContext(2, Math.ceil((patternDur * repeats + 1) * sr), sr);
@@ -7260,7 +7470,7 @@ const AudioDaw = (() => {
             src.buffer = buffer;
             src.loop = true;
             src.loopStart = 0;
-            src.loopEnd = (60 / state.bpm / 4) * state.beatPattern.steps;
+            src.loopEnd = (60 / bpmAt(state.currentTime) / 4) * state.beatPattern.steps;
             src.connect(ctx.destination);
             src.start();
             beatAudition = src;
@@ -7282,8 +7492,9 @@ const AudioDaw = (() => {
             const buffer = await renderBeatPatternBuffer(repeats);
             const blob = audioBufferToWav(buffer);
             pushUndo();
-            const track = addTrack({ name: `Beat ${state.bpm}bpm` });
-            await addClipToTrack(track, blob, { name: `beat-${state.bpm}bpm-x${repeats}`, startTime: snapTime(state.currentTime) });
+            const bpmHere = Math.round(bpmAt(state.currentTime) * 100) / 100;
+            const track = addTrack({ name: `Beat ${bpmHere}bpm` });
+            await addClipToTrack(track, blob, { name: `beat-${bpmHere}bpm-x${repeats}`, startTime: snapTime(state.currentTime) });
             updateTotalDuration();
             renderAllTracks();
             updateBottomPanel();
@@ -7975,6 +8186,7 @@ const AudioDaw = (() => {
             version: 3,
             projectName: currentProjectName || null,
             bpm: state.bpm,
+            tempoMap: (state.tempoMap || []).map(c => ({ ...c })),
             masterLimiterEnabled: state.masterLimiterEnabled,
             timeSignature: state.timeSignature,
             masterVolume: state.masterVolume,
@@ -8029,6 +8241,7 @@ const AudioDaw = (() => {
         state.zoom = keepZoom;
         if (project.projectName) currentProjectName = project.projectName;
         state.bpm = project.bpm || 120;
+        state.tempoMap = (project.tempoMap || []).filter(c => c.t > 0 && c.bpm > 0).map(c => ({ ...c }));
         state.timeSignature = project.timeSignature || [4, 4];
         state.masterVolume = project.masterVolume ?? 1.0;
         state.rulerMode = project.rulerMode || 'time';
@@ -8115,7 +8328,7 @@ const AudioDaw = (() => {
 
         buildTransport();
         if (timeline) {
-            timeline.setTempo(state.bpm, state.timeSignature);
+            timeline.setTempo(state.bpm, state.timeSignature, state.tempoMap || []);
             timeline.setMode(state.rulerMode);
             timeline.setLoop(state.loopEnabled, state.loopStart, state.loopEnd);
             timeline.setPunch(state.punchEnabled);
@@ -8331,7 +8544,7 @@ const AudioDaw = (() => {
         addTrack();
         buildTransport();
         if (timeline) {
-            timeline.setTempo(state.bpm, state.timeSignature);
+            timeline.setTempo(state.bpm, state.timeSignature, state.tempoMap || []);
             timeline.setMode(state.rulerMode);
             timeline.setLoop(false, 0, 0);
             timeline.setPunch(false);
