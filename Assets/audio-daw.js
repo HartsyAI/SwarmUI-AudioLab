@@ -5830,14 +5830,19 @@ const AudioDaw = (() => {
         if (recording) return;
         const support = AudioDawInput.support();
         const audioPossible = support.mic && support.worklet;
-        const midiOnly = state.tracks.some(t => t.armed && t.kind === 'instrument') && !state.tracks.some(t => t.armed && t.kind !== 'instrument');
-        if (!audioPossible && !midiOnly) {
-            if (typeof doNoticePopover === 'function') {
-                doNoticePopover(!support.mic
-                    ? translate('Recording audio needs HTTPS (or localhost): browsers block audio input on plain HTTP. Instrument tracks still record.')
-                    : translate('This browser cannot capture audio (no AudioWorklet).'), 'notice-pop-red');
+        if (!audioPossible) {
+            // Instrument tracks still record; armed audio tracks are skipped with a warning
+            const midiArmedAny = state.tracks.some(t => t.armed && t.kind === 'instrument');
+            const why = !support.mic
+                ? translate('Recording audio needs HTTPS (or localhost): browsers block audio input on plain HTTP. Instrument tracks still record.')
+                : translate('This browser cannot capture audio (no AudioWorklet).');
+            if (!midiArmedAny) {
+                if (typeof doNoticePopover === 'function') doNoticePopover(why, 'notice-pop-red');
+                return;
             }
-            return;
+            if (state.tracks.some(t => t.armed && t.kind !== 'instrument') && typeof doNoticePopover === 'function') {
+                doNoticePopover(why, 'notice-pop-yellow');
+            }
         }
         let armed = state.tracks.filter(t => t.armed);
         if (!armed.length) {
