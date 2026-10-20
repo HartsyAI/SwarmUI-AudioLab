@@ -2827,3 +2827,30 @@ input[type="range"].daw-transport-zoom { width: 90px; }
     pointer-events: none;
 }
 .daw-proll-velbar.selected { background: var(--text); }
+
+/* Thin sliders keep a visible thumb in Firefox, whose native range draws no thumb at 3px tall */
+input[type="range"].daw-track-volume,
+input[type="range"].daw-proll-vel {
+    height: 14px;
+    background: transparent;
+}
+input[type="range"].daw-track-volume::-moz-range-track,
+input[type="range"].daw-proll-vel::-moz-range-track {
+    height: 3px;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--text-soft) 35%, transparent);
+}
+input[type="range"].daw-track-volume::-moz-range-progress,
+input[type="range"].daw-proll-vel::-moz-range-progress {
+    height: 3px;
+    border-radius: 2px;
+    background: var(--emphasis);
+}
+input[type="range"].daw-track-volume::-moz-range-thumb,
+input[type="range"].daw-proll-vel::-moz-range-thumb {
+    width: 10px;
+    height: 10px;
+    border: none;
+    border-radius: 50%;
+    background: var(--emphasis);
+}
