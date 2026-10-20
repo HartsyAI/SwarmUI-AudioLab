@@ -355,6 +355,13 @@ first time.
 - **Clips.** Drag the small handles at a clip's top corners for fade in and fade out (the curve is drawn on the
   clip), drag its gain readout up or down for clip gain, and use the clip menu to split, duplicate, mute, or spot it
   to an exact time.
+- **Crossfades and takes.** Select a range that spans the boundary between two clips and press F: the clips overlap and
+  fade into each other. On layered takes, right-click a clip and choose **Use this take for the selection** to comp
+  that range from another take.
+- **Tempo.** The **Tempo** row above the ruler holds tempo changes: double-click to add one where you point, drag to
+  move it, double-click to set its BPM, and right-click for options. Bars, the grid, snapping, the click and the
+  count-in follow the tempo map. Clips and MIDI stay in seconds, so a tempo change never stretches audio, and
+  tempo-synced delays retune at each change.
 
 Edits undo with Ctrl+Z, and trims and splits never touch the source audio.
 
@@ -379,9 +386,10 @@ DAW work is saved three ways, and they are independent:
   a crashed tab or an accidental refresh does not lose work.
 - **Local quick saves.** Named slots, also in IndexedDB, for fast checkpoints on the machine you are working on.
 - **Server side projects.** `Project` > `Save`, `Save As`, and `Open` store named projects against your SwarmUI user
-  account through the `AudioLabSaveProject` API, so they follow you between browsers and machines. They hold up to
-  40 MB of audio. Recorded takes are lossless 32-bit float, about 11 MB per mono minute at 48 kHz, so a long
-  recording session stays in autosave and local saves.
+  account through the `AudioLabSaveProject` API, so they follow you between browsers and machines. Each clip's audio
+  is its own file beside the project, and a save uploads only the audio the server does not have yet. A single clip
+  may hold 140 MB (about 12 minutes of mono 32-bit float at 48 kHz) and a project 4 GB. Recorded takes are lossless
+  32-bit float, about 11 MB per mono minute at 48 kHz.
 
 ![The Project menu](Assets/readme/daw-project-menu.png)
 
@@ -447,7 +455,8 @@ project takes the file's tempo). Bounce an instrument track to audio to run stem
 
 The **Piano Roll** tab edits the selected MIDI clip: click to add a note, drag to move it or drag its end to resize,
 double-click or Delete to remove, set velocity, quantize to the grid, and transpose by a semitone or an octave.
-Notes sound as you place them.
+A velocity lane under the roll sets each note's velocity. A sustain pedal (CC 64) on a MIDI keyboard is recorded
+with the notes, holds them until it comes up, and is kept in `.mid` files. Notes sound as you place them.
 
 **Keys to Score** plays into the [Score](#score) tab rather than rendering audio. Pick a voice, hit `Record into
 score`, play the on-screen keyboard, and `Stop and write` quantizes what you played onto the score's grid and
@@ -574,6 +583,7 @@ Press `?` in the DAW for this list.
 | Ctrl+C / X / V | Copy / cut / paste at the playhead |
 | Delete | Delete the selection or the selected clip |
 | T | Split at the playhead (or at the selection edges) |
+| F | Crossfade the two clips across the selection |
 | , / . | Nudge the selected clip by one grid step |
 | Ctrl+D | Duplicate the selected clip |
 | M / S | Mute / solo the selected track |
@@ -859,8 +869,8 @@ No telemetry, no analytics, no update pings, no ads.
 
 Known and planned, so you can tell missing from broken:
 
-- **More DAW.** Sends and aux buses, automation write modes (Touch, Latch, Write), a tempo map, shaped crossfades,
-  take comping, and MIDI sustain, CC and note chase. [DAW_AUDIT.md](DAW_AUDIT.md) has the full list against a pro DAW.
+- **More DAW.** Groups and VCAs, automation for parameters beyond volume and pan, and a time signature change inside
+  the tempo map. [DAW_AUDIT.md](DAW_AUDIT.md) has the full list against a pro DAW.
 - **Score sections on the timeline.** The timeline has a Markers ruler, but the Score tab's sections are not placed
   on it yet.
 - **Cloud API engines.** All 20 provider definitions exist but none are tested, so all are disabled. They get

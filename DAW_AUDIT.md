@@ -45,6 +45,24 @@ from parameter ids, so `Text2Audio Style` is `textaudiostyle`.
 | 24 | Automation lane | Dragging a line segment stopped after the first step | The drag re-rendered the lane under the pointer | 7d5499e |
 | 25 | Undo | The crash-recovery autosave kept the state from before an undo | Undo and redo did not mark the session dirty | 7d5499e |
 
+## Found in review
+
+Found by the review bot on the open pull request, and by the tests that followed. Each row names the commit.
+
+| # | Flow | What happened | Cause | Commit |
+|---|------|---------------|-------|--------|
+| 26 | Solo | Soloing an aux return silenced everything sent into it | A send was gated by its source track's solo, and solo sat on the fader, so post-fader sends were muted too | 9df89b0 |
+| 27 | Solo export | Exporting a soloed return rendered silence | Tracks silent under solo were skipped, so their sends never rendered | 9df89b0 |
+| 28 | Project open and resume | Aux sends lost their bus when a project opened | Saved bus ids were not mapped to the ids the session gives the restored tracks | 9df89b0 |
+| 29 | Automation | Touch kept writing after switching from Latch or Write mid-pass | The open writer kept the mode it started with | 9df89b0 |
+| 30 | MIDI import | A file whose first tempo event came after the start lost its opening tempo | The delayed event was taken as the session tempo | 9df89b0 |
+| 31 | MIDI sustain | A sustained note kept sounding through a later clip that covered it | The covering check ran only at the note's onset | 9df89b0 |
+| 32 | Inputs | A microphone opened while the DAW was hidden stayed open | Permission finished after the tab was hidden, so nothing was left to release | 9df89b0 |
+| 33 | Crossfade | A crossfade with no boundary to cross still cleared the redo history | The undo step was taken before the pair check | 9df89b0 |
+| 34 | Instrument playback | Stopping or closing with an empty sampler threw an error | An empty sampler voice had no kill handle | 1c82847 |
+| 35 | MIDI duplicate | Duplicating a muted or colored MIDI clip lost both | The copy was built without them | 1c82847 |
+| 36 | MIDI shuffle | Deleting a MIDI clip in Shuffle mode left a gap | Only the deleted clip moved | 1c82847 |
+
 ## Mics and instruments (the input gap), now closed
 
 Before: MediaRecorder (lossy Opus), takes placed at the button press with no latency compensation, only the first
@@ -67,32 +85,27 @@ Score tab. Now:
 | Area | Pro Tools | Before | Now |
 |------|-----------|--------|-----|
 | Track header | Number, R / I / S / M, view selector, automation mode, inserts, I/O, volume and pan readouts | Name, M, S, volume, R, pan, automation toggle, meter | Number, R / I / S / M / A, pan, volume, input chooser, inserts count, dB readout, meter, right-click menu |
-| Rulers | Bars and Beats, Min:Secs, Tempo, Chords, Markers | One ruler | Bars and Beats, Min:Secs, Markers, drawn only for the visible slice |
+| Rulers | Bars and Beats, Min:Secs, Tempo, Chords, Markers | One ruler | Bars and Beats, Min:Secs, Tempo (a tempo map), Markers, drawn only for the visible slice |
 | Markers | Yes | None | Add, move, rename, jump, previous and next |
 | Counters | Main and Sub, selection Start / End / Length | Time and bars.beats | Main and sub (click to swap), Start / End / Length |
 | Edit modes and tools | Shuffle, Spot, Slip, Grid; smart tool and more | Snap toggle | Slip, Grid, Shuffle; smart and range tools; spot to time |
 | Grid and nudge | Selectable values | Followed zoom; no nudge | Bars, note values, triplets, seconds; nudge by the grid |
 | Selection | Time range across tracks | Playhead and loop only | Range across tracks: delete, split, copy, cut, paste, loop, export |
-| Clips | Fade handles, crossfades, clip gain | Numeric fades in the Clip Editor | On-clip fade handles with shapes, draggable clip gain, short seams between layered takes |
-| Takes | Playlists and comping | None | Layered takes, newest on top; bring to front or send to back |
+| Clips | Fade handles, crossfades, clip gain | Numeric fades in the Clip Editor | On-clip fade handles with shapes, draggable clip gain, crossfades across a selection (F), short seams between layered takes |
+| Takes | Playlists and comping | None | Layered takes, newest on top; bring to front or send to back; a take comped into a selected range |
 | Signal flow | Inserts pre-fader | FX after the fader | Inserts pre-fader |
 | Routing | Sends, aux buses, groups, VCAs | None | Sends (level, pre or post, mute) to aux buses with their own inserts; stems include bus returns |
 | Automation | Read, Touch, Latch, Write, Off | Volume and pan breakpoints, drawn by hand | Read, Touch, Latch, Write and Off for volume and pan, written from the faders during playback |
 | Export | Bounce a range, stems, 24-bit, 32-bit float | Full mixdown, 16-bit | Song, selection or loop; 16, 24 or 32-bit float at 44.1 or 48 kHz; stems as one ZIP |
-| MIDI | Instrument tracks, piano roll | None | Instrument tracks, MIDI clips, piano roll, `.mid` import and export |
+| MIDI | Instrument tracks, piano roll | None | Instrument tracks, MIDI clips, piano roll with a velocity lane, sustain pedal (CC 64), `.mid` import and export |
 
 ## Remaining gaps
 
 - Groups and VCAs.
 - Automation of parameters beyond volume and pan (send levels, effect parameters).
-- Tempo map and tempo ruler; the session has one BPM and meter.
-- Crossfades you can shape; layered takes only get short automatic seams.
-- Take comping across playlists.
-- MIDI: sustain pedal and CC, and a velocity lane.
+- One time signature per session: the tempo map changes BPM, not the meter.
+- Playlists: each track has one lane of clips, and takes are layered and comped in place.
 - Very long sessions: every clip still decodes its own WaveSurfer copy.
-- Server-side projects cap at 40 MB of audio (64 MB of JSON, audio inlined as base64). Lossless takes reach that
-  after about 3.5 minutes of mono recording; autosave and local saves are unaffected. Storing project audio as
-  separate, compressed files would lift it.
 
 ## Verification
 
@@ -116,10 +129,25 @@ Tested in Chromium through the proxy below, against the live site for everything
   passes, `.mid` round trip, bounce, sampler pitching (C5 from a C4 sample).
 - Every transport, header, menu and bottom-tab button, at 1600x900 and at a narrow pane.
 
+Checked on this branch head, also in Chromium through the proxy:
+
+- Tempo map: changes added, moved and removed on the Tempo row, with bars, counters, grid and click following them.
+  Undo, autosave and `.mid` export carry them.
+- Tempo-synced delay: the live delay time steps from 0.5 s at 120 BPM to 1.0 s at 60 BPM at a change at 4 s, and the
+  export's delay ends at 1.0 s.
+- Aux return: soloing a bus exports the audio sent into it (RMS 0.0155 with the bus soloed, silent before the fix).
+- Save and resume: a send follows its bus to the id the bus gets when the project is restored.
+- MIDI: a `.mid` with a tempo change after its first note imports with a base of 120 BPM and the change at 0.5 s. A
+  note under a held pedal stops at a later clip (1.5 s, not 3 s).
+- Firefox 153: the recording, WAV export, send tail, computer-keyboard MIDI and piano-roll drag checks passed with no
+  page errors, and a Touch write driven by real mouse input recorded envelope points.
+
 Not verified: a real microphone, interface or MIDI keyboard (synthetic streams and the computer keyboard stood in),
-Firefox and Safari, the Demucs install flow on a server without weights, and a SwarmUI restart loading the new
-script registrations in `AudioLab.cs` (compile-checked only; the proxy injected them in the same order). YuE, YuE2
-and MiniMax take the same request path as HeartLib but were not generated.
+Safari (no WebKit build here), the Demucs install flow on a server without weights, and a SwarmUI restart loading the
+new script registrations in `AudioLab.cs` and the project-audio endpoints (compile-checked only; the proxy injected the
+scripts in the same order, and the project-audio tests pass in an isolated copy). YuE, YuE2 and MiniMax take the same
+request path as HeartLib but were not generated. Three review fixes were checked by reading the code only: the writer
+on a mode change, the hidden-tab microphone release, and the crossfade undo check.
 
 ACE-Step on the live site is served natively by HartsyInference (`AceStep15/...`), not by the Audio Backend, which
 is why the Audio Backend never listed it. The DAW now offers those checkpoints. Verified live: a 10 s turbo request
