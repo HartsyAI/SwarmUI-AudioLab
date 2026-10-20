@@ -71,7 +71,10 @@ const AudioDaw = (() => {
             selection: null,     // {start, end, trackIds} time range across tracks
             rulerMode: 'time', // 'time' | 'beats'
             markers: [],      // [{id, time, name, color}] sorted by time
-            snapEnabled: true,
+            snapEnabled: true,  // mirrors editMode !== 'slip' (older projects stored only this)
+            editMode: 'grid',   // 'slip' | 'grid' | 'shuffle'
+            gridValue: 'auto',  // a GRID_VALUES id
+            tool: 'smart',      // 'smart' | 'range'
             zoom: 100,        // pixels per second
             scrollLeft: 0,
             totalDuration: 10,
@@ -108,6 +111,8 @@ const AudioDaw = (() => {
         const top = container.getBoundingClientRect().top;
         // 28px clearance keeps the DAW footer above the fixed version display
         container.style.height = Math.max(400, window.innerHeight - top - 28) + 'px';
+        if (timeline) timeline.redraw();
+        applyBottomBarLayout();
     }
 
     /** Bind to the static tab DOM and build the UI. Idempotent per session. */
@@ -255,8 +260,9 @@ const AudioDaw = (() => {
         const onMove = (clientX) => {
             if (!dragging) return;
             const mainRect = main.getBoundingClientRect();
-            const newWidth = Math.max(120, Math.min(clientX - mainRect.left, mainRect.width * 0.4));
+            const newWidth = Math.max(160, Math.min(clientX - mainRect.left, mainRect.width * 0.4));
             main.style.setProperty('--daw-header-width', newWidth + 'px');
+            if (timeline) timeline.redraw();
         };
         document.addEventListener('mousemove', (e) => onMove(e.clientX));
         document.addEventListener('touchmove', (e) => onMove(e.touches[0].clientX));
@@ -286,9 +292,11 @@ const AudioDaw = (() => {
         const bar = document.getElementById('daw_bottom_bar');
         const btn = document.getElementById('daw_bbar_button');
         if (!bar) return;
-        const px = parseInt(localStorage.getItem('daw_bbar_px')) || 380;
+        const px = parseInt(localStorage.getItem('daw_bbar_px')) || 300;
         const tabsH = document.getElementById('daw_bbar_tabs')?.offsetHeight || 38;
-        bar.style.height = (bottomBarShut ? tabsH : Math.max(120, px)) + 'px';
+        // The arrangement keeps at least ~45% of the DAW, however tall the panel was dragged on a bigger screen
+        const containerH = document.getElementById('daw_container')?.clientHeight || 800;
+        bar.style.height = (bottomBarShut ? tabsH : Math.max(120, Math.min(px, Math.round(containerH * 0.55)))) + 'px';
         bar.classList.toggle('daw-bbar-shut', bottomBarShut);
         if (btn) btn.innerHTML = bottomBarShut ? '&#x290A;' : '&#x290B;';
     }
@@ -303,7 +311,7 @@ const AudioDaw = (() => {
             e.stopPropagation();
             if (bottomBarShut) {
                 // Reopen to a useful height even if it was dragged tiny before
-                localStorage.setItem('daw_bbar_px', Math.max(380, parseInt(localStorage.getItem('daw_bbar_px')) || 0));
+                localStorage.setItem('daw_bbar_px', Math.max(300, parseInt(localStorage.getItem('daw_bbar_px')) || 0));
             }
             setBottomBarShut(!bottomBarShut);
         });
@@ -336,7 +344,7 @@ const AudioDaw = (() => {
 
     // ===== TRANSPORT BAR =====
 
-    // Inline SVG icons — all currentColor so they inherit theme colors (no hardcoded colors).
+    // Inline SVG icons, all currentColor so they inherit theme colors (no hardcoded colors).
     const svgFill = (path) => `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${path}</svg>`;
     const svgLine = (path) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
     const DAW_ICONS = {
@@ -346,9 +354,18 @@ const AudioDaw = (() => {
         stop: svgFill('<rect x="6" y="6" width="12" height="12" rx="1.5"/>'),
         toStart: svgFill('<rect x="5" y="5" width="3" height="14" rx="1"/><path d="M19.2 5.7v12.6a0.6 0.6 0 0 1-0.95 0.5L10 12.5a0.6 0.6 0 0 1 0-1l8.25-6.3a0.6 0.6 0 0 1 0.95 0.5z"/>'),
         toEnd: svgFill('<rect x="16" y="5" width="3" height="14" rx="1"/><path d="M4.8 5.7v12.6a0.6 0.6 0 0 0 0.95 0.5L14 12.5a0.6 0.6 0 0 0 0-1L5.75 5.2a0.6 0.6 0 0 0-0.95 0.5z"/>'),
+        rewind: svgFill('<path d="M11.6 6.3v11.4a0.6 0.6 0 0 1-0.96 0.48L3.4 12.5a0.6 0.6 0 0 1 0-0.96l7.24-5.7a0.6 0.6 0 0 1 0.96 0.47z"/><path d="M20.6 6.3v11.4a0.6 0.6 0 0 1-0.96 0.48L12.4 12.5a0.6 0.6 0 0 1 0-0.96l7.24-5.7a0.6 0.6 0 0 1 0.96 0.47z"/>'),
+        forward: svgFill('<path d="M3.4 6.3v11.4a0.6 0.6 0 0 0 0.96 0.48l7.24-5.68a0.6 0.6 0 0 0 0-0.96L4.36 5.84a0.6 0.6 0 0 0-0.96 0.47z"/><path d="M12.4 6.3v11.4a0.6 0.6 0 0 0 0.96 0.48l7.24-5.68a0.6 0.6 0 0 0 0-0.96l-7.24-5.7a0.6 0.6 0 0 0-0.96 0.47z"/>'),
+        smartTool: svgLine('<path d="M6 3l12 8.5-5.2 1.3L10 19z"/>'),
+        rangeTool: svgLine('<path d="M9 4h6M12 4v16M9 20h6"/>'),
         caretDown: svgFill('<path d="M7.5 10l4.5 5 4.5-5z"/>'),
         refresh: svgLine('<path d="M3 4v6h6"/><path d="M4.2 15a8 8 0 1 0 1.9-8.4L3 10"/>')
     };
+
+    /** One bar (bars ruler) or five seconds (time ruler): the rewind / fast-forward step. */
+    function transportStep() {
+        return state.rulerMode === 'beats' ? (60 / state.bpm) * (state.timeSignature[0] || 4) : 5;
+    }
 
     function buildTransport() {
         transportEl.innerHTML = '';
@@ -359,14 +376,25 @@ const AudioDaw = (() => {
             transportEl.appendChild(g);
             return g;
         };
+        const mkBtn = (group, html, title, onClick, cls = '') => {
+            const b = document.createElement('button');
+            b.className = 'daw-transport-btn' + cls;
+            b.innerHTML = html;
+            b.title = title;
+            b.addEventListener('click', onClick);
+            group.appendChild(b);
+            return b;
+        };
+        const mkText = (group, text, title, onClick, cls, active) =>
+            mkBtn(group, escapeHtml(text), title, onClick, ' daw-btn-text ' + cls + (active ? ' active' : ''));
 
-        // ── Transport: record (+mic), rewind, play, stop, end, loop ──
+        // ── Transport: record (+settings), return to zero, rewind, play, stop, forward, end ──
         const transGroup = mkGroup();
         const recWrap = createDiv(null, 'daw-btn-group');
         const recBtn = document.createElement('button');
-        recBtn.className = 'daw-transport-btn daw-btn-rec';
+        recBtn.className = 'daw-transport-btn daw-btn-rec' + (recording ? ' active' : '');
         recBtn.innerHTML = DAW_ICONS.record;
-        recBtn.title = translate('Record into armed track (R)');
+        recBtn.title = translate('Record the armed tracks (R)');
         recBtn.addEventListener('click', () => {
             if (recording) stopRecordingFlow(); else startRecordingFlow();
         });
@@ -374,72 +402,93 @@ const AudioDaw = (() => {
         const micBtn = document.createElement('button');
         micBtn.className = 'daw-transport-btn daw-btn-mic-settings';
         micBtn.innerHTML = DAW_ICONS.caretDown;
-        micBtn.title = translate('Microphone settings');
+        micBtn.title = translate('Record settings: default input, count-in, pre-roll, latency');
         micBtn.addEventListener('click', (e) => showMicSettingsMenu(e));
         recWrap.appendChild(micBtn);
         transGroup.appendChild(recWrap);
-        quickAppendButton(transGroup, DAW_ICONS.toStart, () => seekTo(0), ' daw-transport-btn', translate('Rewind to start'));
-        const playBtn = document.createElement('button');
-        playBtn.className = 'daw-transport-btn daw-btn-play';
-        playBtn.innerHTML = DAW_ICONS.play;
-        playBtn.title = translate('Play / Pause (Space)');
-        playBtn.addEventListener('click', togglePlayback);
-        transGroup.appendChild(playBtn);
-        quickAppendButton(transGroup, DAW_ICONS.stop, () => {
+        mkBtn(transGroup, DAW_ICONS.toStart, translate('Return to zero (Home)'), () => seekTo(0));
+        mkBtn(transGroup, DAW_ICONS.rewind, translate('Rewind one bar, or 5 s on the time grid (Shift+Left)'),
+            () => seekTo(Math.max(0, state.currentTime - transportStep())));
+        mkBtn(transGroup, state.isPlaying ? DAW_ICONS.pause : DAW_ICONS.play, translate('Play / Pause (Space)'), togglePlayback, ' daw-btn-play');
+        mkBtn(transGroup, DAW_ICONS.stop, translate('Stop'), () => {
             if (recording) { stopRecordingFlow(); return; }
             stopPlayback();
             seekTo(0);
-        }, ' daw-transport-btn', translate('Stop'));
-        quickAppendButton(transGroup, DAW_ICONS.toEnd, () => seekTo(state.contentDuration), ' daw-transport-btn', translate('Go to end'));
-        const loopBtn = document.createElement('button');
-        loopBtn.className = 'daw-transport-btn daw-btn-text daw-btn-loop' + (state.loopEnabled ? ' active' : '');
-        loopBtn.textContent = translate('LOOP');
-        loopBtn.title = translate('Toggle Loop (L)');
-        loopBtn.addEventListener('click', toggleLoop);
-        transGroup.appendChild(loopBtn);
-        const clickBtn = document.createElement('button');
-        clickBtn.className = 'daw-transport-btn daw-btn-text daw-btn-click' + (state.metronome ? ' active' : '');
-        clickBtn.textContent = translate('CLICK');
-        clickBtn.title = translate('Metronome while playing and recording (C). Count-in is in the record menu');
-        clickBtn.addEventListener('click', toggleMetronome);
-        transGroup.appendChild(clickBtn);
-        const punchBtn = document.createElement('button');
-        punchBtn.className = 'daw-transport-btn daw-btn-text daw-btn-punch' + (state.punchEnabled ? ' active' : '');
-        punchBtn.textContent = translate('PUNCH');
-        punchBtn.title = translate('Punch recording: Record replaces only the loop range, after a pre-roll (P)');
-        punchBtn.addEventListener('click', togglePunch);
-        transGroup.appendChild(punchBtn);
-
-        // ── LCD position cluster: time + bars.beats ──
-        const lcd = createDiv(null, 'daw-lcd');
-        timeDisplayEl = createSpan(null, 'daw-lcd-time');
-        timeDisplayEl.textContent = '0:00.0 / 0:00.0';
-        const lcdBeats = createSpan(null, 'daw-lcd-beats');
-        lcdBeats.textContent = '1.1.1';
-        lcdBeats.title = translate('Position in bars.beats.sixteenths');
-        lcd.appendChild(timeDisplayEl);
-        lcd.appendChild(lcdBeats);
-        transportEl.appendChild(lcd);
-
-        const spacer = createDiv(null, 'daw-transport-spacer');
-        transportEl.appendChild(spacer);
-
-        // ── Zoom ──
-        const zoomGroup = mkGroup(' daw-tgroup-fields');
-        const zoomLabel = createSpan(null, 'daw-transport-label');
-        zoomLabel.textContent = translate('ZOOM');
-        const zoomSlider = document.createElement('input');
-        zoomSlider.type = 'range';
-        zoomSlider.className = 'daw-transport-zoom';
-        zoomSlider.min = '10';
-        zoomSlider.max = '500';
-        zoomSlider.value = state.zoom;
-        zoomSlider.title = translate('Timeline zoom (pixels per second)');
-        zoomSlider.addEventListener('input', (e) => {
-            setZoom(parseInt(e.target.value));
         });
-        zoomGroup.appendChild(zoomLabel);
-        zoomGroup.appendChild(zoomSlider);
+        mkBtn(transGroup, DAW_ICONS.forward, translate('Forward one bar, or 5 s on the time grid (Shift+Right)'),
+            () => seekTo(state.currentTime + transportStep()));
+        mkBtn(transGroup, DAW_ICONS.toEnd, translate('Go to end (End)'), () => seekTo(state.contentDuration));
+
+        const modeGroup = mkGroup();
+        mkText(modeGroup, translate('LOOP'), translate('Loop playback over the loop range (L)'), toggleLoop, 'daw-btn-loop', state.loopEnabled);
+        mkText(modeGroup, translate('CLICK'), translate('Metronome while playing and recording (C). Count-in is in the record menu'), toggleMetronome, 'daw-btn-click', state.metronome);
+        mkText(modeGroup, translate('PUNCH'), translate('Punch recording: Record replaces only the loop range, after a pre-roll (P)'), togglePunch, 'daw-btn-punch', state.punchEnabled);
+
+        // ── Counters: main + sub position, selection start / end / length ──
+        const lcd = createDiv(null, 'daw-lcd');
+        const mkCounter = (cls, labelCls) => {
+            const row = createDiv(null, 'daw-lcd-row');
+            const lbl = createSpan(null, 'daw-lcd-label ' + labelCls);
+            const val = createSpan(null, cls);
+            row.appendChild(lbl);
+            row.appendChild(val);
+            lcd.appendChild(row);
+            return row;
+        };
+        const mainRow = mkCounter('daw-lcd-main', 'daw-lcd-main-label');
+        mkCounter('daw-lcd-sub', 'daw-lcd-sub-label');
+        mainRow.title = translate('Click to swap the main counter between bars and minutes:seconds');
+        mainRow.addEventListener('click', () => setRulerMode(state.rulerMode === 'beats' ? 'time' : 'beats'));
+        timeDisplayEl = mainRow.querySelector('.daw-lcd-main');
+        transportEl.appendChild(lcd);
+        const selLcd = createDiv(null, 'daw-lcd daw-lcd-sel');
+        for (const [cls, label] of [['daw-lcd-sel-start', translate('Start')], ['daw-lcd-sel-end', translate('End')], ['daw-lcd-sel-len', translate('Length')]]) {
+            const row = createDiv(null, 'daw-lcd-row');
+            const lbl = createSpan(null, 'daw-lcd-label');
+            lbl.textContent = label;
+            row.appendChild(lbl);
+            row.appendChild(createSpan(null, cls));
+            selLcd.appendChild(row);
+        }
+        selLcd.title = translate('Selection: drag across empty lanes (or use the range tool) to select a time range');
+        transportEl.appendChild(selLcd);
+
+        // ── Edit: tool, edit mode, grid value ──
+        const editGroup = mkGroup(' daw-tgroup-edit');
+        const toolBtns = [];
+        const mkTool = (tool, icon, title) => {
+            const b = mkBtn(editGroup, icon, title, () => setTool(tool), ' daw-tool-btn' + (state.tool === tool ? ' active' : ''));
+            b.dataset.tool = tool;
+            toolBtns.push(b);
+        };
+        mkTool('smart', DAW_ICONS.smartTool, translate('Smart tool: drag clips to move, edges to trim, corners to fade, empty space to select (V)'));
+        mkTool('range', DAW_ICONS.rangeTool, translate('Range tool: drag anywhere, even over clips, to select a time range (Y)'));
+        const sep = createSpan(null, 'daw-tgroup-sep');
+        editGroup.appendChild(sep);
+        for (const [mode, label, title] of [
+            ['slip', translate('SLIP'), translate('Slip: clips move freely, no grid')],
+            ['grid', translate('GRID'), translate('Grid: moves, trims and the playhead snap to the grid value')],
+            ['shuffle', translate('SHUF'), translate('Shuffle: deleting closes the gap, pasting pushes later clips along')]
+        ]) {
+            const b = mkText(editGroup, label, title, () => setEditMode(mode), 'daw-seg daw-edit-mode', state.editMode === mode);
+            b.dataset.mode = mode;
+        }
+        const gridSel = document.createElement('select');
+        gridSel.className = 'daw-transport-grid';
+        gridSel.title = translate('Grid value: what moves, trims and nudges snap to');
+        for (const g of GRID_VALUES) {
+            const opt = document.createElement('option');
+            opt.value = g.id;
+            opt.textContent = translate(g.label);
+            gridSel.appendChild(opt);
+        }
+        gridSel.value = state.gridValue;
+        gridSel.addEventListener('change', () => {
+            state.gridValue = gridSel.value;
+            if (state.editMode === 'slip') setEditMode('grid');
+            updateLaneGrid();
+        });
+        editGroup.appendChild(gridSel);
 
         // ── Tempo: BPM + time signature ──
         const tempoGroup = mkGroup(' daw-tgroup-fields');
@@ -452,9 +501,12 @@ const AudioDaw = (() => {
         bpmInputEl.min = 20;
         bpmInputEl.max = 300;
         bpmInputEl.addEventListener('change', (e) => {
-            state.bpm = parseInt(e.target.value) || 120;
+            pushUndo();
+            state.bpm = Math.max(20, Math.min(300, parseInt(e.target.value) || 120));
+            bpmInputEl.value = state.bpm;
             if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
             updateLaneGrid();
+            updateTimeDisplay();
             if (mixer && typeof AudioDawFx !== 'undefined') {
                 for (const [id, chain] of mixer.chains) {
                     const tr = state.tracks.find(t => t.id === id);
@@ -465,74 +517,60 @@ const AudioDaw = (() => {
         const sigSelect = document.createElement('select');
         sigSelect.className = 'daw-transport-timesig';
         sigSelect.title = translate('Time signature');
-        for (const sig of ['4/4', '3/4', '6/8', '2/4', '5/4']) {
+        for (const sig of ['4/4', '3/4', '6/8', '2/4', '5/4', '7/8', '12/8']) {
             const opt = document.createElement('option');
             opt.value = sig;
             opt.textContent = sig;
             sigSelect.appendChild(opt);
         }
-        sigSelect.value = state.timeSignature.join('/');
+        const curSig = state.timeSignature.join('/');
+        if (![...sigSelect.options].some(o => o.value === curSig)) {
+            const opt = document.createElement('option');
+            opt.value = curSig;
+            opt.textContent = curSig;
+            sigSelect.appendChild(opt);
+        }
+        sigSelect.value = curSig;
         sigSelect.addEventListener('change', () => {
+            pushUndo();
             state.timeSignature = sigSelect.value.split('/').map(Number);
             if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
             updateLaneGrid();
+            updateTimeDisplay();
         });
         tempoGroup.appendChild(bpmLabel);
         tempoGroup.appendChild(bpmInputEl);
         tempoGroup.appendChild(sigSelect);
 
-        // ── Ruler mode: TIME | BARS segmented radio ──
-        const rulerGroup = mkGroup();
-        const segBtns = [];
-        const mkSeg = (label, mode, title) => {
-            const b = document.createElement('button');
-            b.className = 'daw-transport-btn daw-btn-text daw-seg' + (state.rulerMode === mode ? ' active' : '');
-            b.textContent = label;
-            b.title = title;
-            b.addEventListener('click', () => {
-                state.rulerMode = mode;
-                if (timeline) timeline.setMode(mode);
-                segBtns.forEach(([btn, m]) => btn.classList.toggle('active', m === mode));
-                updateLaneGrid();
-            });
-            segBtns.push([b, mode]);
-            rulerGroup.appendChild(b);
-        };
-        mkSeg(translate('TIME'), 'time', translate('Ruler shows minutes:seconds'));
-        mkSeg(translate('BARS'), 'beats', translate('Ruler shows bars/beats at the project tempo'));
+        // ── Zoom ──
+        const zoomGroup = mkGroup(' daw-tgroup-fields');
+        const zoomSlider = document.createElement('input');
+        zoomSlider.type = 'range';
+        zoomSlider.className = 'daw-transport-zoom';
+        zoomSlider.min = '10';
+        zoomSlider.max = '1000';
+        zoomSlider.value = state.zoom;
+        zoomSlider.title = translate('Timeline zoom (+ / -)');
+        zoomSlider.addEventListener('input', (e) => setZoom(parseInt(e.target.value)));
+        mkBtn(zoomGroup, '&#x2212;', translate('Zoom out (-)'), () => setZoom(state.zoom / 1.25), ' daw-zoom-step');
+        zoomGroup.appendChild(zoomSlider);
+        mkBtn(zoomGroup, '+', translate('Zoom in (+)'), () => setZoom(state.zoom * 1.25), ' daw-zoom-step');
+        mkBtn(zoomGroup, translate('FIT'), translate('Zoom to fit the whole song (Z)'), zoomToFit, ' daw-btn-text daw-zoom-fit');
 
-        // ── Workspace toggles: snap-to-grid, sound palette ──
+        // ── Sound palette ──
         const togGroup = mkGroup();
-        const snapBtn = document.createElement('button');
-        snapBtn.className = 'daw-transport-btn daw-btn-text daw-btn-snap' + (state.snapEnabled ? ' active' : '');
-        snapBtn.textContent = translate('SNAP');
-        snapBtn.title = translate('Snap to grid');
-        snapBtn.addEventListener('click', () => {
-            state.snapEnabled = !state.snapEnabled;
-            snapBtn.classList.toggle('active', state.snapEnabled);
-        });
-        togGroup.appendChild(snapBtn);
-        const palBtn = document.createElement('button');
-        palBtn.className = 'daw-transport-btn daw-btn-text daw-btn-palette';
-        palBtn.textContent = translate('SOUNDS');
-        palBtn.title = translate('Sound Palette: generate SFX/loops on demand (audition, then add)');
-        palBtn.addEventListener('click', () => togglePalette(palBtn));
-        togGroup.appendChild(palBtn);
+        const palBtn = mkText(togGroup, translate('SOUNDS'), translate('Sound Palette: generate SFX/loops on demand (audition, then add)'),
+            () => togglePalette(palBtn), 'daw-btn-palette', !!paletteEl);
 
-        // (Master volume/meter/loudness live in the Mixer's Master strip — one
-        // master control, not two.)
-
-        // Second spacer: floats the controls cluster over the working area and
-        // pins the file operations + close to the far right.
-        const spacer2 = createDiv(null, 'daw-transport-spacer');
-        transportEl.appendChild(spacer2);
+        const spacer = createDiv(null, 'daw-transport-spacer');
+        transportEl.appendChild(spacer);
 
         // ── File operations (DAW menu-bar convention) + window close ──
         const fileGroup = mkGroup();
         const mkFileBtn = (label, title, fn) => {
             const b = document.createElement('button');
             b.className = 'daw-transport-btn daw-btn-text';
-            b.innerHTML = `${label} &#x25BE;`;
+            b.innerHTML = `${escapeHtml(label)} &#x25BE;`;
             b.title = title;
             b.addEventListener('click', fn);
             fileGroup.appendChild(b);
@@ -540,13 +578,44 @@ const AudioDaw = (() => {
         };
         mkFileBtn(translate('PROJECT'), translate('Save, load, or start projects'), (e) => showProjectMenu(e));
         mkFileBtn(translate('IMPORT'), translate('Add audio from your outputs or your computer'), (e) => showImportMenu(e));
-        mkFileBtn(translate('EXPORT'), translate('Export the mixdown (WAV/MP3/OGG/FLAC/AAC or to Outputs)'), (e) => showExportMenu(e));
+        mkFileBtn(translate('EXPORT'), translate('Export the mixdown, a range, or stems'), (e) => showExportMenu(e));
         const closeBtn = document.createElement('button');
         closeBtn.className = 'daw-transport-btn daw-btn-close';
         closeBtn.innerHTML = '&#x2715;';
         closeBtn.title = translate('Close Audio Lab');
         closeBtn.addEventListener('click', close);
         transportEl.appendChild(closeBtn);
+        updateTimeDisplay();
+    }
+
+    /** Smart or range tool. */
+    function setTool(tool) {
+        state.tool = tool === 'range' ? 'range' : 'smart';
+        transportEl?.querySelectorAll('.daw-tool-btn').forEach(b => b.classList.toggle('active', b.dataset.tool === state.tool));
+        clipLanesEl?.classList.toggle('daw-tool-range', state.tool === 'range');
+    }
+
+    /** Slip, grid or shuffle editing. */
+    function setEditMode(mode) {
+        state.editMode = ['slip', 'grid', 'shuffle'].includes(mode) ? mode : 'grid';
+        state.snapEnabled = state.editMode !== 'slip';
+        transportEl?.querySelectorAll('.daw-edit-mode').forEach(b => b.classList.toggle('active', b.dataset.mode === state.editMode));
+    }
+
+    /** Which scale leads: the main counter, the lane grid and the brighter ruler row. */
+    function setRulerMode(mode) {
+        state.rulerMode = mode === 'beats' ? 'beats' : 'time';
+        if (timeline) timeline.setMode(state.rulerMode);
+        updateLaneGrid();
+        updateTimeDisplay();
+    }
+
+    /** Zoom so the whole song fits the visible lanes. */
+    function zoomToFit() {
+        const width = (clipLanesEl?.clientWidth || 800) - 40;
+        const dur = Math.max(1, state.contentDuration || state.totalDuration);
+        setZoom(width / dur);
+        if (clipLanesEl) clipLanesEl.scrollLeft = 0;
     }
 
     // ===== FOOTER =====
@@ -559,39 +628,64 @@ const AudioDaw = (() => {
         ]);
     }
 
-    // ===== TIMELINE =====
+    // ===== GRID =====
 
-    /**
-     * Quantize a timeline position to the active grid. No-op when snap is off.
-     * Beats mode: nearest beat, refining to 1/2 or 1/4 beat when zoomed in.
-     * Time mode: finest of 5s/1s/0.5s/0.1s that still spans >= ~12px.
-     */
-    function snapTime(t) {
-        if (!state || !state.snapEnabled) return t;
-        let grid;
+    // Note values count quarter-note beats (the DAW's BPM is quarter notes per minute); triplets fit three
+    // in the space of two.
+    const GRID_VALUES = [
+        { id: 'auto', label: 'Grid: auto' },
+        { id: 'bar', label: '1 bar', bars: 1 },
+        { id: '1/2', label: '1/2 note', beats: 2 },
+        { id: '1/4', label: '1/4 note', beats: 1 },
+        { id: '1/8', label: '1/8 note', beats: 0.5 },
+        { id: '1/16', label: '1/16 note', beats: 0.25 },
+        { id: '1/32', label: '1/32 note', beats: 0.125 },
+        { id: '1/8t', label: '1/8 triplet', beats: 1 / 3 },
+        { id: '1/16t', label: '1/16 triplet', beats: 1 / 6 },
+        { id: '1s', label: '1 second', seconds: 1 },
+        { id: '0.5s', label: '500 ms', seconds: 0.5 },
+        { id: '0.1s', label: '100 ms', seconds: 0.1 },
+        { id: '10ms', label: '10 ms', seconds: 0.01 }
+    ];
+
+    /** Seconds per grid step. Auto follows the zoom: the finest musical (or round-second) step >= ~12 px. */
+    function gridStep() {
+        const g = GRID_VALUES.find(x => x.id === state.gridValue);
+        const secPerBeat = 60 / state.bpm;
+        if (g && g.bars) return g.bars * secPerBeat * (state.timeSignature[0] || 4);
+        if (g && g.beats) return g.beats * secPerBeat;
+        if (g && g.seconds) return g.seconds;
         if (state.rulerMode === 'beats') {
-            const secPerBeat = 60 / state.bpm;
-            grid = secPerBeat;
+            let grid = secPerBeat;
             while ((grid / 2) * state.zoom >= 12 && grid > secPerBeat / 4 + 1e-9) grid /= 2;
-        } else {
-            grid = 5;
-            for (const g of [5, 1, 0.5, 0.1]) {
-                if (g * state.zoom >= 12) grid = g;
-            }
+            return grid;
         }
+        let grid = 5;
+        for (const step of [5, 1, 0.5, 0.1]) {
+            if (step * state.zoom >= 12) grid = step;
+        }
+        return grid;
+    }
+
+    /** Quantize a timeline position to the grid. No-op in Slip mode. */
+    function snapTime(t) {
+        if (!state || state.editMode === 'slip') return t;
+        const grid = gridStep();
         return Math.round(t / grid) * grid;
     }
+
+    // ===== TIMELINE =====
 
     function initTimeline() {
         rulerContainer.innerHTML = '';
         timeline = AudioDawTimeline.create(rulerContainer, {
             zoom: state.zoom,
-            height: 30,
             totalDuration: state.totalDuration,
             mode: state.rulerMode,
             bpm: state.bpm,
             timeSig: state.timeSignature
         });
+        document.getElementById('daw_main')?.style.setProperty('--daw-ruler-h', timeline.getHeight() + 'px');
         timeline.setSnapper(snapTime);
         timeline.on('seek', (time) => {
             seekTo(snapTime(time));
@@ -616,6 +710,116 @@ const AudioDaw = (() => {
             updateLoopShade();
             resyncPlayback(); // live bounds drag while playing reschedules the window
         });
+        timeline.on('markerAdd', (time) => addMarker(time));
+        timeline.on('markerMove', (id, time) => {
+            const m = state.markers.find(x => x.id === id);
+            if (!m) return;
+            pushUndo();
+            m.time = Math.max(0, time);
+            refreshMarkers();
+        });
+        timeline.on('markerClick', (id) => {
+            const m = state.markers.find(x => x.id === id);
+            if (m) seekTo(m.time);
+        });
+        timeline.on('markerRename', (id) => renameMarker(id));
+        timeline.on('markerContext', (id, e) => showMarkerMenu(id, e));
+        timeline.setMarkers(state.markers);
+        timeline.setPunch(state.punchEnabled);
+        timeline.setLoop(state.loopEnabled, state.loopStart, state.loopEnd);
+        renderRulerCorner();
+    }
+
+    /** Ruler names beside the rulers, like a pro DAW's ruler column. */
+    function renderRulerCorner() {
+        const corner = document.querySelector('#daw_main .daw-ruler-corner');
+        if (!corner) return;
+        corner.innerHTML = '';
+        for (const [name, cls] of [[translate('Bars|Beats'), 'bars'], [translate('Min:Secs'), 'time'], [translate('Markers'), 'markers']]) {
+            const row = createDiv(null, 'daw-ruler-name daw-ruler-name-' + cls);
+            row.textContent = name;
+            corner.appendChild(row);
+        }
+        const add = document.createElement('button');
+        add.className = 'daw-marker-add';
+        add.textContent = '+';
+        add.title = translate('Add a marker at the playhead (Enter)');
+        add.addEventListener('click', () => addMarker(state.currentTime));
+        corner.querySelector('.daw-ruler-name-markers')?.appendChild(add);
+    }
+
+    // ===== MARKERS =====
+
+    let markerSeq = 0;
+
+    function sortMarkers() {
+        state.markers.sort((a, b) => a.time - b.time);
+    }
+
+    /** Push markers to the ruler and draw their lines through the lanes. */
+    function refreshMarkers() {
+        sortMarkers();
+        if (timeline) timeline.setMarkers(state.markers);
+        if (!clipLanesEl) return;
+        let layer = clipLanesEl.querySelector('.daw-marker-lines');
+        if (!layer) {
+            layer = createDiv(null, 'daw-marker-lines');
+            clipLanesEl.appendChild(layer);
+        }
+        layer.innerHTML = '';
+        for (const m of state.markers) {
+            const line = createDiv(null, 'daw-marker-line');
+            line.style.left = (m.time * state.zoom) + 'px';
+            if (m.color) line.style.setProperty('--marker-color', m.color);
+            layer.appendChild(line);
+        }
+    }
+
+    function addMarker(time, name = null) {
+        pushUndo();
+        state.markers.push({
+            id: `marker-${Date.now().toString(36)}-${++markerSeq}`,
+            time: Math.max(0, time),
+            name: name || `${translate('Marker')} ${state.markers.length + 1}`,
+            color: null
+        });
+        refreshMarkers();
+    }
+
+    function renameMarker(id) {
+        const m = state.markers.find(x => x.id === id);
+        if (!m) return;
+        const name = prompt(translate('Marker name:'), m.name);
+        if (!name || !name.trim() || name.trim() === m.name) return;
+        pushUndo();
+        m.name = name.trim();
+        refreshMarkers();
+    }
+
+    function showMarkerMenu(id, e) {
+        const m = state.markers.find(x => x.id === id);
+        if (!m) return;
+        dawMenu(e, [
+            { label: translate('Jump here'), action: () => seekTo(m.time) },
+            { label: translate('Rename…'), action: () => renameMarker(id) },
+            { label: translate('Move to playhead'), action: () => { pushUndo(); m.time = state.currentTime; refreshMarkers(); } },
+            {
+                label: translate('Select to next marker'),
+                action: () => {
+                    const next = state.markers.find(x => x.time > m.time + 1e-6);
+                    setSelection({ start: m.time, end: next ? next.time : Math.max(state.contentDuration, m.time + 1), trackIds: state.tracks.map(t => t.id) });
+                }
+            },
+            { label: translate('Delete marker'), action: () => { pushUndo(); state.markers = state.markers.filter(x => x.id !== id); refreshMarkers(); } }
+        ]);
+    }
+
+    /** Jump to the previous (-1) or next (+1) marker from the playhead. */
+    function jumpMarker(dir) {
+        const t = state.currentTime;
+        const list = state.markers;
+        const m = dir > 0 ? list.find(x => x.time > t + 1e-3) : [...list].reverse().find(x => x.time < t - 1e-3);
+        if (m) seekTo(m.time);
     }
 
     // ===== BOTTOM PANEL =====
@@ -923,10 +1127,11 @@ const AudioDaw = (() => {
                     e.stopPropagation();
                     const sel = getClip();
                     if (sel) {
+                        pushUndo();
                         sel.clip.muted = !sel.clip.muted;
-                        applyClipGain(sel.clip);
                         renderAllTracks();
                         updateBottomPanel();
+                        resyncPlayback(); // a muted clip stops covering the one below it
                     }
                 });
                 actions.appendChild(muteBtn);
@@ -2111,51 +2316,182 @@ const AudioDaw = (() => {
         return audioBufferToWav(out);
     }
 
+    // Export choices (per browser): range is per session, quality is remembered
+    const exportSettings = (() => {
+        const base = { range: 'song', bitDepth: 16, sampleRate: 44100 };
+        try {
+            const saved = JSON.parse(localStorage.getItem('audiolab_daw_export') || '{}');
+            return { ...base, bitDepth: saved.bitDepth || 16, sampleRate: saved.sampleRate || 44100 };
+        }
+        catch (_) {
+            return base;
+        }
+    })();
+
+    function saveExportSettings() {
+        try {
+            localStorage.setItem('audiolab_daw_export', JSON.stringify({ bitDepth: exportSettings.bitDepth, sampleRate: exportSettings.sampleRate }));
+        } catch (_) {}
+    }
+
+    /** What an export covers: the whole song, the selection, or the loop range (falling back to the song). */
+    function exportBounds() {
+        if (exportSettings.range === 'selection' && state.selection) {
+            return { start: state.selection.start, end: state.selection.end, exact: true, label: 'selection' };
+        }
+        if (exportSettings.range === 'loop' && state.loopEnd > state.loopStart) {
+            return { start: state.loopStart, end: state.loopEnd, exact: true, label: 'loop' };
+        }
+        return { start: 0, end: state.contentDuration, exact: false, label: 'mix' };
+    }
+
     /**
-     * Render the arrangement offline through the SAME node graph + scheduleClip
-     * math as live playback, so exports always match what you hear.
+     * Render offline through the SAME node graph + scheduleClip math as live playback, so exports always match
+     * what you hear. A whole-song export runs on while reverb/delay tails ring out; a range export ends exactly
+     * at its end.
+     * @param {Object} [opts] - { start, end, exact (no tail), trackIds: stems, render only these tracks, as if soloed,
+     *   without the master limiter so the stems sum back to the mix }
      */
-    async function renderMixdownBuffer() {
-        if (state.tracks.length === 0 || state.contentDuration <= 0) return null;
-        const sampleRate = 44100;
-        // Export ends with the music; leave room only when FX tails need to ring out.
-        const hasTails = state.tracks.some(t => (t.fx || []).some(f =>
+    async function renderMixdownBuffer({ start = 0, end = state.contentDuration, exact = false, trackIds = null } = {}) {
+        const stems = !!trackIds;
+        const tracks = stems ? state.tracks.filter(t => trackIds.includes(t.id)) : state.tracks;
+        if (!tracks.length || end - start <= 0) return null;
+        const sampleRate = exportSettings.sampleRate;
+        const hasTails = !exact && tracks.some(t => (t.fx || []).some(f =>
             f.enabled && (f.type === 'reverb' || f.type === 'delay')));
-        const renderEnd = state.contentDuration + (hasTails ? 5 : 0.1);
-        const totalSamples = Math.max(1, Math.ceil(renderEnd * sampleRate));
+        const renderLen = (end - start) + (exact ? 0 : (hasTails ? 5 : 0.1));
+        const totalSamples = Math.max(1, Math.ceil(renderLen * sampleRate));
         const offlineCtx = new OfflineAudioContext(2, totalSamples, sampleRate);
         const masterGain = offlineCtx.createGain();
-        masterGain.gain.value = state.masterVolume;
+        masterGain.gain.value = stems ? 1 : state.masterVolume;
         let masterOut = masterGain;
-        if (state.masterLimiterEnabled && typeof AudioDawFx !== 'undefined') {
+        if (!stems && state.masterLimiterEnabled && typeof AudioDawFx !== 'undefined') {
             const lim = AudioDawFx.buildMasterLimiter(offlineCtx);
             masterGain.connect(lim);
             masterOut = lim;
         }
         masterOut.connect(offlineCtx.destination);
-        const soloActive = hasSoloTracks();
-        for (const track of state.tracks) {
+        const soloActive = !stems && hasSoloTracks();
+        const origin = { t0Ctx: 0, t0Timeline: start, windowEnd: start + renderLen };
+        for (const track of tracks) {
             if (track.muted || (soloActive && !track.soloed)) continue; // no point rendering silence
             const chain = buildTrackChain(offlineCtx, track, masterGain);
-            scheduleTrackAutomation(chain, track, { t0Ctx: 0, t0Timeline: 0, windowEnd: renderEnd, fresh: true });
+            if (stems) chain.trackGain.gain.value = track.volume; // another track's solo must not silence its stem
+            scheduleTrackAutomation(chain, track, { ...origin, fresh: true });
+            const plan = trackAudibleSegments(track);
             for (const clip of track.clips) {
                 if (clip.muted) continue;
-                scheduleClip(offlineCtx, chain.input, clip,
-                    { t0Ctx: 0, t0Timeline: 0, windowEnd: renderEnd });
+                scheduleClip(offlineCtx, chain.input, clip, origin, plan.get(clip.id));
+            }
+            if (typeof AudioDawInstruments !== 'undefined' && AudioDawInstruments.scheduleTrack) {
+                AudioDawInstruments.scheduleTrack(offlineCtx, chain.input, track, origin);
             }
         }
         return await offlineCtx.startRendering();
     }
 
-    /** Render mixdown to a WAV Blob (export). */
-    async function renderMixdownBlob() {
+    /** Render the chosen export range to a WAV Blob at the chosen bit depth (null when there is nothing). */
+    async function renderMixdownBlob(bounds = exportBounds()) {
         try {
-            const rendered = await renderMixdownBuffer();
-            return rendered ? audioBufferToWav(rendered) : null;
+            const rendered = await renderMixdownBuffer(bounds);
+            return rendered ? audioBufferToWav(rendered, { bitDepth: exportSettings.bitDepth }) : null;
         } catch (err) {
             console.error('[AudioDaw] Mixdown render failed:', err);
             return null;
         }
+    }
+
+    /** File-name stem for exports: the project name, or "audiolab". */
+    function exportBaseName() {
+        return (currentProjectName || 'audiolab').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'audiolab';
+    }
+
+    const CRC_TABLE = (() => {
+        const t = new Uint32Array(256);
+        for (let n = 0; n < 256; n++) {
+            let c = n;
+            for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+            t[n] = c >>> 0;
+        }
+        return t;
+    })();
+
+    function crc32(bytes) {
+        let c = 0xFFFFFFFF;
+        for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+        return (c ^ 0xFFFFFFFF) >>> 0;
+    }
+
+    /** Minimal ZIP (stored, uncompressed): stems arrive as one download instead of a burst a browser may block. */
+    function zipStore(files) {
+        const enc = new TextEncoder();
+        const parts = [];
+        const central = [];
+        let offset = 0;
+        for (const f of files) {
+            const name = enc.encode(f.name);
+            const crc = crc32(f.data);
+            const size = f.data.length;
+            const local = new DataView(new ArrayBuffer(30));
+            local.setUint32(0, 0x04034b50, true);
+            local.setUint16(4, 20, true);
+            local.setUint16(6, 0x0800, true); // UTF-8 names
+            local.setUint16(12, 0x21, true);  // 1980-01-01
+            local.setUint32(14, crc, true);
+            local.setUint32(18, size, true);
+            local.setUint32(22, size, true);
+            local.setUint16(26, name.length, true);
+            parts.push(new Uint8Array(local.buffer), name, f.data);
+            const cen = new DataView(new ArrayBuffer(46));
+            cen.setUint32(0, 0x02014b50, true);
+            cen.setUint16(4, 20, true);
+            cen.setUint16(6, 20, true);
+            cen.setUint16(8, 0x0800, true);
+            cen.setUint16(14, 0x21, true);
+            cen.setUint32(16, crc, true);
+            cen.setUint32(20, size, true);
+            cen.setUint32(24, size, true);
+            cen.setUint16(28, name.length, true);
+            cen.setUint32(42, offset, true);
+            central.push(new Uint8Array(cen.buffer), name);
+            offset += 30 + name.length + size;
+        }
+        const cenSize = central.reduce((n, c) => n + c.length, 0);
+        const end = new DataView(new ArrayBuffer(22));
+        end.setUint32(0, 0x06054b50, true);
+        end.setUint16(8, files.length, true);
+        end.setUint16(10, files.length, true);
+        end.setUint32(12, cenSize, true);
+        end.setUint32(16, offset, true);
+        return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
+    }
+
+    /** Every track with content, rendered on its own over the export range, in one ZIP. */
+    async function doExportStems() {
+        const bounds = exportBounds();
+        const tracks = state.tracks.filter(t => !t.muted && (t.clips.length || t.midiClips?.length));
+        if (!tracks.length || bounds.end - bounds.start <= 0) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Nothing to export'), 'notice-pop-yellow');
+            return;
+        }
+        const overlay = showDawLoadingOverlay(translate('Rendering stems...'));
+        try {
+            const files = [];
+            for (const [i, track] of tracks.entries()) {
+                const buf = await renderMixdownBuffer({ ...bounds, trackIds: [track.id] });
+                if (!buf) continue;
+                const wav = audioBufferToWav(buf, { bitDepth: exportSettings.bitDepth });
+                const safe = track.name.replace(/[\\/:*?"<>|]+/g, '_').trim() || `Track ${i + 1}`;
+                files.push({ name: `${String(i + 1).padStart(2, '0')} ${safe}.wav`, data: new Uint8Array(await wav.arrayBuffer()) });
+            }
+            downloadBlob(zipStore(files), `${exportBaseName()}-stems.zip`);
+            if (typeof doNoticePopover === 'function') doNoticePopover(`${files.length} ` + translate('stems exported'), 'notice-pop-green');
+        }
+        catch (err) {
+            console.error('[AudioDaw] Stem export failed:', err);
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Stem export failed:') + ' ' + err.message, 'notice-pop-red');
+        }
+        hideDawLoadingOverlay(overlay);
     }
 
     function findClipById(clipId) {
@@ -2194,8 +2530,8 @@ const AudioDaw = (() => {
             if (syncing) return;
             syncing = true;
             state.scrollLeft = clipLanesEl.scrollLeft;
-            // Sync ruler horizontal scroll
-            if (rulerContainer) rulerContainer.scrollLeft = clipLanesEl.scrollLeft;
+            // The ruler follows (its canvas only draws the visible slice)
+            if (timeline) timeline.setScrollLeft(clipLanesEl.scrollLeft);
             // Sync track headers vertical scroll
             if (trackHeadersEl) trackHeadersEl.scrollTop = clipLanesEl.scrollTop;
             syncing = false;
@@ -2245,13 +2581,122 @@ const AudioDaw = (() => {
                 el.addEventListener('pointerup', onUp);
             });
         };
-        setupLaneScrub(clipLanesEl, (e) => e.target === clipLanesEl || e.target.classList.contains('daw-track-lane'));
         if (playheadEl) setupLaneScrub(playheadEl, () => true);
+        setupLaneSelection();
+    }
+
+    // ===== RANGE SELECTION =====
+    // Smart tool: a click on empty lane space places the playhead and selects that track; a drag selects a time
+    // range across every track the drag spans. Range tool: the same drag works over clips too.
+
+    function laneAtY(clientY) {
+        for (const lane of clipLanesEl.querySelectorAll('.daw-track-lane')) {
+            const r = lane.getBoundingClientRect();
+            if (clientY >= r.top && clientY <= r.bottom) return lane;
+        }
+        return null;
+    }
+
+    /** Track ids from one lane to another, inclusive, in arrangement order. */
+    function tracksBetween(laneA, laneB) {
+        const ids = state.tracks.map(t => t.id);
+        const a = ids.indexOf(laneA?.dataset.trackId);
+        const b = ids.indexOf(laneB?.dataset.trackId);
+        if (a < 0 && b < 0) return [];
+        const lo = Math.min(a < 0 ? b : a, b < 0 ? a : b);
+        const hi = Math.max(a, b);
+        return ids.slice(lo, hi + 1);
+    }
+
+    function setupLaneSelection() {
+        const timeAtX = (clientX) => {
+            const rect = clipLanesEl.getBoundingClientRect();
+            return Math.max(0, (clientX - rect.left + clipLanesEl.scrollLeft) / state.zoom);
+        };
+        clipLanesEl.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            const onEmpty = e.target === clipLanesEl || e.target.classList.contains('daw-track-lane');
+            const overClip = !!e.target.closest('.daw-clip:not(.daw-clip-recording)');
+            if (!onEmpty && !(state.tool === 'range' && overClip)) return;
+            e.preventDefault();
+            clipLanesEl.setPointerCapture(e.pointerId);
+            const startX = e.clientX, startY = e.clientY;
+            const t0 = timeAtX(e.clientX);
+            const lane0 = laneAtY(e.clientY);
+            let dragging = false;
+            const onMove = (me) => {
+                if (!dragging && Math.abs(me.clientX - startX) < 4 && Math.abs(me.clientY - startY) < 4) return;
+                dragging = true;
+                const t1 = timeAtX(me.clientX);
+                const lane1 = laneAtY(me.clientY) || lane0;
+                setSelection({ start: Math.min(t0, t1), end: Math.max(t0, t1), trackIds: tracksBetween(lane0, lane1) }, { snap: true });
+            };
+            const onUp = (ue) => {
+                try { clipLanesEl.releasePointerCapture(ue.pointerId); } catch (_) {}
+                clipLanesEl.removeEventListener('pointermove', onMove);
+                clipLanesEl.removeEventListener('pointerup', onUp);
+                if (dragging) return;
+                // A click: playhead here, selection cleared, the lane's track selected
+                clearSelection();
+                const id = lane0?.dataset.trackId;
+                if (id && id !== state.selectedTrackId) {
+                    state.selectedTrackId = id;
+                    updateTrackSelection();
+                    updateBottomPanel();
+                }
+                seekTo(snapTime(t0));
+            };
+            clipLanesEl.addEventListener('pointermove', onMove);
+            clipLanesEl.addEventListener('pointerup', onUp);
+        });
+    }
+
+    /**
+     * Set the time selection. Edges snap to the grid unless in Slip mode; a range under a millisecond clears it.
+     * @param {{start: number, end: number, trackIds: string[]}|null} sel
+     */
+    function setSelection(sel, { snap = false } = {}) {
+        if (sel && snap) sel = { ...sel, start: snapTime(sel.start), end: snapTime(sel.end) };
+        state.selection = sel && sel.end - sel.start > 0.001 && sel.trackIds?.length ? sel : null;
+        renderSelection();
+        updateTimeDisplay();
+    }
+
+    function clearSelection() {
+        if (!state.selection) return;
+        state.selection = null;
+        renderSelection();
+        updateTimeDisplay();
+    }
+
+    /** Selection bands on the selected tracks' lanes, and the band on the ruler. */
+    function renderSelection() {
+        if (!clipLanesEl) return;
+        clipLanesEl.querySelectorAll('.daw-sel-band').forEach(el => el.remove());
+        const sel = state.selection;
+        if (timeline) timeline.setSelection(sel);
+        if (!sel) return;
+        for (const id of sel.trackIds) {
+            const track = state.tracks.find(t => t.id === id);
+            if (!track?.laneEl) continue;
+            const band = createDiv(null, 'daw-sel-band');
+            band.style.left = (sel.start * state.zoom) + 'px';
+            band.style.width = Math.max(1, (sel.end - sel.start) * state.zoom) + 'px';
+            track.laneEl.appendChild(band);
+        }
     }
 
     // ===== TRACK MANAGEMENT =====
 
+    /** "Track 2": the lowest free number for a default track name. */
+    function nextTrackName(prefix = 'Track') {
+        let n = 1;
+        while (state.tracks.some(t => t.name === `${prefix} ${n}`)) n++;
+        return `${prefix} ${n}`;
+    }
+
     function addTrack(opts = {}) {
+        if (!opts.name) opts = { ...opts, name: nextTrackName(translate('Track')) };
         const track = AudioDawTrack.createTrack(opts);
         state.tracks.push(track);
         if (!state.selectedTrackId) state.selectedTrackId = track.id;
@@ -2368,6 +2813,15 @@ const AudioDaw = (() => {
                 updateBottomPanel();
                 resyncPlayback();
             },
+            isRangeTool: () => state.tool === 'range',
+            onClipFadeStart: () => pushUndo(),
+            onClipFadeEnd: () => {
+                updateBottomPanel();
+                resyncPlayback(); // fades are baked into scheduled ramps
+            },
+            onClipGainStart: () => pushUndo(),
+            onClipGainChange: (clip) => applyClipGain(clip),
+            onClipGainEnd: () => updateBottomPanel(),
             onClipMove: () => {
                 updateTotalDuration();
                 resyncPlayback();
@@ -2458,6 +2912,8 @@ const AudioDaw = (() => {
 
         updateTrackSelection();
         updateClipLanesWidth();
+        renderSelection();
+        refreshMarkers();
     }
 
     function updateTrackSelection() {
@@ -3007,59 +3463,107 @@ const AudioDaw = (() => {
         }
     }
 
+    /** Seconds of a clip that play: its source length minus the trimmed head and tail. */
+    function visibleDur(clip) {
+        return clip.duration - clip.offset - clip.trimEnd;
+    }
+
     /**
-     * Schedule one clip into a context — the single source of truth for placement
-     * math, used identically by live playback, loop iterations, and offline export.
-     * Node chain per clip: source -> fadeGain (fade ramps only) -> clipGain (mute/gain) -> destNode (track input).
+     * Where each clip on a track is heard. Clips layer: a later clip (the newest take, the last one dropped)
+     * covers the ones before it, the way a pro DAW's playlist does, so a clip only plays where no later,
+     * unmuted clip sits. Shared by live playback and export.
+     * @returns {Map<string, Array<[number, number]>>} clipId -> audible timeline intervals
+     */
+    function trackAudibleSegments(track) {
+        const out = new Map();
+        const clips = track.clips;
+        const spans = clips.map(c => [c.startTime, c.startTime + visibleDur(c)]);
+        for (let i = 0; i < clips.length; i++) {
+            let segs = [spans[i]];
+            for (let j = i + 1; j < clips.length && segs.length; j++) {
+                if (clips[j].muted) continue; // a muted clip on top lets the one below through
+                const [cs, ce] = spans[j];
+                const next = [];
+                for (const [s, e] of segs) {
+                    if (ce <= s || cs >= e) {
+                        next.push([s, e]);
+                        continue;
+                    }
+                    if (cs > s) next.push([s, cs]);
+                    if (ce < e) next.push([ce, e]);
+                }
+                segs = next.filter(([s, e]) => e - s > 0.002);
+            }
+            out.set(clips[i].id, segs);
+        }
+        return out;
+    }
+
+    const SEAM_FADE = 0.004; // seconds: a click-free seam where a covering clip starts or ends
+
+    /**
+     * Schedule one clip into a context: the single source of truth for placement math, used identically by
+     * live playback, loop iterations, and offline export.
+     * Nodes per clip: one source + fadeGain per audible segment -> clipGain (mute/gain) -> destNode (track input).
      * @param {BaseAudioContext} ctx
      * @param {AudioNode} destNode - the track chain's input (ahead of the inserts)
      * @param {Object} clip
      * @param {Object} origin - { t0Ctx, t0Timeline, windowEnd }: ctx time t0Ctx corresponds
      *   to timeline time t0Timeline; nothing is scheduled at/after windowEnd (loop/export bound).
-     * @returns {{source, fadeGain, clipGain}|null}
+     * @param {Array<[number, number]>} [segments] - audible timeline intervals (trackAudibleSegments); whole clip if omitted
+     * @returns {{clipGain: GainNode, sources: Array<{source, fadeGain}>}|null}
      */
-    function scheduleClip(ctx, destNode, clip, { t0Ctx, t0Timeline, windowEnd = Infinity }) {
+    function scheduleClip(ctx, destNode, clip, { t0Ctx, t0Timeline, windowEnd = Infinity }, segments = null) {
         const P = t0Timeline;
-        const visibleDur = clip.duration - clip.offset - clip.trimEnd;
-        if (!clip.decodedBuffer || visibleDur <= 0) return null;
+        const vis = visibleDur(clip);
+        if (!clip.decodedBuffer || vis <= 0) return null;
         const clipStart = clip.startTime;
-        const clipEnd = clipStart + visibleDur;
-        if (clipEnd <= P || clipStart >= windowEnd) return null;
+        const clipEnd = clipStart + vis;
+        const parts = (segments || [[clipStart, clipEnd]]).map(([s, e]) => ({
+            s, e,
+            // A seam is an edge another clip made; the clip's own start and end are not seams
+            seamIn: s > clipStart + 1e-6,
+            seamOut: e < clipEnd - 1e-6,
+            from: Math.max(s, P),
+            to: Math.min(e, windowEnd)
+        })).filter(p => p.to - p.from > 0.001);
+        if (!parts.length) return null;
 
-        const into = Math.max(0, P - clipStart);
-        const when = t0Ctx + Math.max(0, clipStart - P);
-        const bufferOffset = clip.offset + into;
-        const playDuration = Math.min(visibleDur - into, windowEnd - Math.max(P, clipStart));
-        if (playDuration <= 0) return null;
-
-        const source = ctx.createBufferSource();
-        source.buffer = clip.decodedBuffer;
-        const fadeGain = ctx.createGain();
         const clipGain = ctx.createGain();
         clipGain.gain.value = clip.muted ? 0 : (clip.gain ?? 1);
-        source.connect(fadeGain);
-        fadeGain.connect(clipGain);
         clipGain.connect(destNode);
-
-        // Fade envelope; a mid-clip start resumes at the exact instantaneous value
-        const fi = Math.min(clip.fadeIn || 0, visibleDur);
-        const fo = Math.min(clip.fadeOut || 0, visibleDur - fi);
-        if (fi > 0 || fo > 0) {
-            const u0 = into;
-            const foStart = visibleDur - fo;
-            let startVal = 1;
-            if (fi > 0 && u0 < fi) startVal = u0 / fi;
-            else if (fo > 0 && u0 > foStart) startVal = (visibleDur - u0) / fo;
-            fadeGain.gain.setValueAtTime(startVal, when);
-            if (fi > 0 && u0 < fi) fadeGain.gain.linearRampToValueAtTime(1, when + (fi - u0));
-            if (fo > 0 && u0 < visibleDur) {
-                if (u0 < foStart) fadeGain.gain.setValueAtTime(1, when + (foStart - u0));
-                fadeGain.gain.linearRampToValueAtTime(0, when + (visibleDur - u0));
+        const fi = Math.min(clip.fadeIn || 0, vis);
+        const fo = Math.min(clip.fadeOut || 0, vis - fi);
+        const sources = [];
+        for (const part of parts) {
+            // Gain at timeline time t: the clip's fades times the seam ramps
+            const gainAt = (t) => {
+                const u = t - clipStart;
+                let g = 1;
+                if (fi > 0 && u < fi) g = Math.min(g, u / fi);
+                if (fo > 0 && u > vis - fo) g = Math.min(g, (vis - u) / fo);
+                if (part.seamIn) g *= Math.min(1, (t - part.s) / SEAM_FADE);
+                if (part.seamOut) g *= Math.min(1, (part.e - t) / SEAM_FADE);
+                return Math.max(0, Math.min(1, g));
+            };
+            const when = t0Ctx + (part.from - P);
+            const source = ctx.createBufferSource();
+            source.buffer = clip.decodedBuffer;
+            const fadeGain = ctx.createGain();
+            source.connect(fadeGain);
+            fadeGain.connect(clipGain);
+            const knees = [clipStart + fi, clipEnd - fo, part.s + SEAM_FADE, part.e - SEAM_FADE, part.to]
+                .filter(t => t > part.from + 1e-6 && t <= part.to + 1e-9)
+                .sort((a, b) => a - b);
+            const g0 = gainAt(part.from);
+            if (g0 < 1 || knees.some(t => gainAt(t) < 1)) {
+                fadeGain.gain.setValueAtTime(g0, when);
+                for (const t of knees) fadeGain.gain.linearRampToValueAtTime(gainAt(t), t0Ctx + (t - P));
             }
+            source.start(when, clip.offset + (part.from - clipStart), part.to - part.from);
+            sources.push({ source, fadeGain });
         }
-
-        source.start(when, bufferOffset, playDuration);
-        return { source, fadeGain, clipGain };
+        return { clipGain, sources };
     }
 
     /**
@@ -3072,11 +3576,13 @@ const AudioDaw = (() => {
         for (const track of state.tracks) {
             const chain = chainFor(track);
             scheduleTrackAutomation(chain, track, { t0Ctx, t0Timeline: P, windowEnd, fresh: iteration === 0 });
+            const plan = trackAudibleSegments(track);
             for (const clip of track.clips) {
-                const nodes = scheduleClip(ctx, chain.input, clip, { t0Ctx, t0Timeline: P, windowEnd });
+                const nodes = scheduleClip(ctx, chain.input, clip, { t0Ctx, t0Timeline: P, windowEnd }, plan.get(clip.id));
                 if (!nodes) continue;
                 const entry = { clipId: clip.id, trackId: track.id, iteration, ...nodes };
-                nodes.source.onended = () => {
+                // Segments run in time order, so the last one ending retires the entry
+                nodes.sources[nodes.sources.length - 1].source.onended = () => {
                     if (!playback) return;
                     const i = playback.liveClips.indexOf(entry);
                     if (i >= 0) playback.liveClips.splice(i, 1);
@@ -3303,17 +3809,22 @@ const AudioDaw = (() => {
         if (playback.clicks.length > 64) playback.clicks.splice(0, playback.clicks.length - 64);
     }
 
+    /** Stop and disconnect one scheduled clip (all of its segments). */
+    function stopLiveClip(n) {
+        for (const s of n.sources) {
+            s.source.onended = null;
+            try { s.source.stop(); } catch (_) {}
+            try { s.source.disconnect(); } catch (_) {}
+            try { s.fadeGain.disconnect(); } catch (_) {}
+        }
+        try { n.clipGain.disconnect(); } catch (_) {}
+    }
+
     /** Stop every scheduled source and pending click; the mixer graph stays up. */
     function teardownPlaybackGraph() {
         if (!playback) return;
         clearInterval(playback.schedulerId);
-        for (const n of playback.liveClips) {
-            n.source.onended = null;
-            try { n.source.stop(); } catch (_) {}
-            try { n.source.disconnect(); } catch (_) {}
-            try { n.fadeGain.disconnect(); } catch (_) {}
-            try { n.clipGain.disconnect(); } catch (_) {}
-        }
+        for (const n of playback.liveClips) stopLiveClip(n);
         for (const osc of playback.clicks || []) {
             try { osc.stop(); } catch (_) {}
         }
@@ -3349,13 +3860,7 @@ const AudioDaw = (() => {
         if (!state.isPlaying || !playback) return;
         const ctx = playback.ctx;
         const P = Math.max(0, Math.min(currentTimelineTime(), state.totalDuration));
-        for (const n of playback.liveClips) {
-            n.source.onended = null;
-            try { n.source.stop(); } catch (_) {}
-            try { n.source.disconnect(); } catch (_) {}
-            try { n.fadeGain.disconnect(); } catch (_) {}
-            try { n.clipGain.disconnect(); } catch (_) {}
-        }
+        for (const n of playback.liveClips) stopLiveClip(n);
         playback.liveClips = [];
         for (const osc of playback.clicks) {
             try { osc.stop(); } catch (_) {}
@@ -3431,21 +3936,48 @@ const AudioDaw = (() => {
         if (btn) btn.innerHTML = playing ? DAW_ICONS.pause : DAW_ICONS.play;
     }
 
+    const TICKS_PER_BEAT = 960;
+
+    /** Bar|beat|tick (960 ticks per beat), the way a pro DAW's counter reads; a length counts from zero. */
+    function formatBBT(t, { length = false } = {}) {
+        const secPerBeat = 60 / state.bpm;
+        const perBar = state.timeSignature[0] || 4;
+        const totalTicks = Math.round(Math.max(0, t) / secPerBeat * TICKS_PER_BEAT);
+        const ticksPerBar = perBar * TICKS_PER_BEAT;
+        const bar = Math.floor(totalTicks / ticksPerBar);
+        const beat = Math.floor((totalTicks % ticksPerBar) / TICKS_PER_BEAT);
+        const tick = String(totalTicks % TICKS_PER_BEAT).padStart(3, '0');
+        return length ? `${bar}|${beat}|${tick}` : `${bar + 1}|${beat + 1}|${tick}`;
+    }
+
+    /** m:ss.mmm (h:mm:ss.mmm past an hour). */
+    function formatMinSec(t) {
+        const ms = Math.round(Math.max(0, t) * 1000);
+        const h = Math.floor(ms / 3600000);
+        const m = Math.floor((ms % 3600000) / 60000);
+        const s = Math.floor((ms % 60000) / 1000);
+        const body = `${String(s).padStart(2, '0')}.${String(ms % 1000).padStart(3, '0')}`;
+        return h ? `${h}:${String(m).padStart(2, '0')}:${body}` : `${m}:${body}`;
+    }
+
+    /** Main + sub counters and the selection's start / end / length, in the leading scale. */
     function updateTimeDisplay() {
-        if (!timeDisplayEl) return;
-        const current = durationStringifyColons2(state.currentTime);
-        const total = durationStringifyColons2(state.totalDuration);
-        timeDisplayEl.textContent = `${current} / ${total}`;
-        const beatsEl = transportEl?.querySelector('.daw-lcd-beats');
-        if (beatsEl) {
-            const beatLen = 60 / state.bpm;
-            const beatsPerBar = state.timeSignature[0] || 4;
-            const totalBeats = state.currentTime / beatLen;
-            const bar = Math.floor(totalBeats / beatsPerBar) + 1;
-            const beat = Math.floor(totalBeats % beatsPerBar) + 1;
-            const sixteenth = Math.floor((totalBeats % 1) * 4) + 1;
-            beatsEl.textContent = `${bar}.${beat}.${sixteenth}`;
-        }
+        if (!transportEl || !state) return;
+        const beats = state.rulerMode === 'beats';
+        const fmt = (t, length = false) => beats ? formatBBT(t, { length }) : formatMinSec(t);
+        const set = (sel, text) => {
+            const el = transportEl.querySelector(sel);
+            if (el && el.textContent !== text) el.textContent = text;
+        };
+        const t = state.currentTime;
+        set('.daw-lcd-main-label', beats ? translate('BARS') : translate('TIME'));
+        set('.daw-lcd-main', fmt(t));
+        set('.daw-lcd-sub-label', beats ? translate('TIME') : translate('BARS'));
+        set('.daw-lcd-sub', beats ? formatMinSec(t) : formatBBT(t));
+        const sel = state.selection;
+        set('.daw-lcd-sel-start', fmt(sel ? sel.start : t));
+        set('.daw-lcd-sel-end', fmt(sel ? sel.end : t));
+        set('.daw-lcd-sel-len', fmt(sel ? sel.end - sel.start : 0, true));
     }
 
     /**
@@ -3495,7 +4027,15 @@ const AudioDaw = (() => {
     // ===== ZOOM =====
 
     function setZoom(newZoom) {
-        state.zoom = Math.max(10, Math.min(500, newZoom));
+        const old = state.zoom;
+        state.zoom = Math.max(10, Math.min(1000, newZoom));
+        // Keep the playhead where it was on screen (or the left edge, when the playhead is out of view)
+        let keepScroll = null;
+        if (clipLanesEl && old !== state.zoom) {
+            const px = state.currentTime * old - clipLanesEl.scrollLeft;
+            const visible = px >= 0 && px <= clipLanesEl.clientWidth;
+            keepScroll = visible ? state.currentTime * state.zoom - px : clipLanesEl.scrollLeft / old * state.zoom;
+        }
         if (timeline) timeline.setZoom(state.zoom);
         for (const track of state.tracks) {
             AudioDawTrack.updateZoom(track, state.zoom);
@@ -3504,6 +4044,9 @@ const AudioDaw = (() => {
         updatePlayheadPosition();
         updateLaneGrid();
         updateLoopShade();
+        refreshMarkers();
+        renderSelection();
+        if (keepScroll !== null) clipLanesEl.scrollLeft = Math.max(0, keepScroll);
         // Keep the transport slider in sync (keyboard +/- also zooms)
         const slider = transportEl?.querySelector('.daw-transport-zoom');
         if (slider) slider.value = state.zoom;
@@ -3871,18 +4414,239 @@ const AudioDaw = (() => {
         updateLoopShade();
     }
 
+    // ===== EDIT OPERATIONS (range, clipboard, layering, nudge) =====
+
+    let clipboard = null; // { items: [{trackOffset, clip: serialized}], length }
+
+    /** Copy of a clip sharing its audio, with the given window (no undo, no render). */
+    function cloneClip(c, overrides = {}) {
+        const nc = AudioDawTrack.createClip(c.blob, { name: c.name, startTime: c.startTime, color: c.color, blobKey: c.blobKey });
+        nc.decodedBuffer = c.decodedBuffer;
+        nc.duration = c.duration;
+        nc.offset = c.offset;
+        nc.trimEnd = c.trimEnd;
+        nc.gain = c.gain;
+        nc.fadeIn = c.fadeIn;
+        nc.fadeOut = c.fadeOut;
+        nc.muted = c.muted;
+        return Object.assign(nc, overrides);
+    }
+
+    /** The part of a clip inside [start, end), as a new clip (null when they do not overlap). */
+    function clipPortion(clip, start, end) {
+        const cs = clip.startTime;
+        const ce = cs + visibleDur(clip);
+        const s = Math.max(cs, start);
+        const e = Math.min(ce, end);
+        if (e - s < 0.001) return null;
+        const piece = cloneClip(clip);
+        piece.startTime = s;
+        piece.offset = clip.offset + (s - cs);
+        piece.trimEnd = clip.trimEnd + (ce - e);
+        piece.fadeIn = s > cs ? 0 : Math.min(clip.fadeIn || 0, e - s);
+        piece.fadeOut = e < ce ? 0 : Math.min(clip.fadeOut || 0, e - s);
+        return piece;
+    }
+
+    /** Remove [start, end) from the selected tracks. Shuffle mode closes the gap. */
+    function deleteRange(sel, { snapshot = true } = {}) {
+        if (snapshot) pushUndo();
+        const len = sel.end - sel.start;
+        for (const id of sel.trackIds) {
+            const track = state.tracks.find(t => t.id === id);
+            if (!track) continue;
+            const kept = [];
+            for (const clip of track.clips) {
+                const cs = clip.startTime;
+                const ce = cs + visibleDur(clip);
+                if (ce <= sel.start + 1e-6 || cs >= sel.end - 1e-6) {
+                    kept.push(clip);
+                    continue;
+                }
+                const left = clipPortion(clip, cs, sel.start);
+                const right = clipPortion(clip, sel.end, ce);
+                if (left) kept.push(left);
+                if (right) kept.push(right);
+            }
+            if (state.editMode === 'shuffle') {
+                for (const c of kept) {
+                    if (c.startTime >= sel.end - 1e-6) c.startTime -= len;
+                }
+            }
+            track.clips = kept;
+        }
+        if (findClipById(state.selectedClipId) === null) state.selectedClipId = null;
+        updateTotalDuration();
+        renderAllTracks();
+        updateBottomPanel();
+        resyncPlayback();
+    }
+
+    /** Split every clip on the selected tracks at the selection's edges. */
+    function splitAtSelection(sel) {
+        pushUndo();
+        for (const id of sel.trackIds) {
+            const track = state.tracks.find(t => t.id === id);
+            if (!track) continue;
+            const out = [];
+            for (const clip of track.clips) {
+                let pieces = [clip];
+                for (const at of [sel.start, sel.end]) {
+                    const next = [];
+                    for (const p of pieces) {
+                        const rel = at - p.startTime;
+                        if (rel > 0.001 && rel < visibleDur(p) - 0.001) next.push(...splitClipAt(p, rel));
+                        else next.push(p);
+                    }
+                    pieces = next;
+                }
+                out.push(...pieces);
+            }
+            track.clips = out;
+        }
+        renderAllTracks();
+        updateBottomPanel();
+        resyncPlayback();
+    }
+
+    /** Copy the selection (the parts of clips inside it, per track) or else the selected clip. */
+    function copySelection() {
+        const sel = state.selection;
+        if (sel) {
+            const order = state.tracks.map(t => t.id).filter(id => sel.trackIds.includes(id));
+            const items = [];
+            order.forEach((id, offset) => {
+                const track = state.tracks.find(t => t.id === id);
+                for (const clip of track.clips) {
+                    const piece = clipPortion(clip, sel.start, sel.end);
+                    if (piece) items.push({ trackOffset: offset, clip: piece, rel: piece.startTime - sel.start });
+                }
+            });
+            clipboard = { items, length: sel.end - sel.start };
+        }
+        else {
+            const found = findClipById(state.selectedClipId);
+            if (!found) return false;
+            clipboard = { items: [{ trackOffset: 0, clip: cloneClip(found.clip), rel: 0 }], length: visibleDur(found.clip) };
+        }
+        if (typeof doNoticePopover === 'function') {
+            doNoticePopover(translate('Copied') + ` ${clipboard.items.length} ` + (clipboard.items.length === 1 ? translate('clip') : translate('clips')), 'notice-pop-green');
+        }
+        return true;
+    }
+
+    function cutSelection() {
+        const sel = state.selection;
+        if (sel) {
+            if (!copySelection()) return;
+            deleteRange(sel);
+            clearSelection();
+            return;
+        }
+        const found = findClipById(state.selectedClipId);
+        if (found && copySelection()) doDeleteClip(found.clip, found.track);
+    }
+
+    /** Paste at the playhead, starting on the selected track. Shuffle mode pushes later clips along. */
+    function pasteClipboard() {
+        if (!clipboard?.items.length) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Nothing to paste. Copy a clip or a selection first'), 'notice-pop-yellow');
+            return;
+        }
+        pushUndo();
+        const at = state.currentTime;
+        const base = Math.max(0, state.tracks.findIndex(t => t.id === state.selectedTrackId));
+        const touched = new Set();
+        for (const item of clipboard.items) {
+            let track = state.tracks[base + item.trackOffset];
+            if (!track) track = addTrack();
+            if (state.editMode === 'shuffle' && !touched.has(track.id)) {
+                for (const c of track.clips) {
+                    if (c.startTime >= at - 1e-6) c.startTime += clipboard.length;
+                }
+            }
+            touched.add(track.id);
+            const nc = cloneClip(item.clip, { startTime: at + item.rel });
+            track.clips.push(nc);
+            state.selectedClipId = nc.id;
+        }
+        updateTotalDuration();
+        renderAllTracks();
+        updateBottomPanel();
+        resyncPlayback();
+    }
+
+    /** Layering: move a clip to the top (1) or bottom (-1) of its track, which changes what is heard. */
+    function reorderClip(clip, track, dir) {
+        const idx = track.clips.indexOf(clip);
+        if (idx < 0) return;
+        pushUndo();
+        track.clips.splice(idx, 1);
+        if (dir > 0) track.clips.push(clip);
+        else track.clips.unshift(clip);
+        renderAllTracks();
+        resyncPlayback();
+    }
+
+    /** Spot: type the exact start time (in the leading scale's units: seconds, or bar.beat). */
+    function spotClip(clip) {
+        const beats = state.rulerMode === 'beats';
+        const current = beats ? formatBBT(clip.startTime).replace(/\|/g, '.') : clip.startTime.toFixed(3);
+        const val = prompt(beats ? translate('Start at bar.beat.tick (e.g. 5.1.000):') : translate('Start time in seconds:'), current);
+        if (val === null) return;
+        let t;
+        if (beats) {
+            const [bar, beat = '1', tick = '0'] = val.trim().split(/[.|:]/);
+            const perBar = state.timeSignature[0] || 4;
+            t = ((parseInt(bar) - 1) * perBar + (parseInt(beat) - 1) + (parseInt(tick) || 0) / TICKS_PER_BEAT) * (60 / state.bpm);
+        }
+        else {
+            t = parseFloat(val);
+        }
+        if (!isFinite(t) || t < 0) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('That is not a valid time'), 'notice-pop-yellow');
+            return;
+        }
+        pushUndo();
+        clip.startTime = t;
+        updateTotalDuration();
+        renderAllTracks();
+        resyncPlayback();
+    }
+
+    /** Nudge the selected clip by one grid step. */
+    function nudgeSelected(dir) {
+        const found = findClipById(state.selectedClipId);
+        if (!found) return;
+        pushUndo();
+        const step = state.editMode === 'slip' ? 0.01 : gridStep();
+        found.clip.startTime = Math.max(0, found.clip.startTime + dir * step);
+        updateTotalDuration();
+        renderAllTracks();
+        resyncPlayback();
+    }
+
     // ===== CLIP CONTEXT MENU =====
 
     function showClipContextMenu(e, clip, track) {
+        const idx = track.clips.indexOf(clip);
+        const covered = track.clips.some((c, j) => j > idx && !c.muted
+            && c.startTime < clip.startTime + visibleDur(clip) && c.startTime + visibleDur(c) > clip.startTime);
         dawMenu(e, [
             { label: translate('Split at Playhead'), action: () => doSplitClip(clip, track) },
             { label: translate('Duplicate'), action: () => doDuplicateClip(clip, track) },
             { label: translate('Delete'), action: () => doDeleteClip(clip, track) },
             { label: clip.muted ? translate('Unmute Clip') : translate('Mute Clip'), action: () => {
+                pushUndo();
                 clip.muted = !clip.muted;
-                applyClipGain(clip);
                 renderAllTracks();
+                resyncPlayback(); // a muted clip stops covering the one below it
             }},
+            { label: translate('Bring to front (play this take)'), disabled: !covered && idx === track.clips.length - 1, action: () => reorderClip(clip, track, 1) },
+            { label: translate('Send to back'), disabled: idx === 0, action: () => reorderClip(clip, track, -1) },
+            { label: translate('Spot to time…'), action: () => spotClip(clip) },
+            { label: translate('Select clip range'), action: () => setSelection({ start: clip.startTime, end: clip.startTime + visibleDur(clip), trackIds: [track.id] }) },
+            { label: translate('Copy'), action: () => { state.selectedClipId = clip.id; copySelection(); } },
             { label: translate('Separate Stems… (Demucs)'), action: () => openStemsForClip(clip, track) },
             { label: translate('Conform to') + ` ${state.bpm} BPM…`, action: () => conformClipToBpm(clip, track) }
         ]);
@@ -3988,6 +4752,13 @@ const AudioDaw = (() => {
                 return;
             }
             track.clips.splice(idx, 1);
+            if (state.editMode === 'shuffle') {
+                // Shuffle closes the gap: everything after the clip slides left by its length
+                const end = clip.startTime + visibleDur(clip);
+                for (const c of track.clips) {
+                    if (c.startTime >= end - 1e-6) c.startTime -= visibleDur(clip);
+                }
+            }
 
             // Clean up element (blob stays in blobStore — undo snapshots may reference it;
             // garbageCollectBlobs() reclaims it once nothing does)
@@ -4334,12 +5105,6 @@ const AudioDaw = (() => {
         dawMenu(e, items);
     }
 
-    /** "Audio 3": the next unused default name for a recording track. */
-    function nextAudioTrackName() {
-        let n = 1;
-        while (state.tracks.some(t => t.name === `Audio ${n}`)) n++;
-        return `Audio ${n}`;
-    }
 
     /** Count-in clicks ending at ctx time t0 (the downbeat recording starts on). */
     function scheduleCountIn(ctx, t0, seconds) {
@@ -4368,7 +5133,7 @@ const AudioDaw = (() => {
         let armed = state.tracks.filter(t => t.armed);
         if (!armed.length) {
             pushUndo();
-            const track = addTrack({ name: nextAudioTrackName() });
+            const track = addTrack({ name: nextTrackName(translate('Audio')) });
             track.armed = true;
             track.input = { deviceId: recordSettings.deviceId || null, channels: 'mono' };
             armed = [track];
@@ -4579,8 +5344,9 @@ const AudioDaw = (() => {
         for (const track of state.tracks) {
             for (const clip of track.clips) referenced.add(clip.blobKey);
         }
-        // Drum pads hold their audio in the same store
+        // Drum pads and the clipboard hold their audio in the same store
         for (const lane of state.beatPattern.lanes) referenced.add(lane.blobKey);
+        for (const item of clipboard?.items || []) referenced.add(item.clip.blobKey);
         for (const snap of [...state.undoStack, ...state.redoStack]) {
             for (const ts of snap.tracks) {
                 for (const cs of ts.clips) referenced.add(cs.blobKey);
@@ -5613,6 +6379,9 @@ const AudioDaw = (() => {
             masterVolume: state.masterVolume,
             rulerMode: state.rulerMode,
             snapEnabled: state.snapEnabled,
+            editMode: state.editMode,
+            gridValue: state.gridValue,
+            markers: state.markers.map(m => ({ ...m })),
             metronome: state.metronome,
             beatPattern: {
                 steps: state.beatPattern.steps,
@@ -5659,6 +6428,9 @@ const AudioDaw = (() => {
         state.masterVolume = project.masterVolume ?? 1.0;
         state.rulerMode = project.rulerMode || 'time';
         state.snapEnabled = project.snapEnabled !== false;
+        state.editMode = ['slip', 'grid', 'shuffle'].includes(project.editMode) ? project.editMode : (state.snapEnabled ? 'grid' : 'slip');
+        state.gridValue = project.gridValue || 'auto';
+        state.markers = (project.markers || []).map(m => ({ id: m.id, time: m.time, name: m.name, color: m.color || null }));
         state.masterLimiterEnabled = project.masterLimiterEnabled !== false;
         state.metronome = !!project.metronome;
         // Clear before anything is stored: clearing after the pad loop below wiped every pad's audio.
@@ -5727,12 +6499,16 @@ const AudioDaw = (() => {
         if (timeline) {
             timeline.setTempo(state.bpm, state.timeSignature);
             timeline.setMode(state.rulerMode);
+            timeline.setLoop(state.loopEnabled, state.loopStart, state.loopEnd);
+            timeline.setPunch(state.punchEnabled);
         }
+        setTool(state.tool);
         updateTotalDuration();
         renderAllTracks();
         updateBottomPanel();
         updateTimeDisplay();
         updatePlayheadPosition();
+        updateLoopShade();
     }
 
     function scheduleAutosave() {
@@ -5906,11 +6682,19 @@ const AudioDaw = (() => {
         currentProjectName = null;
         addTrack();
         buildTransport();
+        if (timeline) {
+            timeline.setTempo(state.bpm, state.timeSignature);
+            timeline.setMode(state.rulerMode);
+            timeline.setLoop(false, 0, 0);
+            timeline.setPunch(false);
+        }
+        setTool(state.tool);
         updateTotalDuration();
         renderAllTracks();
         updateBottomPanel();
         updateTimeDisplay();
         updatePlayheadPosition();
+        updateLoopShade();
     }
 
     function showProjectMenu(e) {
@@ -5965,29 +6749,51 @@ const AudioDaw = (() => {
     // ===== EXPORT =====
 
     function showExportMenu(e) {
+        const hasSel = !!state.selection;
+        const hasLoop = state.loopEnd > state.loopStart;
+        const reopen = () => showExportMenu(e);
+        const pick = (key, value) => () => {
+            exportSettings[key] = value;
+            if (key !== 'range') saveExportSettings();
+            reopen();
+        };
         dawMenu(e, [
-            { label: translate('WAV (Lossless)'), action: () => doExportMixdown('wav') },
-            { label: translate('MP3 (192kbps)'), action: () => doExportMixdown('mp3') },
+            { heading: translate('Range') },
+            { label: translate('Whole song'), checked: exportSettings.range === 'song', action: pick('range', 'song') },
+            { label: translate('Selection'), checked: exportSettings.range === 'selection', disabled: !hasSel, action: pick('range', 'selection') },
+            { label: translate('Loop range'), checked: exportSettings.range === 'loop', disabled: !hasLoop, action: pick('range', 'loop') },
+            { heading: translate('Quality (WAV and stems)') },
+            { label: translate('16-bit'), checked: exportSettings.bitDepth === 16, action: pick('bitDepth', 16) },
+            { label: translate('24-bit'), checked: exportSettings.bitDepth === 24, action: pick('bitDepth', 24) },
+            { label: translate('32-bit float'), checked: exportSettings.bitDepth === 32, action: pick('bitDepth', 32) },
+            { label: '44.1 kHz', checked: exportSettings.sampleRate === 44100, action: pick('sampleRate', 44100) },
+            { label: '48 kHz', checked: exportSettings.sampleRate === 48000, action: pick('sampleRate', 48000) },
+            { heading: translate('Export') },
+            { label: translate('WAV'), action: () => doExportMixdown('wav') },
+            { label: translate('MP3 (192 kbps)'), action: () => doExportMixdown('mp3') },
             { label: translate('OGG Vorbis'), action: () => doExportMixdown('ogg') },
-            { label: translate('FLAC (Lossless)'), action: () => doExportMixdown('flac') },
-            { label: translate('AAC (192kbps)'), action: () => doExportMixdown('aac') },
+            { label: translate('FLAC (lossless)'), action: () => doExportMixdown('flac') },
+            { label: translate('AAC (192 kbps)'), action: () => doExportMixdown('aac') },
+            { label: translate('Stems: one WAV per track (ZIP)'), action: () => doExportStems() },
             { label: translate('Save WAV to Swarm Outputs'), action: saveMixdownToOutputs }
         ]);
     }
 
     async function doExportMixdown(format = 'wav') {
         if (state.tracks.length === 0) return;
+        const bounds = exportBounds();
         try {
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Rendering mixdown...', 'notice-pop-blue');
+                doNoticePopover(translate('Rendering mixdown...'), 'notice-pop-blue');
             }
-            const wavBlob = await renderMixdownBlob();
+            const wavBlob = await renderMixdownBlob(bounds);
             if (!wavBlob) throw new Error('Nothing to export');
+            const name = `${exportBaseName()}-${bounds.label}`;
 
             if (format === 'wav') {
-                downloadBlob(wavBlob, `audiolab-mixdown-${Date.now()}.wav`);
+                downloadBlob(wavBlob, `${name}.wav`);
                 if (typeof doNoticePopover === 'function') {
-                    doNoticePopover('WAV exported', 'notice-pop-green');
+                    doNoticePopover(translate('WAV exported'), 'notice-pop-green');
                 }
             } else {
                 // Convert via backend API
@@ -6001,7 +6807,7 @@ const AudioDaw = (() => {
                 });
                 if (result.success && result.audio_data) {
                     const convertedBlob = AudioLabCore.base64ToBlob(result.audio_data, result.mime_type || 'audio/mpeg');
-                    downloadBlob(convertedBlob, `audiolab-mixdown-${Date.now()}.${format}`);
+                    downloadBlob(convertedBlob, `${name}.${format}`);
                     if (typeof doNoticePopover === 'function') {
                         doNoticePopover(`${format.toUpperCase()} ` + translate('exported'), 'notice-pop-green');
                     }
@@ -6098,49 +6904,77 @@ const AudioDaw = (() => {
 
     function handleKeyboard(e) {
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
+        // The computer-keyboard instrument claims its keys first while it is enabled
+        if (typeof AudioDawInstruments !== 'undefined' && AudioDawInstruments.handleKeyDown && AudioDawInstruments.handleKeyDown(e)) return;
         const key = e.key.toLowerCase();
+        const mod = e.ctrlKey || e.metaKey;
+        const sel = state.selection;
 
         if (key === ' ') {
             e.preventDefault();
             if (recording) stopRecordingFlow();
             else togglePlayback();
         }
-        else if (key === 'r' && e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        else if (key === 'r' && e.shiftKey && !mod) {
             e.preventDefault();
             const track = getSelectedTrack();
             if (track) toggleArm(track);
         }
-        else if (key === 'i' && !e.ctrlKey && !e.metaKey) {
-            const track = getSelectedTrack();
-            if (track) toggleMonitor(track);
-        }
-        else if (key === 'c' && !e.ctrlKey && !e.metaKey) { toggleMetronome(); }
-        else if (key === 'p' && !e.ctrlKey && !e.metaKey) { togglePunch(); }
-        else if (key === 'r' && !e.ctrlKey && !e.metaKey) {
+        else if (key === 'r' && !mod) {
             e.preventDefault();
             if (recording) stopRecordingFlow();
             else startRecordingFlow();
         }
-        else if (key === 'z' && (e.ctrlKey || e.metaKey) && e.shiftKey) { e.preventDefault(); doRedo(); }
-        else if (key === 'z' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doUndo(); }
-        else if (key === 's' && (e.ctrlKey || e.metaKey)) {
+        else if (key === 'z' && mod && e.shiftKey) { e.preventDefault(); doRedo(); }
+        else if (key === 'y' && mod) { e.preventDefault(); doRedo(); }
+        else if (key === 'z' && mod) { e.preventDefault(); doUndo(); }
+        else if (key === 's' && mod) {
             e.preventDefault();
             if (currentProjectName) saveProjectToServer(currentProjectName);
             else promptSaveAs();
         }
-        else if (key === 'd' && (e.ctrlKey || e.metaKey)) {
+        else if (key === 'd' && mod) {
             e.preventDefault();
-            const sel = findClipById(state.selectedClipId);
-            if (sel) doDuplicateClip(sel.clip, sel.track);
+            const found = findClipById(state.selectedClipId);
+            if (found) doDuplicateClip(found.clip, found.track);
+        }
+        else if (key === 'c' && mod) { e.preventDefault(); copySelection(); }
+        else if (key === 'x' && mod) { e.preventDefault(); cutSelection(); }
+        else if (key === 'v' && mod) { e.preventDefault(); pasteClipboard(); }
+        else if (key === 'a' && mod) {
+            e.preventDefault();
+            setSelection({ start: 0, end: Math.max(state.contentDuration, 0.1), trackIds: state.tracks.map(t => t.id) });
         }
         else if (key === 'delete' || key === 'backspace') {
-            if (state.selectedClipId) {
-                const track = state.tracks.find(t => t.clips.some(c => c.id === state.selectedClipId));
-                const clip = track?.clips.find(c => c.id === state.selectedClipId);
-                if (clip && track) doDeleteClip(clip, track);
+            if (sel) {
+                e.preventDefault();
+                deleteRange(sel);
+                clearSelection();
+            }
+            else if (state.selectedClipId) {
+                const found = findClipById(state.selectedClipId);
+                if (found) doDeleteClip(found.clip, found.track);
             }
         }
-        else if (key === 'm') {
+        else if (key === 'escape') {
+            clearSelection();
+            document.querySelector('.daw-context-menu')?.remove();
+        }
+        else if (key === 'enter') {
+            e.preventDefault();
+            addMarker(state.currentTime);
+        }
+        else if (key === '[') { jumpMarker(-1); }
+        else if (key === ']') { jumpMarker(1); }
+        else if (key === ',') { nudgeSelected(-1); }
+        else if (key === '.') { nudgeSelected(1); }
+        else if (key === 'arrowleft' || key === 'arrowright') {
+            e.preventDefault();
+            const dir = key === 'arrowleft' ? -1 : 1;
+            const step = e.shiftKey ? transportStep() : gridStep();
+            seekTo(Math.max(0, state.currentTime + dir * step));
+        }
+        else if (key === 'm' && !mod) {
             const track = getSelectedTrack();
             if (track) {
                 track.muted = !track.muted;
@@ -6148,7 +6982,7 @@ const AudioDaw = (() => {
                 renderAllTracks();
             }
         }
-        else if (key === 's') {
+        else if (key === 's' && !mod) {
             const track = getSelectedTrack();
             if (track) {
                 track.soloed = !track.soloed;
@@ -6156,17 +6990,44 @@ const AudioDaw = (() => {
                 renderAllTracks();
             }
         }
-        else if (key === 'l') { toggleLoop(); }
-        else if (key === 't') {
-            const sel = findClipById(state.selectedClipId);
-            if (sel) doSplitClip(sel.clip, sel.track);
+        else if (key === 'i' && !mod) {
+            const track = getSelectedTrack();
+            if (track) toggleMonitor(track);
         }
-        else if (key === 'b') { switchBottomTab('beats'); }
-        else if (key === 'f') { switchBottomTab('fx'); }
+        else if (key === 'c' && !mod) { toggleMetronome(); }
+        else if (key === 'p' && !mod) { togglePunch(); }
+        else if (key === 'l' && !mod) {
+            // With a selection, L loops it
+            if (sel) {
+                state.loopStart = sel.start;
+                state.loopEnd = sel.end;
+                if (!state.loopEnabled) toggleLoop();
+                else {
+                    if (timeline) timeline.setLoop(true, state.loopStart, state.loopEnd);
+                    updateLoopShade();
+                    resyncPlayback();
+                }
+            }
+            else {
+                toggleLoop();
+            }
+        }
+        else if (key === 't' && !mod) {
+            if (sel) splitAtSelection(sel);
+            else {
+                const found = findClipById(state.selectedClipId);
+                if (found) doSplitClip(found.clip, found.track);
+            }
+        }
+        else if (key === 'v' && !mod) { setTool('smart'); }
+        else if (key === 'y' && !mod) { setTool('range'); }
+        else if (key === 'z' && !mod) { zoomToFit(); }
+        else if (key === 'b' && !mod) { switchBottomTab('beats'); }
+        else if (key === 'f' && !mod) { switchBottomTab('fx'); }
         else if (key === '+' || key === '=') { e.preventDefault(); setZoom(state.zoom * 1.25); }
         else if (key === '-') { e.preventDefault(); setZoom(state.zoom / 1.25); }
         else if (key === 'home') { e.preventDefault(); seekTo(0); }
-        else if (key === 'end') { e.preventDefault(); seekTo(state.totalDuration); }
+        else if (key === 'end') { e.preventDefault(); seekTo(state.contentDuration); }
         else if (key === '?') { e.preventDefault(); showShortcutHelp(); }
     }
 
@@ -6181,18 +7042,25 @@ const AudioDaw = (() => {
         const overlay = createDiv(null, 'daw-shortcut-help');
         const rows = [
             ['Space', 'Play / Pause (stops recording)'],
-            ['R', 'Start / stop recording'],
-            ['L', 'Toggle loop'],
+            ['R / Shift+R', 'Record / arm the selected track'],
+            ['I', 'Monitor the selected track\'s input'],
             ['C / P', 'Metronome / punch recording'],
-            ['Shift+R / I', 'Arm / monitor the selected track'],
-            ['M / S', 'Mute / solo selected track'],
-            ['T', 'Split selected clip at playhead'],
-            ['Delete', 'Delete selected clip'],
-            ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'],
-            ['Ctrl+D', 'Duplicate selected clip'],
-            ['Ctrl+S', 'Save project'],
-            ['+ / -', 'Zoom in / out'],
+            ['L', 'Loop (loops the selection when there is one)'],
             ['Home / End', 'Jump to start / end'],
+            ['Left / Right', 'Move the playhead one grid step (Shift: one bar)'],
+            ['Enter / [ / ]', 'Add a marker / previous / next marker'],
+            ['V / Y', 'Smart tool / range tool'],
+            ['Ctrl+A', 'Select everything'],
+            ['Ctrl+C / X / V', 'Copy / cut / paste at the playhead'],
+            ['Delete', 'Delete the selection or the selected clip'],
+            ['T', 'Split at the playhead (or at the selection edges)'],
+            [', / .', 'Nudge the selected clip by one grid step'],
+            ['Ctrl+D', 'Duplicate the selected clip'],
+            ['M / S', 'Mute / solo the selected track'],
+            ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'],
+            ['Ctrl+S', 'Save project'],
+            ['+ / - / Z', 'Zoom in / out / to fit'],
+            ['Esc', 'Clear the selection'],
             ['?', 'Toggle this help']
         ];
         // Key names stay as-is (they name physical keys); only the descriptions are translated.

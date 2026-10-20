@@ -346,13 +346,43 @@ const AudioDawTrack = (() => {
      * inside the overflow-hidden clip element shows exactly the trimmed window.
      */
     function applyClipLayout(el, clip) {
+        const vis = clip.duration - clip.offset - clip.trimEnd;
+        const width = Math.max(vis * currentZoom, 4);
         el.style.left = (clip.startTime * currentZoom) + 'px';
-        el.style.width = Math.max((clip.duration - clip.offset - clip.trimEnd) * currentZoom, 4) + 'px';
+        el.style.width = width + 'px';
         const wsC = el.querySelector('.daw-clip-waveform');
         if (wsC) {
             wsC.style.width = (clip.duration * currentZoom) + 'px';
             wsC.style.transform = `translateX(${-clip.offset * currentZoom}px)`;
         }
+        // Fade shapes and their corner handles
+        const fiPx = Math.min(width, (clip.fadeIn || 0) * currentZoom);
+        const foPx = Math.min(width - fiPx, (clip.fadeOut || 0) * currentZoom);
+        const fadeIn = el.querySelector('.daw-clip-fade-in');
+        const fadeOut = el.querySelector('.daw-clip-fade-out');
+        if (fadeIn) {
+            fadeIn.style.width = fiPx + 'px';
+            fadeIn.style.display = fiPx > 0.5 ? '' : 'none';
+        }
+        if (fadeOut) {
+            fadeOut.style.width = foPx + 'px';
+            fadeOut.style.display = foPx > 0.5 ? '' : 'none';
+        }
+        const hIn = el.querySelector('.daw-clip-fade-handle-in');
+        const hOut = el.querySelector('.daw-clip-fade-handle-out');
+        if (hIn) hIn.style.left = Math.max(0, fiPx - 5) + 'px';
+        if (hOut) hOut.style.right = Math.max(0, foPx - 5) + 'px';
+        const gainEl = el.querySelector('.daw-clip-gain');
+        if (gainEl) gainEl.textContent = clipGainText(clip);
+    }
+
+    /** Pro-DAW style clip gain readout: "0 dB", "+2.5 dB", "-6 dB". */
+    function clipGainText(clip) {
+        const g = clip.gain ?? 1;
+        if (g <= 0) return '-∞ dB';
+        const db = 20 * Math.log10(g);
+        if (Math.abs(db) < 0.05) return '0 dB';
+        return (db > 0 ? '+' : '') + db.toFixed(1) + ' dB';
     }
 
     /**
@@ -394,6 +424,26 @@ const AudioDawTrack = (() => {
                 // Waveform container
                 const wsContainer = createDiv(null, 'daw-clip-waveform');
                 clipEl.appendChild(wsContainer);
+
+                // Fade shapes (the shaded, attenuated corners) and their drag handles
+                const fadeInShape = createDiv(null, 'daw-clip-fade daw-clip-fade-in');
+                const fadeOutShape = createDiv(null, 'daw-clip-fade daw-clip-fade-out');
+                clipEl.appendChild(fadeInShape);
+                clipEl.appendChild(fadeOutShape);
+                const fadeInHandle = createDiv(null, 'daw-clip-fade-handle daw-clip-fade-handle-in');
+                fadeInHandle.title = translate('Drag to set the fade-in');
+                const fadeOutHandle = createDiv(null, 'daw-clip-fade-handle daw-clip-fade-handle-out');
+                fadeOutHandle.title = translate('Drag to set the fade-out');
+                clipEl.appendChild(fadeInHandle);
+                clipEl.appendChild(fadeOutHandle);
+                setupFadeDrag(fadeInHandle, 'in', clipEl, clip, track, callbacks);
+                setupFadeDrag(fadeOutHandle, 'out', clipEl, clip, track, callbacks);
+
+                // Clip gain readout, drag up/down to change it
+                const gainEl = createDiv(null, 'daw-clip-gain');
+                gainEl.title = translate('Clip gain: drag up or down, double-click for 0 dB');
+                clipEl.appendChild(gainEl);
+                setupGainDrag(gainEl, clipEl, clip, track, callbacks);
 
                 // Trim handles (left = offset, right = trimEnd)
                 const trimL = createDiv(null, 'daw-clip-trim daw-clip-trim-left');
@@ -454,7 +504,9 @@ const AudioDawTrack = (() => {
 
             // Update position, size, waveform alignment, and colors (track may be recolored)
             applyClipLayout(entry.el, clip);
-            entry.el.style.backgroundColor = hexToRgba(clip.color || track.color, 0.3);
+            // Opaque, so a later clip visibly covers the one below it (it is also the one heard)
+            entry.el.style.backgroundColor = `color-mix(in srgb, ${clip.color || track.color} 28%, var(--background-soft))`;
+            entry.el.style.zIndex = String(2 + track.clips.indexOf(clip));
             if (entry.ws) {
                 try { entry.ws.setOptions({ waveColor: clip.color || track.color }); } catch (_) {}
             }
@@ -481,6 +533,8 @@ const AudioDawTrack = (() => {
 
         clipEl.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
+            // The range tool selects across clips instead; let the lanes take the gesture
+            if (callbacks.isRangeTool && callbacks.isRangeTool()) return;
             isDragging = false;
             dragStartX = e.clientX;
             dragStartY = e.clientY;
@@ -605,6 +659,7 @@ const AudioDawTrack = (() => {
     function setupTrimDrag(handle, side, clipEl, clip, track, callbacks) {
         handle.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
+            if (callbacks.isRangeTool && callbacks.isRangeTool()) return;
             e.stopPropagation();
             e.preventDefault();
             handle.setPointerCapture(e.pointerId);
@@ -647,6 +702,90 @@ const AudioDawTrack = (() => {
             };
             handle.addEventListener('pointermove', onMove);
             handle.addEventListener('pointerup', onUp);
+        });
+    }
+
+    /**
+     * Drag a clip's top corner to set its fade. The fade-in runs from the clip start, the fade-out to its end;
+     * the two never overlap. Undo snapshots via onClipFadeStart, rescheduling via onClipFadeEnd.
+     */
+    function setupFadeDrag(handle, side, clipEl, clip, track, callbacks) {
+        handle.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            if (callbacks.isRangeTool && callbacks.isRangeTool()) return;
+            e.stopPropagation();
+            e.preventDefault();
+            handle.setPointerCapture(e.pointerId);
+            const startX = e.clientX;
+            const start = { fadeIn: clip.fadeIn || 0, fadeOut: clip.fadeOut || 0 };
+            let moved = false;
+            const onMove = (me) => {
+                if (!moved && Math.abs(me.clientX - startX) > 2) {
+                    moved = true;
+                    if (callbacks.onClipFadeStart) callbacks.onClipFadeStart(clip, track);
+                }
+                if (!moved) return;
+                const vis = clip.duration - clip.offset - clip.trimEnd;
+                const dSec = (me.clientX - startX) / currentZoom;
+                if (side === 'in') {
+                    clip.fadeIn = Math.max(0, Math.min(vis - (clip.fadeOut || 0), start.fadeIn + dSec));
+                } else {
+                    clip.fadeOut = Math.max(0, Math.min(vis - (clip.fadeIn || 0), start.fadeOut - dSec));
+                }
+                applyClipLayout(clipEl, clip);
+            };
+            const onUp = (ue) => {
+                try { handle.releasePointerCapture(ue.pointerId); } catch (_) {}
+                handle.removeEventListener('pointermove', onMove);
+                handle.removeEventListener('pointerup', onUp);
+                if (moved && callbacks.onClipFadeEnd) callbacks.onClipFadeEnd(clip, track);
+            };
+            handle.addEventListener('pointermove', onMove);
+            handle.addEventListener('pointerup', onUp);
+        });
+        handle.addEventListener('click', (e) => e.stopPropagation());
+    }
+
+    /** Drag the clip gain readout up/down (0.25 dB per pixel, -24 to +12 dB); double-click resets to 0 dB. */
+    function setupGainDrag(gainEl, clipEl, clip, track, callbacks) {
+        gainEl.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            if (callbacks.isRangeTool && callbacks.isRangeTool()) return;
+            e.stopPropagation();
+            e.preventDefault();
+            gainEl.setPointerCapture(e.pointerId);
+            const startY = e.clientY;
+            const g0 = clip.gain ?? 1;
+            const db0 = g0 > 0 ? 20 * Math.log10(g0) : -24;
+            let moved = false;
+            const onMove = (me) => {
+                if (!moved && Math.abs(me.clientY - startY) > 2) {
+                    moved = true;
+                    if (callbacks.onClipGainStart) callbacks.onClipGainStart(clip, track);
+                }
+                if (!moved) return;
+                const db = Math.max(-24, Math.min(12, db0 + (startY - me.clientY) * 0.25));
+                clip.gain = Math.pow(10, db / 20);
+                gainEl.textContent = clipGainText(clip);
+                if (callbacks.onClipGainChange) callbacks.onClipGainChange(clip, track);
+            };
+            const onUp = (ue) => {
+                try { gainEl.releasePointerCapture(ue.pointerId); } catch (_) {}
+                gainEl.removeEventListener('pointermove', onMove);
+                gainEl.removeEventListener('pointerup', onUp);
+                if (moved && callbacks.onClipGainEnd) callbacks.onClipGainEnd(clip, track);
+            };
+            gainEl.addEventListener('pointermove', onMove);
+            gainEl.addEventListener('pointerup', onUp);
+        });
+        gainEl.addEventListener('click', (e) => e.stopPropagation());
+        gainEl.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            if (callbacks.onClipGainStart) callbacks.onClipGainStart(clip, track);
+            clip.gain = 1;
+            gainEl.textContent = clipGainText(clip);
+            if (callbacks.onClipGainChange) callbacks.onClipGainChange(clip, track);
+            if (callbacks.onClipGainEnd) callbacks.onClipGainEnd(clip, track);
         });
     }
 

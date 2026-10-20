@@ -616,7 +616,7 @@ input[type="range"].daw-transport-zoom { width: 11rem; flex-shrink: 0; }
     min-height: 0;
     display: grid;
     grid-template-columns: var(--daw-header-width, 220px) 5px 1fr;
-    grid-template-rows: 30px 1fr;
+    grid-template-rows: var(--daw-ruler-h, 52px) 1fr;
     overflow: hidden;
     position: relative;
 }
@@ -2510,3 +2510,159 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
 .daw-gen-notice { max-width: 640px; }
 .daw-gen-warn { color: var(--yellow); margin: 0.3rem 0; }
 .daw-gen-refresh { min-width: 0 !important; padding: 0 0.5rem !important; margin-left: 0.3rem; }
+
+/* ===== STACKED RULERS, MARKERS, SELECTION ===== */
+.daw-ruler-canvas { pointer-events: auto; }
+.daw-ruler-spacer { pointer-events: none; }
+.daw-ruler-corner { display: flex; flex-direction: column; overflow: hidden; }
+.daw-ruler-name {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 0.5rem;
+    font-size: 0.66rem;
+    font-weight: 600;
+    color: var(--text-soft);
+    border-bottom: 1px solid var(--shadow);
+    white-space: nowrap;
+}
+.daw-ruler-name-bars { height: 18px; }
+.daw-ruler-name-time { height: 16px; }
+.daw-ruler-name-markers { height: 18px; border-bottom: none; background: var(--background-soft); }
+.daw-marker-add {
+    border: none;
+    background: transparent;
+    color: var(--text-soft);
+    font-size: 0.9rem;
+    line-height: 1;
+    padding: 0 0.2rem;
+    cursor: pointer;
+}
+.daw-marker-add:hover { color: var(--emphasis); }
+.daw-ruler-markers { position: absolute; left: 0; z-index: 4; }
+.daw-marker {
+    --marker-color: var(--yellow);
+    position: absolute;
+    top: 1px;
+    height: 15px;
+    max-width: 160px;
+    padding: 0 0.35rem 0 0.3rem;
+    border-left: 2px solid var(--marker-color);
+    background: color-mix(in srgb, var(--marker-color) 22%, var(--background));
+    color: var(--text);
+    font-size: 0.65rem;
+    line-height: 15px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border-radius: 0 3px 3px 0;
+    cursor: grab;
+    user-select: none;
+}
+.daw-marker:hover { background: color-mix(in srgb, var(--marker-color) 40%, var(--background)); }
+.daw-marker-lines { position: absolute; top: 0; left: 0; height: 100%; pointer-events: none; z-index: 3; }
+.daw-marker-line {
+    --marker-color: var(--yellow);
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 0;
+    border-left: 1px dashed color-mix(in srgb, var(--marker-color) 55%, transparent);
+}
+.daw-sel-band {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: color-mix(in srgb, var(--text) 14%, transparent);
+    border-left: 1px solid color-mix(in srgb, var(--text) 45%, transparent);
+    border-right: 1px solid color-mix(in srgb, var(--text) 45%, transparent);
+    pointer-events: none;
+    z-index: 50;
+}
+.daw-clip-lanes.daw-tool-range, .daw-clip-lanes.daw-tool-range .daw-clip { cursor: text; }
+.daw-loop-handle.punch { background: var(--red); }
+
+/* ===== CLIP FADES AND GAIN ===== */
+.daw-clip-fade {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    pointer-events: none;
+    z-index: 1;
+    background: color-mix(in srgb, var(--black) 45%, transparent);
+}
+.daw-clip-fade-in { left: 0; clip-path: polygon(0 0, 100% 0, 0 100%); }
+.daw-clip-fade-out { right: 0; clip-path: polygon(0 0, 100% 0, 100% 100%); }
+.daw-clip-fade-handle {
+    position: absolute;
+    top: 0;
+    width: 10px;
+    height: 10px;
+    z-index: 3;
+    cursor: ew-resize;
+    background: color-mix(in srgb, var(--white) 70%, transparent);
+    border: 1px solid color-mix(in srgb, var(--black) 50%, transparent);
+    border-radius: 0 0 3px 3px;
+    opacity: 0;
+    transition: opacity 0.1s;
+}
+.daw-clip:hover .daw-clip-fade-handle, .daw-clip.selected .daw-clip-fade-handle { opacity: 0.9; }
+.daw-clip-gain {
+    position: absolute;
+    left: 4px;
+    bottom: 2px;
+    z-index: 2;
+    padding: 0 0.3rem;
+    border-radius: 0.5rem;
+    font-size: 0.6rem;
+    line-height: 1.3;
+    color: var(--white);
+    background: color-mix(in srgb, var(--black) 55%, transparent);
+    cursor: ns-resize;
+    user-select: none;
+    white-space: nowrap;
+}
+.daw-clip:not(:hover):not(.selected) .daw-clip-gain { opacity: 0.75; }
+
+/* ===== COMPACT TRANSPORT, COUNTERS, EDIT TOOLS ===== */
+.daw-transport { padding: 0.35rem 0.7rem; gap: 0.35rem 0.45rem; }
+.daw-transport .daw-transport-btn { min-width: 30px; min-height: 30px; padding: 0.2rem 0.4rem; }
+.daw-transport .daw-btn-text { min-width: 0 !important; padding: 0.2rem 0.5rem; font-size: 0.72rem !important; }
+.daw-transport .daw-transport-btn svg { width: 1.05rem; height: 1.05rem; }
+.daw-tgroup { padding: 0.15rem; border-radius: 0.55rem; }
+.daw-tgroup-fields { min-height: 0; padding: 0.15rem 0.5rem; gap: 0.35rem; }
+.daw-tgroup-sep { width: 1px; align-self: stretch; margin: 0.15rem 0.2rem; background: var(--border-color); }
+.daw-tool-btn.active { background: var(--emphasis); color: var(--background); }
+.daw-transport-grid {
+    height: 26px;
+    margin-left: 0.2rem;
+    padding: 0 0.3rem;
+    border: 1px solid var(--border-color);
+    border-radius: 0.35rem;
+    background: var(--background);
+    color: var(--text);
+    font-size: 0.75rem;
+}
+.daw-transport-zoom { width: 90px; }
+.daw-zoom-step { min-width: 24px !important; font-weight: 700; }
+.daw-lcd { padding: 0.15rem 0.6rem; margin: 0; gap: 0; min-width: 9.5rem; cursor: default; }
+.daw-lcd-row { display: flex; align-items: baseline; gap: 0.45rem; width: 100%; }
+.daw-lcd-row:first-child { cursor: pointer; }
+.daw-lcd-label {
+    min-width: 2.6rem;
+    font-size: 0.58rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--text-soft);
+    text-transform: uppercase;
+}
+.daw-lcd-main, .daw-lcd-sub, .daw-lcd-sel-start, .daw-lcd-sel-end, .daw-lcd-sel-len {
+    font-family: var(--font-monospace, monospace);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.daw-lcd-main { font-size: 1.05rem; color: var(--emphasis); line-height: 1.15; }
+.daw-lcd-sub { font-size: 0.74rem; color: var(--text-soft); line-height: 1.1; }
+.daw-lcd-sel { min-width: 8.5rem; }
+.daw-lcd-sel .daw-lcd-row > span:last-child { font-size: 0.7rem; color: var(--text); line-height: 1.15; }
+.daw-lcd-sel .daw-lcd-label { min-width: 2.9rem; }
