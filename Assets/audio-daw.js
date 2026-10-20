@@ -1416,7 +1416,8 @@ const AudioDaw = (() => {
         const found = findMidiClip(state.selectedMidiClipId);
         AudioDawInstruments.renderPianoRoll(prPane, found?.clip || null, found?.track || null, {
             zoom: Math.max(80, Math.min(400, state.zoom * 1.5)),
-            gridStep: () => gridStep(),
+            // The clip's own tempo, the same one the grid is drawn with (bpm below)
+            gridStep: () => gridStep(found ? found.clip.startTime : state.currentTime),
             snap: (t) => found ? snapTime(found.clip.startTime + t) - found.clip.startTime : t,
             bpm: () => found ? bpmAt(found.clip.startTime) : state.bpm,
             play: (pitch, vel) => {
@@ -5650,10 +5651,13 @@ const AudioDaw = (() => {
                 renderAllTracks();
             }},
             { label: translate('Export as MIDI file'), action: () => {
+                // What the clip plays: notes that start inside it, cut at its end, and pedal events inside it
                 const len = AudioDawInstruments.midiClipLength(clip);
+                const notes = clip.notes.filter(n => n.start < len).map(n => ({ ...n, dur: Math.min(n.dur, len - n.start) }));
+                const cc = (clip.cc || []).filter(e => e.t <= len);
                 const tempos = (state.tempoMap || []).filter(c => c.t > clip.startTime && c.t < clip.startTime + len)
                     .map(c => ({ t: c.t - clip.startTime, bpm: c.bpm }));
-                downloadBlob(AudioDawInstruments.writeMidiFile(clip.notes, bpmAt(clip.startTime), clip.cc, tempos), `${(clip.name || 'clip').replace(/[\\/:*?"<>|]+/g, '_')}.mid`);
+                downloadBlob(AudioDawInstruments.writeMidiFile(notes, bpmAt(clip.startTime), cc, tempos), `${(clip.name || 'clip').replace(/[\\/:*?"<>|]+/g, '_')}.mid`);
             }},
             { label: translate('Delete'), action: () => deleteMidiClip(clip, track) }
         ]);
