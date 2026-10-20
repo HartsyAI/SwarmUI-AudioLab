@@ -2748,3 +2748,50 @@ input[type="range"].daw-transport-zoom { width: 90px; }
 .daw-lcd { min-width: 8.4rem; }
 .daw-lcd-sel { min-width: 7.6rem; }
 .daw-transport-spacer { min-width: 0; }
+
+/* ===== AUX BUSES, SENDS, AUTOMATION WRITE MODES ===== */
+.daw-track-header.bus { background: color-mix(in srgb, var(--emphasis) 6%, transparent); }
+.daw-track-header.bus .daw-track-input { color: var(--emphasis); cursor: pointer; }
+.daw-bus-lane-hint {
+    position: sticky;
+    left: 0.6rem;
+    display: inline-flex;
+    align-items: center;
+    height: 100%;
+    font-size: 0.75rem;
+    color: var(--text-soft);
+    pointer-events: none;
+    white-space: nowrap;
+}
+.daw-mixer-strip.bus { border-color: color-mix(in srgb, var(--emphasis) 55%, var(--shadow)); }
+.daw-strip-sends {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    width: 100%;
+}
+.daw-strip-send {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+}
+.daw-strip-send.muted { opacity: 0.45; }
+.daw-strip-send-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.68rem;
+    color: var(--text-soft);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+.daw-strip-send-name:hover { color: var(--text); }
+.daw-mixer-strip .daw-knob.daw-strip-send-knob { width: 22px; height: 22px; }
+.daw-mixer-strip .daw-knob.daw-strip-send-knob .daw-knob-dial::before { height: 6px; }
+.daw-strip-send-pre { padding: 0 0.25rem; font-size: 0.6rem; min-width: 0; }
+.daw-strip-send-add { width: 100%; font-size: 0.68rem; padding: 0.05rem 0.2rem; }
+.daw-track-btn.auto-writing { color: var(--red); border-color: var(--red); }
+.daw-automation-mode { margin-left: 0.3rem; }
+.daw-automation-mode.writing { color: var(--red); border-color: var(--red); }

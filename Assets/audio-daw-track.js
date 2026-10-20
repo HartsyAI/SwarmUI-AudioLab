@@ -83,7 +83,8 @@ const AudioDawTrack = (() => {
         return {
             id: `track-${id}`,
             name: opts.name || `Track ${id}`,
-            kind: opts.kind === 'instrument' ? 'instrument' : 'audio', // instrument tracks play MIDI clips
+            // instrument tracks play MIDI clips; a bus (aux) has no clips and sums what tracks send it
+            kind: ['instrument', 'bus'].includes(opts.kind) ? opts.kind : 'audio',
             instrument: opts.instrument || null,     // AudioDawInstruments.createInstrument() for instrument tracks
             midiClips: [],                           // [{id, name, startTime, length, notes: [{id, pitch, start, dur, vel}], muted, color}]
             clips: [],
@@ -102,6 +103,8 @@ const AudioDawTrack = (() => {
             automation: { volume: [], pan: [] },     // sorted [{t, v}] envelopes
             automationVisible: false,
             automationParam: 'volume',
+            automationMode: 'read',                  // 'read', 'touch', 'latch', 'write' or 'off'
+            sends: [],                               // [{busId, level, pre, muted}] to aux bus tracks
             // Runtime DOM refs (not serialized)
             headerEl: null,
             laneEl: null,
@@ -113,6 +116,7 @@ const AudioDawTrack = (() => {
 
     /** Short text for a track's input: "Default · Mono", "USB Mic · In 2". */
     function inputText(track, deviceLabel) {
+        if (track.kind === 'bus') return translate('AUX') + ' · ' + translate('Sends in');
         if (track.kind === 'instrument') {
             const inst = track.instrument;
             return `MIDI · ${inst?.type === 'sampler' ? (inst.sampleName || translate('Sampler')) : (inst?.preset || translate('Synth'))}`;
@@ -121,6 +125,11 @@ const AudioDawTrack = (() => {
         const chText = ch === 'stereo' ? translate('Stereo') : (typeof ch === 'number' ? `${translate('In')} ${ch}` : translate('Mono'));
         const dev = track.input?.deviceId ? (deviceLabel || translate('Input')) : translate('Default');
         return `${dev} · ${chText}`;
+    }
+
+    /** Touch, Latch and Write record fader moves during playback. */
+    function isWriteMode(mode) {
+        return mode === 'touch' || mode === 'latch' || mode === 'write';
     }
 
     function dbText(v) {
@@ -207,14 +216,16 @@ const AudioDawTrack = (() => {
             controls.appendChild(b);
             return b;
         };
-        mkBtn('arm', translate('R'), translate('Record arm: records on the transport\'s Record (Shift+R)'), 'active-arm', track.armed, (b) => {
-            if (callbacks.onArm) callbacks.onArm(track);
-            b.classList.toggle('active-arm', track.armed);
-        });
-        mkBtn('monitor', translate('I'), translate('Input monitor: hear the live input through this track (I)'), 'active-monitor', track.monitor, (b) => {
-            if (callbacks.onMonitor) callbacks.onMonitor(track);
-            b.classList.toggle('active-monitor', track.monitor);
-        });
+        if (track.kind !== 'bus') {
+            mkBtn('arm', translate('R'), translate('Record arm: records on the transport\'s Record (Shift+R)'), 'active-arm', track.armed, (b) => {
+                if (callbacks.onArm) callbacks.onArm(track);
+                b.classList.toggle('active-arm', track.armed);
+            });
+            mkBtn('monitor', translate('I'), translate('Input monitor: hear the live input through this track (I)'), 'active-monitor', track.monitor, (b) => {
+                if (callbacks.onMonitor) callbacks.onMonitor(track);
+                b.classList.toggle('active-monitor', track.monitor);
+            });
+        }
         mkBtn('solo', translate('S'), translate('Solo'), 'active-solo', track.soloed, (b) => {
             track.soloed = !track.soloed;
             b.classList.toggle('active-solo', track.soloed);
@@ -225,9 +236,10 @@ const AudioDawTrack = (() => {
             b.classList.toggle('active-mute', track.muted);
             if (callbacks.onMute) callbacks.onMute(track);
         });
-        mkBtn('automation', translate('A'), translate('Show/hide the automation lane'), 'active-solo', track.automationVisible, () => {
+        const autoBtn = mkBtn('automation', translate('A'), translate('Show/hide the automation lane'), 'active-solo', track.automationVisible, () => {
             if (callbacks.onAutomationToggle) callbacks.onAutomationToggle(track);
         });
+        autoBtn.classList.toggle('auto-writing', isWriteMode(track.automationMode));
 
         // Pan knob (reuses the mixer's knob widget)
         if (typeof AudioDawMixer !== 'undefined' && AudioDawMixer.createKnob) {
@@ -237,9 +249,12 @@ const AudioDawTrack = (() => {
                 onChange: (v) => {
                     track.pan = Math.round(v * 20) / 20;
                     if (callbacks.onPan) callbacks.onPan(track);
-                }
+                },
+                onGrab: () => callbacks.onFaderGrab?.(track, 'pan'),
+                onRelease: () => callbacks.onFaderRelease?.(track, 'pan')
             });
             knob.classList.add('daw-track-pan-knob');
+            knob.dataset.role = 'pan';
             controls.appendChild(knob);
         }
 
@@ -259,7 +274,7 @@ const AudioDawTrack = (() => {
         controls.appendChild(volSlider);
         header.appendChild(controls);
 
-        // Row 3: input chooser, inserts, volume readout
+        // Row 3: input chooser (a bus shows what feeds it), inserts, volume readout
         const io = createDiv(null, 'daw-track-io');
         const inBtn = document.createElement('button');
         inBtn.className = 'daw-track-input';
@@ -267,7 +282,9 @@ const AudioDawTrack = (() => {
         inBtn.textContent = inputText(track, callbacks.inputLabel?.(track));
         inBtn.title = track.kind === 'instrument'
             ? translate('Instrument and MIDI input: the sound this track plays, keyboard and MIDI device')
-            : translate('Input: device and channels this track records and monitors');
+            : track.kind === 'bus'
+                ? translate('Aux bus: tracks send to it from their menu or the Mixer')
+                : translate('Input: device and channels this track records and monitors');
         inBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             if (callbacks.onInputMenu) callbacks.onInputMenu(track, e);
@@ -306,6 +323,9 @@ const AudioDawTrack = (() => {
             volVal.textContent = dbText(1);
             if (callbacks.onVolume) callbacks.onVolume(track);
         });
+        // Grab and release bracket an automation write (Touch, Latch, Write)
+        volSlider.addEventListener('pointerdown', () => callbacks.onFaderGrab?.(track, 'volume'));
+        volSlider.addEventListener('change', () => callbacks.onFaderRelease?.(track, 'volume'));
 
         // Live stereo meter (OBS-style: zone gradient lights up to the level, L/R bars)
         const meter = createDiv(null, 'daw-meter-hpair daw-track-meter-pair');
@@ -322,6 +342,7 @@ const AudioDawTrack = (() => {
         header.appendChild(meter);
         header.classList.toggle('armed', !!track.armed);
         header.classList.toggle('instrument', track.kind === 'instrument');
+        header.classList.toggle('bus', track.kind === 'bus');
 
         // Click to select track
         header.addEventListener('click', () => {
@@ -839,6 +860,8 @@ const AudioDawTrack = (() => {
         }
         const volVal = q('volume-value');
         if (volVal) volVal.textContent = dbText(track.volume);
+        q('pan')?.setValue?.(track.pan || 0);
+        q('automation')?.classList.toggle('auto-writing', isWriteMode(track.automationMode));
         const inBtn = q('input');
         if (inBtn) inBtn.textContent = inputText(track, track.headerCallbacks?.inputLabel?.(track));
         const fxBtn = q('fx');
@@ -897,7 +920,7 @@ const AudioDawTrack = (() => {
         base.classList.add('daw-automation-baseline');
         svg.appendChild(base);
 
-        let segmentDragged = false; // suppress the click-to-add that follows a segment drag
+        // Suppresses the click-to-add that follows a segment drag; kept on the track because the drag re-renders the lane
 
         if (points.length) {
             const poly = document.createElementNS(SVG_NS, 'polyline');
@@ -929,7 +952,7 @@ const AudioDawTrack = (() => {
                 const onMove = (me) => {
                     if (!moved) {
                         moved = true;
-                        segmentDragged = true;
+                        track.autoSegmentDragged = true;
                         if (callbacks.onAutomationGestureStart) callbacks.onAutomationGestureStart(track);
                     }
                     const dv = (startY - me.clientY) / AUTO_LANE_H * range;
@@ -940,15 +963,18 @@ const AudioDawTrack = (() => {
                     });
                     renderAutomationLane(track, currentZoom, callbacks);
                 };
+                // Window listeners: each move re-renders the lane, which replaces this polyline mid-drag
                 const onUp = (ue) => {
                     try { poly.releasePointerCapture(ue.pointerId); } catch (_) {}
-                    poly.removeEventListener('pointermove', onMove);
-                    poly.removeEventListener('pointerup', onUp);
+                    window.removeEventListener('pointermove', onMove);
+                    window.removeEventListener('pointerup', onUp);
+                    window.removeEventListener('pointercancel', onUp);
                     if (moved && callbacks.onAutomationChange) callbacks.onAutomationChange(track);
-                    setTimeout(() => { segmentDragged = false; }, 0);
+                    setTimeout(() => { track.autoSegmentDragged = false; }, 0);
                 };
-                poly.addEventListener('pointermove', onMove);
-                poly.addEventListener('pointerup', onUp);
+                window.addEventListener('pointermove', onMove);
+                window.addEventListener('pointerup', onUp);
+                window.addEventListener('pointercancel', onUp);
             });
         }
 
@@ -1005,7 +1031,7 @@ const AudioDawTrack = (() => {
 
         // Click empty space to add a point (line clicks are segment drags, handled above)
         svg.addEventListener('click', (e) => {
-            if (segmentDragged) return;
+            if (track.autoSegmentDragged) return;
             if (e.target !== svg && e.target !== base) return;
             const rect = svg.getBoundingClientRect();
             let t = (e.clientX - rect.left) / currentZoom;
@@ -1062,6 +1088,8 @@ const AudioDawTrack = (() => {
             },
             automationVisible: track.automationVisible,
             automationParam: track.automationParam,
+            automationMode: track.automationMode || 'read',
+            sends: (track.sends || []).map(sd => ({ ...sd })),
             clips: track.clips.map(c => ({
                 id: c.id,
                 blobKey: c.blobKey,

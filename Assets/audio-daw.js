@@ -1244,11 +1244,22 @@ const AudioDaw = (() => {
             if (typeof AudioDawMixer !== 'undefined') {
                 AudioDawMixer.render(mixerContent, state, (prop, val) => {
                     if (prop === 'masterVolume') { state.masterVolume = val; updatePlaybackGains(); }
-                    else if (prop === 'pan') { updatePlaybackGains(); }
-                    else if (prop === 'mute' || prop === 'solo' || prop === 'volume') {
+                    else if (prop === 'pan') { automationInput(val, 'pan'); updatePlaybackGains(); }
+                    else if (prop === 'volume') {
+                        automationInput(val, 'volume');
                         updatePlaybackGains();
                         AudioDawTrack.syncHeaderControls(val); // val is the track here
                     }
+                    else if (prop === 'mute' || prop === 'solo') {
+                        updatePlaybackGains();
+                        AudioDawTrack.syncHeaderControls(val);
+                    }
+                    else if (prop === 'grab') automationGrab(val.track, val.param);
+                    else if (prop === 'release') automationRelease(val.track, val.param);
+                    else if (prop === 'send') updatePlaybackGains(); // level or mute: a param write
+                    else if (prop === 'routing') { scheduleAutosave(); rebuildRouting(val.track); }
+                    else if (prop === 'removeSend') removeSend(val.track, val.send.busId);
+                    else if (prop === 'addSend') showAddSendMenu(val.track, val.event);
                 });
             } else {
                 mixerContent.innerHTML = '';
@@ -2350,7 +2361,8 @@ const AudioDaw = (() => {
                     onProgress: (frac) => busy.setProgress(frac)
                 });
                 pushUndo();
-                const target = generatePlacement === 'selected' ? getSelectedTrack() : null;
+                const sel = generatePlacement === 'selected' ? getSelectedTrack() : null;
+                const target = sel && sel.kind !== 'bus' ? sel : null;
                 const track = target || addTrack({ name: eng.name });
                 const label = promptText.slice(0, 28) || eng.name;
                 const clip = await addClipToTrack(track, blob, {
@@ -2464,22 +2476,47 @@ const AudioDaw = (() => {
         }
         const renderLen = (end - start) + (exact ? 0 : Math.max(hasTails ? 5 : 0.1, instTail));
         const totalSamples = Math.max(1, Math.ceil(renderLen * sampleRate));
-        const offlineCtx = new OfflineAudioContext(2, totalSamples, sampleRate);
+        // The limiter's look-ahead is rendered past the end and trimmed off the front, so the mix lines up with
+        // the timeline (and with the stems, which skip the limiter)
+        const useLimiter = !stems && state.masterLimiterEnabled && typeof AudioDawFx !== 'undefined';
+        const limProf = useLimiter ? await masterLimiterProfile(sampleRate) : null;
+        const lead = limProf ? limProf.frames : 0;
+        const offlineCtx = new OfflineAudioContext(2, totalSamples + lead, sampleRate);
         const masterGain = offlineCtx.createGain();
         masterGain.gain.value = stems ? 1 : state.masterVolume;
         let masterOut = masterGain;
-        if (!stems && state.masterLimiterEnabled && typeof AudioDawFx !== 'undefined') {
+        if (useLimiter) {
             const lim = AudioDawFx.buildMasterLimiter(offlineCtx);
+            const trim = offlineCtx.createGain();
+            trim.gain.value = 1 / limProf.gain;
             masterGain.connect(lim);
-            masterOut = lim;
+            lim.connect(trim);
+            masterOut = trim;
         }
         masterOut.connect(offlineCtx.destination);
         const soloActive = !stems && hasSoloTracks();
         const origin = { t0Ctx: 0, t0Timeline: start, windowEnd: start + renderLen };
-        for (const track of tracks) {
+        // Aux buses first, so sends have somewhere to go. A track's stem is dry (no sends) and a bus's stem is what
+        // its senders feed it (their direct outputs left out), so the stems still sum to the mix.
+        const stemBus = stems && tracks.length === 1 && tracks[0].kind === 'bus' ? tracks[0] : null;
+        const busChains = new Map();
+        for (const bus of state.tracks.filter(t => t.kind === 'bus')) {
+            if (stems ? bus !== stemBus : (bus.muted || computeTrackGain(bus) === 0)) continue;
+            const chain = buildTrackChain(offlineCtx, bus, masterGain);
+            if (stems) chain.trackGain.gain.value = bus.volume;
+            scheduleTrackAutomation(chain, bus, { ...origin, fresh: true });
+            busChains.set(bus.id, chain);
+        }
+        const renderSet = stemBus
+            ? state.tracks.filter(t => t.kind !== 'bus' && !t.muted && (t.sends || []).some(sd => sd.busId === stemBus.id && !sd.muted))
+            : tracks.filter(t => t.kind !== 'bus');
+        for (const track of renderSet) {
             if (track.muted || (soloActive && !track.soloed)) continue; // no point rendering silence
-            const chain = buildTrackChain(offlineCtx, track, masterGain);
+            const chain = buildTrackChain(offlineCtx, track, stemBus ? null : masterGain);
             if (stems) chain.trackGain.gain.value = track.volume; // another track's solo must not silence its stem
+            if (!stems || stemBus) {
+                connectSends(offlineCtx, chain, track, (busId) => busChains.get(busId)?.input || null, { ignoreSolo: stems });
+            }
             scheduleTrackAutomation(chain, track, { ...origin, fresh: true });
             const plan = trackAudibleSegments(track);
             for (const clip of track.clips) {
@@ -2490,7 +2527,13 @@ const AudioDaw = (() => {
                 AudioDawInstruments.scheduleTrack(offlineCtx, chain.input, track, origin);
             }
         }
-        return await offlineCtx.startRendering();
+        const rendered = await offlineCtx.startRendering();
+        if (!lead) return rendered;
+        const out = new AudioBuffer({ numberOfChannels: rendered.numberOfChannels, length: totalSamples, sampleRate });
+        for (let ch = 0; ch < rendered.numberOfChannels; ch++) {
+            out.copyToChannel(rendered.getChannelData(ch).subarray(lead, lead + totalSamples), ch);
+        }
+        return out;
     }
 
     /** Render the chosen export range to a WAV Blob at the chosen bit depth (null when there is nothing). */
@@ -2572,7 +2615,9 @@ const AudioDaw = (() => {
     /** Every track with content, rendered on its own over the export range, in one ZIP. */
     async function doExportStems() {
         const bounds = exportBounds();
-        const tracks = state.tracks.filter(t => !t.muted && (t.clips.length || t.midiClips?.length));
+        // Every track with content, plus each aux bus something sends to (its return is a stem of its own)
+        const fed = (bus) => state.tracks.some(t => !t.muted && (t.sends || []).some(sd => sd.busId === bus.id && !sd.muted));
+        const tracks = state.tracks.filter(t => !t.muted && (t.clips.length || t.midiClips?.length || (t.kind === 'bus' && fed(t))));
         if (!tracks.length || bounds.end - bounds.start <= 0) {
             if (typeof doNoticePopover === 'function') doNoticePopover(translate('Nothing to export'), 'notice-pop-yellow');
             return;
@@ -2839,6 +2884,11 @@ const AudioDaw = (() => {
         // Blobs stay in blobStore for undo; garbageCollectBlobs() reclaims them later
         closeTrackInput(track.id);
         dropChain(track.id);
+        if (track.kind === 'bus') {
+            for (const t of state.tracks) {
+                if ((t.sends || []).some(sd => sd.busId === track.id)) t.sends = t.sends.filter(sd => sd.busId !== track.id);
+            }
+        }
         AudioDawTrack.destroyTrack(track);
         state.tracks.splice(idx, 1);
         if (state.selectedTrackId === trackId) {
@@ -2862,11 +2912,14 @@ const AudioDaw = (() => {
             // (volume skipped: rebuilding mid-drag would fight the slider)
             onMute: () => { updatePlaybackGains(); updateBottomPanel(); },
             onSolo: () => { updatePlaybackGains(); updateBottomPanel(); },
-            onVolume: () => { updatePlaybackGains(); },
-            onPan: () => { updatePlaybackGains(); },
+            onVolume: (track) => { automationInput(track, 'volume'); updatePlaybackGains(); },
+            onPan: (track) => { automationInput(track, 'pan'); updatePlaybackGains(); },
+            onFaderGrab: (track, param) => automationGrab(track, param),
+            onFaderRelease: (track, param) => automationRelease(track, param),
             onArm: (track) => toggleArm(track),
             onMonitor: (track) => toggleMonitor(track),
-            onInputMenu: (track, e) => track.kind === 'instrument' ? showInstrumentMenu(track, e) : showTrackInputMenu(track, e),
+            onInputMenu: (track, e) => track.kind === 'instrument' ? showInstrumentMenu(track, e)
+                : track.kind === 'bus' ? showBusInputsMenu(track, e) : showTrackInputMenu(track, e),
             onOpenFx: (track) => {
                 state.selectedTrackId = track.id;
                 updateTrackSelection();
@@ -2949,6 +3002,12 @@ const AudioDaw = (() => {
             onClipCrossTrack: (clip, srcTrack, targetTrackId) => {
                 const targetTrack = state.tracks.find(t => t.id === targetTrackId);
                 if (!targetTrack) return;
+                if (targetTrack.kind === 'bus') {
+                    // An aux bus holds no clips: the clip stays on its own track
+                    renderAllTracks();
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('An aux bus holds no clips. Send a track to it instead'), 'notice-pop-yellow');
+                    return;
+                }
                 // Remove from source track
                 const idx = srcTrack.clips.indexOf(clip);
                 if (idx !== -1) srcTrack.clips.splice(idx, 1);
@@ -2971,6 +3030,14 @@ const AudioDaw = (() => {
 
             const lane = AudioDawTrack.buildClipLane(track, state.zoom, clipCallbacks);
             clipLanesEl.appendChild(lane);
+            if (track.kind === 'bus') {
+                const hint = createDiv(null, 'daw-bus-lane-hint');
+                const senders = busSenders(track);
+                hint.textContent = senders.length
+                    ? translate('Aux bus, fed by') + ' ' + senders.map(t => t.name).join(', ')
+                    : translate('Aux bus. Send tracks to it from their menu or the Mixer');
+                lane.appendChild(hint);
+            }
 
             AudioDawTrack.renderClips(track, state.zoom, clipCallbacks, state.selectedClipId);
             if (track.kind === 'instrument') {
@@ -2993,13 +3060,9 @@ const AudioDaw = (() => {
             }
 
             if (track.automationVisible) {
-                const autoCallbacks = {
-                    snapTime: (t) => snapTime(t),
-                    onAutomationGestureStart: () => pushUndo(),
-                    onAutomationChange: (tr) => rescheduleTrackAutomation(tr)
-                };
+                const autoCallbacks = automationLaneCallbacks();
                 clipLanesEl.appendChild(AudioDawTrack.buildAutomationLane(track, state.zoom, autoCallbacks));
-                // Matching header spacer keeps headers aligned; hosts the param picker
+                // Matching header spacer keeps headers aligned; hosts the param picker and the automation mode
                 const spacer = createDiv(null, 'daw-automation-head');
                 const sel = document.createElement('select');
                 sel.className = 'daw-fx-select';
@@ -3015,6 +3078,19 @@ const AudioDaw = (() => {
                     AudioDawTrack.renderAutomationLane(track, state.zoom, autoCallbacks);
                 });
                 spacer.appendChild(sel);
+                const modeSel = document.createElement('select');
+                modeSel.className = 'daw-fx-select daw-automation-mode';
+                modeSel.title = translate('Automation mode. Read plays the envelope; Touch writes while you hold a fader or pan knob during playback; Latch keeps writing after you let go; Write overwrites the whole pass; Off ignores the envelope');
+                for (const [mode, label] of [['read', 'Read'], ['touch', 'Touch'], ['latch', 'Latch'], ['write', 'Write'], ['off', 'Off']]) {
+                    const opt = document.createElement('option');
+                    opt.value = mode;
+                    opt.textContent = translate(label);
+                    modeSel.appendChild(opt);
+                }
+                modeSel.value = track.automationMode || 'read';
+                modeSel.classList.toggle('writing', isWriteMode(modeSel.value));
+                modeSel.addEventListener('change', () => setAutomationMode(track, modeSel.value));
+                spacer.appendChild(modeSel);
                 trackHeadersEl.appendChild(spacer);
             }
         }
@@ -3037,7 +3113,9 @@ const AudioDaw = (() => {
                     const track = addInstrumentTrack('sampler');
                     openInstrumentPanel(track, 'sampler');
                 }},
-                { label: translate('Import MIDI file…'), action: () => importMidiFile() }
+                { label: translate('Import MIDI file…'), action: () => importMidiFile() },
+                { label: translate('Aux bus'), action: () => addBusTrack() },
+                { label: translate('Aux bus with reverb'), action: () => addBusTrack({ reverb: true }) }
             ]);
         });
         trackHeadersEl.appendChild(addBtn);
@@ -3121,11 +3199,36 @@ const AudioDaw = (() => {
         return state.tracks.some(t => t.soloed);
     }
 
+    /** A bus stays audible under solo while a soloed track sends to it (or it is soloed itself). */
+    function busFedBySolo(bus) {
+        return state.tracks.some(t => t.soloed && t.kind !== 'bus' && (t.sends || []).some(sd => sd.busId === bus.id && !sd.muted));
+    }
+
     /** Effective gain for a track's chain given mute/solo state. */
     function computeTrackGain(track) {
         const soloActive = hasSoloTracks();
-        const audible = !track.muted && (!soloActive || track.soloed);
+        const audible = !track.muted && (!soloActive || track.soloed || (track.kind === 'bus' && busFedBySolo(track)));
         return audible ? track.volume : 0;
+    }
+
+    /** One send's gain: its level, silent with its source (a pre-fader send skips the fader, never the mute). */
+    function sendGain(track, send, { ignoreSolo = false } = {}) {
+        if (send.muted || track.muted) return 0;
+        if (!ignoreSolo && hasSoloTracks() && !track.soloed) return 0;
+        return send.level;
+    }
+
+    /** Wire a track's sends from its chain into aux bus inputs (busInputFor(busId) -> AudioNode or null). */
+    function connectSends(ctx, chain, track, busInputFor, opts = {}) {
+        for (const send of track.sends || []) {
+            const dest = busInputFor(send.busId);
+            if (!dest) continue;
+            const g = ctx.createGain();
+            g.gain.value = sendGain(track, send, opts);
+            (send.pre ? chain.preTap : chain.postTap).connect(g);
+            g.connect(dest);
+            chain.sendGains.set(send.busId, g);
+        }
     }
 
     /**
@@ -3154,8 +3257,8 @@ const AudioDaw = (() => {
             trackPan = ctx.createStereoPanner();
             trackPan.pan.value = track.pan || 0;
             volAuto.connect(trackPan);
-            trackPan.connect(masterGain);
-        } else {
+            if (masterGain) trackPan.connect(masterGain);
+        } else if (masterGain) {
             volAuto.connect(masterGain);
         }
         let analysers = null;
@@ -3167,7 +3270,10 @@ const AudioDaw = (() => {
             analysers = [ctx.createAnalyser(), ctx.createAnalyser()];
             analysers.forEach((a, i) => { a.fftSize = 512; meterSplitter.connect(a, i); });
         }
-        return { input, trackGain, fxChain, volAuto, trackPan, analysers, meterSplitter };
+        // Send taps: pre-fader after the inserts, post-fader after the pan
+        const preTap = fxChain ? fxChain.output : input;
+        const postTap = trackPan || volAuto;
+        return { input, trackGain, fxChain, volAuto, trackPan, analysers, meterSplitter, preTap, postTap, sendGains: new Map() };
     }
 
     /** Fully disconnect one track chain (incl. FX feedback loops, which otherwise persist). */
@@ -3179,6 +3285,7 @@ const AudioDaw = (() => {
         if (chain.trackPan) { try { chain.trackPan.disconnect(); } catch (_) {} }
         if (chain.meterSplitter) { try { chain.meterSplitter.disconnect(); } catch (_) {} }
         for (const a of chain.analysers || []) { try { a.disconnect(); } catch (_) {} }
+        for (const g of chain.sendGains?.values() || []) { try { g.disconnect(); } catch (_) {} }
     }
 
     // ===== MIXER GRAPH =====
@@ -3214,10 +3321,18 @@ const AudioDaw = (() => {
             m.masterLimiter = null;
         }
         let out = m.masterGain;
+        if (m.masterTrim) {
+            try { m.masterTrim.disconnect(); } catch (_) {}
+            m.masterTrim = null;
+        }
         if (state.masterLimiterEnabled && typeof AudioDawFx !== 'undefined') {
             m.masterLimiter = AudioDawFx.buildMasterLimiter(m.ctx);
+            m.masterTrim = m.ctx.createGain(); // undoes the compressor's makeup gain once measured
             m.masterGain.connect(m.masterLimiter);
-            out = m.masterLimiter;
+            m.masterLimiter.connect(m.masterTrim);
+            out = m.masterTrim;
+            const trim = m.masterTrim;
+            masterLimiterProfile(m.ctx.sampleRate).then(prof => { trim.gain.value = 1 / prof.gain; });
         }
         out.connect(m.ctx.destination);
         out.connect(m.masterSplitter);
@@ -3230,6 +3345,12 @@ const AudioDaw = (() => {
         if (!chain) {
             chain = buildTrackChain(m.ctx, track, m.masterGain);
             m.chains.set(track.id, chain);
+            if (track.kind !== 'bus') {
+                connectSends(m.ctx, chain, track, (busId) => {
+                    const bus = state.tracks.find(t => t.id === busId && t.kind === 'bus');
+                    return bus ? chainFor(bus).input : null;
+                });
+            }
             if (!playback) holdTrackAutomation(chain, track, state.currentTime);
             const entry = trackInputs.get(track.id);
             if (entry) applyMonitor(track, entry);
@@ -3247,6 +3368,360 @@ const AudioDaw = (() => {
         }
         disposeChain(chain);
         mixer.chains.delete(trackId);
+        // A bus's senders feed its old input: drop them too, they rebuild and reconnect on next use
+        const track = state?.tracks.find(t => t.id === trackId);
+        if (track?.kind === 'bus') {
+            for (const t of state.tracks) {
+                if (t.kind !== 'bus' && (t.sends || []).some(sd => sd.busId === trackId)) dropChain(t.id);
+            }
+        }
+    }
+
+    /** Stopped transport: give every live input its chain back after a rebuild (monitoring keeps sounding). */
+    function restoreLiveChains() {
+        if (!mixer || !state) return;
+        for (const t of state.tracks) {
+            if (trackInputs.has(t.id)) chainFor(t);
+        }
+    }
+
+    /** Sends changed shape (added, removed, pre or post): rebuild the sender's chain so the graph matches. */
+    function rebuildRouting(track) {
+        if (!mixer) return;
+        dropChain(track.id);
+        if (playback) resyncPlayback();
+        else restoreLiveChains();
+    }
+
+    // ===== AUX BUSES AND SENDS =====
+
+    /** Tracks with a send to this bus. */
+    function busSenders(bus) {
+        return state.tracks.filter(t => t.kind !== 'bus' && (t.sends || []).some(sd => sd.busId === bus.id));
+    }
+
+    /** A new aux bus at the bottom; with reverb it carries a fully wet reverb, the classic send-return setup. */
+    function addBusTrack({ reverb = false, snapshot = true } = {}) {
+        if (snapshot) pushUndo();
+        const bus = addTrack({ kind: 'bus', name: nextTrackName(reverb ? translate('Reverb Bus') : translate('Bus')) });
+        bus.volume = 1;
+        if (reverb && typeof AudioDawFx !== 'undefined') {
+            const fx = AudioDawFx.createEffectState('reverb');
+            if (fx) {
+                fx.params.mix = 1; // a return carries only the wet signal; the dry stays on the source track
+                bus.fx.push(fx);
+            }
+        }
+        renderAllTracks();
+        updateBottomPanel();
+        return bus;
+    }
+
+    /** Route a track to a bus (once). Level defaults to -6 dB, post-fader. */
+    function addSend(track, busId, { level = 0.5, snapshot = true } = {}) {
+        if (track.kind === 'bus' || (track.sends || []).some(sd => sd.busId === busId)) return;
+        if (snapshot) pushUndo();
+        track.sends = [...(track.sends || []), { busId, level, pre: false, muted: false }];
+        rebuildRouting(track);
+        renderAllTracks();
+        updateBottomPanel();
+    }
+
+    function removeSend(track, busId) {
+        if (!(track.sends || []).some(sd => sd.busId === busId)) return;
+        pushUndo();
+        track.sends = track.sends.filter(sd => sd.busId !== busId);
+        rebuildRouting(track);
+        renderAllTracks();
+        updateBottomPanel();
+    }
+
+    /** Track menu entries: a toggle per bus, and one-step reverb send. A bus lists what feeds it instead. */
+    function sendMenuItems(track) {
+        const buses = state.tracks.filter(t => t.kind === 'bus');
+        if (track.kind === 'bus') {
+            const senders = busSenders(track);
+            return [{ heading: translate('Fed by') },
+                ...(senders.length ? senders.map(t => ({ label: t.name, disabled: true }))
+                    : [{ label: translate('No sends yet'), disabled: true }])];
+        }
+        const has = (bus) => (track.sends || []).some(sd => sd.busId === bus.id);
+        return [
+            { heading: translate('Sends') },
+            ...buses.map(bus => ({
+                label: translate('Send to') + ' ' + bus.name, checked: has(bus),
+                action: () => has(bus) ? removeSend(track, bus.id) : addSend(track, bus.id)
+            })),
+            { label: translate('Send to a new reverb bus'), action: () => {
+                pushUndo();
+                const bus = addBusTrack({ reverb: true, snapshot: false });
+                addSend(track, bus.id, { snapshot: false });
+            }}
+        ];
+    }
+
+    /** The Mixer's + Send button. */
+    function showAddSendMenu(track, e) {
+        const items = sendMenuItems(track).filter(it => !it.heading);
+        dawMenu(e, items.length ? items : [{ label: translate('No aux buses yet'), disabled: true }]);
+    }
+
+    /** A bus's input button: what feeds it, and a shortcut to the Mixer where sends are set. */
+    function showBusInputsMenu(bus, e) {
+        dawMenu(e, [
+            ...sendMenuItems(bus),
+            { label: translate('Open the Mixer'), action: () => switchBottomTab('mixer') }
+        ]);
+    }
+
+    // ===== AUTOMATION WRITING (Touch, Latch, Write) =====
+    // While playing, moving the fader or pan of a track in a write mode records envelope points instead of moving
+    // the track's static level. Envelopes are relative to the fader (volume x0..2, pan offset -1..1), so a move is
+    // measured against where the control sat when grabbed, starting from the envelope's value at that moment.
+
+    const autoWrite = { base: new Map(), active: new Map(), undoPushed: false };
+
+    function isWriteMode(mode) {
+        return mode === 'touch' || mode === 'latch' || mode === 'write';
+    }
+
+    function writeKey(track, param) {
+        return `${track.id}|${param}`;
+    }
+
+    /** The envelope's value at t (identity when there are no points: x1 volume, 0 pan offset). */
+    function envelopeAt(track, param, t) {
+        const env = track.automation?.[param] || [];
+        const ident = param === 'volume' ? 1 : 0;
+        return env.length && typeof AudioDawFx !== 'undefined' ? AudioDawFx.envelopeValueAt(env, t) : ident;
+    }
+
+    /** Pass start: remember each track's static levels, and open Write mode's whole-pass writes. */
+    function automationPassStart() {
+        autoWrite.base.clear();
+        autoWrite.active.clear();
+        autoWrite.undoPushed = false;
+        for (const t of state.tracks) {
+            autoWrite.base.set(t.id, { volume: t.volume, pan: t.pan || 0 });
+            if (t.automationMode === 'write') {
+                openWrite(t, 'volume', { overwrite: true });
+                openWrite(t, 'pan', { overwrite: true });
+            }
+        }
+    }
+
+    function openWrite(track, param, { overwrite = false } = {}) {
+        const key = writeKey(track, param);
+        let w = autoWrite.active.get(key);
+        if (w) return w;
+        if (!autoWrite.undoPushed) {
+            pushUndo();
+            autoWrite.undoPushed = true;
+        }
+        if (!autoWrite.base.has(track.id)) autoWrite.base.set(track.id, { volume: track.volume, pan: track.pan || 0 });
+        const base = autoWrite.base.get(track.id);
+        const t = currentTimelineTime();
+        // Write mode writes the fader as it stands (identity); Touch and Latch pick up the envelope where it is
+        const v0 = overwrite ? (param === 'volume' ? 1 : 0) : envelopeAt(track, param, t);
+        w = { track, param, points: [{ t, v: v0 }], grab: { control: param === 'volume' ? base.volume : base.pan, v0 },
+            touching: false, latched: track.automationMode !== 'touch' };
+        autoWrite.active.set(key, w);
+        return w;
+    }
+
+    function writing(track, param) {
+        return !!playback && autoWrite.active.has(writeKey(track, param));
+    }
+
+    /** A grab on a fader or pan knob: in Touch or Latch this opens a write at the envelope's current value. */
+    function automationGrab(track, param) {
+        if (!playback || !isWriteMode(track.automationMode)) return;
+        const w = openWrite(track, param);
+        const base = autoWrite.base.get(track.id);
+        w.touching = true;
+        // Measure the move from where the control sits now, starting at the envelope value being written
+        w.grab = { control: param === 'volume' ? base.volume : base.pan, v0: w.points[w.points.length - 1].v };
+    }
+
+    /**
+     * A fader or pan move. While writing, the move becomes an envelope point and plays live, and the track's
+     * static level is put back (the control shows the move until it is released).
+     */
+    function automationInput(track, param) {
+        if (!playback || !isWriteMode(track.automationMode)) return;
+        let w = autoWrite.active.get(writeKey(track, param));
+        if (!w) {
+            // A move without a grab event (keyboard on the control): treat it as a touch
+            automationGrab(track, param);
+            w = autoWrite.active.get(writeKey(track, param));
+            if (!w) return;
+        }
+        const base = autoWrite.base.get(track.id);
+        let v;
+        if (param === 'volume') {
+            const moved = track.volume;
+            v = w.grab.control > 0 ? w.grab.v0 * moved / w.grab.control : (moved > 0 ? 2 : 0);
+            v = Math.max(0, Math.min(2, v));
+            track.volume = base.volume;
+        }
+        else {
+            const moved = track.pan || 0;
+            v = Math.max(-1, Math.min(1, w.grab.v0 + (moved - w.grab.control)));
+            track.pan = base.pan;
+        }
+        recordAutomationPoint(w, currentTimelineTime(), v);
+        const chain = mixer?.chains.get(track.id);
+        if (chain) {
+            const now = chain.volAuto.context.currentTime;
+            const prm = param === 'volume' ? chain.volAuto.gain : chain.trackPan?.pan;
+            if (prm) {
+                try { prm.cancelScheduledValues(now); } catch (_) {}
+                prm.setTargetAtTime(param === 'volume' ? v : Math.max(-1, Math.min(1, base.pan + v)), now, 0.01);
+            }
+        }
+    }
+
+    function recordAutomationPoint(w, t, v) {
+        const last = w.points[w.points.length - 1];
+        if (last && (t < last.t - 0.05 || t > last.t + 0.5)) {
+            // The playhead jumped (loop wrap, seek): commit what was written and carry on from here
+            commitAutomationWrite(w, { returnToOld: !w.latched });
+            w.points = [];
+        }
+        const prev = w.points[w.points.length - 1];
+        if (prev && t - prev.t < 0.03) prev.v = v;
+        else w.points.push({ t, v });
+    }
+
+    /** Release: Touch commits and hands back to the existing envelope; Latch and Write keep the last value going. */
+    function automationRelease(track, param) {
+        const w = autoWrite.active.get(writeKey(track, param));
+        if (!w) return;
+        w.touching = false;
+        if (w.latched) return;
+        commitAutomationWrite(w, { returnToOld: true });
+        autoWrite.active.delete(writeKey(track, param));
+        rescheduleTrackAutomation(track);
+        AudioDawTrack.syncHeaderControls(track);
+        refreshAutomationViews();
+    }
+
+    /** Latched writes hold their value as the playhead moves. */
+    function automationTick() {
+        if (!playback || !autoWrite.active.size) return;
+        const t = currentTimelineTime();
+        for (const w of autoWrite.active.values()) {
+            if (w.touching || !w.latched) continue;
+            const last = w.points[w.points.length - 1];
+            if (last && t - last.t >= 0.1) recordAutomationPoint(w, t, last.v);
+        }
+    }
+
+    /** Pass end: every write still open commits at the stop point; Write mode becomes Touch for the next pass. */
+    function automationPassEnd(stopT) {
+        if (!autoWrite.active.size) return;
+        const switched = new Set();
+        for (const w of autoWrite.active.values()) {
+            const last = w.points[w.points.length - 1];
+            if (last && stopT > last.t + 0.01 && stopT - last.t < 0.5) w.points.push({ t: stopT, v: last.v });
+            commitAutomationWrite(w, { returnToOld: true });
+            if (w.track.automationMode === 'write') {
+                w.track.automationMode = 'touch';
+                switched.add(w.track.name);
+            }
+            AudioDawTrack.syncHeaderControls(w.track);
+        }
+        autoWrite.active.clear();
+        if (switched.size) {
+            renderAllTracks(); // the lane heads show the new mode
+            if (typeof doNoticePopover === 'function') {
+                doNoticePopover(translate('Write pass recorded. Switched to Touch so the next pass does not overwrite it') + `: ${[...switched].join(', ')}`, 'notice-pop-blue');
+            }
+        }
+        else {
+            refreshAutomationViews();
+        }
+        scheduleAutosave();
+    }
+
+    /**
+     * Merge a written segment into the track's envelope: the old curve leads in, the new points replace whatever
+     * was under them, and with returnToOld the old curve takes over again just after.
+     */
+    function commitAutomationWrite(w, { returnToOld }) {
+        const pts = w.points;
+        if (!pts.length) return;
+        // A pass that wrote exactly what was already there (an untouched pan in Write mode) changes nothing
+        if (pts.every(p => Math.abs(p.v - envelopeAt(w.track, w.param, p.t)) < 1e-4)) {
+            w.points = [];
+            return;
+        }
+        const env = w.track.automation[w.param] || [];
+        const t0 = pts[0].t;
+        const t1 = pts[pts.length - 1].t;
+        const lead = Math.max(0, t0 - 0.01);
+        const tail = t1 + 0.05;
+        const before = envelopeAt(w.track, w.param, lead);
+        const after = envelopeAt(w.track, w.param, tail);
+        const kept = env.filter(p => p.t < lead || p.t > (returnToOld ? tail : t1));
+        const merged = kept.concat(t0 > 0.01 ? [{ t: lead, v: before }] : [], pts.map(p => ({ ...p })),
+            returnToOld ? [{ t: tail, v: after }] : []);
+        merged.sort((a, b) => a.t - b.t);
+        const unique = merged.filter((p, i) => i === 0 || p.t - merged[i - 1].t > 1e-4);
+        // A held value (Latch, Write) is a run of equal points: keep only its ends
+        w.track.automation[w.param] = unique.filter((p, i) => i === 0 || i === unique.length - 1
+            || Math.abs(p.v - unique[i - 1].v) > 1e-4 || Math.abs(p.v - unique[i + 1].v) > 1e-4);
+        w.points = [];
+    }
+
+    /** Redraw automation lanes after a write (only the lanes, so a pass in progress is not disturbed). */
+    function refreshAutomationViews() {
+        for (const t of state.tracks) {
+            if (t.automationVisible && t.autoLaneEl) {
+                AudioDawTrack.renderAutomationLane(t, state.zoom, automationLaneCallbacks());
+            }
+        }
+    }
+
+    function automationLaneCallbacks() {
+        return {
+            snapTime: (t) => snapTime(t),
+            onAutomationGestureStart: () => pushUndo(),
+            onAutomationChange: (tr) => rescheduleTrackAutomation(tr)
+        };
+    }
+
+    /** Track menu entries for the automation mode. */
+    function automationModeItems(track) {
+        const names = { read: 'Read', touch: 'Touch', latch: 'Latch', write: 'Write', off: 'Off' };
+        return [{ heading: translate('Automation') },
+            ...Object.keys(names).map(mode => ({
+                label: translate(names[mode]), checked: (track.automationMode || 'read') === mode,
+                action: () => setAutomationMode(track, mode)
+            }))];
+    }
+
+    function setAutomationMode(track, mode) {
+        const was = track.automationMode || 'read';
+        if (was === mode) return;
+        // Leaving a write mode mid-pass commits what was written
+        for (const param of ['volume', 'pan']) {
+            const w = autoWrite.active.get(writeKey(track, param));
+            if (w && !isWriteMode(mode)) {
+                commitAutomationWrite(w, { returnToOld: true });
+                autoWrite.active.delete(writeKey(track, param));
+            }
+        }
+        track.automationMode = mode;
+        if (playback && !autoWrite.base.has(track.id)) autoWrite.base.set(track.id, { volume: track.volume, pan: track.pan || 0 });
+        if (playback && mode === 'write') {
+            openWrite(track, 'volume', { overwrite: true });
+            openWrite(track, 'pan', { overwrite: true });
+        }
+        rescheduleTrackAutomation(track);
+        AudioDawTrack.syncHeaderControls(track);
+        renderAllTracks();
+        scheduleAutosave();
     }
 
     /** Drop chains whose track is gone. */
@@ -3261,7 +3736,7 @@ const AudioDaw = (() => {
     function destroyMixer() {
         if (!mixer) return;
         for (const id of [...mixer.chains.keys()]) dropChain(id);
-        for (const node of [mixer.masterGain, mixer.masterLimiter, mixer.masterSplitter, mixer.clickBus, ...mixer.masterAnalysers]) {
+        for (const node of [mixer.masterGain, mixer.masterLimiter, mixer.masterTrim, mixer.masterSplitter, mixer.clickBus, ...mixer.masterAnalysers]) {
             if (node) { try { node.disconnect(); } catch (_) {} }
         }
         mixer = null;
@@ -3273,17 +3748,31 @@ const AudioDaw = (() => {
         if (!mixer) return;
         dropChain(track.id);
         if (playback) resyncPlayback(); // recreates the chain while rescheduling
-        else if (trackInputs.has(track.id)) chainFor(track); // a monitored input needs its chain back now
+        else restoreLiveChains(); // a monitored input (or one feeding this bus) needs its chain back now
     }
 
     /** Schedule volume/pan envelopes onto a chain using the same origin math as clips. */
     function scheduleTrackAutomation(chain, track, { t0Ctx, t0Timeline, windowEnd = Infinity, fresh = true }) {
         if (typeof AudioDawFx === 'undefined') return;
+        if (track.automationMode === 'off') {
+            // Off: the envelopes are kept but not played
+            if (fresh) {
+                try { chain.volAuto.gain.cancelScheduledValues(t0Ctx); } catch (_) {}
+                chain.volAuto.gain.setValueAtTime(1, t0Ctx);
+                if (chain.trackPan) {
+                    try { chain.trackPan.pan.cancelScheduledValues(t0Ctx); } catch (_) {}
+                    chain.trackPan.pan.setValueAtTime(track.pan || 0, t0Ctx);
+                }
+            }
+            return;
+        }
+        // A param being written live is driven by the control, not its old envelope
+        const live = !!playback && chain.volAuto.context === playback.ctx;
         const auto = track.automation || {};
-        if (auto.volume?.length) {
+        if (auto.volume?.length && !(live && writing(track, 'volume'))) {
             AudioDawFx.scheduleEnvelope(chain.volAuto.gain, auto.volume, { t0Ctx, t0Timeline, windowEnd, fresh });
         }
-        if (chain.trackPan && auto.pan?.length) {
+        if (chain.trackPan && auto.pan?.length && !(live && writing(track, 'pan'))) {
             AudioDawFx.scheduleEnvelope(chain.trackPan.pan, auto.pan, {
                 t0Ctx, t0Timeline, windowEnd, fresh,
                 transform: (v) => Math.max(-1, Math.min(1, (track.pan || 0) + v))
@@ -3294,7 +3783,7 @@ const AudioDaw = (() => {
     /** Stopped transport: hold each envelope at its value under the playhead, so monitoring hears that level. */
     function holdTrackAutomation(chain, track, at) {
         const now = chain.volAuto.context.currentTime;
-        const hasFx = typeof AudioDawFx !== 'undefined';
+        const hasFx = typeof AudioDawFx !== 'undefined' && track.automationMode !== 'off';
         const vol = track.automation?.volume;
         try { chain.volAuto.gain.cancelScheduledValues(now); } catch (_) {}
         chain.volAuto.gain.setValueAtTime(vol?.length && hasFx ? AudioDawFx.envelopeValueAt(vol, at) : 1, now);
@@ -3767,8 +4256,14 @@ const AudioDaw = (() => {
             const chain = mixer.chains.get(track.id);
             if (!chain) continue;
             chain.trackGain.gain.setTargetAtTime(computeTrackGain(track), now, 0.015);
-            const panEnv = track.automation?.pan;
-            if (chain.trackPan && !(panEnv?.length)) {
+            for (const send of track.sends || []) {
+                chain.sendGains?.get(send.busId)?.gain.setTargetAtTime(sendGain(track, send), now, 0.015);
+            }
+            const panEnv = track.automationMode === 'off' ? null : track.automation?.pan;
+            if (writing(track, 'pan')) {
+                // A live pan write owns the pan right now
+            }
+            else if (chain.trackPan && !(panEnv?.length)) {
                 chain.trackPan.pan.setTargetAtTime(track.pan || 0, now, 0.015);
             }
             else if (chain.trackPan && panEnv?.length && typeof AudioDawFx !== 'undefined') {
@@ -3881,6 +4376,7 @@ const AudioDaw = (() => {
                 iteration: 0
             } : null
         };
+        automationPassStart();
         scheduleTransportFrom(P, { t0Ctx, windowEnd: loopArmed ? state.loopEnd : Infinity, iteration: 0 });
         playback.schedulerId = setInterval(schedulerTick, SCHEDULER_TICK_MS);
         schedulerTick(); // first clicks now, not a tick later
@@ -3941,6 +4437,7 @@ const AudioDaw = (() => {
         }
         scheduleClicks();
         scheduleInstrumentNotes();
+        automationTick();
     }
 
     /**
@@ -4010,6 +4507,7 @@ const AudioDaw = (() => {
     function stopPlayback() {
         if (!state || !state.isPlaying) return;
         state.currentTime = Math.min(currentTimelineTime(), playback?.endTime ?? state.totalDuration);
+        automationPassEnd(state.currentTime);
         state.isPlaying = false;
         updatePlayButton(false);
         cancelAnimationFrame(rafId);
@@ -4382,6 +4880,10 @@ const AudioDaw = (() => {
 
     /** R: arm or disarm a track. Arming opens and meters its input. */
     function toggleArm(track) {
+        if (track.kind === 'bus') {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('An aux bus has no input to record. Arm an audio or instrument track'), 'notice-pop-yellow');
+            return;
+        }
         if (recording) {
             if (typeof doNoticePopover === 'function') doNoticePopover(translate('Stop recording before changing which tracks are armed'), 'notice-pop-yellow');
             return;
@@ -4398,6 +4900,7 @@ const AudioDaw = (() => {
 
     /** I: hear the live input through the track (inserts, fader, pan). */
     function toggleMonitor(track) {
+        if (track.kind === 'bus') return;
         track.monitor = !track.monitor;
         if (track.monitor && !monitorHintShown) {
             monitorHintShown = true;
@@ -4491,8 +4994,10 @@ const AudioDaw = (() => {
             },
             { label: translate('Duplicate track'), action: () => duplicateTrack(track) },
             { label: translate('Color…'), action: () => showTrackColorMenu(track, e) },
-            { label: track.kind === 'instrument' ? translate('Instrument…') : translate('Input…'),
-                action: () => track.kind === 'instrument' ? showInstrumentMenu(track, e) : showTrackInputMenu(track, e) },
+            ...(track.kind === 'bus' ? [] : [{ label: track.kind === 'instrument' ? translate('Instrument…') : translate('Input…'),
+                action: () => track.kind === 'instrument' ? showInstrumentMenu(track, e) : showTrackInputMenu(track, e) }]),
+            ...sendMenuItems(track),
+            ...automationModeItems(track),
             { heading: translate('Height') },
             ...heights.map(([label, h]) => ({ label, checked: track.height === h, action: () => setTrackHeight(track, h) })),
             { heading: '' },
@@ -4535,6 +5040,8 @@ const AudioDaw = (() => {
         copy.automation = ts.automation;
         copy.automationVisible = ts.automationVisible;
         copy.automationParam = ts.automationParam;
+        copy.automationMode = ts.automationMode || 'read';
+        copy.sends = (ts.sends || []).map(sd => ({ ...sd }));
         copy.kind = ts.kind;
         copy.instrument = ts.instrument;
         for (const mc of ts.midiClips) {
@@ -5395,7 +5902,7 @@ const AudioDaw = (() => {
                     madeInstrument.set(item.trackOffset, track);
                 }
             }
-            if (!track) track = addTrack();
+            if (!track || (!item.midi && track.kind === 'bus')) track = addTrack();
             if (state.editMode === 'shuffle' && !touched.has(track.id)) {
                 for (const c of track.clips) {
                     if (c.startTime >= at - 1e-6) c.startTime += clipboard.length;
@@ -5864,7 +6371,46 @@ const AudioDaw = (() => {
 
     /** Latency between scheduling a sample and the performer hearing it (context buffer + output device). */
     function outputLatency(ctx) {
-        return (ctx.baseLatency || 0) + (ctx.outputLatency || 0);
+        // Plus the master limiter's look-ahead while it is on: the performer hears everything that much later
+        const prof = limiterProfiles.get(ctx.sampleRate);
+        const lim = mixer?.masterLimiter && mixer.ctx === ctx && prof ? prof.frames / ctx.sampleRate : 0;
+        return (ctx.baseLatency || 0) + (ctx.outputLatency || 0) + lim;
+    }
+
+    // The master limiter is a DynamicsCompressorNode, which looks ahead (everything through it comes out 6 ms late
+    // in Chromium) and adds the spec's automatic makeup gain (+0.5 dB at these settings) even below its threshold.
+    // Both are measured once per sample rate, so exports can trim the delay and a gain stage can undo the makeup:
+    // the limiter then only acts on peaks.
+    const limiterProfiles = new Map(); // sampleRate -> { frames, gain }
+
+    async function masterLimiterProfile(sampleRate) {
+        if (limiterProfiles.has(sampleRate)) return limiterProfiles.get(sampleRate);
+        const prof = { frames: 0, gain: 1 };
+        if (typeof AudioDawFx !== 'undefined') {
+            try {
+                // A step of 0.1, well under the threshold: the first sample out is the delay (the step comes out
+                // attenuated while the detector settles, so any level counts), the settled level is the makeup
+                const ctx = new OfflineAudioContext(1, Math.ceil(sampleRate * 0.2), sampleRate);
+                const src = ctx.createConstantSource();
+                src.offset.value = 0.1;
+                const lim = AudioDawFx.buildMasterLimiter(ctx);
+                src.connect(lim);
+                lim.connect(ctx.destination);
+                src.start(0);
+                const out = (await ctx.startRendering()).getChannelData(0);
+                let i = 0;
+                while (i < out.length && Math.abs(out[i]) < 1e-6) i++;
+                prof.frames = i < out.length ? i : 0;
+                const settled = out[Math.floor(sampleRate * 0.15)] / 0.1;
+                if (settled > 0.5 && settled < 2) prof.gain = settled;
+            }
+            catch (_) {
+                prof.frames = 0;
+                prof.gain = 1;
+            }
+        }
+        limiterProfiles.set(sampleRate, prof);
+        return prof;
     }
 
     /** Record settings menu (the caret beside Record). */
@@ -6275,6 +6821,7 @@ const AudioDaw = (() => {
         const snapshot = state.undoStack.pop();
         await restoreSnapshot(snapshot);
         garbageCollectBlobs();
+        scheduleAutosave(); // the crash-recovery copy follows undo too
     }
 
     async function doRedo() {
@@ -6285,6 +6832,7 @@ const AudioDaw = (() => {
         const snapshot = state.redoStack.pop();
         await restoreSnapshot(snapshot);
         garbageCollectBlobs();
+        scheduleAutosave();
     }
 
     async function restoreSnapshot(snapshot) {
@@ -6345,6 +6893,8 @@ const AudioDaw = (() => {
             };
             track.automationVisible = !!ts.automationVisible;
             track.automationParam = ts.automationParam || 'volume';
+            track.automationMode = ts.automationMode || 'read';
+            track.sends = (ts.sends || []).map(sd => ({ ...sd }));
 
             for (const cs of ts.clips) {
                 const stored = blobStore.get(cs.blobKey);
@@ -7368,6 +7918,8 @@ const AudioDaw = (() => {
             };
             track.automationVisible = !!ts.automationVisible;
             track.automationParam = ts.automationParam || 'volume';
+            track.automationMode = ts.automationMode || 'read';
+            track.sends = (ts.sends || []).map(sd => ({ ...sd }));
             for (const cs of ts.clips || []) {
                 const blob = blobs.get(cs.blobKey);
                 if (!blob) continue;
