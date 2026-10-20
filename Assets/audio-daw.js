@@ -3389,6 +3389,12 @@ const AudioDaw = (() => {
         for (const id of [...trackInputs.keys()]) closeTrackInput(id);
     }
 
+    /** Never leave the microphone hot while the DAW is hidden. Showing the DAW again re-opens what is armed or monitored. */
+    function releaseInputsIfHidden() {
+        const el = document.getElementById('daw_container');
+        if (!recording && el && el.offsetParent === null) closeAllInputs();
+    }
+
     function reportInputError(track, err) {
         console.error('[AudioDaw] Input failed for', track?.name, err);
         if (typeof doNoticePopover === 'function') {
@@ -5918,6 +5924,7 @@ const AudioDaw = (() => {
         }));
         stopPlayback();
         if (recording === rec) recording = null;
+        releaseInputsIfHidden(); // the captured audio is already in hand
         removeRecordingPlaceholders(rec);
         const made = [];
         rec.takes.forEach((take, i) => {
@@ -7920,10 +7927,14 @@ const AudioDaw = (() => {
                     if (!initialized) {
                         ensureInitialized();
                         maybeOfferResume().then(maybeShowStartScreen);
+                    } else if (state) {
+                        resyncAllInputs(); // armed and monitored tracks get their inputs back
                     }
                 } else if (recording) {
-                    // Never leave the microphone hot while the DAW is hidden
+                    // Never leave the microphone hot while the DAW is hidden; inputs close once the take is kept
                     stopRecordingFlow();
+                } else {
+                    releaseInputsIfHidden();
                 }
             });
         }
