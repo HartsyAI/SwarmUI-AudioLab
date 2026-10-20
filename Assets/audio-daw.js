@@ -7380,7 +7380,7 @@ const AudioDaw = (() => {
             let total = 0;
             for (const b of blobs.values()) total += b.size;
             if (total > SERVER_SAVE_LIMIT_BYTES) {
-                throw new Error(`Project audio too large for server save (${Math.round(total / 1024 / 1024)}MB, max ${SERVER_SAVE_LIMIT_BYTES / 1024 / 1024}MB)`);
+                throw new Error(`Project audio too large for server save (${Math.round(total / 1024 / 1024)}MB, max ${SERVER_SAVE_LIMIT_BYTES / 1024 / 1024}MB). Autosave and local saves still hold it`);
             }
             const blobData = {};
             for (const [key, blob] of blobs) {

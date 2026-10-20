@@ -82,6 +82,9 @@ Score tab. Now:
 - MIDI: sustain pedal and CC, a velocity lane, and note chase (a note that started before the playhead stays
   silent when playback starts inside it).
 - Very long sessions: every clip still decodes its own WaveSurfer copy.
+- Server-side projects cap at 40 MB of audio (64 MB of JSON, audio inlined as base64). Lossless takes reach that
+  after about 3.5 minutes of mono recording; autosave and local saves are unaffected. Storing project audio as
+  separate, compressed files would lift it.
 
 ## Verification
 

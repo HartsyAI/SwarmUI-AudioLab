@@ -366,7 +366,9 @@ DAW work is saved three ways, and they are independent:
   a crashed tab or an accidental refresh does not lose work.
 - **Local quick saves.** Named slots, also in IndexedDB, for fast checkpoints on the machine you are working on.
 - **Server side projects.** `Project` > `Save`, `Save As`, and `Open` store named projects against your SwarmUI user
-  account through the `AudioLabSaveProject` API, so they follow you between browsers and machines.
+  account through the `AudioLabSaveProject` API, so they follow you between browsers and machines. They hold up to
+  40 MB of audio. Recorded takes are lossless 32-bit float, about 11 MB per mono minute at 48 kHz, so a long
+  recording session stays in autosave and local saves.
 
 ![The Project menu](Assets/readme/daw-project-menu.png)
 
