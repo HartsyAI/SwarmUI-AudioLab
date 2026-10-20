@@ -475,15 +475,13 @@
     position: relative;
     background: var(--background);
 }
-/* Hides the AudioLab main-tab button; !important so permissions.js's inline
-   display re-application can't reveal it */
-.daw-tab-hidden { display: none !important; }
 
 /* ===== TRANSPORT BAR ===== */
 .daw-transport {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.7rem;
+    gap: 0.5rem 0.7rem;
     padding: 0.65rem 1.4rem;
     border-bottom: 1px solid var(--border-color);
     background: var(--background);

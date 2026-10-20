@@ -67,6 +67,7 @@ const AudioDaw = (() => {
             loopStart: 0,
             loopEnd: 0,
             rulerMode: 'time', // 'time' | 'beats'
+            markers: [],      // [{id, time, name, color}] sorted by time
             snapEnabled: true,
             zoom: 100,        // pixels per second
             scrollLeft: 0,
@@ -81,21 +82,16 @@ const AudioDaw = (() => {
 
     // ===== PUBLIC API =====
 
-    // ===== TAB VISIBILITY =====
-    // The tab <li> is hidden with a class (not inline style) because permissions.js
-    // re-applies inline display on permission-gated elements and would undo us.
+    // ===== TAB =====
+    // The tab is always reachable (Swarm's own tab permission still gates it); it used to stay hidden until an
+    // autosave, a saved project or an audio result existed, which left a first-time user no way in.
 
     function dawTabLink() { return document.getElementById('maintab_audiolab'); }
 
     function showDawTab() {
         const link = dawTabLink();
         if (!link) return;
-        link.closest('.nav-item')?.classList.remove('daw-tab-hidden');
         link.click();
-    }
-
-    function hideDawTab() {
-        dawTabLink()?.closest('.nav-item')?.classList.add('daw-tab-hidden');
     }
 
     /**
@@ -202,14 +198,13 @@ const AudioDaw = (() => {
         (document.getElementById('daw_container') || document.body).appendChild(dlg);
     }
 
-    /** Full teardown: delete the crash-recovery autosave, free all memory, hide the tab. */
+    /** Full teardown: delete the crash-recovery autosave, free all memory, return to the Generate tab. */
     function finishClose() {
         if (typeof AudioDawStore !== 'undefined') {
             AudioDawStore.deleteProject(AUTOSAVE_SLOT).catch(() => {});
         }
         destroyAll();
         initialized = false;
-        hideDawTab();
         document.getElementById('text2imagetabbutton')?.click();
     }
 
@@ -1202,11 +1197,15 @@ const AudioDaw = (() => {
         modelLabel.textContent = translate('Model:');
         const modelSelect = document.createElement('select');
         modelSelect.className = 'daw-stems-select';
-        for (const [id, def] of Object.entries(STEM_MODELS)) {
+        for (const id of stemModelChoices()) {
             const opt = document.createElement('option');
             opt.value = id;
-            opt.textContent = def.label;
+            opt.textContent = STEM_MODELS[id].label;
             modelSelect.appendChild(opt);
+        }
+        if (!generateEngines) {
+            // First render before the engine list arrived: redraw once it has, so only real variants show.
+            ensureEnginesList().then(() => { if (container.isConnected) renderStemsPanel(container); }).catch(() => {});
         }
         modelRow.appendChild(modelLabel);
         modelRow.appendChild(modelSelect);
@@ -1329,6 +1328,13 @@ const AudioDaw = (() => {
         htdemucs_6s: { label: 'HTDemucs 6-stem, adds guitar + piano', stems: ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'] }
     };
 
+    /** Demucs variants this server can run: demucs_fx's installed models, else the two the engine ships. */
+    function stemModelChoices() {
+        const eng = (generateEngines || []).find(e => e.id === 'demucs_fx');
+        const ids = (eng?.models || []).filter(m => m.installed !== false).map(m => m.id).filter(id => STEM_MODELS[id]);
+        return ids.length ? ids : ['htdemucs', 'htdemucs_6s'];
+    }
+
     // Track colors per stem name (+ the synthesized "instrumental" combine track).
     const STEM_COLORS = {
         vocals: '#cc5de8', drums: '#ff922b', bass: '#22b8cf',
@@ -1361,6 +1367,7 @@ const AudioDaw = (() => {
     // ===== GENERATE TAB =====
 
     let generateEngines = null; // engine list cache for the Generate tab
+    let generateBackendStatus = null; // 'RUNNING', another BackendStatus, or 'NOT_FOUND' (no Audio Backend)
 
     /**
      * Generate through SwarmUI's core pipeline (GenerateText2ImageWS) — the same
@@ -1447,20 +1454,135 @@ const AudioDaw = (() => {
     }
 
     /** Fetch + cache the engine list (shared by the Generate tab, palette, and beat pads). */
-    async function ensureEnginesList() {
-        if (!generateEngines) {
+    async function ensureEnginesList(force = false) {
+        if (!generateEngines || force) {
             const result = await AudioLabAPI.callAPI('AudioLabListEngines');
             if (!result.success) throw new Error(result.error || 'Failed to list engines');
             generateEngines = result.engines || [];
+            generateBackendStatus = result.backend_status || 'NOT_FOUND';
         }
         return generateEngines;
     }
 
-    /** First installed model's Swarm-registry name for an engine id (cached engine list). */
+    /** First installed model's Swarm-registry name for an installed engine (cached engine list). */
     function dawSwarmModelFor(engineId) {
-        const eng = (generateEngines || []).find(x => x.id === engineId);
+        const eng = (generateEngines || []).find(x => x.id === engineId && x.installed);
         const m = (eng?.models || []).find(x => x.installed !== false);
         return m?.swarm_model || null;
+    }
+
+    // Engines whose Prompt carries LYRICS and Text2Audio Style the description (DynamicAudioBackend maps
+    // them that way); every other generator reads its description from the Prompt.
+    const LYRIC_MUSIC_ENGINES = new Set(['acestep_music', 'yue_music', 'yue2_music', 'heartlib_music', 'minimax_music3']);
+    // Engines that read core's BPM / time signature params (feature audio_ace_inputs).
+    const TEMPO_PARAM_ENGINES = new Set(['acestep_music']);
+    // Core's Text2Audio Time Signature takes beats per bar, from this set only.
+    const CORE_BEATS_PER_BAR = ['2', '3', '4', '6'];
+    // Preference order when a feature (palette loops) needs "any music engine".
+    const MUSIC_ENGINE_ORDER = ['acestep_music', 'musicgen_music', 'stableaudio_music', 'minimax_music3', 'heartlib_music', 'yue2_music', 'yue_music'];
+    // Speech-category engines that are not speech-to-text (the Score tab drives these).
+    const NON_SPEECH_STT = new Set(['sheetsage2_transcribe']);
+
+    /**
+     * Prompt + core params for a music or SFX request, routed the way the backend reads each engine.
+     * Tempo hints become core BPM/meter params where the engine takes them, and a "120 BPM" tag on the
+     * description otherwise (MusicGen and Stable Audio were trained on tagged descriptions).
+     * @returns {{prompt: string, params: Object}}
+     */
+    function buildAudioGenRequest(engineId, { description, lyrics = '', duration = 0, seed = -1, tempoHints = false }) {
+        const params = {};
+        let prompt;
+        if (LYRIC_MUSIC_ENGINES.has(engineId)) {
+            params.textaudiostyle = description;
+            prompt = lyrics;
+        }
+        else {
+            prompt = description;
+            if (tempoHints && !TEMPO_PARAM_ENGINES.has(engineId) && !/\bbpm\b/i.test(description)) {
+                prompt += `, ${state.bpm} BPM`;
+            }
+        }
+        if (duration > 0) params.textaudioduration = Math.max(1, Math.min(1000, duration));
+        if (seed >= 0) params.seed = seed;
+        if (tempoHints && TEMPO_PARAM_ENGINES.has(engineId)) {
+            params.textaudiobpm = Math.max(10, Math.min(300, Math.round(state.bpm)));
+            const beats = String(state.timeSignature[0]);
+            if (CORE_BEATS_PER_BAR.includes(beats)) params.textaudiotimesignature = beats;
+        }
+        return { prompt, params };
+    }
+
+    /** First installed music engine in preference order, or null. */
+    function preferredMusicEngine() {
+        for (const id of MUSIC_ENGINE_ORDER) {
+            if (dawSwarmModelFor(id)) return id;
+        }
+        return null;
+    }
+
+    // Params the DAW form sets itself, or that take media the DAW supplies from clips.
+    const ENGINE_OPTION_SKIP = new Set(['textaudioduration', 'textaudiostyle', 'textaudiobpm', 'textaudiotimesignature',
+        'audioformat', 'audiooutputformat', 'audioquality', 'streamchunksize', 'referenceaudio', 'referencetext']);
+    const ENGINE_OPTION_SKIP_TYPES = new Set(['audio', 'video', 'image', 'audio_list', 'video_list', 'image_list', 'model']);
+
+    /** Core param definitions that belong to an engine: any of its feature flags, minus what the DAW drives. */
+    function engineOptionParams(engine) {
+        if (!engine || typeof gen_param_types === 'undefined' || !gen_param_types) return [];
+        const features = new Set(engine.features || []);
+        return gen_param_types.filter(p => {
+            if (!p.feature_flag || ENGINE_OPTION_SKIP.has(p.id) || ENGINE_OPTION_SKIP_TYPES.has(p.type)) return false;
+            return p.feature_flag.split(',').some(f => features.has(f.trim()));
+        });
+    }
+
+    /**
+     * Render an engine's own params with core's widgets (same controls as the Generate tab).
+     * @returns {{el: HTMLElement, read: function(): Object}} read() returns the values to send
+     */
+    function renderEngineOptions(engine, idPrefix) {
+        const wrap = createDiv(null, 'daw-gen-options');
+        const params = engineOptionParams(engine);
+        if (!params.length || typeof getHtmlForParam !== 'function') {
+            return { el: wrap, read: () => ({}) };
+        }
+        const details = document.createElement('details');
+        details.className = 'daw-gen-options-box';
+        const summary = document.createElement('summary');
+        summary.textContent = translate('Engine options') + ` (${params.length})`;
+        details.appendChild(summary);
+        const body = createDiv(null, 'daw-gen-options-body');
+        const runnables = [];
+        for (const p of params) {
+            const made = getHtmlForParam(p, idPrefix);
+            if (!made) continue;
+            const cell = createDiv(null, 'daw-gen-option');
+            cell.innerHTML = made.html;
+            body.appendChild(cell);
+            if (made.runnable) runnables.push(made.runnable);
+        }
+        details.appendChild(body);
+        wrap.appendChild(details);
+        // Widgets that size themselves need to be in the DOM, which happens once the caller appends wrap.
+        setTimeout(() => {
+            for (const run of runnables) { try { run(); } catch (_) {} }
+            if (typeof applyTranslations === 'function') applyTranslations(body);
+        }, 0);
+        const read = () => {
+            const out = {};
+            for (const p of params) {
+                const input = document.getElementById(idPrefix + p.id);
+                if (!input) continue;
+                const toggle = document.getElementById(idPrefix + p.id + '_toggle');
+                if (p.toggleable && toggle && !toggle.checked) continue;
+                const val = getInputVal(input);
+                if (val === null || val === undefined || val === '') continue;
+                // An untouched control equals the param default; sending it is harmless but noisy.
+                if (`${val}` === `${p.default}`) continue;
+                out[p.id] = val;
+            }
+            return out;
+        };
+        return { el: wrap, read };
     }
 
     /** Bottom-panel tab: generate TTS/music/SFX with an installed engine straight into a track. */
@@ -1474,16 +1596,38 @@ const AudioDaw = (() => {
         // name/desc are translated where they are rendered (translate() needs to run per language switch).
     ];
     let generateCategory = 'tts';
+    const generateEngineChoice = {}; // category -> last engine picked, kept across panel rebuilds
+    let generatePlacement = 'new'; // 'new' track or the 'selected' track
 
     function enginesForCategory(cat) {
         const list = (generateEngines || []).filter(e => e.installed);
         if (cat === 'tts') return list.filter(e => e.category === 'TTS');
-        if (cat === 'stt') return list.filter(e => e.category === 'STT');
+        if (cat === 'stt') return list.filter(e => e.category === 'STT' && !NON_SPEECH_STT.has(e.id));
         const gen = list.filter(e => e.category === 'AudioGeneration');
         return cat === 'sfx' ? gen.filter(e => /sfx/i.test(e.id)) : gen.filter(e => !/sfx/i.test(e.id));
     }
 
-    async function renderGeneratePanel(container) {
+    /** Card shown in place of the form when no Audio Backend exists: the model names it needs do not exist yet. */
+    function buildBackendNotice(container) {
+        const card = createDiv(null, 'daw-fx-card daw-gen-notice');
+        const title = createDiv(null, 'daw-fx-card-title');
+        title.textContent = translate('No Audio Backend on this server');
+        card.appendChild(title);
+        const text = createDiv(null, 'daw-stems-desc');
+        text.textContent = translate('Generation runs through SwarmUI\'s Audio Backend. Add one under Server > Backends, install engines from its card, then refresh this tab.');
+        card.appendChild(text);
+        const row = createDiv(null, 'daw-clip-editor-actions');
+        quickAppendButton(row, translate('Open Backends'), () => {
+            document.getElementById('servertabbutton')?.click();
+            setTimeout(() => document.getElementById('serverbackendstabbutton')?.click(), 50);
+        }, ' basic-button btn-primary', translate('Go to Server > Backends'));
+        quickAppendButton(row, translate('Refresh'), () => renderGeneratePanel(container, { refresh: true }),
+            ' basic-button', translate('Check again for an Audio Backend and installed engines'));
+        card.appendChild(row);
+        return card;
+    }
+
+    async function renderGeneratePanel(container, { refresh = false } = {}) {
         container.innerHTML = '';
         const panel = createDiv(null, 'daw-generate-panel');
         container.appendChild(panel);
@@ -1491,12 +1635,18 @@ const AudioDaw = (() => {
         status.textContent = translate('Loading engines...');
         panel.appendChild(status);
         try {
-            await ensureEnginesList();
+            await ensureEnginesList(refresh);
         } catch (err) {
             status.textContent = translate('Failed to load engines:') + ' ' + err.message;
+            quickAppendButton(panel, translate('Retry'), () => renderGeneratePanel(container, { refresh: true }), ' basic-button btn-sm');
             return;
         }
         status.remove();
+
+        if (generateBackendStatus === 'NOT_FOUND') {
+            panel.appendChild(buildBackendNotice(container));
+            return;
+        }
 
         // Category cards; fall back to the first category that has an engine
         if (!enginesForCategory(generateCategory).length) {
@@ -1514,7 +1664,7 @@ const AudioDaw = (() => {
                 + `<span class="daw-fx-pick-desc">${count ? translate(cat.desc) : translate('No engine installed')}</span>`;
             pick.addEventListener('click', () => {
                 if (!count) {
-                    if (typeof doNoticePopover === 'function') doNoticePopover(translate(cat.name) + ': ' + translate('No installed engine. Add one under Server -> Backends'), 'notice-pop-yellow');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate(cat.name) + ': ' + translate('No installed engine. Install one from the Audio Backend card under Server > Backends'), 'notice-pop-yellow');
                     return;
                 }
                 generateCategory = cat.id;
@@ -1524,11 +1674,19 @@ const AudioDaw = (() => {
         }
         panel.appendChild(browser);
 
+        if (generateBackendStatus && generateBackendStatus !== 'RUNNING') {
+            const warn = createDiv(null, 'daw-stems-clipinfo daw-gen-warn');
+            warn.textContent = translate('The Audio Backend is') + ` ${String(generateBackendStatus).toLowerCase()}. `
+                + translate('Generations wait until it is running.');
+            panel.appendChild(warn);
+        }
+
         const engines = enginesForCategory(generateCategory);
         if (!engines.length) {
             const none = createDiv(null, 'daw-stems-desc');
-            none.textContent = translate('No audio engines installed. Add one from the Audio Backend card under Server -> Backends.');
+            none.textContent = translate('No audio engines installed. Install one from the Audio Backend card under Server > Backends, then refresh.');
             panel.appendChild(none);
+            quickAppendButton(panel, translate('Refresh'), () => renderGeneratePanel(container, { refresh: true }), ' basic-button btn-sm');
             return;
         }
 
@@ -1552,8 +1710,12 @@ const AudioDaw = (() => {
             opt.textContent = eng.name;
             engineSelect.appendChild(opt);
         }
+        const remembered = generateEngineChoice[generateCategory];
+        if (remembered && engines.some(e => e.id === remembered)) engineSelect.value = remembered;
         engineRow.appendChild(engineLabel);
         engineRow.appendChild(engineSelect);
+        quickAppendButton(engineRow, '&#x21bb;', () => renderGeneratePanel(container, { refresh: true }),
+            ' basic-button btn-sm daw-gen-refresh', translate('Refresh the engine list'));
         mainCol.appendChild(engineRow);
 
         const currentEngine = () => engines.find(x => x.id === engineSelect.value) || engines[0];
@@ -1581,6 +1743,15 @@ const AudioDaw = (() => {
             modelRow.style.display = models.length > 1 ? '' : 'none';
         }
 
+        // Engine-specific params (voices, speed, sampling), rebuilt per engine with core's own widgets
+        const optionsHost = createDiv(null, 'daw-gen-options-host');
+        let engineOptions = { read: () => ({}) };
+        function rebuildOptions() {
+            optionsHost.innerHTML = '';
+            engineOptions = renderEngineOptions(currentEngine(), 'dawgen_');
+            optionsHost.appendChild(engineOptions.el);
+        }
+
         // ==== Speech to Text: transcription workflow (produces text, not audio) ====
         if (generateCategory === 'stt') {
             const resultArea = document.createElement('textarea');
@@ -1588,6 +1759,7 @@ const AudioDaw = (() => {
             resultArea.rows = 4;
             resultArea.placeholder = translate('Transcription appears here…');
             mainCol.appendChild(resultArea);
+            mainCol.appendChild(optionsHost);
 
             const actionRow = createDiv(null, 'daw-stems-action-row');
             const hint = createSpan(null, 'daw-stems-clipinfo');
@@ -1600,15 +1772,15 @@ const AudioDaw = (() => {
             goBtn.addEventListener('click', async () => {
                 const sel = findClipById(state.selectedClipId);
                 if (!sel) {
-                    if (typeof doNoticePopover === 'function') doNoticePopover('Select a clip to transcribe', 'notice-pop-yellow');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('Select a clip to transcribe'), 'notice-pop-yellow');
                     return;
                 }
                 goBtn.disabled = true;
                 const busy = createBusyIndicator(translate('Transcribing…'), 'generate');
                 sideCol.appendChild(busy);
                 try {
-                    const b64 = await AudioLabCore.readAsBase64(sel.clip.blob);
-                    const result = await AudioLabAPI.processSTT(b64, { providerId: currentEngine().id });
+                    const b64 = await AudioLabCore.readAsBase64(await clipAudioBlob(sel.clip));
+                    const result = await AudioLabAPI.processSTT(b64, { providerId: currentEngine().id, model: modelSelect.value || null });
                     if (!result.success || !result.transcription) throw new Error(result.error || 'No transcription returned');
                     resultArea.value = result.transcription.trim();
                 } catch (err) {
@@ -1627,12 +1799,17 @@ const AudioDaw = (() => {
             copyBtn.addEventListener('click', () => {
                 if (!resultArea.value) return;
                 navigator.clipboard?.writeText(resultArea.value);
-                if (typeof doNoticePopover === 'function') doNoticePopover('Copied to clipboard', 'notice-pop-green');
+                if (typeof doNoticePopover === 'function') doNoticePopover(translate('Copied to clipboard'), 'notice-pop-green');
             });
             copyRow.appendChild(copyBtn);
             sideCol.appendChild(copyRow);
-            engineSelect.addEventListener('change', rebuildModels);
+            engineSelect.addEventListener('change', () => {
+                generateEngineChoice[generateCategory] = engineSelect.value;
+                rebuildModels();
+                rebuildOptions();
+            });
             rebuildModels();
+            rebuildOptions();
             return;
         }
 
@@ -1648,6 +1825,7 @@ const AudioDaw = (() => {
             : translate('Describe the sound: "punchy kick drum", "rain on a tin roof"...');
         mainCol.appendChild(promptArea);
 
+        // Lyrics only exist for engines that sing them; the rest would silently ignore the box.
         let lyricsArea = null;
         if (isMusicCat) {
             lyricsArea = document.createElement('textarea');
@@ -1656,6 +1834,7 @@ const AudioDaw = (() => {
             lyricsArea.placeholder = translate('Lyrics (optional, leave empty for instrumental)');
             mainCol.appendChild(lyricsArea);
         }
+        mainCol.appendChild(optionsHost);
 
         // Options: duration + seed (music/SFX), tempo hints (music)
         let durationInput = null, seedInput = null, tempoCheck = null;
@@ -1668,6 +1847,7 @@ const AudioDaw = (() => {
             durationInput.type = 'number';
             durationInput.className = 'daw-clip-fade-input';
             durationInput.min = '1';
+            durationInput.max = '1000';
             durationInput.value = isMusicCat ? '20' : '3';
             const seedLabel = document.createElement('label');
             seedLabel.className = 'daw-stems-ctl-label';
@@ -1724,14 +1904,14 @@ const AudioDaw = (() => {
             sttBtn.addEventListener('click', async () => {
                 const sel = findClipById(state.selectedClipId);
                 if (!sel) {
-                    if (typeof doNoticePopover === 'function') doNoticePopover('Select a clip to transcribe', 'notice-pop-yellow');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('Select a clip to transcribe'), 'notice-pop-yellow');
                     return;
                 }
                 sttBtn.disabled = true;
                 sttBtn.textContent = translate('Transcribing…');
                 try {
-                    const b64 = await AudioLabCore.readAsBase64(sel.clip.blob);
-                    const result = await AudioLabAPI.processSTT(b64);
+                    const b64 = await AudioLabCore.readAsBase64(await clipAudioBlob(sel.clip));
+                    const result = await AudioLabAPI.processSTT(b64, { providerId: enginesForCategory('stt')[0]?.id });
                     if (!result.success || !result.transcription) throw new Error(result.error || 'No transcription returned');
                     refTextInput.value = result.transcription.trim();
                     refCheck.checked = true;
@@ -1758,10 +1938,29 @@ const AudioDaw = (() => {
 
         const supportsVoiceRef = () => (currentEngine()?.features || []).includes('tts_voice_ref');
 
+        // Where the result lands: a new track, or the selected track (at the playhead either way)
+        const placeRow = createDiv(null, 'daw-stems-model-row');
+        const placeLabel = document.createElement('label');
+        placeLabel.className = 'daw-stems-ctl-label';
+        placeLabel.textContent = translate('Place on:');
+        const placeSelect = document.createElement('select');
+        placeSelect.className = 'daw-stems-select';
+        for (const [v, l] of [['new', translate('New track')], ['selected', translate('Selected track')]]) {
+            const opt = document.createElement('option');
+            opt.value = v;
+            opt.textContent = l;
+            placeSelect.appendChild(opt);
+        }
+        placeSelect.value = generatePlacement;
+        placeSelect.addEventListener('change', () => { generatePlacement = placeSelect.value; });
+        placeRow.appendChild(placeLabel);
+        placeRow.appendChild(placeSelect);
+        sideCol.appendChild(placeRow);
+
         // Action row: hint above a full-width Generate button
         const actionRow = createDiv(null, 'daw-stems-action-row');
         const hint = createSpan(null, 'daw-stems-clipinfo');
-        hint.textContent = translate('Result is added as a new track at the playhead (and saved to your outputs).');
+        hint.textContent = translate('Result lands at the playhead (and is saved to your outputs).');
         actionRow.appendChild(hint);
         const goBtn = document.createElement('button');
         goBtn.className = 'basic-button btn-sm daw-stems-go';
@@ -1770,13 +1969,19 @@ const AudioDaw = (() => {
         sideCol.appendChild(actionRow);
 
         function refreshVisibility() {
+            const eng = currentEngine();
             if (isTts) {
                 refRow.style.display = supportsVoiceRef() ? '' : 'none';
                 refNote.style.display = supportsVoiceRef() ? 'none' : '';
             }
+            if (lyricsArea) lyricsArea.style.display = LYRIC_MUSIC_ENGINES.has(eng?.id) ? '' : 'none';
             rebuildModels();
+            rebuildOptions();
         }
-        engineSelect.addEventListener('change', refreshVisibility);
+        engineSelect.addEventListener('change', () => {
+            generateEngineChoice[generateCategory] = engineSelect.value;
+            refreshVisibility();
+        });
         refreshVisibility();
 
         goBtn.addEventListener('click', async () => {
@@ -1785,44 +1990,44 @@ const AudioDaw = (() => {
             const models = (eng.models || []).filter(m => m.installed !== false);
             const modelDef = models.find(m => m.id === modelSelect.value) || models[0];
             if (!modelDef?.swarm_model) {
-                if (typeof doNoticePopover === 'function') doNoticePopover('No installed model for this engine', 'notice-pop-yellow');
+                if (typeof doNoticePopover === 'function') doNoticePopover(translate('No installed model for this engine'), 'notice-pop-yellow');
                 return;
             }
             const promptText = promptArea.value.trim();
             if (!promptText) {
                 if (typeof doNoticePopover === 'function') {
-                    doNoticePopover(isTts ? 'Enter text to speak first' : 'Enter a prompt first', 'notice-pop-yellow');
+                    doNoticePopover(isTts ? translate('Enter text to speak first') : translate('Enter a prompt first'), 'notice-pop-yellow');
                 }
                 return;
             }
-            // Core T2I params — same pipeline + param ids as the main Generate tab
-            const params = {};
+            const lyricsText = (isMusicCat && LYRIC_MUSIC_ENGINES.has(eng.id)) ? (lyricsArea?.value.trim() || '') : '';
+            // Core T2I params: same pipeline + param ids as the main Generate tab
+            let request;
             if (isTts) {
+                request = { prompt: promptText, params: {} };
                 if (refCheck.checked && supportsVoiceRef()) {
                     const sel = findClipById(state.selectedClipId);
                     if (!sel) {
-                        if (typeof doNoticePopover === 'function') doNoticePopover('Select a clip to use as voice reference', 'notice-pop-yellow');
+                        if (typeof doNoticePopover === 'function') doNoticePopover(translate('Select a clip to use as voice reference'), 'notice-pop-yellow');
                         return;
                     }
-                    const b64 = await AudioLabCore.readAsBase64(sel.clip.blob);
-                    params.referenceaudio = `data:${sel.clip.blob.type || 'audio/wav'};base64,${b64}`;
-                    if (refTextInput.value.trim()) params.referencetext = refTextInput.value.trim();
-                }
-            } else {
-                // Core's convention: Prompt carries the lyrics, Text2Audio Style carries the style.
-                // The style box is the main one here, so it moves to text2audiostyle and the lyrics box
-                // becomes the prompt (see dawSwarmGenerate below, which sends promptText as the prompt).
-                if (isMusicCat) {
-                    params.text2audiostyle = promptText;
-                }
-                params.text2audioduration = Math.max(1, parseFloat(durationInput.value) || (isMusicCat ? 20 : 3));
-                const seed = parseInt(seedInput.value);
-                if (!isNaN(seed) && seed >= 0) params.seed = seed;
-                if (isMusicCat && tempoCheck?.checked) {
-                    params.text2audiobpm = state.bpm;
-                    params.text2audiotimesignature = state.timeSignature.join('/');
+                    const refBlob = await clipAudioBlob(sel.clip);
+                    const b64 = await AudioLabCore.readAsBase64(refBlob);
+                    request.params.referenceaudio = `data:${refBlob.type || 'audio/wav'};base64,${b64}`;
+                    if (refTextInput.value.trim()) request.params.referencetext = refTextInput.value.trim();
                 }
             }
+            else {
+                const seed = parseInt(seedInput.value);
+                request = buildAudioGenRequest(eng.id, {
+                    description: promptText,
+                    lyrics: lyricsText,
+                    duration: parseFloat(durationInput.value) || (isMusicCat ? 20 : 3),
+                    seed: isNaN(seed) ? -1 : seed,
+                    tempoHints: !!tempoCheck?.checked
+                });
+            }
+            Object.assign(request.params, engineOptions.read());
 
             // Non-blocking: only the Generate button locks; the rest of the DAW
             // stays usable while the engine works (progress on the tab too).
@@ -1830,31 +2035,34 @@ const AudioDaw = (() => {
             const busy = createBusyIndicator(translate('Generating with') + ` ${eng.name}…`, 'generate');
             sideCol.appendChild(busy);
             try {
-                const lyricsText = isMusicCat ? (lyricsArea?.value.trim() || '') : '';
                 const { blob, metadata } = await dawSwarmGenerate({
                     model: modelDef.swarm_model,
-                    prompt: isMusicCat ? lyricsText : promptText,
-                    params,
+                    prompt: request.prompt,
+                    params: request.params,
                     onProgress: (frac) => busy.setProgress(frac)
                 });
                 pushUndo();
-                const track = addTrack({ name: eng.name });
-                await addClipToTrack(track, blob, {
-                    name: promptText.slice(0, 28) || eng.name,
+                const target = generatePlacement === 'selected' ? getSelectedTrack() : null;
+                const track = target || addTrack({ name: eng.name });
+                const label = promptText.slice(0, 28) || eng.name;
+                const clip = await addClipToTrack(track, blob, {
+                    name: label,
                     startTime: snapTime(state.currentTime),
                     meta: buildClipScoreMeta(metadata, {
                         style: isMusicCat ? promptText : '',
                         lyrics: lyricsText,
                         model: modelDef.swarm_model,
                         engineId: eng.id,
-                        label: promptText.slice(0, 28) || eng.name
+                        label
                     })
                 });
+                state.selectedTrackId = track.id;
+                state.selectedClipId = clip.id;
                 updateTotalDuration();
                 renderAllTracks();
                 updateBottomPanel();
                 resyncPlayback();
-                if (typeof doNoticePopover === 'function') doNoticePopover('Generated clip added (also saved to your outputs)', 'notice-pop-green');
+                if (typeof doNoticePopover === 'function') doNoticePopover(translate('Generated clip added (also saved to your outputs)'), 'notice-pop-green');
             } catch (err) {
                 console.error('[AudioDaw] Generate failed:', err);
                 if (typeof doNoticePopover === 'function') doNoticePopover(translate('Generate failed:') + ' ' + err.message, 'notice-pop-red');
@@ -1922,7 +2130,7 @@ const AudioDaw = (() => {
             scheduleTrackAutomation(chain, track, { t0Ctx: 0, t0Timeline: 0, windowEnd: renderEnd, fresh: true });
             for (const clip of track.clips) {
                 if (clip.muted) continue;
-                scheduleClip(offlineCtx, chain.trackGain, clip,
+                scheduleClip(offlineCtx, chain.input, clip,
                     { t0Ctx: 0, t0Timeline: 0, windowEnd: renderEnd });
             }
         }
@@ -1947,6 +2155,24 @@ const AudioDaw = (() => {
             if (clip) return { clip, track };
         }
         return null;
+    }
+
+    /**
+     * The audio a clip actually plays (its trimmed window) as a Blob. Untrimmed clips hand back their source
+     * blob; trimmed or split clips share a source with other clips, so their window is rendered to WAV.
+     */
+    async function clipAudioBlob(clip) {
+        if ((clip.offset || 0) <= 1e-6 && (clip.trimEnd || 0) <= 1e-6) return clip.blob;
+        const buf = clip.decodedBuffer || await AudioDawTrack.decodeClip(clip);
+        const sr = buf.sampleRate;
+        const start = Math.max(0, Math.floor((clip.offset || 0) * sr));
+        const visible = clip.duration - (clip.offset || 0) - (clip.trimEnd || 0);
+        const len = Math.max(1, Math.min(buf.length - start, Math.round(visible * sr)));
+        const out = new AudioBuffer({ numberOfChannels: buf.numberOfChannels, length: len, sampleRate: sr });
+        for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+            out.copyToChannel(buf.getChannelData(ch).subarray(start, start + len), ch);
+        }
+        return audioBufferToWav(out);
     }
 
     // ===== SCROLL SYNC =====
@@ -2242,6 +2468,7 @@ const AudioDaw = (() => {
         state.totalDuration = Math.max(10, content) + 5;
         if (timeline) timeline.setDuration(state.totalDuration);
         updateClipLanesWidth();
+        updateTimeDisplay();
     }
 
     // ===== PLAYBACK ENGINE (Web Audio API) =====
@@ -2264,22 +2491,27 @@ const AudioDaw = (() => {
         return audible ? track.volume : 0;
     }
 
-    /** Create a track's persistent node chain: trackGain -> trackPan -> masterGain (+ analyser tap for meters). */
+    /**
+     * Create a track's persistent node chain, in pro signal-flow order:
+     * input (clips, live input) -> inserts (pre-fader) -> trackGain (fader, mute/solo) -> volAuto -> trackPan
+     * -> masterGain, plus an analyser tap for meters. volAuto carries the volume envelope so live fader moves
+     * and automation ramps never fight over one AudioParam.
+     */
     function buildTrackChain(ctx, track, masterGain) {
+        const input = ctx.createGain();
         const trackGain = ctx.createGain();
         trackGain.gain.value = computeTrackGain(track);
-        // Insert FX after the static fader; volAuto carries the volume envelope so
-        // live fader moves and automation ramps never fight over one AudioParam.
         const fxChain = (typeof AudioDawFx !== 'undefined')
             ? AudioDawFx.buildFxChain(ctx, track.fx, { bpm: state.bpm }) : null;
+        if (fxChain) {
+            input.connect(fxChain.input);
+            fxChain.output.connect(trackGain);
+        } else {
+            input.connect(trackGain);
+        }
         const volAuto = ctx.createGain();
         volAuto.gain.value = 1;
-        if (fxChain) {
-            trackGain.connect(fxChain.input);
-            fxChain.output.connect(volAuto);
-        } else {
-            trackGain.connect(volAuto);
-        }
+        trackGain.connect(volAuto);
         let trackPan = null;
         if (ctx.createStereoPanner) {
             trackPan = ctx.createStereoPanner();
@@ -2298,11 +2530,12 @@ const AudioDaw = (() => {
             analysers = [ctx.createAnalyser(), ctx.createAnalyser()];
             analysers.forEach((a, i) => { a.fftSize = 512; meterSplitter.connect(a, i); });
         }
-        return { trackGain, fxChain, volAuto, trackPan, analysers, meterSplitter };
+        return { input, trackGain, fxChain, volAuto, trackPan, analysers, meterSplitter };
     }
 
     /** Fully disconnect one track chain (incl. FX feedback loops, which otherwise persist). */
     function disposeChain(chain) {
+        try { chain.input.disconnect(); } catch (_) {}
         try { chain.trackGain.disconnect(); } catch (_) {}
         if (typeof AudioDawFx !== 'undefined') AudioDawFx.disposeFxChain(chain.fxChain);
         try { chain.volAuto.disconnect(); } catch (_) {}
@@ -2494,9 +2727,9 @@ const AudioDaw = (() => {
     /**
      * Schedule one clip into a context — the single source of truth for placement
      * math, used identically by live playback, loop iterations, and offline export.
-     * Node chain per clip: source -> fadeGain (fade ramps only) -> clipGain (mute/gain) -> destNode.
+     * Node chain per clip: source -> fadeGain (fade ramps only) -> clipGain (mute/gain) -> destNode (track input).
      * @param {BaseAudioContext} ctx
-     * @param {AudioNode} destNode - the track's trackGain
+     * @param {AudioNode} destNode - the track chain's input (ahead of the inserts)
      * @param {Object} clip
      * @param {Object} origin - { t0Ctx, t0Timeline, windowEnd }: ctx time t0Ctx corresponds
      *   to timeline time t0Timeline; nothing is scheduled at/after windowEnd (loop/export bound).
@@ -2561,7 +2794,7 @@ const AudioDaw = (() => {
             }
             scheduleTrackAutomation(chain, track, { t0Ctx, t0Timeline: P, windowEnd, fresh: iteration === 0 });
             for (const clip of track.clips) {
-                const nodes = scheduleClip(ctx, chain.trackGain, clip, { t0Ctx, t0Timeline: P, windowEnd });
+                const nodes = scheduleClip(ctx, chain.input, clip, { t0Ctx, t0Timeline: P, windowEnd });
                 if (!nodes) continue;
                 const entry = { clipId: clip.id, trackId: track.id, iteration, ...nodes };
                 nodes.source.onended = () => {
@@ -3104,75 +3337,54 @@ const AudioDaw = (() => {
 
     // ===== CLIP OPERATIONS =====
 
-    async function doSplitClip(clip, track) {
-        // splitTime is relative to the clip's visible (trimmed) region
-        const splitTime = state.currentTime - clip.startTime;
+    /**
+     * Split a clip at the playhead without touching audio: both halves keep the shared source blob and differ
+     * only in their window (offset/trimEnd), so the split is instant, lossless, and undo is a plain snapshot.
+     */
+    function doSplitClip(clip, track, at = state.currentTime) {
+        const splitTime = at - clip.startTime;
         const visibleDur = clip.duration - clip.offset - clip.trimEnd;
-        if (splitTime <= 0 || splitTime >= visibleDur) {
+        if (splitTime <= 0.001 || splitTime >= visibleDur - 0.001) {
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Move playhead over clip to split', 'notice-pop-yellow');
+                doNoticePopover(translate('Move the playhead over the clip to split it'), 'notice-pop-yellow');
             }
-            return;
+            return null;
         }
-        try {
-            pushUndo();
-            const parts = await AudioLabCore.splitAudio(clip.blob, splitTime + clip.offset);
-            if (!parts) {
-                console.error('[AudioDaw] splitAudio returned null');
-                return;
-            }
+        const idx = track.clips.indexOf(clip);
+        if (idx === -1) return null;
+        pushUndo();
+        const pieces = splitClipAt(clip, splitTime);
+        track.clips.splice(idx, 1, ...pieces);
+        const oldEntry = track.clipElements.get(clip.id);
+        if (oldEntry?.ws) oldEntry.ws.destroy();
+        if (oldEntry?.el) oldEntry.el.remove();
+        track.clipElements.delete(clip.id);
+        state.selectedClipId = pieces[1].id;
+        updateTotalDuration();
+        renderAllTracks();
+        updateBottomPanel();
+        resyncPlayback();
+        return pieces;
+    }
 
-            const idx = track.clips.indexOf(clip);
-            if (idx === -1) {
-                console.error('[AudioDaw] clip not found in track during split');
-                return;
-            }
-
-            // Create two new clips replacing the original. Part A's blob still contains the
-            // trimmed head (offset carries over); part B's blob still contains the trimmed tail.
-            const clipA = AudioDawTrack.createClip(parts.before, {
-                name: clip.name + ' (A)',
-                startTime: clip.startTime,
-                color: clip.color
-            });
-            await AudioDawTrack.decodeClip(clipA);
-            clipA.offset = clip.offset;
-            clipA.gain = clip.gain;
-            blobStore.set(clipA.blobKey, { blob: parts.before, decodedBuffer: clipA.decodedBuffer });
-
-            const clipB = AudioDawTrack.createClip(parts.after, {
-                name: clip.name + ' (B)',
-                startTime: clip.startTime + splitTime,
-                color: clip.color
-            });
-            await AudioDawTrack.decodeClip(clipB);
-            clipB.trimEnd = clip.trimEnd;
-            clipB.gain = clip.gain;
-            blobStore.set(clipB.blobKey, { blob: parts.after, decodedBuffer: clipB.decodedBuffer });
-
-            // Replace original clip
-            track.clips.splice(idx, 1, clipA, clipB);
-
-            // Clean up old clip WaveSurfer
-            const oldEntry = track.clipElements.get(clip.id);
-            if (oldEntry?.ws) oldEntry.ws.destroy();
-            if (oldEntry?.el) oldEntry.el.remove();
-            track.clipElements.delete(clip.id);
-
-            state.selectedClipId = null;
-            updateTotalDuration();
-            renderAllTracks();
-            updateBottomPanel();
-            resyncPlayback();
-            if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Clip split successfully', 'notice-pop-green');
-            }
-        } catch (err) {
-            console.error('[AudioDaw] Split failed:', err);
-            if (typeof doNoticePopover === 'function') {
-                doNoticePopover(translate('Split failed:') + ' ' + err.message, 'notice-pop-red');
-            }
+    /** Two clips covering `clip` split `splitTime` seconds into its visible window (no undo, no render). */
+    function splitClipAt(clip, splitTime) {
+        const base = { color: clip.color, blobKey: clip.blobKey };
+        const a = AudioDawTrack.createClip(clip.blob, { ...base, name: clip.name, startTime: clip.startTime, meta: clip.meta });
+        const b = AudioDawTrack.createClip(clip.blob, { ...base, name: clip.name, startTime: clip.startTime + splitTime });
+        for (const c of [a, b]) {
+            c.decodedBuffer = clip.decodedBuffer;
+            c.duration = clip.duration;
+            c.gain = clip.gain;
+            c.muted = clip.muted;
         }
+        a.offset = clip.offset;
+        a.trimEnd = clip.duration - clip.offset - splitTime;
+        a.fadeIn = Math.min(clip.fadeIn || 0, splitTime);
+        b.offset = clip.offset + splitTime;
+        b.trimEnd = clip.trimEnd;
+        b.fadeOut = Math.min(clip.fadeOut || 0, clip.duration - b.offset - b.trimEnd);
+        return [a, b];
     }
 
     /** "Foo" -> "Foo (copy)" -> "Foo (copy 2)" instead of stacking " (copy)" forever. */
@@ -3379,7 +3591,7 @@ const AudioDaw = (() => {
         bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="stems"]')?.appendChild(busy);
 
         try {
-            const base64 = await AudioLabCore.readAsBase64(clip.blob);
+            const base64 = await AudioLabCore.readAsBase64(await clipAudioBlob(clip));
             const result = await AudioLabAPI.callAPI('ProcessAudio', {
                 provider_id: 'demucs_fx',
                 args: {
@@ -3647,24 +3859,39 @@ const AudioDaw = (() => {
         for (const track of state.tracks) {
             for (const clip of track.clips) referenced.add(clip.blobKey);
         }
+        // Drum pads hold their audio in the same store
+        for (const lane of state.beatPattern.lanes) referenced.add(lane.blobKey);
         for (const snap of [...state.undoStack, ...state.redoStack]) {
             for (const ts of snap.tracks) {
                 for (const cs of ts.clips) referenced.add(cs.blobKey);
             }
+            for (const lane of snap.beatPattern?.lanes || []) referenced.add(lane.blobKey);
         }
         for (const key of [...blobStore.keys()]) {
             if (!referenced.has(key)) blobStore.delete(key);
         }
     }
 
-    function pushUndo() {
-        const snapshot = {
+    /** Everything undo restores, deep-copied so later edits never alias the snapshot. */
+    function takeSnapshot() {
+        return {
             tracks: state.tracks.map(t => AudioDawTrack.serializeTrack(t)),
             selectedTrackId: state.selectedTrackId,
             selectedClipId: state.selectedClipId,
             masterVolume: state.masterVolume,
-            bpm: state.bpm
+            bpm: state.bpm,
+            timeSignature: [...state.timeSignature],
+            markers: (state.markers || []).map(m => ({ ...m })),
+            beatPattern: {
+                steps: state.beatPattern.steps,
+                swing: state.beatPattern.swing,
+                lanes: state.beatPattern.lanes.map(l => ({ ...l, steps: [...l.steps] }))
+            }
         };
+    }
+
+    function pushUndo() {
+        const snapshot = takeSnapshot();
         state.undoStack.push(snapshot);
         if (state.undoStack.length > MAX_UNDO) state.undoStack.shift();
         state.redoStack = []; // clear redo on new action
@@ -3675,13 +3902,7 @@ const AudioDaw = (() => {
     async function doUndo() {
         if (state.undoStack.length === 0) return;
         // Save current state to redo
-        const currentSnapshot = {
-            tracks: state.tracks.map(t => AudioDawTrack.serializeTrack(t)),
-            selectedTrackId: state.selectedTrackId,
-            selectedClipId: state.selectedClipId,
-            masterVolume: state.masterVolume,
-            bpm: state.bpm
-        };
+        const currentSnapshot = takeSnapshot();
         state.redoStack.push(currentSnapshot);
 
         const snapshot = state.undoStack.pop();
@@ -3691,13 +3912,7 @@ const AudioDaw = (() => {
 
     async function doRedo() {
         if (state.redoStack.length === 0) return;
-        const currentSnapshot = {
-            tracks: state.tracks.map(t => AudioDawTrack.serializeTrack(t)),
-            selectedTrackId: state.selectedTrackId,
-            selectedClipId: state.selectedClipId,
-            masterVolume: state.masterVolume,
-            bpm: state.bpm
-        };
+        const currentSnapshot = takeSnapshot();
         state.undoStack.push(currentSnapshot);
 
         const snapshot = state.redoStack.pop();
@@ -3717,6 +3932,22 @@ const AudioDaw = (() => {
         state.masterVolume = snapshot.masterVolume;
         state.bpm = snapshot.bpm;
         if (bpmInputEl) bpmInputEl.value = state.bpm;
+        if (snapshot.timeSignature) {
+            state.timeSignature = [...snapshot.timeSignature];
+            const sig = transportEl?.querySelector('.daw-transport-timesig');
+            if (sig) sig.value = state.timeSignature.join('/');
+        }
+        if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
+        if (snapshot.markers) state.markers = snapshot.markers.map(m => ({ ...m }));
+        if (snapshot.beatPattern) {
+            state.beatPattern = {
+                steps: snapshot.beatPattern.steps,
+                swing: snapshot.beatPattern.swing,
+                lanes: snapshot.beatPattern.lanes.map(l => ({ ...l, steps: [...l.steps] }))
+            };
+            const beatsPane = bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="beats"]');
+            if (beatsPane) renderBeatsPanel(beatsPane);
+        }
 
         // Recreate tracks from snapshot
         state.tracks = [];
@@ -3828,7 +4059,7 @@ const AudioDaw = (() => {
         }
         const overlay = showDawLoadingOverlay(translate('Stretching') + ` ${srcBpm} → ${state.bpm} BPM...`);
         try {
-            const base64 = await AudioLabCore.readAsBase64(clip.blob);
+            const base64 = await AudioLabCore.readAsBase64(await clipAudioBlob(clip));
             const result = await AudioLabAPI.callAPI('AudioLabTimeStretch', { audio_data: base64, rate });
             if (!result.success || !result.audio_data) throw new Error(result.error || 'Stretch returned no audio');
             const blob = AudioLabCore.base64ToBlob(result.audio_data, 'audio/wav');
@@ -3972,10 +4203,11 @@ const AudioDaw = (() => {
 
     async function addBeatPadBlob(name, blob, container) {
         const blobKey = `beatpad-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        blobStore.set(blobKey, { blob, decodedBuffer: await AudioLabCore.decodeToBuffer(blob) });
+        const decodedBuffer = await AudioLabCore.decodeToBuffer(blob);
+        pushUndo();
+        blobStore.set(blobKey, { blob, decodedBuffer });
         state.beatPattern.lanes.push(newBeatLane(name, blobKey));
         renderBeatsPanel(container);
-        scheduleAutosave();
     }
 
     // ===== PIANO / KEYS =====
@@ -4251,6 +4483,7 @@ const AudioDaw = (() => {
         }
         stepsSel.value = p.steps;
         stepsSel.addEventListener('change', () => {
+            pushUndo();
             const n = parseInt(stepsSel.value);
             p.steps = n;
             for (const lane of p.lanes) {
@@ -4267,7 +4500,12 @@ const AudioDaw = (() => {
         swing.min = '0'; swing.max = '0.6'; swing.step = '0.05';
         swing.value = p.swing || 0;
         swing.className = 'daw-beats-swing';
-        swing.addEventListener('input', () => { p.swing = parseFloat(swing.value); });
+        let swingGesture = false;
+        swing.addEventListener('input', () => {
+            if (!swingGesture) { swingGesture = true; pushUndo(); }
+            p.swing = parseFloat(swing.value);
+        });
+        swing.addEventListener('change', () => { swingGesture = false; });
         head.appendChild(swingLbl);
         head.appendChild(swing);
 
@@ -4324,13 +4562,19 @@ const AudioDaw = (() => {
             gainSl.value = lane.gain ?? 1;
             gainSl.className = 'daw-beats-lane-gain';
             gainSl.title = translate('Pad gain');
-            gainSl.addEventListener('input', () => { lane.gain = parseFloat(gainSl.value); });
+            let gainGesture = false;
+            gainSl.addEventListener('input', () => {
+                if (!gainGesture) { gainGesture = true; pushUndo(); }
+                lane.gain = parseFloat(gainSl.value);
+            });
+            gainSl.addEventListener('change', () => { gainGesture = false; });
             row.appendChild(gainSl);
             const del = document.createElement('button');
             del.className = 'daw-fx-mini-btn';
             del.innerHTML = '&#x2715;';
             del.title = translate('Remove lane');
             del.addEventListener('click', () => {
+                pushUndo();
                 p.lanes.splice(li, 1);
                 renderBeatsPanel(container);
             });
@@ -4340,9 +4584,9 @@ const AudioDaw = (() => {
                 const cell = document.createElement('button');
                 cell.className = 'daw-beats-step' + (lane.steps[i] ? ' on' : '') + (i % 4 === 0 ? ' beat-head' : '');
                 cell.addEventListener('click', () => {
+                    pushUndo();
                     lane.steps[i] = !lane.steps[i];
                     cell.classList.toggle('on', lane.steps[i]);
-                    scheduleAutosave();
                 });
                 stepsWrap.appendChild(cell);
             }
@@ -4407,12 +4651,19 @@ const AudioDaw = (() => {
         const clipBtn = document.createElement('button');
         clipBtn.className = 'basic-button btn-sm';
         clipBtn.textContent = translate('From Selected Clip');
-        clipBtn.addEventListener('click', () => {
+        clipBtn.addEventListener('click', async () => {
             const sel = findClipById(state.selectedClipId);
             if (!sel) {
-                if (typeof doNoticePopover === 'function') doNoticePopover('Select a clip first', 'notice-pop-yellow');
+                if (typeof doNoticePopover === 'function') doNoticePopover(translate('Select a clip first'), 'notice-pop-yellow');
                 return;
             }
+            // A trimmed or split clip shares its source blob, so the pad gets just the part that plays.
+            const trimmed = (sel.clip.offset || 0) > 1e-6 || (sel.clip.trimEnd || 0) > 1e-6;
+            if (trimmed) {
+                await addBeatPadBlob(sel.clip.name.slice(0, 18), await clipAudioBlob(sel.clip), container);
+                return;
+            }
+            pushUndo();
             state.beatPattern.lanes.push(newBeatLane(sel.clip.name.slice(0, 18), sel.clip.blobKey));
             renderBeatsPanel(container);
         });
@@ -4441,45 +4692,44 @@ const AudioDaw = (() => {
         renderPalette();
     }
 
+    /** Engine a palette request runs on: AudioGen for SFX, the first installed music engine for loops. */
     function paletteEngineFor(type) {
-        if (type === 'sfx') return { engineId: 'audiogen_sfx', usesPrompt: true, params: (dur, seed) => ({ text2audioduration: dur, seed }) };
-        // loops/music: ACE-Step with tempo/time-signature hints from the transport
-        return {
-            engineId: 'acestep_music',
-            // The palette prompt describes a loop, not lyrics — so it is the STYLE. Prompt stays empty, which
-            // ACE-Step reads as instrumental, which is what a palette loop should be.
-            params: (dur, seed, prompt) => ({
-                text2audioduration: dur, seed,
-                text2audiostyle: prompt || '',
-                text2audiobpm: state.bpm,
-                text2audiotimesignature: state.timeSignature.join('/')
-            })
-        };
+        return type === 'sfx' ? 'audiogen_sfx' : preferredMusicEngine();
     }
 
     async function paletteGenerate(prompt, type, duration, count) {
-        const eng = paletteEngineFor(type);
         try { await ensureEnginesList(); } catch (_) {}
-        const model = dawSwarmModelFor(eng.engineId);
+        const engineId = paletteEngineFor(type);
+        const model = engineId ? dawSwarmModelFor(engineId) : null;
         if (!model) {
             if (typeof doNoticePopover === 'function') {
                 doNoticePopover(translate('No installed engine for') + ' '
-                    + (type === 'sfx' ? 'SFX (AudioGen)' : 'music (ACE-Step)'), 'notice-pop-yellow');
+                    + (type === 'sfx' ? translate('sound effects (AudioGen)') : translate('music')), 'notice-pop-yellow');
             }
             return [];
         }
-        // Each candidate is a normal Swarm generation — saved to outputs + history
+        // Each candidate is a normal Swarm generation, saved to outputs + history. Loops are instrumental, so
+        // the description is the style and lyric engines get no lyrics.
+        const errors = [];
         const jobs = [];
         for (let i = 0; i < count; i++) {
             const seed = Math.floor(Math.random() * 1e9);
-            jobs.push(dawSwarmGenerate({ model, prompt: eng.usesPrompt ? prompt : '', params: eng.params(duration, seed, prompt) })
-                .then(({ blob, metadata }) => ({ blob, seed, metadata }))
-                .catch(err => { console.error('[AudioDaw] Palette generation failed:', err); return null; }));
+            const req = buildAudioGenRequest(engineId, { description: prompt, duration, seed, tempoHints: type !== 'sfx' });
+            jobs.push(dawSwarmGenerate({ model, prompt: req.prompt, params: req.params })
+                .then(async ({ blob, metadata }) => {
+                    let length = duration;
+                    try { length = (await AudioLabCore.decodeToBuffer(blob)).duration; } catch (_) {}
+                    return { blob, seed, metadata, length };
+                })
+                .catch(err => { console.error('[AudioDaw] Palette generation failed:', err); errors.push(err.message); return null; }));
         }
         const done = (await Promise.all(jobs)).filter(Boolean);
-        return done.map(({ blob, seed, metadata }) => ({
-            blob, url: URL.createObjectURL(blob), prompt, seed, type,
-            meta: buildClipScoreMeta(metadata, { style: prompt, model, engineId: eng.engineId, label: prompt.slice(0, 24) })
+        if (!done.length && errors.length && typeof doNoticePopover === 'function') {
+            doNoticePopover(translate('Generation failed:') + ' ' + errors[0], 'notice-pop-red');
+        }
+        return done.map(({ blob, seed, metadata, length }) => ({
+            blob, url: URL.createObjectURL(blob), prompt, seed, type, duration: length,
+            meta: buildClipScoreMeta(metadata, { style: prompt, model, engineId, label: prompt.slice(0, 24) })
         }));
     }
 
@@ -4535,9 +4785,6 @@ const AudioDaw = (() => {
             goBtn.textContent = translate('Generating…');
             try {
                 const results = await paletteGenerate(prompt, typeSel.value, parseInt(durSel.value), parseInt(countSel.value));
-                if (!results.length && typeof doNoticePopover === 'function') {
-                    doNoticePopover('Generation returned nothing. Check the engine is installed', 'notice-pop-red');
-                }
                 paletteResults.unshift(...results);
                 paletteResults = paletteResults.slice(0, 12);
                 renderPalette();
@@ -4598,7 +4845,7 @@ const AudioDaw = (() => {
             varBtn.title = translate('Generate a variation (same prompt, new seed)');
             varBtn.addEventListener('click', async () => {
                 varBtn.disabled = true;
-                const results = await paletteGenerate(res.prompt, res.type, Math.max(1, Math.round(res.blob.size / (44100 * 4 * 2))) || 4, 1);
+                const results = await paletteGenerate(res.prompt, res.type, Math.max(1, Math.round(res.duration || 4)), 1);
                 paletteResults.unshift(...results);
                 paletteResults = paletteResults.slice(0, 12);
                 renderPalette();
@@ -4679,6 +4926,8 @@ const AudioDaw = (() => {
         state.rulerMode = project.rulerMode || 'time';
         state.snapEnabled = project.snapEnabled !== false;
         state.masterLimiterEnabled = project.masterLimiterEnabled !== false;
+        // Clear before anything is stored: clearing after the pad loop below wiped every pad's audio.
+        blobStore.clear();
         if (project.beatPattern) {
             state.beatPattern = {
                 steps: project.beatPattern.steps || 16,
@@ -4691,7 +4940,6 @@ const AudioDaw = (() => {
                 }
             }
         }
-        blobStore.clear();
 
         for (const ts of project.tracks || []) {
             const track = AudioDawTrack.createTrack({ name: ts.name, color: ts.color, height: ts.height });
@@ -5158,6 +5406,11 @@ const AudioDaw = (() => {
         else if (key === '?') { e.preventDefault(); showShortcutHelp(); }
     }
 
+    /** Key releases: the computer-keyboard instrument ends its notes here. */
+    function handleKeyboardUp(e) {
+        if (typeof AudioDawInstruments !== 'undefined' && AudioDawInstruments.handleKeyUp) AudioDawInstruments.handleKeyUp(e);
+    }
+
     function showShortcutHelp() {
         const existing = document.querySelector('.daw-shortcut-help');
         if (existing) { existing.remove(); return; }
@@ -5252,29 +5505,29 @@ const AudioDaw = (() => {
     }
 
     // ===== TAB-MODE BOOT (once per page load) =====
-    // Hides the tab until it's needed, wires the tab-shown lifecycle (lazy init +
-    // mic release on switch-away), and reveals a dormant tab when a resumable
-    // autosave exists. No-ops on pages without the AudioLab tab.
+    // Wires the tab-shown lifecycle (lazy init + mic release on switch-away), keyboard, and autosave flush.
+    // No-ops on pages without the AudioLab tab.
     function bootTabMode() {
         const container = document.getElementById('daw_container');
         if (!container || !dawTabLink()) return;
-        hideDawTab();
         // Keyboard: document-level, only while the DAW tab is the visible one
         document.addEventListener('keydown', (e) => {
             if (!initialized || !state || container.offsetParent === null) return;
             handleKeyboard(e);
         });
-        // Browser tabs die without warning — flush the autosave on page close too
+        document.addEventListener('keyup', (e) => {
+            if (!initialized || !state || container.offsetParent === null) return;
+            handleKeyboardUp(e);
+        });
+        // Browser tabs die without warning: flush the autosave on page close too
         window.addEventListener('beforeunload', () => flushAutosave());
         window.addEventListener('resize', sizeDawContainer);
         if (typeof $ !== 'undefined') {
             $('#toptablist').on('shown.bs.tab', (e) => {
                 if (e.target.id === 'maintab_audiolab') {
                     sizeDawContainer(); // pane just became measurable
-                    // Covers hash-nav landing directly on #audiolab too (no re-click
-                    // from inside the shown handler — just unhide + init)
+                    // Covers hash-nav landing directly on #audiolab too
                     if (!initialized) {
-                        dawTabLink()?.closest('.nav-item')?.classList.remove('daw-tab-hidden');
                         ensureInitialized();
                         maybeOfferResume().then(maybeShowStartScreen);
                     }
@@ -5284,27 +5537,6 @@ const AudioDaw = (() => {
                 }
             });
         }
-        // Dormant tab: a crash-recovery autosave only exists when a session ended
-        // WITHOUT a clean Close (clean closes delete the slot) — reveal the tab
-        // so the user can get back to their interrupted work.
-        if (typeof AudioDawStore !== 'undefined') {
-            AudioDawStore.getProjectMeta(AUTOSAVE_SLOT).then(meta => {
-                if (meta && Date.now() - meta.savedAt <= AUTOSAVE_MAX_AGE_MS) {
-                    dawTabLink()?.closest('.nav-item')?.classList.remove('daw-tab-hidden');
-                }
-            }).catch(() => {});
-        }
-        // Users with saved projects get the tab as their way back into the DAW —
-        // clicking it opens the start screen with their project list. (Delayed so
-        // the session is established before the API call.)
-        setTimeout(() => {
-            try {
-                AudioLabAPI.callAPI('AudioLabListProjects').then(result => {
-                    const names = (result?.projects || []).filter(n => n !== AUTOSAVE_SLOT);
-                    if (names.length) dawTabLink()?.closest('.nav-item')?.classList.remove('daw-tab-hidden');
-                }).catch(() => {});
-            } catch (_) {}
-        }, 1500);
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', bootTabMode);
