@@ -7963,7 +7963,8 @@ const AudioDaw = (() => {
 
     const AUTOSAVE_SLOT = '__autosave__';
     const AUTOSAVE_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
-    const SERVER_SAVE_LIMIT_BYTES = 40 * 1024 * 1024;
+    // One clip's audio travels in one request (base64 under core's request limit); the project as a whole has no limit
+    const SERVER_AUDIO_FILE_LIMIT_BYTES = 140 * 1024 * 1024;
     let autosaveTimer = null;
     let currentProjectName = null;
 
@@ -8240,21 +8241,41 @@ const AudioDaw = (() => {
         body.appendChild(bar);
     }
 
+    /**
+     * Server save: each clip's audio is its own file beside the project, uploaded only when the server lacks it (a
+     * blob key never changes its audio), then the arrangement JSON lists them under "audio".
+     */
     async function saveProjectToServer(name) {
         const overlay = showDawLoadingOverlay(translate('Saving project...'));
+        const say = (text) => {
+            const el = overlay?.querySelector('.daw-loading-text');
+            if (el) el.textContent = text;
+        };
         try {
             const project = serializeProject();
             const blobs = collectProjectBlobs();
-            let total = 0;
-            for (const b of blobs.values()) total += b.size;
-            if (total > SERVER_SAVE_LIMIT_BYTES) {
-                throw new Error(`Project audio too large for server save (${Math.round(total / 1024 / 1024)}MB, max ${SERVER_SAVE_LIMIT_BYTES / 1024 / 1024}MB). Autosave and local saves still hold it`);
+            for (const blob of blobs.values()) {
+                if (blob.size > SERVER_AUDIO_FILE_LIMIT_BYTES) {
+                    throw new Error(`${translate('One clip is too long for a server save')} (${Math.round(blob.size / 1024 / 1024)} MB, max ${SERVER_AUDIO_FILE_LIMIT_BYTES / 1024 / 1024} MB). ${translate('Autosave and local saves still hold it')}`);
+                }
             }
-            const blobData = {};
+            const listed = await AudioLabAPI.callAPI('AudioLabListProjectAudio', { name });
+            if (!listed.success) throw new Error(listed.error || 'Could not list the project audio');
+            const have = listed.audio || {};
+            const audio = {};
+            const missing = [...blobs].filter(([key, blob]) => have[key] !== blob.size);
+            let done = 0;
             for (const [key, blob] of blobs) {
-                blobData[key] = { b64: await AudioLabCore.readAsBase64(blob), type: blob.type || 'audio/wav' };
+                audio[key] = { type: blob.type || 'audio/wav', size: blob.size };
+                if (have[key] === blob.size) continue;
+                say(`${translate('Uploading audio')} ${++done} / ${missing.length}`);
+                const up = await AudioLabAPI.callAPI('AudioLabSaveProjectAudio', {
+                    name, key, audio_b64: await AudioLabCore.readAsBase64(blob)
+                });
+                if (!up.success) throw new Error(up.error || 'Audio upload failed');
             }
-            project.blobs = blobData;
+            project.audio = audio;
+            say(translate('Saving project...'));
             const result = await AudioLabAPI.callAPI('AudioLabSaveProject', {
                 name, project_json: JSON.stringify(project)
             });
@@ -8275,10 +8296,20 @@ const AudioDaw = (() => {
             if (!result.success) throw new Error(result.error || 'Load failed');
             const project = JSON.parse(result.project_json);
             const blobs = new Map();
+            // Projects saved before audio moved to its own files carry it inline
             for (const [key, info] of Object.entries(project.blobs || {})) {
                 blobs.set(key, AudioLabCore.base64ToBlob(info.b64, info.type || 'audio/wav'));
             }
+            const audioKeys = Object.keys(project.audio || {});
+            for (const [i, key] of audioKeys.entries()) {
+                const text = overlay?.querySelector('.daw-loading-text');
+                if (text) text.textContent = `${translate('Loading audio')} ${i + 1} / ${audioKeys.length}`;
+                const got = await AudioLabAPI.callAPI('AudioLabLoadProjectAudio', { name, key });
+                if (!got.success) throw new Error(got.error || `Missing audio ${key}`);
+                blobs.set(key, AudioLabCore.base64ToBlob(got.audio_b64, project.audio[key].type || 'audio/wav'));
+            }
             delete project.blobs;
+            delete project.audio;
             await restoreProject(project, blobs);
             currentProjectName = name;
             if (typeof doNoticePopover === 'function') doNoticePopover(translate('Project loaded:') + ` "${name}"`, 'notice-pop-green');

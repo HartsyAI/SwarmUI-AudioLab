@@ -67,6 +67,9 @@ public static class AudioLabAPI
             API.RegisterAPICall(AudioLabLoadProject, false, AudioLabPermissions.PermDawProjects);
             API.RegisterAPICall(AudioLabListProjects, false, AudioLabPermissions.PermDawProjects);
             API.RegisterAPICall(AudioLabDeleteProject, true, AudioLabPermissions.PermDawProjects);
+            API.RegisterAPICall(AudioLabSaveProjectAudio, true, AudioLabPermissions.PermDawProjects);
+            API.RegisterAPICall(AudioLabLoadProjectAudio, false, AudioLabPermissions.PermDawProjects);
+            API.RegisterAPICall(AudioLabListProjectAudio, false, AudioLabPermissions.PermDawProjects);
             API.RegisterAPICall(AudioLabScoreCapabilities, false, AudioLabPermissions.PermDawProjects);
             API.RegisterAPICall(AudioLabPlanScore, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(AudioLabTranscribeScore, false, AudioLabPermissions.PermProcessAudio);
@@ -235,7 +238,8 @@ public static class AudioLabAPI
         }
     }
 
-    /// <summary>Save a DAW project (arrangement JSON with embedded base64 clip audio) under the user's account.</summary>
+    /// <summary>Save a DAW project's arrangement JSON under the user's account. Its clip audio is stored separately
+    /// (AudioLabSaveProjectAudio) and listed in the JSON's "audio" map; older projects carry it inline as "blobs".</summary>
     public static async Task<JObject> AudioLabSaveProject(Session session, JObject input)
     {
         try
@@ -261,6 +265,13 @@ public static class AudioLabAPI
             }
             await MigrateLegacyProjects(session.User);
             await WriteProjectFile(ProjectPath(session.User, stem), json);
+            // Audio stored beside the project that this version no longer uses goes (projects with inline audio keep none)
+            JObject parsed = JObject.Parse(json);
+            if (parsed["audio"] is JObject audioRefs)
+            {
+                HashSet<string> keep = [.. audioRefs.Properties().Select(p => p.Name)];
+                DawProjectAudio.Prune(DawProjectAudio.AudioDir(ProjectDir(session.User), stem), keep);
+            }
             return AudioLab.CreateSuccessResponse(new JObject() { ["name"] = name, ["size"] = json.Length });
         }
         catch (Exception ex)
@@ -328,6 +339,7 @@ public static class AudioLabAPI
             if (stem is not null)
             {
                 File.Delete(ProjectPath(session.User, stem));
+                DawProjectAudio.DeleteAll(DawProjectAudio.AudioDir(ProjectDir(session.User), stem));
             }
             return AudioLab.CreateSuccessResponse(new JObject() { ["name"] = name });
         }
@@ -335,6 +347,101 @@ public static class AudioLabAPI
         {
             Logs.Error($"[AudioLab] DeleteProject failed: {ex.Message}");
             return AudioLab.CreateErrorResponse($"Delete failed: {ex.Message}", "delete_failed");
+        }
+    }
+
+    /// <summary>The audio folder of a named project, or null when the name has no usable characters.</summary>
+    private static string ProjectAudioDir(User user, string name)
+    {
+        string stem = string.IsNullOrWhiteSpace(name) ? null : ProjectStem(name.Trim());
+        return stem is null ? null : DawProjectAudio.AudioDir(ProjectDir(user), stem);
+    }
+
+    /// <summary>Store one clip's audio for a DAW project ({name, key, audio_b64}), as a file beside the project.</summary>
+    public static async Task<JObject> AudioLabSaveProjectAudio(Session session, JObject input)
+    {
+        try
+        {
+            await MigrateLegacyProjects(session.User);
+            string dir = ProjectAudioDir(session.User, input["name"]?.ToString());
+            string key = DawProjectAudio.SafeKey(input["key"]?.ToString());
+            string b64 = input["audio_b64"]?.ToString();
+            if (dir is null || key is null || string.IsNullOrEmpty(b64))
+            {
+                return AudioLab.CreateErrorResponse("name, key (letters, digits, - and _) and audio_b64 are required", "invalid_request");
+            }
+            if (b64.Length / 4L * 3 > DawProjectAudio.MaxFileBytes)
+            {
+                return AudioLab.CreateErrorResponse($"One clip's audio is over {DawProjectAudio.MaxFileBytes / (1024 * 1024)} MB", "audio_too_large");
+            }
+            byte[] data = Convert.FromBase64String(b64);
+            long others = DawProjectAudio.List(dir).Where(kv => kv.Key != key).Sum(kv => kv.Value);
+            if (others + data.Length > DawProjectAudio.MaxProjectBytes)
+            {
+                return AudioLab.CreateErrorResponse($"The project's audio would pass {DawProjectAudio.MaxProjectBytes / (1024 * 1024 * 1024)} GB", "project_too_large");
+            }
+            await DawProjectAudio.Write(dir, key, data);
+            return AudioLab.CreateSuccessResponse(new JObject() { ["key"] = key, ["size"] = data.Length });
+        }
+        catch (FormatException)
+        {
+            return AudioLab.CreateErrorResponse("audio_b64 is not valid base64", "invalid_request");
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] SaveProjectAudio failed: {ex.Message}");
+            return AudioLab.CreateErrorResponse($"Saving the audio failed: {ex.Message}", "save_failed");
+        }
+    }
+
+    /// <summary>Load one clip's audio of a DAW project ({name, key}) as base64.</summary>
+    public static async Task<JObject> AudioLabLoadProjectAudio(Session session, JObject input)
+    {
+        try
+        {
+            await MigrateLegacyProjects(session.User);
+            string dir = ProjectAudioDir(session.User, input["name"]?.ToString());
+            string key = DawProjectAudio.SafeKey(input["key"]?.ToString());
+            if (dir is null || key is null)
+            {
+                return AudioLab.CreateErrorResponse("name and key are required", "invalid_request");
+            }
+            byte[] data = await DawProjectAudio.Read(dir, key);
+            if (data is null)
+            {
+                return AudioLab.CreateErrorResponse($"The project has no audio '{key}'", "not_found");
+            }
+            return AudioLab.CreateSuccessResponse(new JObject() { ["key"] = key, ["audio_b64"] = Convert.ToBase64String(data) });
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] LoadProjectAudio failed: {ex.Message}");
+            return AudioLab.CreateErrorResponse($"Loading the audio failed: {ex.Message}", "load_failed");
+        }
+    }
+
+    /// <summary>List the audio a DAW project holds ({name}) as key to size, so a save uploads only what is missing.</summary>
+    public static async Task<JObject> AudioLabListProjectAudio(Session session, JObject input)
+    {
+        try
+        {
+            await MigrateLegacyProjects(session.User);
+            string dir = ProjectAudioDir(session.User, input["name"]?.ToString());
+            if (dir is null)
+            {
+                return AudioLab.CreateErrorResponse("name is required", "invalid_request");
+            }
+            JObject audio = [];
+            foreach ((string key, long size) in DawProjectAudio.List(dir))
+            {
+                audio[key] = size;
+            }
+            return AudioLab.CreateSuccessResponse(new JObject() { ["audio"] = audio });
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"[AudioLab] ListProjectAudio failed: {ex.Message}");
+            return AudioLab.CreateErrorResponse($"Listing the audio failed: {ex.Message}", "list_failed");
         }
     }
 
