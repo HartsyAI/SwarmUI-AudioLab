@@ -3689,6 +3689,10 @@ const AudioDaw = (() => {
     /** A grab on a fader or pan knob: in Touch or Latch this opens a write at the envelope's current value. */
     function automationGrab(track, param) {
         if (!playback || !isWriteMode(track.automationMode)) return;
+        // With no write open, the static level is wherever the fader sits now, including Read-mode moves since the pass began
+        if (!autoWrite.active.has(writeKey(track, 'volume')) && !autoWrite.active.has(writeKey(track, 'pan'))) {
+            autoWrite.base.set(track.id, { volume: track.volume, pan: track.pan || 0 });
+        }
         const w = openWrite(track, param);
         const base = autoWrite.base.get(track.id);
         w.touching = true;
@@ -5745,7 +5749,7 @@ const AudioDaw = (() => {
         if (end <= 0) return;
         const overlay = showDawLoadingOverlay(translate('Bouncing') + ` ${track.name}...`);
         try {
-            const buf = await renderMixdownBuffer({ start: 0, end: end + 0.5, exact: true, trackIds: [track.id] });
+            const buf = await renderMixdownBuffer({ start: 0, end: end + 0.5, trackIds: [track.id] });
             if (!buf) throw new Error('Nothing to bounce');
             pushUndo();
             const audio = addTrack({ name: `${track.name} (${translate('audio')})`, color: track.color });
