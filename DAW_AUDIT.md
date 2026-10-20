@@ -143,15 +143,21 @@ Checked on this branch head, also in Chromium through the proxy:
   note under a held pedal stops at a later clip (1.5 s, not 3 s).
 - Firefox 153: the recording, WAV export, send tail, computer-keyboard MIDI and piano-roll drag checks passed with no
   page errors, and a Touch write driven by real mouse input recorded envelope points.
+- Mode switch: a Latch lane switched to Touch mid-pass ends its write at the switch. The last envelope point was at
+  2.60 s, the switch was at about 2.57 s, and nothing was recorded through the 4.83 s stop.
+- Hidden tab: an input that finished opening while the DAW was hidden was released. It reopened when the tab showed
+  again, and closed on disarm (two opens and two releases).
+- Crossfade undo: F with no boundary to cross shows its notice and leaves redo intact (add a bus, undo, select all, F,
+  redo brings the bus back).
+- MIDI keyboard, simulated: software Web MIDI input recorded pitches, velocities and sustain pedal events into a clip.
+  No hardware was involved.
+- Storage: the 17 project-audio unit tests pass again, re-run in an isolated copy of the current C#.
 
-Not verified: a real microphone, interface or MIDI keyboard (synthetic streams and the computer keyboard stood in),
+Not verified: a real microphone, interface or MIDI keyboard (synthetic streams, the computer keyboard and simulated Web MIDI input stood in),
 Safari (no WebKit build here), the Demucs install flow on a server without weights, and a SwarmUI restart loading the
 new script registrations in `AudioLab.cs` and the project-audio endpoints (compile-checked only; the proxy injected the
 scripts in the same order, and the project-audio tests pass in an isolated copy). YuE, YuE2 and MiniMax take the same
-request path as HeartLib but were not generated. Three review fixes were checked by reading the code only: the writer
-on a mode change, the hidden-tab microphone release, and the crossfade undo check.
-
-ACE-Step on the live site is served natively by HartsyInference (`AceStep15/...`), not by the Audio Backend, which
+request path as HeartLib but were not generated. ACE-Step on the live site is served natively by HartsyInference (`AceStep15/...`), not by the Audio Backend, which
 is why the Audio Backend never listed it. The DAW now offers those checkpoints. Verified live: a 10 s turbo request
 with Match project tempo sent BPM 120 and meter 4, and the result's onsets fall on a 0.5 s grid (autocorrelation
 peaks at 0.25, 0.5 and 1.0 s).
