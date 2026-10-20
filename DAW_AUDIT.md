@@ -62,8 +62,11 @@ Found by the review bot on the open pull request, and by the tests that followed
 | 34 | Instrument playback | Stopping or closing with an empty sampler threw an error | An empty sampler voice had no kill handle | 1c82847 |
 | 35 | MIDI duplicate | Duplicating a muted or colored MIDI clip lost both | The copy was built without them | 1c82847 |
 | 36 | MIDI shuffle | Deleting a MIDI clip in Shuffle mode left a gap | Only the deleted clip moved | 1c82847 |
+| 37 | MIDI export | Export as MIDI file wrote notes and pedal events past the clip's end | The export read the clip's whole contents, not the window playback uses | 32bfe07 |
+| 38 | Piano roll grid | New notes and the grid took the playhead's tempo, not the clip's | The grid step was read at the playhead | 32bfe07 |
 
 Rounds 1 to 3 of the same review (13 findings) were fixed in aa65437, 144a00e and d3bba9b. Each thread on the pull request names its fix.
+Round 7 is rows 37 and 38.
 
 ## Mics and instruments (the input gap), now closed
 
