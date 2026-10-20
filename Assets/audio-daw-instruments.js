@@ -64,6 +64,8 @@ const AudioDawInstruments = (() => {
         const nodes = [amp];
         const sources = [];
         let releaseTime;
+        let envAt = () => 0; // the amp envelope's level at ctx time t, so a release starts from where it really is
+        let attackEnd = when;
         if (inst.type === 'sampler') {
             if (!sample) return { stop: () => {}, nodes };
             const src = ctx.createBufferSource();
@@ -73,8 +75,11 @@ const AudioDawInstruments = (() => {
             sources.push(src);
             nodes.push(src);
             const level = (inst.gain ?? 0.8) * vel;
+            const atk = Math.max(0.001, inst.attack || 0.002);
             amp.gain.setValueAtTime(0, when);
-            amp.gain.linearRampToValueAtTime(level, when + Math.max(0.001, inst.attack || 0.002));
+            amp.gain.linearRampToValueAtTime(level, when + atk);
+            attackEnd = when + atk;
+            envAt = (t) => level * Math.max(0, Math.min(1, (t - when) / atk));
             releaseTime = Math.max(0.01, inst.release || 0.2);
             src.start(when);
         }
@@ -110,9 +115,17 @@ const AudioDawInstruments = (() => {
             filter.frequency.linearRampToValueAtTime(peak, when + atk);
             filter.frequency.setTargetAtTime(base + (peak - base) * (inst.sustain ?? 0.5), when + atk, dec / 3);
             const level = (inst.gain ?? 0.5) * vel * 0.6;
+            const hold = level * (inst.sustain ?? 0.5);
             amp.gain.setValueAtTime(0, when);
             amp.gain.linearRampToValueAtTime(level, when + atk);
-            amp.gain.setTargetAtTime(level * (inst.sustain ?? 0.5), when + atk, dec / 3);
+            amp.gain.setTargetAtTime(hold, when + atk, dec / 3);
+            attackEnd = when + atk;
+            envAt = (t) => {
+                const dt = t - when;
+                if (dt <= 0) return 0;
+                if (dt < atk) return level * dt / atk;
+                return hold + (level - hold) * Math.exp(-(dt - atk) / (dec / 3));
+            };
             releaseTime = Math.max(0.01, inst.release || 0.2);
         }
         let stopped = false;
@@ -121,7 +134,12 @@ const AudioDawInstruments = (() => {
             stopped = true;
             const t = Math.max(at, when);
             try {
+                // Canceling at t removes an attack ramp ending at or after t outright, which left the gain at 0 until
+                // the note-off (a note no longer than the attack was silent). Re-ramp to the level the attack had
+                // reached instead; cancelAndHoldAtTime would do this, but Firefox lacks it.
                 amp.gain.cancelScheduledValues(t);
+                if (t <= attackEnd) amp.gain.linearRampToValueAtTime(envAt(t), t);
+                else amp.gain.setValueAtTime(envAt(t), t);
                 amp.gain.setTargetAtTime(0, t, releaseTime / 4);
             } catch (_) {}
             for (const s of sources) {
@@ -180,13 +198,39 @@ const AudioDawInstruments = (() => {
     }
 
     /**
+     * Note chase: notes that began before `t` and still sound at it, as notes starting at `t` with their remaining
+     * length. Starting playback, a loop pass or a range render inside a held note plays the rest of it.
+     */
+    function notesSoundingAt(track, t) {
+        const out = [];
+        const clips = track.midiClips || [];
+        for (let i = 0; i < clips.length; i++) {
+            const clip = clips[i];
+            if (clip.muted) continue;
+            const cs = clip.startTime;
+            const len = midiClipLength(clip);
+            if (cs >= t || cs + len <= t) continue;
+            if (clips.some((c, j) => j > i && !c.muted && t >= c.startTime && t < c.startTime + midiClipLength(c))) continue;
+            for (const n of clip.notes) {
+                if (n.start >= len) continue;
+                const on = cs + n.start;
+                const end = cs + n.start + Math.min(n.dur, len - n.start);
+                if (on >= t - 0.005 || end <= t + 0.005) continue;
+                out.push({ key: `${clip.id}:${n.id}`, time: t, dur: end - t, pitch: n.pitch, vel: n.vel, chased: true });
+            }
+        }
+        return out;
+    }
+
+    /**
      * Offline export: schedule all of a track's notes in the render window.
      * @param {Object} origin - { t0Ctx, t0Timeline, windowEnd }
      */
     function scheduleTrack(ctx, dest, track, origin) {
         if (track.kind !== 'instrument' || !track.instrument) return;
         const sample = trackSample(track);
-        for (const n of notesInWindow(track, origin.t0Timeline, origin.windowEnd)) {
+        const notes = [...notesSoundingAt(track, origin.t0Timeline), ...notesInWindow(track, origin.t0Timeline, origin.windowEnd)];
+        for (const n of notes) {
             const when = origin.t0Ctx + (n.time - origin.t0Timeline);
             const dur = Math.min(n.dur, origin.windowEnd - n.time);
             startVoice(ctx, dest, track.instrument, n.pitch, n.vel, when, dur, sample);
@@ -201,14 +245,22 @@ const AudioDawInstruments = (() => {
         if (track.kind !== 'instrument' || !track.instrument) return [];
         const sample = trackSample(track);
         const voices = [];
-        for (const n of notesInWindow(track, timelineFrom, timelineTo)) {
+        // Notes held across this pass's start chase in once per pass (the seen set keys carry the pass)
+        const notes = [...notesSoundingAt(track, pass.baseTl), ...notesInWindow(track, timelineFrom, timelineTo)];
+        for (const n of notes) {
             const id = `${pass.baseCtx.toFixed(4)}|${n.key}`;
             if (seen.has(id)) continue;
             seen.add(id);
-            const when = pass.baseCtx + (n.time - pass.baseTl);
-            if (when < ctx.currentTime - 0.01) continue;
-            const end = pass.end < Infinity ? Math.min(n.dur, pass.end - n.time) : n.dur;
-            voices.push(startVoice(ctx, dest, track.instrument, n.pitch, n.vel, when, Math.max(0.01, end), sample));
+            let when = pass.baseCtx + (n.time - pass.baseTl);
+            let dur = pass.end < Infinity ? Math.min(n.dur, pass.end - n.time) : n.dur;
+            if (n.chased && when < ctx.currentTime && ctx.currentTime - when < 0.5) {
+                // The first tick came just after the pass began: join the held note now (later than that, a
+                // re-check after the seen set was cleared, it stays skipped)
+                dur -= ctx.currentTime - when;
+                when = ctx.currentTime;
+            }
+            if (when < ctx.currentTime - 0.01 || dur <= 0.01) continue;
+            voices.push(startVoice(ctx, dest, track.instrument, n.pitch, n.vel, when, Math.max(0.01, dur), sample));
         }
         return voices;
     }

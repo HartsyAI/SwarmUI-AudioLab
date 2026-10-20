@@ -1717,10 +1717,43 @@ const AudioDaw = (() => {
         if (!generateEngines || force) {
             const result = await AudioLabAPI.callAPI('AudioLabListEngines');
             if (!result.success) throw new Error(result.error || 'Failed to list engines');
-            generateEngines = result.engines || [];
+            generateEngines = [...(result.engines || []), ...await nativeAudioEngines()];
             generateBackendStatus = result.backend_status || 'NOT_FOUND';
         }
         return generateEngines;
+    }
+
+    // Audio models another backend serves natively (HartsyInference runs ACE-Step from the main model folder),
+    // keyed by core compat class. They generate through the same core request as the Audio Backend's engines.
+    const NATIVE_AUDIO_CLASSES = {
+        'ace-step-1_5': { id: 'native_acestep', name: 'ACE-Step 1.5', features: ['text2audio', 'audio_ace_inputs'] }
+    };
+
+    /** Engine entries for natively served audio models, from core's model list (none when it cannot be read). */
+    async function nativeAudioEngines() {
+        let files = [];
+        try {
+            const res = await new Promise((resolve, reject) => genericRequest('ListModels', { path: '', depth: 8, subtype: 'Stable-Diffusion' }, resolve, 0, reject));
+            files = res.files || [];
+        }
+        catch (_) {
+            return [];
+        }
+        const engines = new Map();
+        for (const f of files) {
+            const def = NATIVE_AUDIO_CLASSES[f.compat_class];
+            // The Audio Backend's own registrations already come through its engine list
+            if (!def || !f.name || f.name.startsWith('Audio Models/')) continue;
+            if (!engines.has(def.id)) {
+                engines.set(def.id, { id: def.id, name: def.name, category: 'AudioGeneration', installed: true, available: true, native: true, features: def.features, models: [] });
+            }
+            const file = f.name.split('/').pop().replace(/\.[^.]+$/, '');
+            engines.get(def.id).models.push({ id: f.name, name: f.title && f.title !== f.name ? f.title : file, installed: true, swarm_model: f.name });
+        }
+        // Fastest first: the plain turbo checkpoint, then the other turbos, then the rest
+        const rank = (m) => /turbo/i.test(m.id) ? (/(xl|shift|continuous)/i.test(m.id) ? 1 : 0) : 2;
+        for (const eng of engines.values()) eng.models.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+        return [...engines.values()];
     }
 
     /** First installed model's Swarm-registry name for an installed engine (cached engine list). */
@@ -1732,13 +1765,13 @@ const AudioDaw = (() => {
 
     // Engines whose Prompt carries LYRICS and Text2Audio Style the description (DynamicAudioBackend maps
     // them that way); every other generator reads its description from the Prompt.
-    const LYRIC_MUSIC_ENGINES = new Set(['acestep_music', 'yue_music', 'yue2_music', 'heartlib_music', 'minimax_music3']);
+    const LYRIC_MUSIC_ENGINES = new Set(['acestep_music', 'native_acestep', 'yue_music', 'yue2_music', 'heartlib_music', 'minimax_music3']);
     // Engines that read core's BPM / time signature params (feature audio_ace_inputs).
-    const TEMPO_PARAM_ENGINES = new Set(['acestep_music']);
+    const TEMPO_PARAM_ENGINES = new Set(['acestep_music', 'native_acestep']);
     // Core's Text2Audio Time Signature takes beats per bar, from this set only.
     const CORE_BEATS_PER_BAR = ['2', '3', '4', '6'];
     // Preference order when a feature (palette loops) needs "any music engine".
-    const MUSIC_ENGINE_ORDER = ['acestep_music', 'musicgen_music', 'stableaudio_music', 'minimax_music3', 'heartlib_music', 'yue2_music', 'yue_music'];
+    const MUSIC_ENGINE_ORDER = ['acestep_music', 'native_acestep', 'musicgen_music', 'stableaudio_music', 'minimax_music3', 'heartlib_music', 'yue2_music', 'yue_music'];
     // Speech-category engines that are not speech-to-text (the Score tab drives these).
     const NON_SPEECH_STT = new Set(['sheetsage2_transcribe']);
 
@@ -1823,10 +1856,17 @@ const AudioDaw = (() => {
         }
         details.appendChild(body);
         wrap.appendChild(details);
+        // What each control showed before the user touched it. A dropdown whose default is not one of its values
+        // shows its first option instead, so comparing against the default would send a choice nobody made.
+        const initial = {};
         // Widgets that size themselves need to be in the DOM, which happens once the caller appends wrap.
         setTimeout(() => {
             for (const run of runnables) { try { run(); } catch (_) {} }
             if (typeof applyTranslations === 'function') applyTranslations(body);
+            for (const p of params) {
+                const input = document.getElementById(idPrefix + p.id);
+                if (input) initial[p.id] = `${getInputVal(input)}`;
+            }
         }, 0);
         const read = () => {
             const out = {};
@@ -1837,8 +1877,9 @@ const AudioDaw = (() => {
                 if (p.toggleable && toggle && !toggle.checked) continue;
                 const val = getInputVal(input);
                 if (val === null || val === undefined || val === '') continue;
-                // An untouched control equals the param default; sending it is harmless but noisy.
-                if (`${val}` === `${p.default}`) continue;
+                // Untouched controls are not sent, so the engine keeps its own defaults (a toggle switched on counts as a choice)
+                const chosen = p.toggleable && toggle?.checked;
+                if (!chosen && `${val}` === (p.id in initial ? initial[p.id] : `${p.default}`)) continue;
                 out[p.id] = val;
             }
             return out;
@@ -1904,7 +1945,8 @@ const AudioDaw = (() => {
         }
         status.remove();
 
-        if (generateBackendStatus === 'NOT_FOUND') {
+        // Without an Audio Backend the Audio Models names do not exist, but natively served models still work
+        if (generateBackendStatus === 'NOT_FOUND' && !generateEngines.some(e => e.native)) {
             panel.appendChild(buildBackendNotice(container));
             return;
         }
@@ -1935,7 +1977,7 @@ const AudioDaw = (() => {
         }
         panel.appendChild(browser);
 
-        if (generateBackendStatus && generateBackendStatus !== 'RUNNING') {
+        if (generateBackendStatus && generateBackendStatus !== 'RUNNING' && generateBackendStatus !== 'NOT_FOUND') {
             const warn = createDiv(null, 'daw-stems-clipinfo daw-gen-warn');
             warn.textContent = translate('The Audio Backend is') + ` ${String(generateBackendStatus).toLowerCase()}. `
                 + translate('Generations wait until it is running.');
@@ -2410,7 +2452,17 @@ const AudioDaw = (() => {
         const sampleRate = exportSettings.sampleRate;
         const hasTails = !exact && tracks.some(t => (t.fx || []).some(f =>
             f.enabled && (f.type === 'reverb' || f.type === 'delay')));
-        const renderLen = (end - start) + (exact ? 0 : (hasTails ? 5 : 0.1));
+        // Instrument voices ring past their last note-off: the release, or a one-shot sample playing out
+        let instTail = 0;
+        if (!exact) {
+            for (const t of tracks) {
+                if (t.kind !== 'instrument' || !t.instrument || !t.midiClips?.length) continue;
+                let tail = (t.instrument.release ?? 0.2) + 0.05;
+                if (t.instrument.type === 'sampler' && t.instrument.oneShot) tail = Math.max(tail, instrumentSample(t)?.duration || 0);
+                instTail = Math.max(instTail, tail);
+            }
+        }
+        const renderLen = (end - start) + (exact ? 0 : Math.max(hasTails ? 5 : 0.1, instTail));
         const totalSamples = Math.max(1, Math.ceil(renderLen * sampleRate));
         const offlineCtx = new OfflineAudioContext(2, totalSamples, sampleRate);
         const masterGain = offlineCtx.createGain();
@@ -4485,7 +4537,11 @@ const AudioDaw = (() => {
         copy.automationParam = ts.automationParam;
         copy.kind = ts.kind;
         copy.instrument = ts.instrument;
-        for (const mc of ts.midiClips) newMidiClip(copy, mc.startTime, mc.length, mc.notes, mc.name);
+        for (const mc of ts.midiClips) {
+            const nc = newMidiClip(copy, mc.startTime, mc.length, mc.notes, mc.name);
+            nc.muted = !!mc.muted;
+            nc.color = mc.color || null;
+        }
         for (const c of track.clips) {
             const nc = AudioDawTrack.createClip(c.blob, { name: c.name, startTime: c.startTime, color: c.color, blobKey: c.blobKey });
             nc.decodedBuffer = c.decodedBuffer;
@@ -8013,9 +8069,14 @@ const AudioDaw = (() => {
             if (!initialized || !state || container.offsetParent === null) return;
             handleKeyboard(e);
         });
+        // Key releases count even while hidden, so a note held across a tab switch still lets go
         document.addEventListener('keyup', (e) => {
-            if (!initialized || !state || container.offsetParent === null) return;
+            if (!initialized || !state) return;
             handleKeyboardUp(e);
+        });
+        // A keyup that happens outside the window never arrives at all
+        window.addEventListener('blur', () => {
+            if (initialized && typeof AudioDawInstruments !== 'undefined') AudioDawInstruments.releaseAll();
         });
         // Browser tabs die without warning: flush the autosave on page close too
         window.addEventListener('beforeunload', () => flushAutosave());
@@ -8031,11 +8092,15 @@ const AudioDaw = (() => {
                     } else if (state) {
                         resyncAllInputs(); // armed and monitored tracks get their inputs back
                     }
-                } else if (recording) {
-                    // Never leave the microphone hot while the DAW is hidden; inputs close once the take is kept
-                    stopRecordingFlow();
                 } else {
-                    releaseInputsIfHidden();
+                    // Held computer-keyboard notes end here (before a take is kept, so they close cleanly)
+                    if (initialized && typeof AudioDawInstruments !== 'undefined') AudioDawInstruments.releaseAll();
+                    if (recording) {
+                        // Never leave the microphone hot while the DAW is hidden; inputs close once the take is kept
+                        stopRecordingFlow();
+                    } else {
+                        releaseInputsIfHidden();
+                    }
                 }
             });
         }
