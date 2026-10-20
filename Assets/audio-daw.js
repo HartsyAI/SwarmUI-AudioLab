@@ -5371,6 +5371,8 @@ const AudioDaw = (() => {
             { label: translate('Duplicate'), action: () => {
                 pushUndo();
                 const copy = newMidiClip(track, clip.startTime + AudioDawInstruments.midiClipLength(clip), clip.length, clip.notes, clip.name);
+                copy.muted = !!clip.muted;
+                copy.color = clip.color || null;
                 updateTotalDuration(); // the copy can end past the old song end
                 selectMidiClip(copy, track);
                 resyncPlayback();
@@ -5397,6 +5399,13 @@ const AudioDaw = (() => {
     function deleteMidiClip(clip, track) {
         pushUndo();
         track.midiClips = track.midiClips.filter(c => c !== clip);
+        if (state.editMode === 'shuffle') {
+            // Shuffle closes the gap, as for audio clips: what follows slides left by the clip's length
+            const len = AudioDawInstruments.midiClipLength(clip);
+            for (const c of track.midiClips) {
+                if (c.startTime >= clip.startTime + len - 1e-6) c.startTime -= len;
+            }
+        }
         if (state.selectedMidiClipId === clip.id) state.selectedMidiClipId = null;
         updateTotalDuration();
         renderAllTracks();

@@ -67,7 +67,11 @@ const AudioDawInstruments = (() => {
         let envAt = () => 0; // the amp envelope's level at ctx time t, so a release starts from where it really is
         let attackEnd = when;
         if (inst.type === 'sampler') {
-            if (!sample) return { stop: () => {}, nodes };
+            if (!sample) {
+                // No sample yet (none chosen, or its audio is missing): a silent voice the transport can still stop
+                const drop = () => { try { amp.disconnect(); } catch (_) {} };
+                return { stop: drop, nodes, kill: drop };
+            }
             const src = ctx.createBufferSource();
             src.buffer = sample;
             src.playbackRate.value = Math.pow(2, (pitch - (inst.rootNote || 60)) / 12);
