@@ -2738,3 +2738,13 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
 .daw-proll-note.selected { outline: 2px solid var(--text); z-index: 2; }
 .daw-proll-note.outside { filter: grayscale(1); }
 .daw-proll-note-edge { position: absolute; top: 0; right: 0; bottom: 0; width: 5px; cursor: ew-resize; }
+
+/* Piano roll velocity slider keeps its size inside the toolbar */
+.daw-proll-toolbar input.daw-proll-vel { width: 110px; flex: 0 0 110px; }
+/* Bottom tabs stay on one row: tighter tabs, scroll sideways when the window is narrow */
+.daw-bottom-bar > .nav-tabs { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+.daw-bottom-bar > .nav-tabs .nav-link { padding: 0.3rem 0.75rem; white-space: nowrap; }
+input[type="range"].daw-transport-zoom { width: 90px; }
+.daw-lcd { min-width: 8.4rem; }
+.daw-lcd-sel { min-width: 7.6rem; }
+.daw-transport-spacer { min-width: 0; }
