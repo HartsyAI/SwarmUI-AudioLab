@@ -53,7 +53,11 @@ const AudioLabCore = (() => {
 
     /** Convert a base64 string to a Blob. */
     function base64ToBlob(base64, mimeType = 'audio/wav') {
-        const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
         return new Blob([bytes], { type: mimeType });
     }
 
