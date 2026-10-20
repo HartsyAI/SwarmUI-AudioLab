@@ -831,6 +831,14 @@ const AudioDawTrack = (() => {
         if (volVal) volVal.textContent = dbText(track.volume);
         const inBtn = q('input');
         if (inBtn) inBtn.textContent = inputText(track, track.headerCallbacks?.inputLabel?.(track));
+        const fxBtn = q('fx');
+        if (fxBtn) {
+            fxBtn.textContent = track.fx.length ? `FX ${track.fx.length}` : 'FX';
+            fxBtn.classList.toggle('has-fx', track.fx.length > 0);
+            fxBtn.title = track.fx.length
+                ? translate('Inserts') + ': ' + track.fx.map(f => f.type).join(', ')
+                : translate('No inserts. Click to add effects');
+        }
     }
 
     const AUTO_LANE_H = 40;

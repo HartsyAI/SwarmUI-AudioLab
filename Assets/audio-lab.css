@@ -2666,3 +2666,20 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
 .daw-lcd-sel { min-width: 8.5rem; }
 .daw-lcd-sel .daw-lcd-row > span:last-child { font-size: 0.7rem; color: var(--text); line-height: 1.15; }
 .daw-lcd-sel .daw-lcd-label { min-width: 2.9rem; }
+
+/* Empty session */
+.daw-empty-state {
+    position: sticky;
+    left: 0;
+    top: 0;
+    width: min(560px, 100%);
+    margin: 1.2rem;
+    padding: 1rem 1.2rem;
+    border: 1px dashed var(--border-color);
+    border-radius: 0.6rem;
+    background: color-mix(in srgb, var(--background) 85%, transparent);
+    z-index: 20;
+}
+.daw-empty-title { font-weight: 700; margin-bottom: 0.3rem; }
+.daw-empty-hint { color: var(--text-soft); font-size: 0.85rem; margin-bottom: 0.7rem; }
+.daw-empty-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }

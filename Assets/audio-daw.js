@@ -776,6 +776,10 @@ const AudioDaw = (() => {
     }
 
     function addMarker(time, name = null) {
+        if (state.markers.some(m => Math.abs(m.time - time) < 0.001)) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('There is already a marker here'), 'notice-pop-yellow');
+            return;
+        }
         pushUndo();
         state.markers.push({
             id: `marker-${Date.now().toString(36)}-${++markerSeq}`,
@@ -2914,6 +2918,32 @@ const AudioDaw = (() => {
         updateClipLanesWidth();
         renderSelection();
         refreshMarkers();
+        renderEmptyState();
+    }
+
+    /** An empty session says how to start instead of showing blank lanes. */
+    function renderEmptyState() {
+        clipLanesEl.querySelector('.daw-empty-state')?.remove();
+        if (state.tracks.length) return;
+        const box = createDiv(null, 'daw-empty-state');
+        const title = createDiv(null, 'daw-empty-title');
+        title.textContent = translate('Start a session');
+        box.appendChild(title);
+        const hint = createDiv(null, 'daw-empty-hint');
+        hint.textContent = translate('Add a track and press R to record from a microphone or instrument, bring in audio, or generate speech, music and sound effects.');
+        box.appendChild(hint);
+        const row = createDiv(null, 'daw-empty-actions');
+        quickAppendButton(row, translate('+ Audio track'), () => {
+            pushUndo();
+            const track = addTrack();
+            state.selectedTrackId = track.id;
+            renderAllTracks();
+        }, ' basic-button btn-primary', translate('An empty track to record or drop audio onto'));
+        quickAppendButton(row, translate('Record'), () => startRecordingFlow(), ' basic-button', translate('Record from the default input onto a new track (R)'));
+        quickAppendButton(row, translate('Import audio…'), () => importAudioToTrack(), ' basic-button', translate('Add audio files from your computer'));
+        quickAppendButton(row, translate('Generate…'), () => switchBottomTab('generate'), ' basic-button', translate('Make speech, music or sound effects with your installed engines'));
+        box.appendChild(row);
+        clipLanesEl.appendChild(box);
     }
 
     function updateTrackSelection() {
@@ -3110,6 +3140,7 @@ const AudioDaw = (() => {
 
     /** Topology change on a track's FX (add/remove/reorder): rebuild its chain live. */
     function rebuildTrackFx(track) {
+        AudioDawTrack.syncHeaderControls(track); // the header's inserts badge
         if (!mixer) return;
         dropChain(track.id);
         if (playback) resyncPlayback(); // recreates the chain while rescheduling
@@ -6904,6 +6935,8 @@ const AudioDaw = (() => {
 
     function handleKeyboard(e) {
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
+        // A keyboard-focused button or link keeps Enter and Space for itself (mouse clicks never leave focus behind)
+        if ((e.key === 'Enter' || e.key === ' ') && e.target.closest?.('button, a, [role="button"], [role="tab"]')) return;
         // The computer-keyboard instrument claims its keys first while it is enabled
         if (typeof AudioDawInstruments !== 'undefined' && AudioDawInstruments.handleKeyDown && AudioDawInstruments.handleKeyDown(e)) return;
         const key = e.key.toLowerCase();
@@ -7150,6 +7183,10 @@ const AudioDaw = (() => {
     function bootTabMode() {
         const container = document.getElementById('daw_container');
         if (!container || !dawTabLink()) return;
+        // A mouse-clicked button drops focus, so Space and Enter go back to the transport shortcuts
+        container.addEventListener('click', (e) => {
+            if (e.detail > 0) e.target.closest?.('button')?.blur();
+        });
         // Keyboard: document-level, only while the DAW tab is the visible one
         document.addEventListener('keydown', (e) => {
             if (!initialized || !state || container.offsetParent === null) return;
