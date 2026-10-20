@@ -63,6 +63,8 @@ Found by the review bot on the open pull request, and by the tests that followed
 | 35 | MIDI duplicate | Duplicating a muted or colored MIDI clip lost both | The copy was built without them | 1c82847 |
 | 36 | MIDI shuffle | Deleting a MIDI clip in Shuffle mode left a gap | Only the deleted clip moved | 1c82847 |
 
+Rounds 1 to 3 of the same review (13 findings) were fixed in aa65437, 144a00e and d3bba9b. Each thread on the pull request names its fix.
+
 ## Mics and instruments (the input gap), now closed
 
 Before: MediaRecorder (lossy Opus), takes placed at the button press with no latency compensation, only the first
