@@ -23,6 +23,7 @@ const AudioDawTimeline = (() => {
             totalDuration: opts.totalDuration || 60,
             scrollLeft: 0,
             loopEnabled: false,
+            punch: false,                     // punch recording uses the loop range, drawn in red
             loopStart: 0,
             loopEnd: 0,
             playheadTime: 0,
@@ -185,15 +186,16 @@ const AudioDawTimeline = (() => {
             }
         }
 
-        // Loop region overlay
-        if (loopEnabled && loopEnd > loopStart) {
-            ctx.fillStyle = emphColor.startsWith('#') ? emphColor + '26' : emphColor.replace(')', ', 0.15)').replace('rgb(', 'rgba(');
+        // Loop region overlay (red while it is the punch range)
+        if ((loopEnabled || state.punch) && loopEnd > loopStart) {
+            const regionColor = state.punch ? (cs.getPropertyValue('--red').trim() || '#e05252') : emphColor;
+            ctx.fillStyle = regionColor.startsWith('#') ? regionColor + '26' : regionColor.replace(')', ', 0.15)').replace('rgb(', 'rgba(');
             const lx = loopStart * zoom;
             const lw = (loopEnd - loopStart) * zoom;
             ctx.fillRect(lx, 0, lw, height);
 
             // Loop markers
-            ctx.fillStyle = emphColor;
+            ctx.fillStyle = regionColor;
             ctx.fillRect(lx, 0, 2, height);
             ctx.fillRect(lx + lw - 2, 0, 2, height);
         }
@@ -270,9 +272,10 @@ const AudioDawTimeline = (() => {
 
     function updateLoopHandles(state) {
         if (!state.loopStartHandle || !state.loopEndHandle) return;
-        const visible = state.loopEnabled;
-        state.loopStartHandle.style.display = visible ? '' : 'none';
-        state.loopEndHandle.style.display = visible ? '' : 'none';
+        const visible = state.loopEnabled || state.punch;
+        // 'block', not '': the stylesheet hides handles by default, so clearing the inline value hid them for good
+        state.loopStartHandle.style.display = visible ? 'block' : 'none';
+        state.loopEndHandle.style.display = visible ? 'block' : 'none';
         if (visible) {
             state.loopStartHandle.style.left = (state.loopStart * state.zoom - state.scrollLeft) + 'px';
             state.loopEndHandle.style.left = (state.loopEnd * state.zoom - state.scrollLeft) + 'px';
@@ -290,6 +293,7 @@ const AudioDawTimeline = (() => {
             setZoom(zoom) {
                 state.zoom = zoom;
                 updateCanvasWidth(state);
+                updateLoopHandles(state); // handles sit at time * zoom, so they move with it
                 draw(state);
             },
 
@@ -318,6 +322,14 @@ const AudioDawTimeline = (() => {
                 state.loopEnabled = enabled;
                 state.loopStart = start || 0;
                 state.loopEnd = end || state.totalDuration;
+                updateLoopHandles(state);
+                draw(state);
+            },
+
+            /** Show the loop range as the punch range (red, handles visible even with loop off). */
+            setPunch(enabled) {
+                state.punch = !!enabled;
+                if (state.punch && !(state.loopEnd > state.loopStart)) state.loopEnd = state.loopStart;
                 updateLoopHandles(state);
                 draw(state);
             },

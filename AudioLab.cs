@@ -77,6 +77,7 @@ public class AudioLab : Extension
             ScriptFiles.Add("Assets/audio-daw-mixer.js");
             ScriptFiles.Add("Assets/audio-daw-fx.js");
             ScriptFiles.Add("Assets/audio-daw-store.js");
+            ScriptFiles.Add("Assets/audio-daw-input.js");
             ScriptFiles.Add("Assets/audio-daw-score.js");
             ScriptFiles.Add("Assets/audio-voice.js");
             ScriptFiles.Add("Assets/audio-daw.js");
@@ -87,6 +88,7 @@ public class AudioLab : Extension
             // Loaded via audioContext.audioWorklet.addModule(...), not as a page <script> tag -- OtherAssets
             // just needs the file servable, the same treatment the soundfont notes below get.
             OtherAssets.Add("Assets/audio-voice-worklet.js");
+            OtherAssets.Add("Assets/audio-daw-recorder-worklet.js");
             // Registered whether or not the files exist yet: the getters read on request, so a soundfont
             // fetched later in the session is served without a restart.
             foreach (string note in ScoreSoundfont.AssetPaths)

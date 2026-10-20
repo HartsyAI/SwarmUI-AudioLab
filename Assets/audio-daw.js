@@ -36,21 +36,21 @@ const AudioDaw = (() => {
     let audioCtx = null;
     let rafId = null;
     let blobStore = new Map(); // blobKey -> { blob, decodedBuffer }
-    // Live playback session graph; null when stopped. See buildTrackChain/scheduleClip.
-    // { ctx, masterGain, chains: Map<trackId, {trackGain, trackPan}>,
-    //   liveClips: [{clipId, trackId, iteration, source, fadeGain, clipGain}],
-    //   baseCtxTime, baseTimelineTime, schedulerId, loop: {nextWrapCtxTime, nextIterScheduled, iteration}|null }
+    // Transport session; null when stopped. Sources play into the persistent mixer graph (see ensureMixer).
+    // { ctx, liveClips: [{clipId, trackId, iteration, source, fadeGain, clipGain}], clicks, clickSeen,
+    //   baseCtxTime, baseTimelineTime, endTime, schedulerId, loop: {nextWrapCtxTime, nextIterScheduled, iteration}|null }
     let playback = null;
     const LOOKAHEAD = 0.2;         // seconds ahead the loop scheduler pre-schedules the next iteration
     const SCHEDULER_TICK_MS = 25;  // setInterval period (rAF would stall in background tabs)
     const START_EPSILON = 0.03;    // shared start instant so no source starts "in the past"
-    // Active mic recording session; null when idle. { track, startP, recorder, placeholderEl }
+    // Recording session; null when idle. { takes: [{track, entry, latency, stopFrame}], placeholders, punch,
+    //   postRoll, startP, startCtx, stopping }
     let recording = null;
     // Guards against double-triggering a Demucs pass while one is running
     let stemsSeparating = false;
     // Clip-editor waveform preview player (destroyed on each panel re-render)
     let clipEditorPlayer = null;
-    let recordSettings = { deviceId: null, voiceMode: false };
+    let recordSettings = loadRecordSettings();
 
     function getDefaultState() {
         return {
@@ -66,6 +66,9 @@ const AudioDaw = (() => {
             loopEnabled: false,
             loopStart: 0,
             loopEnd: 0,
+            metronome: false,    // CLICK: metronome while the transport runs
+            punchEnabled: false, // PUNCH: record only over the loop range
+            selection: null,     // {start, end, trackIds} time range across tracks
             rulerMode: 'time', // 'time' | 'beats'
             markers: [],      // [{id, time, name, color}] sorted by time
             snapEnabled: true,
@@ -394,6 +397,18 @@ const AudioDaw = (() => {
         loopBtn.title = translate('Toggle Loop (L)');
         loopBtn.addEventListener('click', toggleLoop);
         transGroup.appendChild(loopBtn);
+        const clickBtn = document.createElement('button');
+        clickBtn.className = 'daw-transport-btn daw-btn-text daw-btn-click' + (state.metronome ? ' active' : '');
+        clickBtn.textContent = translate('CLICK');
+        clickBtn.title = translate('Metronome while playing and recording (C). Count-in is in the record menu');
+        clickBtn.addEventListener('click', toggleMetronome);
+        transGroup.appendChild(clickBtn);
+        const punchBtn = document.createElement('button');
+        punchBtn.className = 'daw-transport-btn daw-btn-text daw-btn-punch' + (state.punchEnabled ? ' active' : '');
+        punchBtn.textContent = translate('PUNCH');
+        punchBtn.title = translate('Punch recording: Record replaces only the loop range, after a pre-roll (P)');
+        punchBtn.addEventListener('click', togglePunch);
+        transGroup.appendChild(punchBtn);
 
         // ── LCD position cluster: time + bars.beats ──
         const lcd = createDiv(null, 'daw-lcd');
@@ -440,10 +455,10 @@ const AudioDaw = (() => {
             state.bpm = parseInt(e.target.value) || 120;
             if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
             updateLaneGrid();
-            if (playback && typeof AudioDawFx !== 'undefined') {
-                for (const [id, chain] of playback.chains) {
+            if (mixer && typeof AudioDawFx !== 'undefined') {
+                for (const [id, chain] of mixer.chains) {
                     const tr = state.tracks.find(t => t.id === id);
-                    if (tr) AudioDawFx.syncDelayTimes(chain.fxChain, tr.fx, state.bpm, playback.ctx.currentTime);
+                    if (tr) AudioDawFx.syncDelayTimes(chain.fxChain, tr.fx, state.bpm, mixer.ctx.currentTime);
                 }
             }
         });
@@ -668,17 +683,17 @@ const AudioDaw = (() => {
             },
             onParamChange: (track, fx, index) => {
                 fxGestureUndo();
-                const chain = playback?.chains.get(track.id);
+                const chain = mixer?.chains.get(track.id);
                 if (chain?.fxChain) {
-                    AudioDawFx.applyEffectParams(chain.fxChain, index, fx, playback.ctx.currentTime,
-                        { bpm: state.bpm, ctx: playback.ctx });
+                    AudioDawFx.applyEffectParams(chain.fxChain, index, fx, mixer.ctx.currentTime,
+                        { bpm: state.bpm, ctx: mixer.ctx });
                 }
             },
             onToggle: (track, fx, index) => {
                 pushUndo();
-                const chain = playback?.chains.get(track.id);
+                const chain = mixer?.chains.get(track.id);
                 if (chain?.fxChain) {
-                    AudioDawFx.setEffectEnabled(chain.fxChain, index, fx, playback.ctx.currentTime);
+                    AudioDawFx.setEffectEnabled(chain.fxChain, index, fx, mixer.ctx.currentTime);
                 }
             },
             onAdd: (track, type) => {
@@ -705,13 +720,8 @@ const AudioDaw = (() => {
             },
             onMasterLimiter: (enabled) => {
                 state.masterLimiterEnabled = enabled;
-                // Master path topology change: cleanly restart the graph if playing
-                if (state.isPlaying) {
-                    const P = currentTimelineTime();
-                    stopPlayback();
-                    state.currentTime = P;
-                    startPlayback();
-                }
+                // The master path rewires in place; sources keep playing
+                if (mixer) wireMasterOut();
             }
         };
     }
@@ -2279,6 +2289,8 @@ const AudioDaw = (() => {
         if (idx === -1) return;
         const track = state.tracks[idx];
         // Blobs stay in blobStore for undo; garbageCollectBlobs() reclaims them later
+        closeTrackInput(track.id);
+        dropChain(track.id);
         AudioDawTrack.destroyTrack(track);
         state.tracks.splice(idx, 1);
         if (state.selectedTrackId === trackId) {
@@ -2304,7 +2316,17 @@ const AudioDaw = (() => {
             onSolo: () => { updatePlaybackGains(); updateBottomPanel(); },
             onVolume: () => { updatePlaybackGains(); },
             onPan: () => { updatePlaybackGains(); },
-            onArm: () => {},
+            onArm: (track) => toggleArm(track),
+            onMonitor: (track) => toggleMonitor(track),
+            onInputMenu: (track, e) => showTrackInputMenu(track, e),
+            onOpenFx: (track) => {
+                state.selectedTrackId = track.id;
+                updateTrackSelection();
+                updateBottomPanel();
+                switchBottomTab('fx');
+            },
+            onTrackMenu: (track, e) => showTrackMenu(track, e),
+            inputLabel: (track) => deviceLabels.get(track.input?.deviceId) || null,
             onSelect: (track) => {
                 state.selectedTrackId = track.id;
                 updateTrackSelection();
@@ -2385,8 +2407,8 @@ const AudioDaw = (() => {
             }
         };
 
-        for (const track of state.tracks) {
-            const header = AudioDawTrack.buildTrackHeader(track, trackCallbacks);
+        for (const [index, track] of state.tracks.entries()) {
+            const header = AudioDawTrack.buildTrackHeader(track, trackCallbacks, index);
             trackHeadersEl.appendChild(header);
 
             const lane = AudioDawTrack.buildClipLane(track, state.zoom, clipCallbacks);
@@ -2475,7 +2497,7 @@ const AudioDaw = (() => {
 
     function getAudioContext() {
         if (!audioCtx || audioCtx.state === 'closed') {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
         }
         return audioCtx;
     }
@@ -2544,15 +2566,98 @@ const AudioDaw = (() => {
         for (const a of chain.analysers || []) { try { a.disconnect(); } catch (_) {} }
     }
 
+    // ===== MIXER GRAPH =====
+    // Lives while the DAW is open, independent of the transport: a master bus plus one chain per track.
+    // Playback only schedules sources into chain inputs, so monitored inputs keep sounding (and meters keep
+    // moving) while stopped, and effect tails ring out after Stop the way a hardware desk does.
+
+    let mixer = null; // { ctx, masterGain, masterLimiter, masterSplitter, masterAnalysers, clickBus, chains: Map }
+
+    function ensureMixer() {
+        const ctx = getAudioContext();
+        if (mixer && mixer.ctx === ctx) return mixer;
+        const masterGain = ctx.createGain();
+        masterGain.gain.value = state.masterVolume;
+        const masterSplitter = ctx.createChannelSplitter(2);
+        const masterAnalysers = [ctx.createAnalyser(), ctx.createAnalyser()];
+        masterAnalysers.forEach((a, i) => { a.fftSize = 512; masterSplitter.connect(a, i); });
+        // The metronome goes straight to the speakers: never through the master, never into an export
+        const clickBus = ctx.createGain();
+        clickBus.gain.value = recordSettings.clickVolume;
+        clickBus.connect(ctx.destination);
+        mixer = { ctx, masterGain, masterLimiter: null, masterSplitter, masterAnalysers, clickBus, chains: new Map() };
+        wireMasterOut();
+        return mixer;
+    }
+
+    /** (Re)wire master -> optional limiter -> speakers and meter tap. Runs at creation and on a limiter toggle. */
+    function wireMasterOut() {
+        const m = mixer;
+        try { m.masterGain.disconnect(); } catch (_) {}
+        if (m.masterLimiter) {
+            try { m.masterLimiter.disconnect(); } catch (_) {}
+            m.masterLimiter = null;
+        }
+        let out = m.masterGain;
+        if (state.masterLimiterEnabled && typeof AudioDawFx !== 'undefined') {
+            m.masterLimiter = AudioDawFx.buildMasterLimiter(m.ctx);
+            m.masterGain.connect(m.masterLimiter);
+            out = m.masterLimiter;
+        }
+        out.connect(m.ctx.destination);
+        out.connect(m.masterSplitter);
+    }
+
+    /** A track's chain, built on first use. A new chain picks up the track's live input if it is monitored. */
+    function chainFor(track) {
+        const m = ensureMixer();
+        let chain = m.chains.get(track.id);
+        if (!chain) {
+            chain = buildTrackChain(m.ctx, track, m.masterGain);
+            m.chains.set(track.id, chain);
+            if (!playback) holdTrackAutomation(chain, track, state.currentTime);
+            const entry = trackInputs.get(track.id);
+            if (entry) applyMonitor(track, entry);
+        }
+        return chain;
+    }
+
+    function dropChain(trackId) {
+        const chain = mixer?.chains.get(trackId);
+        if (!chain) return;
+        const entry = trackInputs.get(trackId);
+        if (entry?.monitorChain === chain) {
+            try { entry.route.output.disconnect(chain.input); } catch (_) {}
+            entry.monitorChain = null;
+        }
+        disposeChain(chain);
+        mixer.chains.delete(trackId);
+    }
+
+    /** Drop chains whose track is gone. */
+    function pruneChains() {
+        if (!mixer) return;
+        const live = new Set(state.tracks.map(t => t.id));
+        for (const id of [...mixer.chains.keys()]) {
+            if (!live.has(id)) dropChain(id);
+        }
+    }
+
+    function destroyMixer() {
+        if (!mixer) return;
+        for (const id of [...mixer.chains.keys()]) dropChain(id);
+        for (const node of [mixer.masterGain, mixer.masterLimiter, mixer.masterSplitter, mixer.clickBus, ...mixer.masterAnalysers]) {
+            if (node) { try { node.disconnect(); } catch (_) {} }
+        }
+        mixer = null;
+    }
+
     /** Topology change on a track's FX (add/remove/reorder): rebuild its chain live. */
     function rebuildTrackFx(track) {
-        if (!playback) return;
-        const chain = playback.chains.get(track.id);
-        if (chain) {
-            disposeChain(chain);
-            playback.chains.delete(track.id);
-        }
-        resyncPlayback(); // lazily recreates the chain during rescheduling
+        if (!mixer) return;
+        dropChain(track.id);
+        if (playback) resyncPlayback(); // recreates the chain while rescheduling
+        else if (trackInputs.has(track.id)) chainFor(track); // a monitored input needs its chain back now
     }
 
     /** Schedule volume/pan envelopes onto a chain using the same origin math as clips. */
@@ -2570,11 +2675,31 @@ const AudioDaw = (() => {
         }
     }
 
+    /** Stopped transport: hold each envelope at its value under the playhead, so monitoring hears that level. */
+    function holdTrackAutomation(chain, track, at) {
+        const now = chain.volAuto.context.currentTime;
+        const hasFx = typeof AudioDawFx !== 'undefined';
+        const vol = track.automation?.volume;
+        try { chain.volAuto.gain.cancelScheduledValues(now); } catch (_) {}
+        chain.volAuto.gain.setValueAtTime(vol?.length && hasFx ? AudioDawFx.envelopeValueAt(vol, at) : 1, now);
+        if (chain.trackPan) {
+            const pan = track.automation?.pan;
+            const base = track.pan || 0;
+            try { chain.trackPan.pan.cancelScheduledValues(now); } catch (_) {}
+            chain.trackPan.pan.setValueAtTime(pan?.length && hasFx
+                ? Math.max(-1, Math.min(1, base + AudioDawFx.envelopeValueAt(pan, at))) : base, now);
+        }
+    }
+
     /** Live envelope edit: re-anchor + re-ramp this track's automation from the current position. */
     function rescheduleTrackAutomation(track) {
-        if (!playback || typeof AudioDawFx === 'undefined') return;
-        const chain = playback.chains.get(track.id);
+        if (typeof AudioDawFx === 'undefined') return;
+        const chain = mixer?.chains.get(track.id);
         if (!chain) return;
+        if (!playback) {
+            holdTrackAutomation(chain, track, state.currentTime);
+            return;
+        }
         const now = playback.ctx.currentTime;
         const P = currentTimelineTime();
         const W = playback.loop ? state.loopEnd : Infinity;
@@ -2602,6 +2727,127 @@ const AudioDaw = (() => {
                 t0Ctx: playback.loop.nextWrapCtxTime, t0Timeline: state.loopStart,
                 windowEnd: state.loopEnd, fresh: false
             });
+        }
+    }
+
+    // ===== LIVE INPUTS (arm + monitor) =====
+    // A track's input is open while the track is armed (R) or monitoring (I): the device stream (shared per
+    // device), a channel route, and a capture node that always meters the input and records only while the
+    // transport records. Monitoring connects the route into the track's own chain, so the input is heard
+    // through the track's inserts, fader and pan, like a channel on a desk.
+
+    const trackInputs = new Map(); // trackId -> { key, handle, route, capture, latency, label, level, channels, monitorChain }
+    const inputPending = new Map(); // trackId -> Promise, so rapid toggles apply in order
+
+    function inputKey(track) {
+        const inp = track.input || {};
+        return `${inp.deviceId || ''}|${inp.channels ?? 'mono'}|${recordSettings.voiceMode ? 1 : 0}`;
+    }
+
+    /** Open, re-route or close a track's input to match its arm/monitor state. Serialized per track. */
+    function syncTrackInput(track) {
+        const prev = inputPending.get(track.id) || Promise.resolve();
+        const next = prev.catch(() => {}).then(() => syncTrackInputNow(track));
+        inputPending.set(track.id, next);
+        next.catch(() => {}).finally(() => {
+            if (inputPending.get(track.id) === next) inputPending.delete(track.id);
+        });
+        return next;
+    }
+
+    async function syncTrackInputNow(track) {
+        if (!state || !state.tracks.includes(track) || !(track.armed || track.monitor)) {
+            closeTrackInput(track.id);
+            return;
+        }
+        let entry = trackInputs.get(track.id);
+        const key = inputKey(track);
+        if (entry && entry.key !== key) {
+            closeTrackInput(track.id);
+            entry = null;
+        }
+        if (!entry) {
+            const support = AudioDawInput.support();
+            if (!support.mic) throw new Error(translate('Audio input needs HTTPS (or localhost) in this browser'));
+            if (!support.worklet) throw new Error(translate('This browser cannot capture audio (no AudioWorklet)'));
+            const ctx = getAudioContext();
+            if (ctx.state === 'suspended') { try { await ctx.resume(); } catch (_) {} }
+            ensureMixer();
+            const handle = await AudioDawInput.openStream(track.input?.deviceId || null, { voiceMode: recordSettings.voiceMode });
+            let route = null, capture = null;
+            try {
+                route = AudioDawInput.createRoute(ctx, handle.stream, track.input?.channels ?? 'mono');
+                capture = await AudioDawInput.createCapture(ctx, route.output, route.captureChannels);
+            }
+            catch (err) {
+                route?.dispose();
+                handle.release();
+                throw err;
+            }
+            // The track may have been disarmed or removed while the device opened
+            if (!state || !state.tracks.includes(track) || !(track.armed || track.monitor)) {
+                capture.dispose();
+                route.dispose();
+                handle.release();
+                return;
+            }
+            entry = {
+                key, handle, route, capture, level: 0, monitorChain: null,
+                channels: route.captureChannels,
+                latency: AudioDawInput.streamLatency(handle.stream),
+                label: AudioDawInput.streamLabel(handle.stream)
+            };
+            capture.onPeak = (v) => {
+                entry.level = v;
+                if (v >= 0.985) entry.clipped = true;
+            };
+            trackInputs.set(track.id, entry);
+            kickMeters();
+        }
+        applyMonitor(track, entry);
+        AudioDawTrack.syncHeaderControls(track);
+    }
+
+    /** Connect or disconnect a live input to its track's chain, following the track's I button. */
+    function applyMonitor(track, entry) {
+        const want = track.monitor ? chainFor(track) : null;
+        if (entry.monitorChain && entry.monitorChain !== want) {
+            try { entry.route.output.disconnect(entry.monitorChain.input); } catch (_) {}
+            entry.monitorChain = null;
+        }
+        if (want && entry.monitorChain !== want) {
+            entry.route.output.connect(want.input);
+            entry.monitorChain = want;
+        }
+    }
+
+    function closeTrackInput(trackId) {
+        const entry = trackInputs.get(trackId);
+        if (!entry) return;
+        trackInputs.delete(trackId);
+        if (entry.monitorChain) {
+            try { entry.route.output.disconnect(entry.monitorChain.input); } catch (_) {}
+        }
+        entry.capture.dispose();
+        entry.route.dispose();
+        entry.handle.release();
+    }
+
+    function closeAllInputs() {
+        for (const id of [...trackInputs.keys()]) closeTrackInput(id);
+    }
+
+    function reportInputError(track, err) {
+        console.error('[AudioDaw] Input failed for', track?.name, err);
+        if (typeof doNoticePopover === 'function') {
+            doNoticePopover(`${track?.name || translate('Track')}: ` + translate('input failed:') + ' ' + (err?.message || err), 'notice-pop-red');
+        }
+    }
+
+    /** Re-open every live input, e.g. after the voice-processing setting changed. */
+    function resyncAllInputs() {
+        for (const t of state.tracks) {
+            if (t.armed || t.monitor) syncTrackInput(t).catch(err => reportInputError(t, err));
         }
     }
 
@@ -2675,53 +2921,90 @@ const AudioDaw = (() => {
         }
     }
 
-    /** Push live stereo levels + peak-hold ticks into header meters, mixer strips, and the master meter. */
+    /**
+     * Push live levels + peak-hold ticks into header meters, mixer strips and the master meter.
+     * An armed track shows its INPUT level unless it is playing back (what a record-armed channel shows).
+     * @returns {boolean} whether any meter is still showing signal
+     */
     function updateMeters() {
-        if (!playback) return;
+        if (!mixer || !state) return false;
+        let active = false;
         for (const track of state.tracks) {
-            const chain = playback.chains.get(track.id);
-            if (!chain?.analysers) continue;
-            const peaks = readChanPeaks(chain.analysers);
+            const input = trackInputs.get(track.id);
+            let peaks;
+            if (input && track.armed && (!state.isPlaying || recording)) {
+                peaks = [input.level, input.level];
+                track.headerEl?.classList.toggle('input-clipped', !!input.clipped);
+            }
+            else {
+                const chain = mixer.chains.get(track.id);
+                peaks = chain?.analysers ? readChanPeaks(chain.analysers) : [0, 0];
+            }
             const strip = AudioDawMixer.getMeterEl?.(track.id);
             for (let ch = 0; ch < 2; ch++) {
                 const pct = levelToPct(peaks[ch]);
                 const held = heldPeak(`${track.id}:${ch}`, pct);
+                if (pct > 0 || held > 0) active = true;
                 setMeterChan(track.meterChans?.[ch], pct, held, false);
                 setMeterChan(strip?.chans?.[ch], pct, held, true);
             }
         }
-        if (playback.masterAnalysers) {
-            const peaks = readChanPeaks(playback.masterAnalysers);
-            const strip = AudioDawMixer.getMeterEl?.('__master__');
-            for (let ch = 0; ch < 2; ch++) {
-                const pct = levelToPct(peaks[ch]);
-                const held = heldPeak(`__master__:${ch}`, pct);
-                setMeterChan(strip?.chans?.[ch], pct, held, true);
-            }
-            // ~Loudness readout (slow RMS EMA; not true K-weighted LUFS but tracks it usefully)
-            const rms = readRms(playback.masterAnalysers[0]);
-            loudnessEma = loudnessEma * 0.95 + rms * 0.05;
-            const lufsEl = document.querySelector('.daw-master-lufs');
-            if (lufsEl) {
-                const db = loudnessEma > 1e-5 ? (20 * Math.log10(loudnessEma)).toFixed(1) : '-\u221E';
-                lufsEl.textContent = db + ' LU';
-                lufsEl.title = translate('Approximate loudness (RMS). Streaming targets sit around -14.');
-            }
-            // Clip latch: lights when the master pins, click to reset
-            if (Math.max(peaks[0], peaks[1]) >= 0.985) {
-                const clipDot = document.querySelector('.daw-master-clip');
-                if (clipDot) clipDot.classList.add('lit');
-            }
+        const peaks = readChanPeaks(mixer.masterAnalysers);
+        const strip = AudioDawMixer.getMeterEl?.('__master__');
+        for (let ch = 0; ch < 2; ch++) {
+            const pct = levelToPct(peaks[ch]);
+            const held = heldPeak(`__master__:${ch}`, pct);
+            if (pct > 0 || held > 0) active = true;
+            setMeterChan(strip?.chans?.[ch], pct, held, true);
         }
+        // ~Loudness readout (slow RMS EMA; not true K-weighted LUFS but tracks it usefully)
+        const rms = readRms(mixer.masterAnalysers[0]);
+        loudnessEma = loudnessEma * 0.95 + rms * 0.05;
+        const lufsEl = document.querySelector('.daw-master-lufs');
+        if (lufsEl) {
+            const db = loudnessEma > 1e-5 ? (20 * Math.log10(loudnessEma)).toFixed(1) : '-∞';
+            lufsEl.textContent = db + ' LU';
+            lufsEl.title = translate('Approximate loudness (RMS). Streaming targets sit around -14.');
+        }
+        // Clip latch: lights when the master pins, click to reset
+        if (Math.max(peaks[0], peaks[1]) >= 0.985) {
+            const clipDot = document.querySelector('.daw-master-clip');
+            if (clipDot) clipDot.classList.add('lit');
+        }
+        return active;
     }
 
-    /** Zero out every meter and held peak (playback stopped). */
+    /** Zero out every meter and held peak. */
     function resetMeters() {
         meterPeaks.clear();
         for (const track of state?.tracks || []) {
             for (const chan of track.meterChans || []) setMeterChan(chan, 0, 0, false);
         }
         if (AudioDawMixer.resetMeters) AudioDawMixer.resetMeters();
+    }
+
+    // Meters run on their own rAF loop: while playing, while any input is live, and for a moment after both
+    // stop so held peaks and effect tails fall away instead of freezing.
+    let meterRaf = null;
+    let meterBusyAt = 0;
+
+    function kickMeters() {
+        meterBusyAt = performance.now();
+        if (!meterRaf) meterRaf = requestAnimationFrame(meterLoop);
+    }
+
+    function meterLoop() {
+        meterRaf = null;
+        if (!state || !mixer) return;
+        const active = updateMeters();
+        const now = performance.now();
+        if (active || state.isPlaying || trackInputs.size) meterBusyAt = now;
+        if (now - meterBusyAt < 1500) {
+            meterRaf = requestAnimationFrame(meterLoop);
+        }
+        else {
+            resetMeters();
+        }
     }
 
     /**
@@ -2781,17 +3064,13 @@ const AudioDaw = (() => {
 
     /**
      * Schedule every clip of every track from timeline time P.
-     * ALL clips are scheduled — muted ones at gain 0 — so mute/solo/unmute during
+     * ALL clips are scheduled (muted ones at gain 0), so mute/solo/unmute during
      * playback is always a pure AudioParam write, never a missing source.
      */
     function scheduleTransportFrom(P, { t0Ctx, windowEnd = Infinity, iteration = 0 }) {
         const ctx = playback.ctx;
         for (const track of state.tracks) {
-            let chain = playback.chains.get(track.id);
-            if (!chain) {
-                chain = buildTrackChain(ctx, track, playback.masterGain);
-                playback.chains.set(track.id, chain);
-            }
+            const chain = chainFor(track);
             scheduleTrackAutomation(chain, track, { t0Ctx, t0Timeline: P, windowEnd, fresh: iteration === 0 });
             for (const clip of track.clips) {
                 const nodes = scheduleClip(ctx, chain.input, clip, { t0Ctx, t0Timeline: P, windowEnd });
@@ -2807,13 +3086,13 @@ const AudioDaw = (() => {
         }
     }
 
-    /** Param-only update of the whole gain topology (mute/solo/volume/pan/master). */
+    /** Param-only update of the whole gain topology (mute/solo/volume/pan/master), live or stopped. */
     function updatePlaybackGains() {
-        if (!playback) return;
-        const now = playback.ctx.currentTime;
-        playback.masterGain.gain.setTargetAtTime(state.masterVolume, now, 0.015);
+        if (!mixer) return;
+        const now = mixer.ctx.currentTime;
+        mixer.masterGain.gain.setTargetAtTime(state.masterVolume, now, 0.015);
         for (const track of state.tracks) {
-            const chain = playback.chains.get(track.id);
+            const chain = mixer.chains.get(track.id);
             if (!chain) continue;
             chain.trackGain.gain.setTargetAtTime(computeTrackGain(track), now, 0.015);
             const panEnv = track.automation?.pan;
@@ -2821,6 +3100,10 @@ const AudioDaw = (() => {
                 chain.trackPan.pan.setTargetAtTime(track.pan || 0, now, 0.015);
             }
             else if (chain.trackPan && panEnv?.length && typeof AudioDawFx !== 'undefined') {
+                if (!playback) {
+                    holdTrackAutomation(chain, track, state.currentTime);
+                    continue;
+                }
                 // Envelope active: re-anchor + re-ramp instead of fighting scheduled ramps
                 const xf = (v) => Math.max(-1, Math.min(1, (track.pan || 0) + v));
                 const P = currentTimelineTime();
@@ -2866,10 +3149,17 @@ const AudioDaw = (() => {
 
     function toggleLoop() {
         state.loopEnabled = !state.loopEnabled;
-        // First enable with no region set: default to the whole arrangement
+        // First enable with no region set: the selection if there is one, else the whole arrangement
         if (state.loopEnabled && state.loopEnd <= state.loopStart) {
-            state.loopStart = 0;
-            state.loopEnd = state.contentDuration || state.totalDuration;
+            const sel = state.selection;
+            if (sel && sel.end > sel.start) {
+                state.loopStart = sel.start;
+                state.loopEnd = sel.end;
+            }
+            else {
+                state.loopStart = 0;
+                state.loopEnd = state.contentDuration || state.totalDuration;
+            }
         }
         const btn = transportEl?.querySelector('.daw-btn-loop');
         if (btn) btn.classList.toggle('active', state.loopEnabled);
@@ -2878,47 +3168,33 @@ const AudioDaw = (() => {
         resyncPlayback();
     }
 
-    async function startPlayback() {
-        if (state.isPlaying) return;
+    /**
+     * Start the transport at state.currentTime.
+     * @param {Object} [opts] - { delay: seconds before the timeline starts moving (count-in), from: timeline
+     *   position override }
+     * @returns {Promise<Object|null>} the playback session, or null when stopped before it began
+     */
+    async function startPlayback({ delay = 0 } = {}) {
+        if (state.isPlaying) return playback;
         state.isPlaying = true;
         updatePlayButton(true);
-
-        // Safety: a wedged recording session (record-end never fired) must not put
-        // plain playback into record mode (unclamped playhead, no end-stop)
-        if (recording && (!recording.recorder || !recording.recorder.isRecording())) {
-            abortRecording();
-        }
 
         const ctx = getAudioContext();
         if (ctx.state === 'suspended') {
             try { await ctx.resume(); } catch (_) {}
         }
-        if (!state.isPlaying) return; // user hit stop while we awaited the resume
-
-        const masterGain = ctx.createGain();
-        masterGain.gain.value = state.masterVolume;
-        let masterLimiter = null;
-        let masterOut = masterGain;
-        if (state.masterLimiterEnabled && typeof AudioDawFx !== 'undefined') {
-            masterLimiter = AudioDawFx.buildMasterLimiter(ctx);
-            masterGain.connect(masterLimiter);
-            masterOut = masterLimiter;
-        }
-        masterOut.connect(ctx.destination);
-        // Post-limiter stereo taps for the master meter
-        const masterSplitter = ctx.createChannelSplitter(2);
-        masterOut.connect(masterSplitter);
-        const masterAnalysers = [ctx.createAnalyser(), ctx.createAnalyser()];
-        masterAnalysers.forEach((a, i) => { a.fftSize = 512; masterSplitter.connect(a, i); });
+        if (!state.isPlaying) return null; // user hit stop while we awaited the resume
+        ensureMixer();
 
         const P = state.currentTime;
-        const t0Ctx = ctx.currentTime + START_EPSILON;
+        const t0Ctx = ctx.currentTime + START_EPSILON + delay;
         // Loop is suppressed while recording (a take shouldn't wrap onto itself)
         const loopArmed = !recording && state.loopEnabled && state.loopEnd > state.loopStart && P < state.loopEnd;
         playback = {
-            ctx, masterGain, masterLimiter, masterAnalysers,
-            chains: new Map(),
+            ctx,
             liveClips: [],
+            clicks: [],
+            clickSeen: null,
             baseCtxTime: t0Ctx,
             baseTimelineTime: P,
             // Stop at the end of the music, not the ruler; starting past the
@@ -2933,7 +3209,10 @@ const AudioDaw = (() => {
         };
         scheduleTransportFrom(P, { t0Ctx, windowEnd: loopArmed ? state.loopEnd : Infinity, iteration: 0 });
         playback.schedulerId = setInterval(schedulerTick, SCHEDULER_TICK_MS);
+        schedulerTick(); // first clicks now, not a tick later
         animatePlayhead();
+        kickMeters();
+        return playback;
     }
 
     /**
@@ -2973,16 +3252,58 @@ const AudioDaw = (() => {
                 });
                 loop.nextIterScheduled = true;
             }
+        } else if (recording?.punch && !recording.stopping
+            && currentTimelineTime() >= recording.punch.out + recording.postRoll) {
+            // Punch recording runs out its post-roll, then stops itself
+            stopRecordingFlow();
+            return;
         } else if (!recording && currentTimelineTime() >= playback.endTime) {
             // While recording, playback runs past the end so the take can extend the song
             stopPlayback();
             state.currentTime = 0;
             updatePlayheadPosition();
             updateTimeDisplay();
+            return;
         }
+        scheduleClicks();
     }
 
-    /** Stop and disconnect all live sources + chains + master; leaves state.isPlaying alone. */
+    /**
+     * Metronome: schedule clicks for beats inside the next ~200 ms of audio time. Beats count from timeline
+     * zero, accented on each bar's downbeat. With a loop armed the next pass is mapped onto its own start, so
+     * the first click after a wrap is on time; instants already scheduled are skipped.
+     */
+    function scheduleClicks() {
+        if (!playback || !mixer || !state.metronome) return;
+        const ctx = playback.ctx;
+        const beat = 60 / state.bpm;
+        const perBar = state.timeSignature[0] || 4;
+        const now = ctx.currentTime;
+        const horizon = now + 0.2;
+        const passes = [{ baseCtx: playback.baseCtxTime, baseTl: playback.baseTimelineTime, end: playback.loop ? state.loopEnd : Infinity }];
+        if (playback.loop) passes.push({ baseCtx: playback.loop.nextWrapCtxTime, baseTl: state.loopStart, end: state.loopEnd });
+        if (!playback.clickSeen) playback.clickSeen = new Set();
+        for (const pass of passes) {
+            const tlFrom = pass.baseTl + Math.max(0, now - pass.baseCtx);
+            const tlTo = Math.min(pass.end, pass.baseTl + (horizon - pass.baseCtx));
+            for (let k = Math.ceil((tlFrom - 1e-6) / beat); k * beat <= tlTo + 1e-9 && k * beat < pass.end - 1e-6; k++) {
+                const when = pass.baseCtx + (k * beat - pass.baseTl);
+                if (when < now - 0.005) continue;
+                const key = Math.round(when * 1000);
+                if (playback.clickSeen.has(key)) continue;
+                playback.clickSeen.add(key);
+                playback.clicks.push(AudioDawInput.scheduleClick(ctx, mixer.clickBus, when, k % perBar === 0));
+            }
+        }
+        if (playback.clickSeen.size > 256) {
+            for (const key of playback.clickSeen) {
+                if (key < (now - 1) * 1000) playback.clickSeen.delete(key);
+            }
+        }
+        if (playback.clicks.length > 64) playback.clicks.splice(0, playback.clicks.length - 64);
+    }
+
+    /** Stop every scheduled source and pending click; the mixer graph stays up. */
     function teardownPlaybackGraph() {
         if (!playback) return;
         clearInterval(playback.schedulerId);
@@ -2993,13 +3314,16 @@ const AudioDaw = (() => {
             try { n.fadeGain.disconnect(); } catch (_) {}
             try { n.clipGain.disconnect(); } catch (_) {}
         }
-        for (const chain of playback.chains.values()) {
-            disposeChain(chain);
+        for (const osc of playback.clicks || []) {
+            try { osc.stop(); } catch (_) {}
         }
-        try { playback.masterGain.disconnect(); } catch (_) {}
-        if (playback.masterLimiter) { try { playback.masterLimiter.disconnect(); } catch (_) {} }
         playback = null;
-        resetMeters();
+        if (mixer && state) {
+            for (const track of state.tracks) {
+                const chain = mixer.chains.get(track.id);
+                if (chain) holdTrackAutomation(chain, track, state.currentTime);
+            }
+        }
     }
 
     function stopPlayback() {
@@ -3011,15 +3335,17 @@ const AudioDaw = (() => {
         teardownPlaybackGraph();
         updatePlayheadPosition();
         updateTimeDisplay();
+        kickMeters(); // let tails and held peaks fall
     }
 
     /**
      * Re-schedule playback from the current position after a topology change
      * (clip add/move/delete/trim, track add/remove, undo/redo, loop change).
-     * Keeps chains for surviving tracks, the scheduler, and the rAF loop —
+     * Keeps chains for surviving tracks, the scheduler, and the rAF loop:
      * no play-button churn, no UI flicker. No-op when stopped.
      */
     function resyncPlayback() {
+        pruneChains();
         if (!state.isPlaying || !playback) return;
         const ctx = playback.ctx;
         const P = Math.max(0, Math.min(currentTimelineTime(), state.totalDuration));
@@ -3031,19 +3357,16 @@ const AudioDaw = (() => {
             try { n.clipGain.disconnect(); } catch (_) {}
         }
         playback.liveClips = [];
-        // Drop chains for removed tracks (missing ones are lazily created on schedule)
-        const liveIds = new Set(state.tracks.map(t => t.id));
-        for (const [id, chain] of playback.chains) {
-            if (!liveIds.has(id)) {
-                disposeChain(chain);
-                playback.chains.delete(id);
-            }
+        for (const osc of playback.clicks) {
+            try { osc.stop(); } catch (_) {}
         }
+        playback.clicks = [];
+        playback.clickSeen = null;
         const t0Ctx = ctx.currentTime + START_EPSILON;
         playback.baseCtxTime = t0Ctx;
         playback.baseTimelineTime = P;
         playback.endTime = P < state.contentDuration ? state.contentDuration : state.totalDuration;
-        const loopArmed = state.loopEnabled && state.loopEnd > state.loopStart && P < state.loopEnd;
+        const loopArmed = !recording && state.loopEnabled && state.loopEnd > state.loopStart && P < state.loopEnd;
         playback.loop = loopArmed ? {
             nextWrapCtxTime: t0Ctx + (state.loopEnd - P),
             nextIterScheduled: false,
@@ -3057,6 +3380,12 @@ const AudioDaw = (() => {
         state.currentTime = Math.max(0, Math.min(time, state.totalDuration));
         updatePlayheadPosition();
         updateTimeDisplay();
+        if (!state.isPlaying && mixer) {
+            for (const track of state.tracks) {
+                const chain = mixer.chains.get(track.id);
+                if (chain) holdTrackAutomation(chain, track, state.currentTime);
+            }
+        }
         resyncPlayback();
     }
 
@@ -3076,9 +3405,7 @@ const AudioDaw = (() => {
             return;
         }
         if (recording) {
-            // Grow the live-waveform placeholder and stretch the timeline as needed
-            recording.placeholderEl.style.width =
-                Math.max(4, (state.currentTime - recording.startP) * state.zoom) + 'px';
+            updateRecordingPlaceholders();
             if (state.currentTime + 5 > state.totalDuration) {
                 state.totalDuration = state.currentTime + 5;
                 if (timeline) timeline.setDuration(state.totalDuration);
@@ -3087,7 +3414,6 @@ const AudioDaw = (() => {
         }
         updatePlayheadPosition();
         updateTimeDisplay();
-        updateMeters();
         // Follow the transport on the staff, when the selected clip is the one the open score produced.
         if (typeof AudioDawScore !== 'undefined') AudioDawScore.syncTime(state.currentTime);
         rafId = requestAnimationFrame(animatePlayhead);
@@ -3157,8 +3483,9 @@ const AudioDaw = (() => {
             shade = createDiv(null, 'daw-loop-shade');
             clipLanesEl.appendChild(shade);
         }
-        const visible = state.loopEnabled && state.loopEnd > state.loopStart;
+        const visible = (state.loopEnabled || state.punchEnabled) && state.loopEnd > state.loopStart;
         shade.style.display = visible ? '' : 'none';
+        shade.classList.toggle('punch', !!state.punchEnabled);
         if (visible) {
             shade.style.left = (state.loopStart * state.zoom) + 'px';
             shade.style.width = ((state.loopEnd - state.loopStart) * state.zoom) + 'px';
@@ -3209,7 +3536,8 @@ const AudioDaw = (() => {
 
     /**
      * Single floating-menu implementation for all DAW dropdowns/context menus.
-     * items: [{ label, action, checked?, disabled? }] — `checked` renders a ✓ column.
+     * items: [{ label, action, checked?, disabled?, hint? } | { heading }]: `checked` renders a ✓ column,
+     * and a heading item is an unclickable section title.
      * Auto-clamps to the viewport; closes on outside click. Returns the menu element.
      */
     function dawMenu(e, items) {
@@ -3219,8 +3547,15 @@ const AudioDaw = (() => {
         menu.style.position = 'fixed';
         menu.style.zIndex = '99999';
         for (const item of items) {
+            if (item.heading !== undefined) {
+                const head = createDiv(null, 'daw-context-heading');
+                head.textContent = item.heading;
+                menu.appendChild(head);
+                continue;
+            }
             const btn = document.createElement('button');
             btn.className = 'daw-context-item';
+            if (item.hint) btn.title = item.hint;
             btn.textContent = (item.checked === undefined ? '' : (item.checked ? '✓ ' : '   ')) + item.label;
             if (item.disabled) btn.disabled = true;
             btn.addEventListener('click', () => {
@@ -3316,6 +3651,224 @@ const AudioDaw = (() => {
         } catch (err) {
             if (typeof doNoticePopover === 'function') doNoticePopover(translate('Failed to list outputs:') + ' ' + err.message, 'notice-pop-red');
         }
+    }
+
+    // ===== TRACK ARM / MONITOR / INPUT MENUS =====
+
+    const deviceLabels = new Map(); // deviceId -> label, filled whenever the device list is read
+    let monitorHintShown = false;
+
+    async function refreshDeviceLabels() {
+        const devices = await AudioDawInput.listDevices();
+        for (const d of devices) {
+            if (d.label) deviceLabels.set(d.deviceId, d.label);
+        }
+        return devices;
+    }
+
+    /** R: arm or disarm a track. Arming opens and meters its input. */
+    function toggleArm(track) {
+        if (recording) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Stop recording before changing which tracks are armed'), 'notice-pop-yellow');
+            return;
+        }
+        track.armed = !track.armed;
+        AudioDawTrack.syncHeaderControls(track);
+        syncTrackInput(track).then(() => refreshDeviceLabels().then(() => AudioDawTrack.syncHeaderControls(track)))
+            .catch(err => {
+                track.armed = false;
+                AudioDawTrack.syncHeaderControls(track);
+                reportInputError(track, err);
+            });
+    }
+
+    /** I: hear the live input through the track (inserts, fader, pan). */
+    function toggleMonitor(track) {
+        track.monitor = !track.monitor;
+        if (track.monitor && !monitorHintShown) {
+            monitorHintShown = true;
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Input monitoring is on. Use headphones: speakers feed back into a microphone'), 'notice-pop-blue');
+        }
+        AudioDawTrack.syncHeaderControls(track);
+        syncTrackInput(track).catch(err => {
+            track.monitor = false;
+            AudioDawTrack.syncHeaderControls(track);
+            reportInputError(track, err);
+        });
+    }
+
+    /** A track's input: device, channels, arm and monitor. */
+    async function showTrackInputMenu(track, e) {
+        const items = [];
+        const support = AudioDawInput.support();
+        if (!support.mic) {
+            dawMenu(e, [{ label: translate('Audio input needs HTTPS (or localhost)'), disabled: true }]);
+            return;
+        }
+        if (recording && track.armed) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Stop recording before changing this track\'s input'), 'notice-pop-yellow');
+            return;
+        }
+        const devices = await refreshDeviceLabels();
+        const labelsHidden = !devices.length || devices.every(d => !d.label);
+        const setInput = (patch) => {
+            track.input = { deviceId: track.input?.deviceId || null, channels: track.input?.channels ?? 'mono', ...patch };
+            AudioDawTrack.syncHeaderControls(track);
+            if (track.armed || track.monitor) syncTrackInput(track).catch(err => reportInputError(track, err));
+        };
+        items.push({ heading: translate('Input device') });
+        if (labelsHidden) {
+            items.push({
+                label: translate('Allow microphone access to list inputs…'),
+                action: async () => {
+                    try {
+                        await AudioDawInput.requestAccess();
+                        showTrackInputMenu(track, e);
+                    }
+                    catch (err) {
+                        reportInputError(track, err);
+                    }
+                }
+            });
+        }
+        items.push({ label: translate('System default input'), checked: !track.input?.deviceId, action: () => setInput({ deviceId: null }) });
+        if (!labelsHidden) {
+            devices.forEach((d, i) => items.push({
+                label: d.label || (translate('Input') + ` ${i + 1}`),
+                checked: track.input?.deviceId === d.deviceId,
+                action: () => setInput({ deviceId: d.deviceId })
+            }));
+        }
+        const open = trackInputs.get(track.id);
+        const available = open ? AudioDawInput.streamChannels(open.handle.stream) : 2;
+        const ch = track.input?.channels ?? 'mono';
+        items.push({ heading: translate('Channels') });
+        items.push({ label: translate('Mono (all channels summed)'), checked: ch === 'mono', action: () => setInput({ channels: 'mono' }) });
+        items.push({ label: translate('Stereo (1 + 2)'), checked: ch === 'stereo', action: () => setInput({ channels: 'stereo' }) });
+        for (let n = 1; n <= Math.max(2, available); n++) {
+            items.push({ label: `${translate('Input')} ${n} ${translate('only')}`, checked: ch === n, action: () => setInput({ channels: n }) });
+        }
+        items.push({ heading: translate('This track') });
+        items.push({ label: translate('Record arm (Shift+R)'), checked: !!track.armed, action: () => toggleArm(track) });
+        items.push({ label: translate('Monitor input (I)'), checked: !!track.monitor, action: () => toggleMonitor(track) });
+        if (open) {
+            items.push({
+                label: `${open.label || translate('Input')}: ${open.channels === 2 ? translate('stereo') : translate('mono')}, ${Math.round(open.latency * 1000)} ms ${translate('input latency')}`,
+                disabled: true
+            });
+        }
+        dawMenu(e, items);
+    }
+
+    /** Right-click on a track header. */
+    function showTrackMenu(track, e) {
+        const heights = [[translate('Small'), 64], [translate('Medium'), 100], [translate('Large'), 160]];
+        dawMenu(e, [
+            {
+                label: translate('Rename…'),
+                action: () => {
+                    const name = prompt(translate('Track name:'), track.name);
+                    if (!name || !name.trim() || name.trim() === track.name) return;
+                    pushUndo();
+                    track.name = name.trim();
+                    renderAllTracks();
+                    updateBottomPanel();
+                }
+            },
+            { label: translate('Duplicate track'), action: () => duplicateTrack(track) },
+            { label: translate('Color…'), action: () => showTrackColorMenu(track, e) },
+            { label: translate('Input…'), action: () => showTrackInputMenu(track, e) },
+            { heading: translate('Height') },
+            ...heights.map(([label, h]) => ({ label, checked: track.height === h, action: () => setTrackHeight(track, h) })),
+            { heading: '' },
+            {
+                label: translate('Delete track'),
+                disabled: state.tracks.length <= 1,
+                action: () => {
+                    pushUndo();
+                    removeTrack(track.id);
+                    updateTotalDuration();
+                    renderAllTracks();
+                    updateBottomPanel();
+                    resyncPlayback();
+                }
+            }
+        ]);
+    }
+
+    /** Waveforms are drawn at the lane height, so a height change re-creates the track's clip views. */
+    function setTrackHeight(track, h) {
+        track.height = h;
+        for (const [, entry] of track.clipElements) {
+            if (entry.ws) entry.ws.destroy();
+            entry.el.remove();
+        }
+        track.clipElements.clear();
+        renderAllTracks();
+    }
+
+    /** A copy of a track right below it: same clips (shared audio), inserts, automation and mix. */
+    function duplicateTrack(track) {
+        pushUndo();
+        const ts = AudioDawTrack.serializeTrack(track);
+        const copy = AudioDawTrack.createTrack({ name: nextCopyName(track.name), color: track.color, height: track.height });
+        copy.volume = ts.volume;
+        copy.pan = ts.pan;
+        copy.muted = ts.muted;
+        copy.input = { ...ts.input };
+        copy.fx = ts.fx;
+        copy.automation = ts.automation;
+        copy.automationVisible = ts.automationVisible;
+        copy.automationParam = ts.automationParam;
+        for (const c of track.clips) {
+            const nc = AudioDawTrack.createClip(c.blob, { name: c.name, startTime: c.startTime, color: c.color, blobKey: c.blobKey });
+            nc.decodedBuffer = c.decodedBuffer;
+            nc.duration = c.duration;
+            nc.offset = c.offset;
+            nc.trimEnd = c.trimEnd;
+            nc.gain = c.gain;
+            nc.fadeIn = c.fadeIn;
+            nc.fadeOut = c.fadeOut;
+            nc.muted = c.muted;
+            copy.clips.push(nc);
+        }
+        state.tracks.splice(state.tracks.indexOf(track) + 1, 0, copy);
+        state.selectedTrackId = copy.id;
+        renderAllTracks();
+        updateBottomPanel();
+        resyncPlayback();
+    }
+
+    /** CLICK: metronome on/off. Turning it off silences clicks already queued. */
+    function toggleMetronome() {
+        state.metronome = !state.metronome;
+        transportEl?.querySelector('.daw-btn-click')?.classList.toggle('active', state.metronome);
+        if (!state.metronome && playback) {
+            for (const osc of playback.clicks) {
+                try { osc.stop(); } catch (_) {}
+            }
+            playback.clicks = [];
+            playback.clickSeen = null;
+        }
+    }
+
+    /** PUNCH: Record replaces only the loop range (set by the loop handles, or the selection). */
+    function togglePunch() {
+        state.punchEnabled = !state.punchEnabled;
+        if (state.punchEnabled && !(state.loopEnd > state.loopStart)) {
+            const sel = state.selection;
+            if (sel && sel.end > sel.start) {
+                state.loopStart = sel.start;
+                state.loopEnd = sel.end;
+                if (timeline) timeline.setLoop(state.loopEnabled, state.loopStart, state.loopEnd);
+            }
+            else if (typeof doNoticePopover === 'function') {
+                doNoticePopover(translate('Punch records over the loop range. Turn on LOOP and drag its handles, or select a range first'), 'notice-pop-yellow');
+            }
+        }
+        transportEl?.querySelector('.daw-btn-punch')?.classList.toggle('active', state.punchEnabled);
+        if (timeline?.setPunch) timeline.setPunch(state.punchEnabled);
+        updateLoopShade();
     }
 
     // ===== CLIP CONTEXT MENU =====
@@ -3665,187 +4218,354 @@ const AudioDaw = (() => {
     }
 
     // ===== RECORDING =====
-    // DAW-local mic capture via AudioLabPlayer.createRecorder (WaveSurfer.Record).
-    // Deliberately NOT AudioLabCore.startRecording — that path is tuned for STT
-    // voice references (16kHz mono, echo cancellation, 30s cap).
+    // Takes are captured by AudioDawInput's worklet on the AudioContext clock (lossless PCM), one per armed
+    // track, and placed with latency compensation, so what was played in time with the playback lands in time
+    // with it. Count-in, pre-roll, punch in/out (over the loop range) and the metronome are transport settings.
+
+    /** Saved record settings (per browser): default input, voice processing, count-in, pre-roll, offset. */
+    function loadRecordSettings() {
+        const base = { deviceId: null, voiceMode: false, countInBars: 0, preRollBars: 1, offsetMs: 0, clickVolume: 0.8 };
+        try {
+            return { ...base, ...JSON.parse(localStorage.getItem('audiolab_daw_record') || '{}') };
+        }
+        catch (_) {
+            return base;
+        }
+    }
+
+    function saveRecordSettings() {
+        try { localStorage.setItem('audiolab_daw_record', JSON.stringify(recordSettings)); } catch (_) {}
+    }
 
     function updateRecordButton(active) {
         const btn = transportEl?.querySelector('.daw-btn-rec');
         if (btn) btn.classList.toggle('active', active);
     }
 
+    /** Latency between scheduling a sample and the performer hearing it (context buffer + output device). */
+    function outputLatency(ctx) {
+        return (ctx.baseLatency || 0) + (ctx.outputLatency || 0);
+    }
+
+    /** Record settings menu (the caret beside Record). */
     async function showMicSettingsMenu(e) {
-        const voiceItem = {
-            label: translate('Voice mode (echo + noise reduction)'),
-            checked: recordSettings.voiceMode,
-            action: () => { recordSettings.voiceMode = !recordSettings.voiceMode; }
-        };
-        // mediaDevices is absent on insecure (non-HTTPS, non-localhost) origins
-        if (!navigator.mediaDevices?.enumerateDevices) {
-            dawMenu(e, [
-                { label: translate('Microphone requires HTTPS (or localhost)'), disabled: true, action: () => {} },
-                voiceItem
-            ]);
-            return;
-        }
-        let devices = [];
-        try {
-            devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput');
-        } catch (_) {}
-        // Until mic permission is granted, browsers hide device labels (and may
-        // collapse the list to one placeholder entry) — offer an explicit grant.
-        const labelsHidden = !devices.length || devices.every(d => !d.label);
-        let permState = 'prompt';
-        try {
-            permState = (await navigator.permissions.query({ name: 'microphone' })).state;
-        } catch (_) {} // permissions.query('microphone') is not universal (e.g. Firefox)
         const items = [];
-        if (labelsHidden && permState === 'denied') {
-            items.push({ label: translate('Mic blocked. Allow it in browser site settings'), disabled: true, action: () => {} });
-        } else if (labelsHidden) {
-            // No permission yet: show nothing but the grant action — device names
-            // are meaningless placeholders until the browser unlocks them.
-            items.push({
-                label: translate('Allow mic access to list devices…'),
-                action: async () => {
-                    try {
-                        // One-shot grant: open the mic just to unlock labels, then release it
-                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                        stream.getTracks().forEach(t => t.stop());
-                        showMicSettingsMenu(e);
-                    } catch (err) {
-                        console.error('[AudioDaw] Mic permission request failed:', err);
-                        if (typeof doNoticePopover === 'function') {
-                            doNoticePopover(translate('Microphone access denied:') + ' ' + err.message, 'notice-pop-red');
+        const support = AudioDawInput.support();
+        if (!support.mic) {
+            items.push({ label: translate('Audio input needs HTTPS (or localhost)'), disabled: true });
+        }
+        else {
+            const devices = await AudioDawInput.listDevices();
+            const labelsHidden = !devices.length || devices.every(d => !d.label);
+            const perm = await AudioDawInput.permissionState();
+            items.push({ heading: translate('Default input for new tracks') });
+            if (labelsHidden && perm === 'denied') {
+                items.push({ label: translate('Microphone blocked. Allow it in the browser site settings'), disabled: true });
+            }
+            else if (labelsHidden) {
+                items.push({
+                    label: translate('Allow microphone access to list inputs…'),
+                    action: async () => {
+                        try {
+                            await AudioDawInput.requestAccess();
+                            showMicSettingsMenu(e);
+                        }
+                        catch (err) {
+                            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Microphone access denied:') + ' ' + err.message, 'notice-pop-red');
                         }
                     }
+                });
+            }
+            else {
+                items.push({ label: translate('System default input'), checked: !recordSettings.deviceId,
+                    action: () => { recordSettings.deviceId = null; saveRecordSettings(); } });
+                devices.forEach((d, i) => items.push({
+                    label: d.label || (translate('Input') + ` ${i + 1}`),
+                    checked: recordSettings.deviceId === d.deviceId,
+                    action: () => { recordSettings.deviceId = d.deviceId; saveRecordSettings(); }
+                }));
+            }
+            items.push({
+                label: translate('Voice processing (echo and noise reduction)'),
+                checked: recordSettings.voiceMode,
+                action: () => {
+                    recordSettings.voiceMode = !recordSettings.voiceMode;
+                    saveRecordSettings();
+                    resyncAllInputs();
                 }
             });
-        } else {
-            items.push({ label: translate('System default microphone'), checked: !recordSettings.deviceId,
-                action: () => { recordSettings.deviceId = null; } });
-            devices.forEach((d, i) => items.push({
-                label: d.label || (translate('Microphone') + ` ${i + 1}`),
-                checked: recordSettings.deviceId === d.deviceId,
-                action: () => { recordSettings.deviceId = d.deviceId; }
-            }));
         }
-        items.push(voiceItem);
+        items.push({ heading: translate('Count-in') });
+        for (const bars of [0, 1, 2]) {
+            items.push({
+                label: bars ? `${bars} ${bars === 1 ? translate('bar') : translate('bars')}` : translate('Off'),
+                checked: recordSettings.countInBars === bars,
+                action: () => { recordSettings.countInBars = bars; saveRecordSettings(); }
+            });
+        }
+        items.push({ heading: translate('Pre-roll before a punch-in') });
+        for (const bars of [0, 1, 2]) {
+            items.push({
+                label: bars ? `${bars} ${bars === 1 ? translate('bar') : translate('bars')}` : translate('Off'),
+                checked: recordSettings.preRollBars === bars,
+                action: () => { recordSettings.preRollBars = bars; saveRecordSettings(); }
+            });
+        }
+        items.push({ heading: translate('Latency compensation') });
+        const ctx = audioCtx && audioCtx.state !== 'closed' ? audioCtx : null;
+        const inLat = Math.max(0, ...[...trackInputs.values()].map(x => x.latency), 0);
+        const outLat = ctx ? outputLatency(ctx) : 0;
+        items.push({
+            label: translate('Measured') + `: ${translate('in')} ${Math.round(inLat * 1000)} ms + ${translate('out')} ${Math.round(outLat * 1000)} ms`,
+            disabled: true
+        });
+        items.push({
+            label: translate('Manual offset') + `: ${recordSettings.offsetMs} ms…`,
+            action: () => {
+                const val = prompt(translate('Extra recording offset in milliseconds. Positive moves takes earlier, negative later. Leave 0 unless takes land consistently late or early.'), String(recordSettings.offsetMs));
+                if (val === null) return;
+                const ms = parseFloat(val);
+                if (!isNaN(ms) && Math.abs(ms) <= 2000) {
+                    recordSettings.offsetMs = Math.round(ms);
+                    saveRecordSettings();
+                }
+            }
+        });
         dawMenu(e, items);
+    }
+
+    /** "Audio 3": the next unused default name for a recording track. */
+    function nextAudioTrackName() {
+        let n = 1;
+        while (state.tracks.some(t => t.name === `Audio ${n}`)) n++;
+        return `Audio ${n}`;
+    }
+
+    /** Count-in clicks ending at ctx time t0 (the downbeat recording starts on). */
+    function scheduleCountIn(ctx, t0, seconds) {
+        if (!mixer || seconds <= 0) return;
+        const beat = 60 / state.bpm;
+        const perBar = state.timeSignature[0] || 4;
+        const beats = Math.round(seconds / beat);
+        for (let i = 0; i < beats; i++) {
+            const when = t0 - (beats - i) * beat;
+            if (when < ctx.currentTime) continue;
+            playback?.clicks.push(AudioDawInput.scheduleClick(ctx, mixer.clickBus, when, i % perBar === 0));
+        }
     }
 
     async function startRecordingFlow() {
         if (recording) return;
-        let track = state.tracks.find(t => t.armed);
-        if (!track) {
-            track = addTrack({ name: 'Recording' });
-            track.armed = true;
-            renderAllTracks();
-        }
-
-        // DAW-quality constraints; voice mode re-enables browser voice processing
-        const constraints = {
-            channelCount: { ideal: 2 },
-            sampleRate: { ideal: 48000 },
-            echoCancellation: recordSettings.voiceMode,
-            noiseSuppression: recordSettings.voiceMode,
-            autoGainControl: recordSettings.voiceMode
-        };
-        if (recordSettings.deviceId) constraints.deviceId = { exact: recordSettings.deviceId };
-
-        // Placeholder clip hosting the live waveform; width grows with the playhead
-        const startP = state.currentTime;
-        const placeholderEl = createDiv(null, 'daw-clip daw-clip-recording');
-        placeholderEl.style.left = (startP * state.zoom) + 'px';
-        placeholderEl.style.width = '4px';
-        const waveEl = createDiv(null, 'daw-clip-waveform');
-        placeholderEl.appendChild(waveEl);
-        if (track.laneEl) track.laneEl.appendChild(placeholderEl);
-
-        const recorder = AudioLabPlayer.createRecorder(waveEl, {
-            height: track.height - 8,
-            continuousWaveform: true,
-            renderRecorded: false,
-            audioBitsPerSecond: 256000
-        });
-        if (!recorder) {
-            placeholderEl.remove();
-            if (typeof doNoticePopover === 'function') doNoticePopover('Recorder unavailable', 'notice-pop-red');
-            return;
-        }
-        recorder.on('end', (blob) => finalizeRecording(blob));
-
-        // Acquire the mic BEFORE touching the transport so a denied/slow permission
-        // prompt can't leave playback running with no capture.
-        try {
-            await recorder.startRecording(constraints);
-        } catch (err) {
-            recorder.destroy();
-            placeholderEl.remove();
-            console.error('[AudioDaw] Mic access failed:', err);
+        const support = AudioDawInput.support();
+        if (!support.mic || !support.worklet) {
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover(translate('Microphone access failed:') + ' ' + err.message, 'notice-pop-red');
+                doNoticePopover(!support.mic
+                    ? translate('Recording needs HTTPS (or localhost): browsers block audio input on plain HTTP.')
+                    : translate('This browser cannot capture audio (no AudioWorklet).'), 'notice-pop-red');
             }
             return;
         }
+        let armed = state.tracks.filter(t => t.armed);
+        if (!armed.length) {
+            pushUndo();
+            const track = addTrack({ name: nextAudioTrackName() });
+            track.armed = true;
+            track.input = { deviceId: recordSettings.deviceId || null, channels: 'mono' };
+            armed = [track];
+            state.selectedTrackId = track.id;
+            renderAllTracks();
+        }
+        // Every armed input opens before the transport moves: a refused or slow permission prompt must not
+        // leave playback running with nothing capturing.
+        const opened = await Promise.allSettled(armed.map(t => syncTrackInput(t)));
+        opened.forEach((r, i) => { if (r.status === 'rejected') reportInputError(armed[i], r.reason); });
+        const inputs = armed.map(t => ({ track: t, entry: trackInputs.get(t.id) })).filter(x => x.entry);
+        if (!inputs.length || recording) return;
 
-        recording = { track, startP, recorder, placeholderEl };
+        const ctx = getAudioContext();
+        if (ctx.state === 'suspended') { try { await ctx.resume(); } catch (_) {} }
+        const sr = ctx.sampleRate;
+        const barDur = (60 / state.bpm) * (state.timeSignature[0] || 4);
+        const punch = state.punchEnabled && state.loopEnd > state.loopStart ? { in: state.loopStart, out: state.loopEnd } : null;
+        const rec = { takes: [], placeholders: [], punch, postRoll: punch ? barDur / 2 : 0, stopping: false, startP: 0, startCtx: 0 };
+        recording = rec;
+
+        if (state.isPlaying && playback) {
+            // Punch in on the fly: capture from right now (a loop pass, if armed, is dropped for the take)
+            if (playback.loop) resyncPlayback();
+            rec.startP = punch ? Math.max(punch.in, currentTimelineTime()) : currentTimelineTime();
+            rec.startCtx = playback.baseCtxTime + (rec.startP - playback.baseTimelineTime);
+        }
+        else {
+            rec.startP = punch ? punch.in : state.currentTime;
+            const preRoll = punch ? Math.min(rec.startP, recordSettings.preRollBars * barDur) : 0;
+            const countIn = recordSettings.countInBars > 0 ? recordSettings.countInBars * barDur : 0;
+            state.currentTime = rec.startP - preRoll;
+            const pb = await startPlayback({ delay: countIn });
+            if (!pb || recording !== rec) {
+                if (recording === rec) recording = null;
+                return;
+            }
+            rec.startCtx = pb.baseCtxTime + preRoll;
+            if (countIn > 0) scheduleCountIn(ctx, pb.baseCtxTime, countIn);
+        }
+
+        const startFrame = Math.round(rec.startCtx * sr);
+        for (const { track, entry } of inputs) {
+            const latency = Math.max(0, entry.latency + outputLatency(ctx) + recordSettings.offsetMs / 1000);
+            entry.capture.start(startFrame);
+            const take = { track, entry, latency, stopFrame: undefined };
+            // A punch stops itself at the out point (plus the latency the take is shifted by)
+            if (punch) {
+                take.stopFrame = Math.round((rec.startCtx + (punch.out - rec.startP) + latency) * sr);
+                entry.capture.stop(take.stopFrame);
+            }
+            rec.takes.push(take);
+            rec.placeholders.push(createRecordingPlaceholder(track, rec.startP));
+        }
         state.isRecording = true;
         updateRecordButton(true);
-        if (!state.isPlaying) startPlayback(); // hear the other tracks while recording
+        kickMeters();
     }
 
     async function stopRecordingFlow() {
-        if (!recording) return;
         const rec = recording;
+        if (!rec || rec.stopping) return;
+        rec.stopping = true;
         state.isRecording = false;
         updateRecordButton(false);
-        try { await rec.recorder.stopRecording(); } catch (_) {} // 'end' event finalizes
+        const ctx = getAudioContext();
+        const sr = ctx.sampleRate;
+        const nowFrame = Math.round(ctx.currentTime * sr);
+        // Keep capturing for the latency the take will be shifted by, so the last notes played are kept
+        const results = await Promise.all(rec.takes.map(t => {
+            const want = nowFrame + Math.round(t.latency * sr);
+            // A punch never runs past its own out point, even when Stop comes during the post-roll
+            return t.entry.capture.stop(t.stopFrame !== undefined ? Math.min(t.stopFrame, want) : want).catch(() => null);
+        }));
         stopPlayback();
-        // Safety net: if 'record-end' never fires, clear the session so playback
-        // doesn't stay stuck in record mode
-        setTimeout(() => {
-            if (recording === rec) {
-                console.warn('[AudioDaw] record-end never fired; aborting recording session');
-                abortRecording();
-            }
-        }, 2000);
-    }
-
-    /** 'record-end' handler: turn the captured blob into a real clip at the record start. */
-    async function finalizeRecording(blob) {
-        const rec = recording;
-        if (!rec) return;
-        recording = null;
-        try { rec.recorder.destroy(); } catch (_) {}
-        rec.placeholderEl.remove();
-        if (!blob || blob.size === 0) return;
+        if (recording === rec) recording = null;
+        removeRecordingPlaceholders(rec);
+        const made = [];
+        rec.takes.forEach((take, i) => {
+            const res = results[i];
+            if (!res || !res.channels.length || res.firstFrame < 0) return;
+            const drop = Math.round(take.latency * res.sampleRate);
+            const len = res.channels[0].length - drop;
+            if (len < res.sampleRate * 0.05) return; // under 50 ms: nothing was really recorded
+            const buf = new AudioBuffer({ numberOfChannels: res.channels.length, length: len, sampleRate: res.sampleRate });
+            res.channels.forEach((c, ch) => buf.copyToChannel(c.subarray(drop, drop + len), ch));
+            // The worklet may have begun a few frames after the planned start (message latency): place the take
+            // where its first kept sample really falls
+            const start = rec.startP + (res.firstFrame / res.sampleRate - rec.startCtx);
+            made.push({ track: take.track, blob: audioBufferToWav(buf, { bitDepth: 32 }), start, peak: maxAbs(res.channels) });
+        });
+        if (!made.length) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Nothing was recorded'), 'notice-pop-yellow');
+            return;
+        }
         pushUndo();
-        try {
-            await addClipToTrack(rec.track, blob, { name: 'Recording', startTime: rec.startP });
-            updateTotalDuration();
-            renderAllTracks();
-            updateBottomPanel();
-            resyncPlayback();
-            if (typeof doNoticePopover === 'function') doNoticePopover('Recording added', 'notice-pop-green');
-        } catch (err) {
-            console.error('[AudioDaw] Failed to add recording:', err);
-            if (typeof doNoticePopover === 'function') {
-                doNoticePopover(translate('Failed to add recording:') + ' ' + err.message, 'notice-pop-red');
-            }
+        for (const m of made) {
+            m.track.takeCount = (m.track.takeCount || 0) + 1;
+            const clip = await addClipToTrack(m.track, m.blob, {
+                name: `${m.track.name} ${translate('take')} ${m.track.takeCount}`,
+                startTime: Math.max(0, m.start)
+            });
+            state.selectedClipId = clip.id;
+            state.selectedTrackId = m.track.id;
+        }
+        updateTotalDuration();
+        renderAllTracks();
+        updateBottomPanel();
+        resyncPlayback();
+        const silent = made.filter(m => m.peak < 0.001).length;
+        if (typeof doNoticePopover === 'function') {
+            doNoticePopover(silent === made.length
+                ? translate('Recorded, but the input was silent. Check the track input and the device level')
+                : `${translate('Recorded')} ${made.length} ${made.length === 1 ? translate('take') : translate('takes')}`,
+                silent === made.length ? 'notice-pop-yellow' : 'notice-pop-green');
         }
     }
 
-    /** Abort an in-flight recording without keeping audio (modal teardown). */
+    function maxAbs(channels) {
+        let peak = 0;
+        for (const c of channels) {
+            for (let i = 0; i < c.length; i += 16) {
+                const v = c[i] < 0 ? -c[i] : c[i];
+                if (v > peak) peak = v;
+            }
+        }
+        return peak;
+    }
+
+    /** Abort an in-flight recording without keeping audio (teardown, project switch). */
     function abortRecording() {
         if (!recording) return;
         const rec = recording;
-        recording = null; // null first so the 'end' handler no-ops
-        try { rec.recorder.stopRecording(); } catch (_) {}
-        try { rec.recorder.destroy(); } catch (_) {}
-        rec.placeholderEl.remove();
+        recording = null;
+        for (const take of rec.takes) {
+            try { take.entry.capture.stop(); } catch (_) {}
+        }
+        removeRecordingPlaceholders(rec);
         if (state) state.isRecording = false;
         updateRecordButton(false);
+    }
+
+    /** A growing red clip on the lane with the take's live waveform, drawn from the input's level. */
+    function createRecordingPlaceholder(track, startP) {
+        const el = createDiv(null, 'daw-clip daw-clip-recording');
+        el.style.left = (startP * state.zoom) + 'px';
+        el.style.width = '2px';
+        const label = createSpan(null, 'daw-clip-label');
+        label.textContent = translate('Recording');
+        el.appendChild(label);
+        const strip = createDiv(null, 'daw-rec-strip');
+        el.appendChild(strip);
+        track.laneEl?.appendChild(el);
+        return { track, el, strip, tiles: [], lastX: 0, startP };
+    }
+
+    function updateRecordingPlaceholders() {
+        if (!recording) return;
+        const t = state.currentTime;
+        for (const ph of recording.placeholders) {
+            // A lane rebuilt mid-take (track list re-render) gets its placeholder back
+            if (ph.track.laneEl && ph.el.parentElement !== ph.track.laneEl) ph.track.laneEl.appendChild(ph.el);
+            ph.el.style.left = (ph.startP * state.zoom) + 'px';
+            if (t <= ph.startP) continue; // count-in or pre-roll: nothing captured yet
+            const x = (t - ph.startP) * state.zoom;
+            ph.el.style.width = Math.max(2, x) + 'px';
+            const entry = trackInputs.get(ph.track.id);
+            drawPlaceholderLevel(ph, x, entry ? entry.level : 0);
+        }
+    }
+
+    function drawPlaceholderLevel(ph, x, level) {
+        const TILE = 1024;
+        const h = Math.max(8, (ph.track.height || 100) - 8);
+        while (ph.tiles.length * TILE < x + 1) {
+            const c = document.createElement('canvas');
+            c.width = TILE;
+            c.height = h;
+            c.className = 'daw-rec-tile';
+            c.style.left = (ph.tiles.length * TILE) + 'px';
+            ph.strip.appendChild(c);
+            ph.tiles.push(c);
+        }
+        const amp = Math.max(1, levelToPct(level) * h * 0.48);
+        for (let px = Math.floor(ph.lastX); px <= Math.floor(x); px++) {
+            const tile = ph.tiles[Math.floor(px / TILE)];
+            if (!tile) continue;
+            const g = tile.getContext('2d');
+            g.fillStyle = 'rgba(255, 255, 255, 0.75)';
+            g.fillRect(px % TILE, h / 2 - amp, 1, amp * 2);
+        }
+        ph.lastX = x;
+    }
+
+    function removeRecordingPlaceholders(rec) {
+        for (const ph of rec.placeholders) ph.el.remove();
+        rec.placeholders = [];
     }
 
     // ===== UNDO / REDO =====
@@ -3964,6 +4684,9 @@ const AudioDaw = (() => {
             track.muted = ts.muted;
             track.soloed = ts.soloed;
             track.armed = ts.armed;
+            track.monitor = !!ts.monitor;
+            track.input = { deviceId: ts.input?.deviceId || null, channels: ts.input?.channels ?? 'mono' };
+            track.takeCount = ts.takeCount || 0;
             track.fx = (ts.fx || []).filter(f => typeof AudioDawFx === 'undefined' || AudioDawFx.FX_DEFS[f.type])
                 .map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));
             track.automation = {
@@ -4000,6 +4723,14 @@ const AudioDaw = (() => {
         updateTotalDuration();
         renderAllTracks();
         resyncPlayback();
+        // Inputs follow the restored arm/monitor state; tracks that no longer exist lose theirs
+        const live = new Set(state.tracks.map(t => t.id));
+        for (const id of [...trackInputs.keys()]) {
+            if (!live.has(id)) closeTrackInput(id);
+        }
+        for (const t of state.tracks) {
+            if (t.armed || t.monitor || trackInputs.has(t.id)) syncTrackInput(t).catch(err => reportInputError(t, err));
+        }
     }
 
     /**
@@ -4882,6 +5613,7 @@ const AudioDaw = (() => {
             masterVolume: state.masterVolume,
             rulerMode: state.rulerMode,
             snapEnabled: state.snapEnabled,
+            metronome: state.metronome,
             beatPattern: {
                 steps: state.beatPattern.steps,
                 swing: state.beatPattern.swing,
@@ -4915,6 +5647,8 @@ const AudioDaw = (() => {
     async function restoreProject(project, blobs) {
         abortRecording();
         stopPlayback();
+        closeAllInputs();
+        destroyMixer();
         for (const track of state.tracks) AudioDawTrack.destroyTrack(track);
         const keepZoom = state.zoom;
         state = getDefaultState();
@@ -4926,6 +5660,7 @@ const AudioDaw = (() => {
         state.rulerMode = project.rulerMode || 'time';
         state.snapEnabled = project.snapEnabled !== false;
         state.masterLimiterEnabled = project.masterLimiterEnabled !== false;
+        state.metronome = !!project.metronome;
         // Clear before anything is stored: clearing after the pad loop below wiped every pad's audio.
         blobStore.clear();
         if (project.beatPattern) {
@@ -4947,7 +5682,11 @@ const AudioDaw = (() => {
             track.pan = ts.pan || 0;
             track.muted = !!ts.muted;
             track.soloed = !!ts.soloed;
-            track.armed = !!ts.armed;
+            // Opening a project never opens a microphone: arm and monitor start off, the input choice is kept
+            track.armed = false;
+            track.monitor = false;
+            track.input = { deviceId: ts.input?.deviceId || null, channels: ts.input?.channels ?? 'mono' };
+            track.takeCount = ts.takeCount || 0;
             track.fx = (ts.fx || []).filter(f => typeof AudioDawFx === 'undefined' || AudioDawFx.FX_DEFS[f.type])
                 .map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));
             track.automation = {
@@ -5287,14 +6026,14 @@ const AudioDaw = (() => {
     }
 
     /**
-     * Convert an AudioBuffer to a WAV Blob.
-     * Pure JS implementation — no dependency on Crunker for export.
+     * Convert an AudioBuffer to a WAV Blob. Pure JS, no dependency on Crunker for export.
+     * @param {Object} [opts] - { bitDepth: 16 (PCM, default), 24 (PCM) or 32 (IEEE float, lossless) }
      */
-    function audioBufferToWav(buffer) {
+    function audioBufferToWav(buffer, { bitDepth = 16 } = {}) {
         const numChannels = buffer.numberOfChannels;
         const sampleRate = buffer.sampleRate;
-        const format = 1; // PCM
-        const bitDepth = 16;
+        const isFloat = bitDepth === 32;
+        const format = isFloat ? 3 : 1; // 3 = IEEE float, 1 = PCM
         const bytesPerSample = bitDepth / 8;
         const blockAlign = numChannels * bytesPerSample;
         const numSamples = buffer.length;
@@ -5326,9 +6065,23 @@ const AudioDaw = (() => {
         let offset = 44;
         for (let i = 0; i < numSamples; i++) {
             for (let ch = 0; ch < numChannels; ch++) {
-                const sample = Math.max(-1, Math.min(1, channels[ch][i]));
-                view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
-                offset += 2;
+                const raw = channels[ch][i];
+                if (isFloat) {
+                    view.setFloat32(offset, raw, true);
+                }
+                else {
+                    const sample = Math.max(-1, Math.min(1, raw));
+                    if (bitDepth === 24) {
+                        const v = Math.round(sample < 0 ? sample * 0x800000 : sample * 0x7FFFFF);
+                        view.setUint8(offset, v & 0xFF);
+                        view.setUint8(offset + 1, (v >> 8) & 0xFF);
+                        view.setUint8(offset + 2, (v >> 16) & 0xFF);
+                    }
+                    else {
+                        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+                    }
+                }
+                offset += bytesPerSample;
             }
         }
 
@@ -5352,6 +6105,17 @@ const AudioDaw = (() => {
             if (recording) stopRecordingFlow();
             else togglePlayback();
         }
+        else if (key === 'r' && e.shiftKey && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            const track = getSelectedTrack();
+            if (track) toggleArm(track);
+        }
+        else if (key === 'i' && !e.ctrlKey && !e.metaKey) {
+            const track = getSelectedTrack();
+            if (track) toggleMonitor(track);
+        }
+        else if (key === 'c' && !e.ctrlKey && !e.metaKey) { toggleMetronome(); }
+        else if (key === 'p' && !e.ctrlKey && !e.metaKey) { togglePunch(); }
         else if (key === 'r' && !e.ctrlKey && !e.metaKey) {
             e.preventDefault();
             if (recording) stopRecordingFlow();
@@ -5419,6 +6183,8 @@ const AudioDaw = (() => {
             ['Space', 'Play / Pause (stops recording)'],
             ['R', 'Start / stop recording'],
             ['L', 'Toggle loop'],
+            ['C / P', 'Metronome / punch recording'],
+            ['Shift+R / I', 'Arm / monitor the selected track'],
             ['M / S', 'Mute / solo selected track'],
             ['T', 'Split selected clip at playhead'],
             ['Delete', 'Delete selected clip'],
@@ -5468,6 +6234,8 @@ const AudioDaw = (() => {
         stopBeatAudition();
         stopPlayback();
         teardownPlaybackGraph();
+        closeAllInputs();
+        destroyMixer();
         // Destroy existing tracks
         if (state) {
             for (const track of state.tracks) {
@@ -5490,6 +6258,10 @@ const AudioDaw = (() => {
         paletteResults = [];
         stopPlayback();
         teardownPlaybackGraph();
+        closeAllInputs();
+        AudioDawInput.releaseAll();
+        destroyMixer();
+        if (meterRaf) { cancelAnimationFrame(meterRaf); meterRaf = null; }
         if (state) {
             for (const track of state.tracks) {
                 AudioDawTrack.destroyTrack(track);

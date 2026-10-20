@@ -88,7 +88,10 @@ const AudioDawTrack = (() => {
             pan: 0.0,
             muted: false,
             soloed: false,
-            armed: false,
+            armed: false,                            // R: records on the transport's Record
+            monitor: false,                          // I: hear the live input through this track
+            input: { deviceId: null, channels: 'mono' }, // device (null = system default); 'mono', 'stereo' or a 1-based channel
+            takeCount: 0,
             color: opts.color || TRACK_COLORS[(id - 1) % TRACK_COLORS.length],
             height: opts.height || 100,
             collapsed: false,
@@ -105,29 +108,46 @@ const AudioDawTrack = (() => {
 
     // ===== TRACK HEADER UI =====
 
+    /** Short text for a track's input: "Default · Mono", "USB Mic · In 2". */
+    function inputText(track, deviceLabel) {
+        const ch = track.input?.channels ?? 'mono';
+        const chText = ch === 'stereo' ? translate('Stereo') : (typeof ch === 'number' ? `${translate('In')} ${ch}` : translate('Mono'));
+        const dev = track.input?.deviceId ? (deviceLabel || translate('Input')) : translate('Default');
+        return `${dev} · ${chText}`;
+    }
+
+    function dbText(v) {
+        return v <= 0 ? '-∞' : (20 * Math.log10(v)).toFixed(1);
+    }
+
     /**
-     * Build the track header DOM element.
+     * Build the track header DOM element, laid out like a pro DAW's track column:
+     * number + name; R (arm), I (input monitor), S, M, automation, pan, volume; input chooser, inserts, dB; meter.
      * @param {Object} track - Track data
-     * @param {Object} callbacks - Event callbacks { onMute, onSolo, onVolume, onArm, onSelect, onRename }
+     * @param {Object} callbacks - { onMute, onSolo, onVolume, onPan, onArm, onMonitor, onInputMenu, onOpenFx,
+     *   onSelect, onRename, onRecolor, onAutomationToggle, onRemove, onTrackMenu, inputLabel(track) }
+     * @param {number} index - position in the track list (shown as the track number)
      * @returns {HTMLElement}
      */
-    function buildTrackHeader(track, callbacks = {}) {
+    function buildTrackHeader(track, callbacks = {}, index = 0) {
         const header = createDiv(null, 'daw-track-header');
         header.dataset.trackId = track.id;
         header.style.height = track.height + 'px';
         header.style.borderLeft = `3px solid ${track.color}`;
-        header.title = translate('Right-click to change track color');
-
-        // Top row: name + remove button. Track color shows via the header's left
-        // border; right-click the header to recolor.
-        const topRow = createDiv(null, 'daw-track-name-row');
+        header.title = translate('Right-click for track options');
         header.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            if (callbacks.onRecolor) callbacks.onRecolor(track, e);
+            if (callbacks.onTrackMenu) callbacks.onTrackMenu(track, e);
+            else if (callbacks.onRecolor) callbacks.onRecolor(track, e);
         });
 
-        // Track name (editable)
+        // Row 1: number + name + remove
+        const topRow = createDiv(null, 'daw-track-name-row');
+        const num = createSpan(null, 'daw-track-num');
+        num.textContent = String(index + 1);
+        topRow.appendChild(num);
+
         const nameEl = document.createElement('span');
         nameEl.className = 'daw-track-name';
         nameEl.textContent = track.name;
@@ -145,6 +165,7 @@ const AudioDawTrack = (() => {
         nameEl.addEventListener('blur', () => {
             nameEl.contentEditable = 'false';
             track.name = nameEl.textContent.trim() || track.name;
+            nameEl.textContent = track.name;
             if (callbacks.onRename) callbacks.onRename(track);
         });
         nameEl.addEventListener('keydown', (e) => {
@@ -153,7 +174,6 @@ const AudioDawTrack = (() => {
         });
         topRow.appendChild(nameEl);
 
-        // Remove track button (visible on hover)
         const removeBtn = document.createElement('button');
         removeBtn.className = 'daw-track-remove';
         removeBtn.innerHTML = '&#x2715;';
@@ -163,79 +183,44 @@ const AudioDawTrack = (() => {
             if (callbacks.onRemove) callbacks.onRemove(track);
         });
         topRow.appendChild(removeBtn);
-
         header.appendChild(topRow);
 
-        // Control buttons row
+        // Row 2: R I S M, automation, pan, volume
         const controls = createDiv(null, 'daw-track-controls');
-
-        // Mute
-        const muteBtn = document.createElement('button');
-        muteBtn.className = 'daw-track-btn' + (track.muted ? ' active-mute' : '');
-        muteBtn.dataset.role = 'mute';
-        muteBtn.textContent = translate('M');
-        muteBtn.title = translate('Mute');
-        muteBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            track.muted = !track.muted;
-            muteBtn.classList.toggle('active-mute', track.muted);
-            if (callbacks.onMute) callbacks.onMute(track);
+        const mkBtn = (role, label, title, activeClass, isActive, onClick) => {
+            const b = document.createElement('button');
+            b.className = 'daw-track-btn' + (isActive ? ' ' + activeClass : '');
+            b.dataset.role = role;
+            b.textContent = label;
+            b.title = title;
+            b.addEventListener('click', (e) => {
+                e.stopPropagation();
+                onClick(b);
+            });
+            controls.appendChild(b);
+            return b;
+        };
+        mkBtn('arm', translate('R'), translate('Record arm: records on the transport\'s Record (Shift+R)'), 'active-arm', track.armed, (b) => {
+            if (callbacks.onArm) callbacks.onArm(track);
+            b.classList.toggle('active-arm', track.armed);
         });
-        controls.appendChild(muteBtn);
-
-        // Solo
-        const soloBtn = document.createElement('button');
-        soloBtn.className = 'daw-track-btn' + (track.soloed ? ' active-solo' : '');
-        soloBtn.dataset.role = 'solo';
-        soloBtn.textContent = translate('S');
-        soloBtn.title = translate('Solo');
-        soloBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
+        mkBtn('monitor', translate('I'), translate('Input monitor: hear the live input through this track (I)'), 'active-monitor', track.monitor, (b) => {
+            if (callbacks.onMonitor) callbacks.onMonitor(track);
+            b.classList.toggle('active-monitor', track.monitor);
+        });
+        mkBtn('solo', translate('S'), translate('Solo'), 'active-solo', track.soloed, (b) => {
             track.soloed = !track.soloed;
-            soloBtn.classList.toggle('active-solo', track.soloed);
+            b.classList.toggle('active-solo', track.soloed);
             if (callbacks.onSolo) callbacks.onSolo(track);
         });
-        controls.appendChild(soloBtn);
-
-        // Volume slider (compact inline, dB taper shared with the mixer)
-        const hasTaper = typeof AudioDawMixer !== 'undefined' && AudioDawMixer.gainToFaderPos;
-        const volSlider = document.createElement('input');
-        volSlider.type = 'range';
-        volSlider.className = 'daw-track-volume';
-        volSlider.dataset.role = 'volume';
-        volSlider.min = '0';
-        volSlider.max = '1';
-        volSlider.step = '0.005';
-        volSlider.value = hasTaper ? AudioDawMixer.gainToFaderPos(track.volume) : track.volume;
-        // Live readout: re-assigned on every drag, so it translates itself here and must stay off class="translate".
-        const volTitle = (v) => `${translate('Volume')}: ${v <= 0 ? '-∞' : (20 * Math.log10(v)).toFixed(1)} dB`;
-        volSlider.title = volTitle(track.volume);
-        volSlider.addEventListener('input', (e) => {
-            const p = parseFloat(e.target.value);
-            track.volume = hasTaper ? AudioDawMixer.faderPosToGain(p) : p;
-            volSlider.title = volTitle(track.volume);
-            if (callbacks.onVolume) callbacks.onVolume(track);
+        mkBtn('mute', translate('M'), translate('Mute'), 'active-mute', track.muted, (b) => {
+            track.muted = !track.muted;
+            b.classList.toggle('active-mute', track.muted);
+            if (callbacks.onMute) callbacks.onMute(track);
         });
-        volSlider.addEventListener('dblclick', () => {
-            track.volume = 1;
-            volSlider.value = hasTaper ? AudioDawMixer.gainToFaderPos(1) : 1;
-            volSlider.title = volTitle(1);
-            if (callbacks.onVolume) callbacks.onVolume(track);
+        mkBtn('automation', translate('A'), translate('Show/hide the automation lane'), 'active-solo', track.automationVisible, () => {
+            if (callbacks.onAutomationToggle) callbacks.onAutomationToggle(track);
         });
-        controls.appendChild(volSlider);
-
-        // Arm (record)
-        const armBtn = document.createElement('button');
-        armBtn.className = 'daw-track-btn daw-track-arm' + (track.armed ? ' active-arm' : '');
-        armBtn.textContent = translate('R');
-        armBtn.title = translate('Arm for recording');
-        armBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            track.armed = !track.armed;
-            armBtn.classList.toggle('active-arm', track.armed);
-            if (callbacks.onArm) callbacks.onArm(track);
-        });
-        controls.appendChild(armBtn);
 
         // Pan knob (reuses the mixer's knob widget)
         if (typeof AudioDawMixer !== 'undefined' && AudioDawMixer.createKnob) {
@@ -251,19 +236,67 @@ const AudioDawTrack = (() => {
             controls.appendChild(knob);
         }
 
-        // Automation lane toggle
-        const autoBtn = document.createElement('button');
-        autoBtn.className = 'daw-track-btn' + (track.automationVisible ? ' active-solo' : '');
-        autoBtn.dataset.role = 'automation';
-        autoBtn.textContent = translate('A');
-        autoBtn.title = translate('Show/hide automation lane');
-        autoBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (callbacks.onAutomationToggle) callbacks.onAutomationToggle(track);
-        });
-        controls.appendChild(autoBtn);
-
+        // Volume slider (compact inline, dB taper shared with the mixer)
+        const hasTaper = typeof AudioDawMixer !== 'undefined' && AudioDawMixer.gainToFaderPos;
+        const volSlider = document.createElement('input');
+        volSlider.type = 'range';
+        volSlider.className = 'daw-track-volume';
+        volSlider.dataset.role = 'volume';
+        volSlider.min = '0';
+        volSlider.max = '1';
+        volSlider.step = '0.005';
+        volSlider.value = hasTaper ? AudioDawMixer.gainToFaderPos(track.volume) : track.volume;
+        // Live readout: re-assigned on every drag, so it translates itself here and must stay off class="translate".
+        const volTitle = (v) => `${translate('Volume')}: ${dbText(v)} dB`;
+        volSlider.title = volTitle(track.volume);
+        controls.appendChild(volSlider);
         header.appendChild(controls);
+
+        // Row 3: input chooser, inserts, volume readout
+        const io = createDiv(null, 'daw-track-io');
+        const inBtn = document.createElement('button');
+        inBtn.className = 'daw-track-input';
+        inBtn.dataset.role = 'input';
+        inBtn.textContent = inputText(track, callbacks.inputLabel?.(track));
+        inBtn.title = translate('Input: device and channels this track records and monitors');
+        inBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (callbacks.onInputMenu) callbacks.onInputMenu(track, e);
+        });
+        io.appendChild(inBtn);
+        const fxBtn = document.createElement('button');
+        fxBtn.className = 'daw-track-fxcount' + (track.fx.length ? ' has-fx' : '');
+        fxBtn.dataset.role = 'fx';
+        fxBtn.textContent = track.fx.length ? `FX ${track.fx.length}` : 'FX';
+        fxBtn.title = track.fx.length
+            ? translate('Inserts') + ': ' + track.fx.map(f => f.type).join(', ')
+            : translate('No inserts. Click to add effects');
+        fxBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (callbacks.onOpenFx) callbacks.onOpenFx(track);
+        });
+        io.appendChild(fxBtn);
+        const volVal = createSpan(null, 'daw-track-vol-val');
+        volVal.dataset.role = 'volume-value';
+        volVal.textContent = dbText(track.volume);
+        volVal.title = translate('Track volume in dB (double-click the slider for 0 dB)');
+        io.appendChild(volVal);
+        header.appendChild(io);
+
+        volSlider.addEventListener('input', (e) => {
+            const p = parseFloat(e.target.value);
+            track.volume = hasTaper ? AudioDawMixer.faderPosToGain(p) : p;
+            volSlider.title = volTitle(track.volume);
+            volVal.textContent = dbText(track.volume);
+            if (callbacks.onVolume) callbacks.onVolume(track);
+        });
+        volSlider.addEventListener('dblclick', () => {
+            track.volume = 1;
+            volSlider.value = hasTaper ? AudioDawMixer.gainToFaderPos(1) : 1;
+            volSlider.title = volTitle(1);
+            volVal.textContent = dbText(1);
+            if (callbacks.onVolume) callbacks.onVolume(track);
+        });
 
         // Live stereo meter (OBS-style: zone gradient lights up to the level, L/R bars)
         const meter = createDiv(null, 'daw-meter-hpair daw-track-meter-pair');
@@ -278,6 +311,7 @@ const AudioDawTrack = (() => {
             track.meterChans.push({ mask, peak: peakTick });
         }
         header.appendChild(meter);
+        header.classList.toggle('armed', !!track.armed);
 
         // Click to select track
         header.addEventListener('click', () => {
@@ -285,6 +319,7 @@ const AudioDawTrack = (() => {
         });
 
         track.headerEl = header;
+        track.headerCallbacks = callbacks;
         return header;
     }
 
@@ -642,15 +677,21 @@ const AudioDawTrack = (() => {
      */
     function syncHeaderControls(track) {
         if (!track.headerEl) return;
-        const muteBtn = track.headerEl.querySelector('[data-role="mute"]');
-        const soloBtn = track.headerEl.querySelector('[data-role="solo"]');
-        const volSlider = track.headerEl.querySelector('[data-role="volume"]');
-        if (muteBtn) muteBtn.classList.toggle('active-mute', track.muted);
-        if (soloBtn) soloBtn.classList.toggle('active-solo', track.soloed);
+        const q = (role) => track.headerEl.querySelector(`[data-role="${role}"]`);
+        q('mute')?.classList.toggle('active-mute', track.muted);
+        q('solo')?.classList.toggle('active-solo', track.soloed);
+        q('arm')?.classList.toggle('active-arm', !!track.armed);
+        q('monitor')?.classList.toggle('active-monitor', !!track.monitor);
+        track.headerEl.classList.toggle('armed', !!track.armed);
+        const volSlider = q('volume');
         if (volSlider) {
             volSlider.value = (typeof AudioDawMixer !== 'undefined' && AudioDawMixer.gainToFaderPos)
                 ? AudioDawMixer.gainToFaderPos(track.volume) : track.volume;
         }
+        const volVal = q('volume-value');
+        if (volVal) volVal.textContent = dbText(track.volume);
+        const inBtn = q('input');
+        if (inBtn) inBtn.textContent = inputText(track, track.headerCallbacks?.inputLabel?.(track));
     }
 
     const AUTO_LANE_H = 40;
@@ -848,6 +889,9 @@ const AudioDawTrack = (() => {
             muted: track.muted,
             soloed: track.soloed,
             armed: track.armed,
+            monitor: !!track.monitor,
+            input: { deviceId: track.input?.deviceId || null, channels: track.input?.channels ?? 'mono' },
+            takeCount: track.takeCount || 0,
             color: track.color,
             height: track.height,
             // Deep copies: undo snapshots must never alias the live objects
