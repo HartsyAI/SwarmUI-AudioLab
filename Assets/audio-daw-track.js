@@ -83,6 +83,9 @@ const AudioDawTrack = (() => {
         return {
             id: `track-${id}`,
             name: opts.name || `Track ${id}`,
+            kind: opts.kind === 'instrument' ? 'instrument' : 'audio', // instrument tracks play MIDI clips
+            instrument: opts.instrument || null,     // AudioDawInstruments.createInstrument() for instrument tracks
+            midiClips: [],                           // [{id, name, startTime, length, notes: [{id, pitch, start, dur, vel}], muted, color}]
             clips: [],
             volume: 0.8,
             pan: 0.0,
@@ -110,6 +113,10 @@ const AudioDawTrack = (() => {
 
     /** Short text for a track's input: "Default · Mono", "USB Mic · In 2". */
     function inputText(track, deviceLabel) {
+        if (track.kind === 'instrument') {
+            const inst = track.instrument;
+            return `MIDI · ${inst?.type === 'sampler' ? (inst.sampleName || translate('Sampler')) : (inst?.preset || translate('Synth'))}`;
+        }
         const ch = track.input?.channels ?? 'mono';
         const chText = ch === 'stereo' ? translate('Stereo') : (typeof ch === 'number' ? `${translate('In')} ${ch}` : translate('Mono'));
         const dev = track.input?.deviceId ? (deviceLabel || translate('Input')) : translate('Default');
@@ -258,7 +265,9 @@ const AudioDawTrack = (() => {
         inBtn.className = 'daw-track-input';
         inBtn.dataset.role = 'input';
         inBtn.textContent = inputText(track, callbacks.inputLabel?.(track));
-        inBtn.title = translate('Input: device and channels this track records and monitors');
+        inBtn.title = track.kind === 'instrument'
+            ? translate('Instrument and MIDI input: the sound this track plays, keyboard and MIDI device')
+            : translate('Input: device and channels this track records and monitors');
         inBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             if (callbacks.onInputMenu) callbacks.onInputMenu(track, e);
@@ -312,6 +321,7 @@ const AudioDawTrack = (() => {
         }
         header.appendChild(meter);
         header.classList.toggle('armed', !!track.armed);
+        header.classList.toggle('instrument', track.kind === 'instrument');
 
         // Click to select track
         header.addEventListener('click', () => {
@@ -1039,6 +1049,9 @@ const AudioDawTrack = (() => {
             monitor: !!track.monitor,
             input: { deviceId: track.input?.deviceId || null, channels: track.input?.channels ?? 'mono' },
             takeCount: track.takeCount || 0,
+            kind: track.kind || 'audio',
+            instrument: track.instrument ? JSON.parse(JSON.stringify(track.instrument)) : null,
+            midiClips: (track.midiClips || []).map(c => ({ ...c, notes: c.notes.map(n => ({ ...n })) })),
             color: track.color,
             height: track.height,
             // Deep copies: undo snapshots must never alias the live objects

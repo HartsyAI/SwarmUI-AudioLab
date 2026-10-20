@@ -81,6 +81,7 @@ const AudioDaw = (() => {
             contentDuration: 0, // end of the last clip — playback/export stop here
             selectedTrackId: null,
             selectedClipId: null,
+            selectedMidiClipId: null,
             undoStack: [],
             redoStack: []
         };
@@ -122,6 +123,8 @@ const AudioDaw = (() => {
         initialized = true;
         sizeDawContainer();
         resetState();
+        AudioDawInstruments.setSampleResolver((key) => blobStore.get(key)?.decodedBuffer || null);
+        AudioDawInstruments.setLiveHandler({ noteOn: liveNoteOn, noteOff: liveNoteOff });
         initLayout();
         renderAllTracks();
         updateTimeDisplay();
@@ -624,7 +627,8 @@ const AudioDaw = (() => {
     function showImportMenu(e) {
         dawMenu(e, [
             { label: translate('From Outputs…'), action: () => showOutputsPicker(e) },
-            { label: translate('From Computer…'), action: () => importAudioToTrack() }
+            { label: translate('From Computer…'), action: () => importAudioToTrack() },
+            { label: translate('MIDI file…'), action: () => importMidiFile(getSelectedTrack()?.kind === 'instrument' ? getSelectedTrack() : null) }
         ]);
     }
 
@@ -1255,6 +1259,31 @@ const AudioDaw = (() => {
         const fxContent = bottomPanelEl.querySelector('.daw-bottom-tab-content[data-tab="fx"]');
         if (fxContent && typeof AudioDawFx !== 'undefined') {
             AudioDawFx.renderFxPanel(fxContent, getSelectedTrack(), fxPanelCallbacks());
+        }
+
+        // Piano roll for the selected MIDI clip
+        const prPane = bottomPanelEl.querySelector('.daw-bottom-tab-content[data-tab="pianoroll"]');
+        if (prPane) {
+            const found = findMidiClip(state.selectedMidiClipId);
+            AudioDawInstruments.renderPianoRoll(prPane, found?.clip || null, found?.track || null, {
+                zoom: Math.max(80, Math.min(400, state.zoom * 1.5)),
+                gridStep: () => gridStep(),
+                snap: (t) => found ? snapTime(found.clip.startTime + t) - found.clip.startTime : t,
+                bpm: () => state.bpm,
+                play: (pitch, vel) => {
+                    if (!found) return;
+                    const ctx = getAudioContext();
+                    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
+                    AudioDawInstruments.startVoice(ctx, chainFor(found.track).input, found.track.instrument, pitch, vel, ctx.currentTime, 0.3, instrumentSample(found.track));
+                    kickMeters();
+                },
+                onGestureStart: () => pushUndo(),
+                onChanged: () => {
+                    updateTotalDuration();
+                    renderAllTracks();
+                    resyncPlayback();
+                }
+            });
         }
 
         // Selection only — the Score pane itself is built once, so an in-progress edit is never wiped.
@@ -2767,7 +2796,7 @@ const AudioDaw = (() => {
             onPan: () => { updatePlaybackGains(); },
             onArm: (track) => toggleArm(track),
             onMonitor: (track) => toggleMonitor(track),
-            onInputMenu: (track, e) => showTrackInputMenu(track, e),
+            onInputMenu: (track, e) => track.kind === 'instrument' ? showInstrumentMenu(track, e) : showTrackInputMenu(track, e),
             onOpenFx: (track) => {
                 state.selectedTrackId = track.id;
                 updateTrackSelection();
@@ -2801,6 +2830,7 @@ const AudioDaw = (() => {
             snapTime: (t) => snapTime(t),
             onClipSelect: (clip, track) => {
                 state.selectedClipId = clip.id;
+                state.selectedMidiClipId = null;
                 state.selectedTrackId = track.id;
                 updateTrackSelection();
                 updateBottomPanel();
@@ -2873,6 +2903,24 @@ const AudioDaw = (() => {
             clipLanesEl.appendChild(lane);
 
             AudioDawTrack.renderClips(track, state.zoom, clipCallbacks, state.selectedClipId);
+            if (track.kind === 'instrument') {
+                AudioDawInstruments.renderMidiClips(track, lane, {
+                    zoom: state.zoom,
+                    snapTime,
+                    selectedClipId: state.selectedMidiClipId,
+                    isRangeTool: () => state.tool === 'range',
+                    onSelect: (clip) => selectMidiClip(clip, track),
+                    onOpen: (clip) => selectMidiClip(clip, track, true),
+                    onContext: (e, clip) => showMidiClipMenu(e, clip, track),
+                    onGestureStart: () => pushUndo(),
+                    onChanged: () => {
+                        updateTotalDuration();
+                        renderAllTracks();
+                        updateBottomPanel();
+                        resyncPlayback();
+                    }
+                });
+            }
 
             if (track.automationVisible) {
                 const autoCallbacks = {
@@ -2905,12 +2953,22 @@ const AudioDaw = (() => {
         const addBtn = document.createElement('button');
         addBtn.className = 'daw-add-track';
         addBtn.innerHTML = `+ <span>${escapeHtml(translate('Add Track'))}</span>`;
-        addBtn.title = translate('Add an empty track');
-        addBtn.addEventListener('click', () => {
-            pushUndo();
-            const track = addTrack();
-            state.selectedTrackId = track.id;
-            renderAllTracks();
+        addBtn.title = translate('Add an audio or instrument track');
+        addBtn.addEventListener('click', (e) => {
+            dawMenu(e, [
+                { label: translate('Audio track'), action: () => {
+                    pushUndo();
+                    const track = addTrack();
+                    state.selectedTrackId = track.id;
+                    renderAllTracks();
+                }},
+                { label: translate('Instrument track (synth)'), action: () => addInstrumentTrack('synth') },
+                { label: translate('Instrument track (sampler)'), action: () => {
+                    const track = addInstrumentTrack('sampler');
+                    openInstrumentPanel(track, 'sampler');
+                }},
+                { label: translate('Import MIDI file…'), action: () => importMidiFile() }
+            ]);
         });
         trackHeadersEl.appendChild(addBtn);
 
@@ -2969,7 +3027,8 @@ const AudioDaw = (() => {
         // totalDuration = ruler length, kept longer so clips can be dragged past the end.
         let content = 0;
         for (const track of state.tracks) {
-            const td = AudioDawTrack.getTrackDuration(track);
+            let td = AudioDawTrack.getTrackDuration(track);
+            for (const mc of track.midiClips || []) td = Math.max(td, mc.startTime + AudioDawInstruments.midiClipLength(mc));
             if (td > content) content = td;
         }
         state.contentDuration = content;
@@ -3243,7 +3302,7 @@ const AudioDaw = (() => {
     }
 
     async function syncTrackInputNow(track) {
-        if (!state || !state.tracks.includes(track) || !(track.armed || track.monitor)) {
+        if (!state || !state.tracks.includes(track) || !(track.armed || track.monitor) || track.kind === 'instrument') {
             closeTrackInput(track.id);
             return;
         }
@@ -3732,6 +3791,8 @@ const AudioDaw = (() => {
             liveClips: [],
             clicks: [],
             clickSeen: null,
+            voices: [],
+            noteSeen: null,
             baseCtxTime: t0Ctx,
             baseTimelineTime: P,
             // Stop at the end of the music, not the ruler; starting past the
@@ -3803,6 +3864,7 @@ const AudioDaw = (() => {
             return;
         }
         scheduleClicks();
+        scheduleInstrumentNotes();
     }
 
     /**
@@ -3859,6 +3921,7 @@ const AudioDaw = (() => {
         for (const osc of playback.clicks || []) {
             try { osc.stop(); } catch (_) {}
         }
+        killPlaybackVoices();
         playback = null;
         if (mixer && state) {
             for (const track of state.tracks) {
@@ -3898,6 +3961,7 @@ const AudioDaw = (() => {
         }
         playback.clicks = [];
         playback.clickSeen = null;
+        killPlaybackVoices();
         const t0Ctx = ctx.currentTime + START_EPSILON;
         playback.baseCtxTime = t0Ctx;
         playback.baseTimelineTime = P;
@@ -4351,7 +4415,8 @@ const AudioDaw = (() => {
             },
             { label: translate('Duplicate track'), action: () => duplicateTrack(track) },
             { label: translate('Color…'), action: () => showTrackColorMenu(track, e) },
-            { label: translate('Input…'), action: () => showTrackInputMenu(track, e) },
+            { label: track.kind === 'instrument' ? translate('Instrument…') : translate('Input…'),
+                action: () => track.kind === 'instrument' ? showInstrumentMenu(track, e) : showTrackInputMenu(track, e) },
             { heading: translate('Height') },
             ...heights.map(([label, h]) => ({ label, checked: track.height === h, action: () => setTrackHeight(track, h) })),
             { heading: '' },
@@ -4394,6 +4459,9 @@ const AudioDaw = (() => {
         copy.automation = ts.automation;
         copy.automationVisible = ts.automationVisible;
         copy.automationParam = ts.automationParam;
+        copy.kind = ts.kind;
+        copy.instrument = ts.instrument;
+        for (const mc of ts.midiClips) newMidiClip(copy, mc.startTime, mc.length, mc.notes, mc.name);
         for (const c of track.clips) {
             const nc = AudioDawTrack.createClip(c.blob, { name: c.name, startTime: c.startTime, color: c.color, blobKey: c.blobKey });
             nc.decodedBuffer = c.decodedBuffer;
@@ -4443,6 +4511,591 @@ const AudioDaw = (() => {
         transportEl?.querySelector('.daw-btn-punch')?.classList.toggle('active', state.punchEnabled);
         if (timeline?.setPunch) timeline.setPunch(state.punchEnabled);
         updateLoopShade();
+    }
+
+    // ===== INSTRUMENT TRACKS =====
+    // Instrument tracks play MIDI clips through AudioDawInstruments' synth or sampler, into the track's own
+    // chain (inserts, fader, pan) like any other track. Live notes come from the computer keyboard, the
+    // on-screen keys or a MIDI device; while the transport records, armed instrument tracks capture them.
+
+    /** Like core's quickAppendButton, but returns the button and takes plain text (never HTML). */
+    function appendButton(div, text, fn, classes = '', title = '') {
+        const b = document.createElement('button');
+        b.className = 'basic-button' + classes;
+        b.textContent = text;
+        b.title = title;
+        b.addEventListener('click', (e) => fn(e, b));
+        div.appendChild(b);
+        return b;
+    }
+
+    let midiClipSeq = 0;
+    const liveVoices = new Map(); // `${trackId}:${pitch}` -> voice
+    let midiRecording = null;      // { startP, punch, takes: [{track, notes, open: Map<pitch, {start, vel}>}] }
+    let liveHintShown = false;
+
+    /** A sampler's decoded sample, from the blob store. */
+    function instrumentSample(track) {
+        const key = track.instrument?.sampleKey;
+        return key ? blobStore.get(key)?.decodedBuffer || null : null;
+    }
+
+    function newMidiClip(track, startTime, length, notes = [], name = null) {
+        const clip = {
+            id: `midi-${Date.now().toString(36)}-${++midiClipSeq}`,
+            name: name || `${track.name} MIDI`,
+            startTime: Math.max(0, startTime),
+            length: Math.max(0.05, length),
+            notes: notes.map((n, i) => ({ id: i + 1, pitch: n.pitch, start: n.start, dur: n.dur, vel: n.vel ?? 100 })),
+            muted: false,
+            color: null
+        };
+        track.midiClips.push(clip);
+        return clip;
+    }
+
+    function findMidiClip(id) {
+        if (!id) return null;
+        for (const track of state.tracks) {
+            const clip = (track.midiClips || []).find(c => c.id === id);
+            if (clip) return { clip, track };
+        }
+        return null;
+    }
+
+    /** New instrument track (synth preset or empty sampler), selected and ready to play. */
+    function addInstrumentTrack(type = 'synth', preset = 'Soft Keys', { snapshot = true } = {}) {
+        if (snapshot) pushUndo();
+        const inst = AudioDawInstruments.createInstrument(type, preset);
+        const track = addTrack({ kind: 'instrument', instrument: inst, name: nextTrackName(type === 'sampler' ? translate('Sampler') : preset) });
+        state.selectedTrackId = track.id;
+        renderAllTracks();
+        updateBottomPanel();
+        return track;
+    }
+
+    /** Which instrument tracks hear live notes: the armed ones, else the selected one. */
+    function liveTargets() {
+        const armed = state.tracks.filter(t => t.kind === 'instrument' && t.armed);
+        if (armed.length) return armed;
+        const sel = getSelectedTrack();
+        return sel?.kind === 'instrument' ? [sel] : [];
+    }
+
+    /** Timeline time of what the performer hears right now (the scheduled clock runs ahead by the output latency). */
+    function heardTimelineNow() {
+        return Math.max(0, currentTimelineTime() - outputLatency(getAudioContext()));
+    }
+
+    function liveNoteOn(pitch, vel) {
+        // While the Keys to Score card records, the keyboard writes into the score instead
+        if (keysState.recording) {
+            keysDown(pitch);
+            return;
+        }
+        const targets = liveTargets();
+        if (!targets.length) {
+            if (!liveHintShown && typeof doNoticePopover === 'function') {
+                liveHintShown = true;
+                doNoticePopover(translate('Select or arm an instrument track to play it (Add Track > Instrument)'), 'notice-pop-yellow');
+            }
+            return;
+        }
+        const ctx = getAudioContext();
+        if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
+        ensureMixer();
+        for (const track of targets) {
+            const key = `${track.id}:${pitch}`;
+            liveVoices.get(key)?.stop(ctx.currentTime);
+            liveVoices.set(key, AudioDawInstruments.startVoice(ctx, chainFor(track).input, track.instrument, pitch, vel, ctx.currentTime, null, instrumentSample(track)));
+            const take = midiRecording?.takes.find(t => t.track === track);
+            if (take) take.open.set(pitch, { start: heardTimelineNow(), vel });
+        }
+        kickMeters();
+        document.querySelectorAll(`.daw-keys-key[data-midi="${pitch}"]`).forEach(k => k.classList.add('pressed'));
+    }
+
+    function liveNoteOff(pitch) {
+        if (keysState.recording) keysUp(pitch);
+        const ctx = getAudioContext();
+        for (const [key, voice] of liveVoices) {
+            if (key.endsWith(':' + pitch)) {
+                voice.stop(ctx.currentTime);
+                liveVoices.delete(key);
+            }
+        }
+        for (const take of midiRecording?.takes || []) {
+            const open = take.open.get(pitch);
+            if (open) {
+                take.notes.push({ pitch, start: open.start, dur: Math.max(0.02, heardTimelineNow() - open.start), vel: open.vel });
+                take.open.delete(pitch);
+            }
+        }
+        document.querySelectorAll(`.daw-keys-key[data-midi="${pitch}"]`).forEach(k => k.classList.remove('pressed'));
+    }
+
+    function stopAllLiveVoices() {
+        const now = audioCtx && audioCtx.state !== 'closed' ? audioCtx.currentTime : 0;
+        for (const voice of liveVoices.values()) voice.stop(now);
+        liveVoices.clear();
+    }
+
+    /** Transport: schedule instrument notes inside the next ~250 ms, for the current pass and the next loop pass. */
+    function scheduleInstrumentNotes() {
+        if (!playback || !mixer) return;
+        const tracks = state.tracks.filter(t => t.kind === 'instrument' && t.instrument && t.midiClips?.length);
+        if (!tracks.length) return;
+        const ctx = playback.ctx;
+        const now = ctx.currentTime;
+        const horizon = now + 0.25;
+        const passes = [{ baseCtx: playback.baseCtxTime, baseTl: playback.baseTimelineTime, end: playback.loop ? state.loopEnd : Infinity }];
+        if (playback.loop) passes.push({ baseCtx: playback.loop.nextWrapCtxTime, baseTl: state.loopStart, end: state.loopEnd });
+        if (!playback.noteSeen) playback.noteSeen = new Set();
+        for (const pass of passes) {
+            const from = pass.baseTl + Math.max(0, now - pass.baseCtx);
+            const to = Math.min(pass.end, pass.baseTl + (horizon - pass.baseCtx));
+            if (to <= from) continue;
+            for (const track of tracks) {
+                const voices = AudioDawInstruments.scheduleWindow(ctx, chainFor(track).input, track, pass, from, to, playback.noteSeen);
+                if (voices.length) playback.voices.push(...voices);
+            }
+        }
+        if (playback.voices.length > 512) playback.voices.splice(0, playback.voices.length - 512);
+        if (playback.noteSeen.size > 4096) playback.noteSeen.clear(); // keys carry their pass, so a clear only risks a re-check
+    }
+
+    function killPlaybackVoices() {
+        for (const v of playback?.voices || []) v.kill();
+        if (playback) {
+            playback.voices = [];
+            playback.noteSeen = null;
+        }
+    }
+
+    /** Start capturing live notes for the armed instrument tracks (called once the transport runs). */
+    function beginMidiRecording(tracks, startP, punch) {
+        midiRecording = tracks.length ? { startP, punch, takes: tracks.map(track => ({ track, notes: [], open: new Map() })) } : null;
+    }
+
+    /** Close held notes and turn each instrument take into a MIDI clip. Returns the clips made (not rendered). */
+    function finishMidiRecording() {
+        const rec = midiRecording;
+        midiRecording = null;
+        if (!rec) return [];
+        const end = heardTimelineNow();
+        const made = [];
+        for (const take of rec.takes) {
+            for (const [pitch, open] of take.open) take.notes.push({ pitch, start: open.start, dur: Math.max(0.02, end - open.start), vel: open.vel });
+            const lo = rec.punch ? rec.punch.in : rec.startP;
+            const hi = rec.punch ? rec.punch.out : Infinity;
+            const notes = take.notes.filter(n => n.start >= lo - 0.02 && n.start < hi)
+                .map(n => ({ pitch: n.pitch, start: Math.max(0, n.start - lo), dur: n.dur, vel: n.vel }));
+            if (!notes.length) continue;
+            const bar = (60 / state.bpm) * (state.timeSignature[0] || 4);
+            const last = Math.max(...notes.map(n => n.start + n.dur));
+            made.push({ track: take.track, start: lo, length: rec.punch ? rec.punch.out - rec.punch.in : Math.max(bar, Math.ceil(last / bar) * bar), notes });
+        }
+        return made;
+    }
+
+    /** Instrument track menu: sound, playing, clips, bounce. */
+    async function showInstrumentMenu(track, e) {
+        const inst = track.instrument || {};
+        const items = [{ heading: translate('Sound') }];
+        for (const name of Object.keys(AudioDawInstruments.SYNTH_PRESETS)) {
+            items.push({
+                label: translate('Synth') + ': ' + translate(name),
+                checked: inst.type === 'synth' && inst.preset === name,
+                action: () => {
+                    pushUndo();
+                    track.instrument = AudioDawInstruments.createInstrument('synth', name);
+                    AudioDawTrack.syncHeaderControls(track);
+                    updateBottomPanel();
+                }
+            });
+        }
+        items.push({ label: translate('Sampler (play a clip across the keys)'), checked: inst.type === 'sampler', action: () => openInstrumentPanel(track, 'sampler') });
+        items.push({ heading: translate('Play') });
+        items.push({ label: translate('Computer keyboard plays notes (A to K, Z/X octave)'), checked: AudioDawInstruments.qwertyEnabled(), action: () => toggleQwerty() });
+        const midiNames = AudioDawInstruments.midiInputNames();
+        items.push({
+            label: midiNames.length ? `${translate('MIDI in')}: ${midiNames.join(', ')}` : translate('Connect a MIDI keyboard…'),
+            disabled: !AudioDawInstruments.midiPossible(),
+            hint: AudioDawInstruments.midiPossible() ? '' : translate('Web MIDI needs HTTPS (or localhost) and a supporting browser'),
+            action: () => connectMidiKeyboard()
+        });
+        items.push({ label: translate('Instrument panel…'), action: () => openInstrumentPanel(track, inst.type === 'sampler' ? 'sampler' : 'synth') });
+        items.push({ heading: translate('Clips') });
+        items.push({ label: translate('New MIDI clip at the playhead (4 bars)'), action: () => {
+            pushUndo();
+            const bar = (60 / state.bpm) * (state.timeSignature[0] || 4);
+            const clip = newMidiClip(track, snapTime(state.currentTime), bar * 4);
+            selectMidiClip(clip, track, true);
+        }});
+        items.push({ label: translate('Import MIDI file…'), action: () => importMidiFile(track) });
+        items.push({ label: translate('Bounce to an audio track'), disabled: !(track.midiClips || []).length, action: () => bounceTrack(track) });
+        dawMenu(e, items);
+    }
+
+    function toggleQwerty() {
+        AudioDawInstruments.setQwerty(!AudioDawInstruments.qwertyEnabled());
+        document.getElementById('daw_container')?.classList.toggle('daw-qwerty-on', AudioDawInstruments.qwertyEnabled());
+        if (typeof doNoticePopover === 'function') {
+            doNoticePopover(AudioDawInstruments.qwertyEnabled()
+                ? translate('Computer keyboard plays notes: A W S E D F T G Y H U J K, Z/X shift the octave. Letter shortcuts pause until you turn it off')
+                : translate('Computer keyboard is back to shortcuts'), 'notice-pop-blue');
+        }
+        const pane = bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="beats"]');
+        if (pane) renderBeatsPanel(pane);
+    }
+
+    async function connectMidiKeyboard() {
+        try {
+            const names = await AudioDawInstruments.connectMidi();
+            if (typeof doNoticePopover === 'function') {
+                doNoticePopover(names.length ? translate('MIDI in:') + ' ' + names.join(', ') : translate('MIDI is on, but no input is connected'), names.length ? 'notice-pop-green' : 'notice-pop-yellow');
+            }
+            const pane = bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="beats"]');
+            if (pane) renderBeatsPanel(pane);
+        }
+        catch (err) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('MIDI access failed:') + ' ' + err.message, 'notice-pop-yellow');
+        }
+    }
+
+    /** Select a MIDI clip (and its track); optionally open it in the piano roll. */
+    function selectMidiClip(clip, track, open = false) {
+        state.selectedMidiClipId = clip.id;
+        state.selectedTrackId = track.id;
+        state.selectedClipId = null;
+        renderAllTracks();
+        updateBottomPanel();
+        if (open) switchBottomTab('pianoroll');
+    }
+
+    function showMidiClipMenu(e, clip, track) {
+        dawMenu(e, [
+            { label: translate('Open in the piano roll'), action: () => selectMidiClip(clip, track, true) },
+            { label: translate('Duplicate'), action: () => {
+                pushUndo();
+                const copy = newMidiClip(track, clip.startTime + AudioDawInstruments.midiClipLength(clip), clip.length, clip.notes, clip.name);
+                selectMidiClip(copy, track);
+                resyncPlayback();
+            }},
+            { label: clip.muted ? translate('Unmute Clip') : translate('Mute Clip'), action: () => {
+                pushUndo();
+                clip.muted = !clip.muted;
+                renderAllTracks();
+                resyncPlayback();
+            }},
+            { label: translate('Bring to front'), action: () => {
+                pushUndo();
+                track.midiClips.splice(track.midiClips.indexOf(clip), 1);
+                track.midiClips.push(clip);
+                renderAllTracks();
+            }},
+            { label: translate('Export as MIDI file'), action: () => {
+                downloadBlob(AudioDawInstruments.writeMidiFile(clip.notes, state.bpm), `${(clip.name || 'clip').replace(/[\\/:*?"<>|]+/g, '_')}.mid`);
+            }},
+            { label: translate('Delete'), action: () => deleteMidiClip(clip, track) }
+        ]);
+    }
+
+    function deleteMidiClip(clip, track) {
+        pushUndo();
+        track.midiClips = track.midiClips.filter(c => c !== clip);
+        if (state.selectedMidiClipId === clip.id) state.selectedMidiClipId = null;
+        updateTotalDuration();
+        renderAllTracks();
+        updateBottomPanel();
+        resyncPlayback();
+    }
+
+    /** Import a .mid file onto an instrument track (a new synth track when none is given). */
+    function importMidiFile(track = null) {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.mid,.midi,audio/midi';
+        input.onchange = async () => {
+            const file = input.files[0];
+            if (!file) return;
+            try {
+                const parsed = AudioDawInstruments.parseMidiFile(await file.arrayBuffer());
+                if (!parsed.notes.length) throw new Error(translate('The file has no notes'));
+                pushUndo();
+                const empty = !state.tracks.some(t => t.clips.length || t.midiClips?.length);
+                // An empty project takes the file's tempo so the notes land on the grid
+                if (empty && parsed.bpm && Math.abs(parsed.bpm - state.bpm) > 0.01) {
+                    state.bpm = Math.round(parsed.bpm);
+                    if (bpmInputEl) bpmInputEl.value = state.bpm;
+                    if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
+                    updateLaneGrid();
+                }
+                const target = track || addInstrumentTrack('synth', 'Soft Keys', { snapshot: false });
+                const last = Math.max(...parsed.notes.map(n => n.start + n.dur));
+                const clip = newMidiClip(target, snapTime(state.currentTime), last + 0.05, parsed.notes, file.name.replace(/\.[^.]+$/, ''));
+                updateTotalDuration();
+                selectMidiClip(clip, target);
+                resyncPlayback();
+                if (typeof doNoticePopover === 'function') doNoticePopover(`${parsed.notes.length} ` + translate('notes imported'), 'notice-pop-green');
+            }
+            catch (err) {
+                if (typeof doNoticePopover === 'function') doNoticePopover(translate('MIDI import failed:') + ' ' + err.message, 'notice-pop-red');
+            }
+        };
+        input.click();
+    }
+
+    /** Render an instrument track (with its inserts and mix) to a new audio track, for stems or AI processing. */
+    async function bounceTrack(track) {
+        const end = Math.max(...(track.midiClips || []).map(c => c.startTime + AudioDawInstruments.midiClipLength(c)), 0);
+        if (end <= 0) return;
+        const overlay = showDawLoadingOverlay(translate('Bouncing') + ` ${track.name}...`);
+        try {
+            const buf = await renderMixdownBuffer({ start: 0, end: end + 0.5, exact: true, trackIds: [track.id] });
+            if (!buf) throw new Error('Nothing to bounce');
+            pushUndo();
+            const audio = addTrack({ name: `${track.name} (${translate('audio')})`, color: track.color });
+            await addClipToTrack(audio, audioBufferToWav(buf, { bitDepth: 32 }), { name: track.name, startTime: 0 });
+            state.tracks.splice(state.tracks.indexOf(audio), 1);
+            state.tracks.splice(state.tracks.indexOf(track) + 1, 0, audio);
+            updateTotalDuration();
+            renderAllTracks();
+            updateBottomPanel();
+            resyncPlayback();
+        }
+        catch (err) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Bounce failed:') + ' ' + err.message, 'notice-pop-red');
+        }
+        hideDawLoadingOverlay(overlay);
+    }
+
+    /** Show the Instruments tab on the synth or sampler card for this track. */
+    function openInstrumentPanel(track, kind) {
+        state.selectedTrackId = track.id;
+        activeInstrument = kind;
+        updateTrackSelection();
+        const pane = bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="beats"]');
+        if (pane) renderBeatsPanel(pane);
+        switchBottomTab('beats');
+    }
+
+    /** Synth or sampler controls for the selected instrument track, plus the playable keys. */
+    function renderInstrumentCard(card, container, kind) {
+        const track = getSelectedTrack();
+        if (!track || track.kind !== 'instrument') {
+            const msg = createDiv(null, 'daw-stems-desc');
+            msg.textContent = translate('Instrument tracks play MIDI: record from the keys below, a MIDI keyboard or the computer keyboard, or import a .mid file. Select one, or create one:');
+            card.appendChild(msg);
+            const row = createDiv(null, 'daw-clip-editor-actions');
+            appendButton(row, kind === 'sampler' ? translate('+ Sampler track') : translate('+ Synth track'), () => {
+                addInstrumentTrack(kind === 'sampler' ? 'sampler' : 'synth');
+                renderBeatsPanel(container);
+            }, ' basic-button btn-primary');
+            card.appendChild(row);
+            return;
+        }
+        const inst = track.instrument;
+        const head = createDiv(null, 'daw-stems-action-row');
+        const title = createSpan(null, 'daw-fx-toolbar-title');
+        title.textContent = `${track.name}: ${inst.type === 'sampler' ? translate('Sampler') : translate('Synth')}`;
+        head.appendChild(title);
+        if (inst.type === 'synth' && kind === 'synth') {
+            const presetSel = document.createElement('select');
+            presetSel.className = 'daw-fx-select';
+            for (const name of Object.keys(AudioDawInstruments.SYNTH_PRESETS)) {
+                const o = document.createElement('option');
+                o.value = name;
+                o.textContent = translate(name);
+                presetSel.appendChild(o);
+            }
+            presetSel.value = inst.preset;
+            presetSel.addEventListener('change', () => {
+                pushUndo();
+                track.instrument = AudioDawInstruments.createInstrument('synth', presetSel.value);
+                AudioDawTrack.syncHeaderControls(track);
+                renderBeatsPanel(container);
+            });
+            head.appendChild(presetSel);
+            for (const [key, label] of [['osc1', translate('Osc 1')], ['osc2', translate('Osc 2')]]) {
+                const lbl = createSpan(null, 'daw-fx-knob-label');
+                lbl.textContent = label;
+                head.appendChild(lbl);
+                const sel = document.createElement('select');
+                sel.className = 'daw-fx-select';
+                for (const w of AudioDawInstruments.WAVES) {
+                    const o = document.createElement('option');
+                    o.value = w;
+                    o.textContent = translate(w);
+                    sel.appendChild(o);
+                }
+                sel.value = inst[key];
+                sel.addEventListener('change', () => { pushUndo(); inst[key] = sel.value; });
+                head.appendChild(sel);
+            }
+        }
+        else if (kind === 'synth') {
+            const note = createSpan(null, 'daw-stems-clipinfo');
+            note.textContent = translate('This track is a sampler. Pick a synth sound from its instrument menu to switch.');
+            head.appendChild(note);
+        }
+        card.appendChild(head);
+
+        if (inst.type === 'synth' && kind === 'synth') {
+            const knobs = createDiv(null, 'daw-fx-knobs');
+            let gesture = null;
+            for (const spec of AudioDawInstruments.SYNTH_KNOBS) {
+                const isLog = spec.taper === 'log';
+                const toNorm = (v) => isLog ? Math.log(v / spec.min) / Math.log(spec.max / spec.min) : v;
+                const fromNorm = (n) => isLog ? spec.min * Math.pow(spec.max / spec.min, n) : n;
+                const col = createDiv(null, 'daw-fx-knob-col');
+                const val = createSpan(null, 'daw-fx-knob-val');
+                val.textContent = spec.fmt(inst[spec.key]);
+                const knob = AudioDawMixer.createKnob({
+                    value: toNorm(inst[spec.key]),
+                    min: isLog ? 0 : spec.min,
+                    max: isLog ? 1 : spec.max,
+                    defaultValue: toNorm(AudioDawInstruments.SYNTH_PRESETS[inst.preset]?.[spec.key] ?? inst[spec.key]),
+                    title: translate(spec.label),
+                    onChange: (v) => {
+                        if (gesture) clearTimeout(gesture);
+                        else pushUndo();
+                        gesture = setTimeout(() => { gesture = null; }, 800);
+                        inst[spec.key] = fromNorm(v);
+                        val.textContent = spec.fmt(inst[spec.key]);
+                    }
+                });
+                const lbl = createSpan(null, 'daw-fx-knob-label');
+                lbl.textContent = translate(spec.label);
+                col.appendChild(knob);
+                col.appendChild(lbl);
+                col.appendChild(val);
+                knobs.appendChild(col);
+            }
+            card.appendChild(knobs);
+        }
+        else if (kind === 'sampler') {
+            const row = createDiv(null, 'daw-stems-action-row');
+            const info = createSpan(null, 'daw-stems-clipinfo');
+            info.textContent = inst.type === 'sampler'
+                ? (inst.sampleName ? translate('Sample') + `: ${inst.sampleName}` : translate('No sample yet. Use the selected clip, or generate one.'))
+                : translate('This track plays a synth. Make it a sampler:');
+            row.appendChild(info);
+            const setSample = async (name, blob) => {
+                const blobKey = `sample-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+                const decodedBuffer = await AudioLabCore.decodeToBuffer(blob);
+                pushUndo();
+                blobStore.set(blobKey, { blob, decodedBuffer });
+                const base = inst.type === 'sampler' ? inst : AudioDawInstruments.createInstrument('sampler');
+                track.instrument = { ...base, sampleKey: blobKey, sampleName: name.slice(0, 40) };
+                AudioDawTrack.syncHeaderControls(track);
+                renderBeatsPanel(container);
+            };
+            appendButton(row, translate('Use selected clip'), async () => {
+                const sel = findClipById(state.selectedClipId);
+                if (!sel) {
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('Select an audio clip first'), 'notice-pop-yellow');
+                    return;
+                }
+                await setSample(sel.clip.name, await clipAudioBlob(sel.clip));
+            }, ' basic-button btn-sm');
+            const promptIn = document.createElement('input');
+            promptIn.type = 'text';
+            promptIn.className = 'daw-generate-reftext';
+            promptIn.placeholder = translate('Or describe a sound to generate: "warm analog bass pluck"');
+            row.appendChild(promptIn);
+            const genBtn = appendButton(row, translate('Generate sample'), async () => {
+                const prompt = promptIn.value.trim();
+                if (!prompt) return;
+                genBtn.disabled = true;
+                try {
+                    await ensureEnginesList().catch(() => {});
+                    const model = dawSwarmModelFor('audiogen_sfx') || dawSwarmModelFor(preferredMusicEngine());
+                    if (!model) throw new Error(translate('No sound effects or music engine is installed'));
+                    const { blob } = await dawSwarmGenerate({ model, prompt, params: { textaudioduration: 2, seed: Math.floor(Math.random() * 1e9) } });
+                    await setSample(prompt, blob);
+                }
+                catch (err) {
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('Sample generation failed:') + ' ' + err.message, 'notice-pop-red');
+                }
+                genBtn.disabled = false;
+            }, ' basic-button btn-sm btn-primary');
+            card.appendChild(row);
+            if (inst.type === 'sampler') {
+                const opts = createDiv(null, 'daw-stems-model-row');
+                const lbl = createSpan(null, 'daw-stems-ctl-label');
+                lbl.textContent = translate('Root note');
+                opts.appendChild(lbl);
+                const rootSel = document.createElement('select');
+                rootSel.className = 'daw-fx-select';
+                for (let m = 36; m <= 84; m++) {
+                    const o = document.createElement('option');
+                    o.value = String(m);
+                    o.textContent = AudioDawInstruments.noteName(m);
+                    rootSel.appendChild(o);
+                }
+                rootSel.value = String(inst.rootNote || 60);
+                rootSel.title = translate('The key that plays the sample at its own pitch');
+                rootSel.addEventListener('change', () => { pushUndo(); inst.rootNote = parseInt(rootSel.value); });
+                opts.appendChild(rootSel);
+                card.appendChild(opts);
+            }
+        }
+
+        // Playable keys: two octaves from the keyboard octave, plus computer keyboard and MIDI
+        const keysHead = createDiv(null, 'daw-stems-action-row');
+        const qwertyBtn = appendButton(keysHead, AudioDawInstruments.qwertyEnabled() ? translate('Computer keyboard: on') : translate('Computer keyboard: off'),
+            () => toggleQwerty(), ' basic-button btn-sm' + (AudioDawInstruments.qwertyEnabled() ? ' btn-primary' : ''),
+            translate('Play notes with A W S E D F T G Y H U J K; Z/X shift the octave'));
+        qwertyBtn.dataset.role = 'qwerty';
+        if (AudioDawInstruments.midiPossible()) {
+            const names = AudioDawInstruments.midiInputNames();
+            appendButton(keysHead, names.length ? `${translate('MIDI in')}: ${names.join(', ')}` : translate('Connect MIDI keyboard'),
+                () => connectMidiKeyboard(), ' basic-button btn-sm');
+        }
+        else {
+            const midiNote = createSpan(null, 'daw-stems-clipinfo');
+            midiNote.textContent = translate('A MIDI keyboard needs HTTPS (or localhost). The keys work everywhere.');
+            keysHead.appendChild(midiNote);
+        }
+        const hint = createSpan(null, 'daw-stems-clipinfo');
+        hint.textContent = translate('Arm the track (R) and press Record to capture what you play.');
+        keysHead.appendChild(hint);
+        card.appendChild(keysHead);
+        card.appendChild(buildPlayableKeys(48));
+    }
+
+    /** Two octaves of on-screen keys that play the live instrument tracks. */
+    function buildPlayableKeys(base) {
+        const wrap = createDiv(null, 'daw-keys-wrap');
+        const BLACK = [1, 1, 0, 1, 1, 1, 0];
+        const WHITE = [0, 2, 4, 5, 7, 9, 11];
+        const NAMES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+        const blackRow = createDiv(null, 'daw-keys-row');
+        const whiteRow = createDiv(null, 'daw-keys-row');
+        const mkKey = (label, midi) => {
+            const b = document.createElement('button');
+            b.className = 'basic-button btn-sm daw-keys-key';
+            b.textContent = label;
+            b.dataset.midi = String(midi);
+            b.addEventListener('pointerdown', (e) => { e.preventDefault(); b.setPointerCapture?.(e.pointerId); liveNoteOn(midi, 100); });
+            b.addEventListener('pointerup', () => liveNoteOff(midi));
+            b.addEventListener('pointercancel', () => liveNoteOff(midi));
+            return b;
+        };
+        for (let o = 0; o < 2; o++) {
+            for (let i = 0; i < 7; i++) {
+                const white = base + o * 12 + WHITE[i];
+                whiteRow.appendChild(mkKey(`${NAMES[i]}${Math.floor(white / 12) - 1}`, white));
+                if (BLACK[i]) blackRow.appendChild(mkKey(`${NAMES[i]}♯`, white + 1));
+                else blackRow.appendChild(createDiv(null, 'daw-keys-key daw-keys-gap'));
+            }
+        }
+        whiteRow.appendChild(mkKey(`C${Math.floor((base + 24) / 12) - 1}`, base + 24));
+        blackRow.appendChild(createDiv(null, 'daw-keys-key daw-keys-gap'));
+        wrap.appendChild(blackRow);
+        wrap.appendChild(whiteRow);
+        return wrap;
     }
 
     // ===== EDIT OPERATIONS (range, clipboard, layering, nudge) =====
@@ -4505,6 +5158,17 @@ const AudioDaw = (() => {
                 }
             }
             track.clips = kept;
+            // Instrument clips: notes starting inside the range go; Shuffle pulls later notes and clips in
+            for (const mc of track.midiClips || []) {
+                const cs = mc.startTime;
+                mc.notes = mc.notes.filter(n => cs + n.start < sel.start || cs + n.start >= sel.end);
+                if (state.editMode === 'shuffle') {
+                    if (cs >= sel.end - 1e-6) mc.startTime -= len;
+                    else for (const n of mc.notes) {
+                        if (cs + n.start >= sel.end) n.start -= len;
+                    }
+                }
+            }
         }
         if (findClipById(state.selectedClipId) === null) state.selectedClipId = null;
         updateTotalDuration();
@@ -5153,10 +5817,12 @@ const AudioDaw = (() => {
     async function startRecordingFlow() {
         if (recording) return;
         const support = AudioDawInput.support();
-        if (!support.mic || !support.worklet) {
+        const audioPossible = support.mic && support.worklet;
+        const midiOnly = state.tracks.some(t => t.armed && t.kind === 'instrument') && !state.tracks.some(t => t.armed && t.kind !== 'instrument');
+        if (!audioPossible && !midiOnly) {
             if (typeof doNoticePopover === 'function') {
                 doNoticePopover(!support.mic
-                    ? translate('Recording needs HTTPS (or localhost): browsers block audio input on plain HTTP.')
+                    ? translate('Recording audio needs HTTPS (or localhost): browsers block audio input on plain HTTP. Instrument tracks still record.')
                     : translate('This browser cannot capture audio (no AudioWorklet).'), 'notice-pop-red');
             }
             return;
@@ -5172,11 +5838,13 @@ const AudioDaw = (() => {
             renderAllTracks();
         }
         // Every armed input opens before the transport moves: a refused or slow permission prompt must not
-        // leave playback running with nothing capturing.
-        const opened = await Promise.allSettled(armed.map(t => syncTrackInput(t)));
-        opened.forEach((r, i) => { if (r.status === 'rejected') reportInputError(armed[i], r.reason); });
-        const inputs = armed.map(t => ({ track: t, entry: trackInputs.get(t.id) })).filter(x => x.entry);
-        if (!inputs.length || recording) return;
+        // leave playback running with nothing capturing. Instrument tracks record notes, not an input.
+        const midiArmed = armed.filter(t => t.kind === 'instrument');
+        const audioArmed = audioPossible ? armed.filter(t => t.kind !== 'instrument') : [];
+        const opened = await Promise.allSettled(audioArmed.map(t => syncTrackInput(t)));
+        opened.forEach((r, i) => { if (r.status === 'rejected') reportInputError(audioArmed[i], r.reason); });
+        const inputs = audioArmed.map(t => ({ track: t, entry: trackInputs.get(t.id) })).filter(x => x.entry);
+        if ((!inputs.length && !midiArmed.length) || recording) return;
 
         const ctx = getAudioContext();
         if (ctx.state === 'suspended') { try { await ctx.resume(); } catch (_) {} }
@@ -5219,6 +5887,8 @@ const AudioDaw = (() => {
             rec.takes.push(take);
             rec.placeholders.push(createRecordingPlaceholder(track, rec.startP));
         }
+        beginMidiRecording(midiArmed, rec.startP, punch);
+        for (const track of midiArmed) rec.placeholders.push(createRecordingPlaceholder(track, rec.startP));
         state.isRecording = true;
         updateRecordButton(true);
         kickMeters();
@@ -5234,6 +5904,7 @@ const AudioDaw = (() => {
         const sr = ctx.sampleRate;
         const nowFrame = Math.round(ctx.currentTime * sr);
         // Keep capturing for the latency the take will be shifted by, so the last notes played are kept
+        const midiMade = finishMidiRecording(); // before the transport stops: note-offs read its clock
         const results = await Promise.all(rec.takes.map(t => {
             const want = nowFrame + Math.round(t.latency * sr);
             // A punch never runs past its own out point, even when Stop comes during the post-roll
@@ -5256,11 +5927,16 @@ const AudioDaw = (() => {
             const start = rec.startP + (res.firstFrame / res.sampleRate - rec.startCtx);
             made.push({ track: take.track, blob: audioBufferToWav(buf, { bitDepth: 32 }), start, peak: maxAbs(res.channels) });
         });
-        if (!made.length) {
+        if (!made.length && !midiMade.length) {
             if (typeof doNoticePopover === 'function') doNoticePopover(translate('Nothing was recorded'), 'notice-pop-yellow');
             return;
         }
         pushUndo();
+        for (const m of midiMade) {
+            m.track.takeCount = (m.track.takeCount || 0) + 1;
+            const clip = newMidiClip(m.track, m.start, m.length, m.notes, `${m.track.name} ${translate('take')} ${m.track.takeCount}`);
+            state.selectedMidiClipId = clip.id;
+        }
         for (const m of made) {
             m.track.takeCount = (m.track.takeCount || 0) + 1;
             const clip = await addClipToTrack(m.track, m.blob, {
@@ -5275,11 +5951,12 @@ const AudioDaw = (() => {
         updateBottomPanel();
         resyncPlayback();
         const silent = made.filter(m => m.peak < 0.001).length;
+        const total = made.length + midiMade.length;
         if (typeof doNoticePopover === 'function') {
-            doNoticePopover(silent === made.length
+            doNoticePopover(made.length && silent === made.length && !midiMade.length
                 ? translate('Recorded, but the input was silent. Check the track input and the device level')
-                : `${translate('Recorded')} ${made.length} ${made.length === 1 ? translate('take') : translate('takes')}`,
-                silent === made.length ? 'notice-pop-yellow' : 'notice-pop-green');
+                : `${translate('Recorded')} ${total} ${total === 1 ? translate('take') : translate('takes')}`,
+                made.length && silent === made.length && !midiMade.length ? 'notice-pop-yellow' : 'notice-pop-green');
         }
     }
 
@@ -5296,6 +5973,7 @@ const AudioDaw = (() => {
 
     /** Abort an in-flight recording without keeping audio (teardown, project switch). */
     function abortRecording() {
+        midiRecording = null;
         if (!recording) return;
         const rec = recording;
         recording = null;
@@ -5378,11 +6056,17 @@ const AudioDaw = (() => {
         // Drum pads and the clipboard hold their audio in the same store
         for (const lane of state.beatPattern.lanes) referenced.add(lane.blobKey);
         for (const item of clipboard?.items || []) referenced.add(item.clip.blobKey);
+        for (const t of state.tracks) {
+            if (t.instrument?.sampleKey) referenced.add(t.instrument.sampleKey);
+        }
         for (const snap of [...state.undoStack, ...state.redoStack]) {
             for (const ts of snap.tracks) {
                 for (const cs of ts.clips) referenced.add(cs.blobKey);
             }
             for (const lane of snap.beatPattern?.lanes || []) referenced.add(lane.blobKey);
+            for (const ts of snap.tracks) {
+                if (ts.instrument?.sampleKey) referenced.add(ts.instrument.sampleKey);
+            }
         }
         for (const key of [...blobStore.keys()]) {
             if (!referenced.has(key)) blobStore.delete(key);
@@ -5484,6 +6168,9 @@ const AudioDaw = (() => {
             track.monitor = !!ts.monitor;
             track.input = { deviceId: ts.input?.deviceId || null, channels: ts.input?.channels ?? 'mono' };
             track.takeCount = ts.takeCount || 0;
+            track.kind = ts.kind || 'audio';
+            track.instrument = ts.instrument ? JSON.parse(JSON.stringify(ts.instrument)) : null;
+            track.midiClips = (ts.midiClips || []).map(c => ({ ...c, notes: c.notes.map(n => ({ ...n })) }));
             track.fx = (ts.fx || []).filter(f => typeof AudioDawFx === 'undefined' || AudioDawFx.FX_DEFS[f.type])
                 .map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));
             track.automation = {
@@ -5897,7 +6584,7 @@ const AudioDaw = (() => {
                 + 'address the browser will not offer it. The keys above work either way.');
         }
         else if (keysState.midiAccess) {
-            const names = [...keysState.midiAccess.inputs.values()].map(i => i.name);
+            const names = AudioDawInstruments.midiInputNames();
             midiRow.textContent = names.length
                 ? translate('MIDI in:') + ' ' + names.join(', ')
                 : translate('MIDI is on, but no input is connected.');
@@ -5928,17 +6615,11 @@ const AudioDaw = (() => {
         return s;
     }
 
+    /** One MIDI connection for the whole DAW: notes reach the score while it records, else the instruments. */
     async function connectKeysMidi(panelContainer) {
         try {
-            keysState.midiAccess = await navigator.requestMIDIAccess();
-            for (const input of keysState.midiAccess.inputs.values()) {
-                input.onmidimessage = (ev) => {
-                    const [status, note, velocity] = ev.data;
-                    const cmd = status & 0xf0;
-                    if (cmd === 0x90 && velocity > 0) keysDown(note);
-                    else if (cmd === 0x80 || (cmd === 0x90 && velocity === 0)) keysUp(note);
-                };
-            }
+            await AudioDawInstruments.connectMidi();
+            keysState.midiAccess = true;
             renderBeatsPanel(panelContainer);
         }
         catch (err) {
@@ -5952,9 +6633,9 @@ const AudioDaw = (() => {
     // flipping ready:true and rendering their UI in renderBeatsPanel.
     const DAW_INSTRUMENTS = [
         { id: 'drums', name: 'Drum Machine', desc: '16/32-step sample sequencer', ready: true },
-        { id: 'keys', name: 'Piano / Keys', desc: 'Play a phrase into the score', ready: true },
-        { id: 'bass', name: 'Bass', desc: 'Coming soon', ready: false },
-        { id: 'synth', name: 'Synth', desc: 'Coming soon', ready: false }
+        { id: 'keys', name: 'Keys to Score', desc: 'Play a phrase into the score', ready: true },
+        { id: 'synth', name: 'Synth', desc: 'Play and record an instrument track', ready: true },
+        { id: 'sampler', name: 'Sampler', desc: 'Any clip or generated sound, across the keys', ready: true }
     ];
     let activeInstrument = 'drums';
 
@@ -5989,6 +6670,10 @@ const AudioDaw = (() => {
 
         const instCard = createDiv(null, 'daw-fx-card daw-inst-card');
         panel.appendChild(instCard);
+        if (activeInstrument === 'synth' || activeInstrument === 'sampler') {
+            renderInstrumentCard(instCard, container, activeInstrument);
+            return;
+        }
         if (activeInstrument === 'keys') {
             if (typeof AudioDawScore === 'undefined') {
                 const missing = createDiv(null, 'daw-stems-desc');
@@ -6440,6 +7125,10 @@ const AudioDaw = (() => {
                 if (stored) blobs.set(lane.blobKey, stored.blob);
             }
         }
+        for (const track of state.tracks) {
+            const key = track.instrument?.sampleKey;
+            if (key && !blobs.has(key) && blobStore.get(key)) blobs.set(key, blobStore.get(key).blob);
+        }
         return blobs;
     }
 
@@ -6490,6 +7179,17 @@ const AudioDaw = (() => {
             track.monitor = false;
             track.input = { deviceId: ts.input?.deviceId || null, channels: ts.input?.channels ?? 'mono' };
             track.takeCount = ts.takeCount || 0;
+            track.kind = ts.kind || 'audio';
+            track.instrument = ts.instrument ? JSON.parse(JSON.stringify(ts.instrument)) : null;
+            track.midiClips = (ts.midiClips || []).map(c => ({ ...c, notes: c.notes.map(n => ({ ...n })) }));
+            const sampleKey = track.instrument?.sampleKey;
+            if (sampleKey && blobs.has(sampleKey) && !blobStore.has(sampleKey)) {
+                try {
+                    blobStore.set(sampleKey, { blob: blobs.get(sampleKey), decodedBuffer: await AudioLabCore.decodeToBuffer(blobs.get(sampleKey)) });
+                } catch (err) {
+                    console.warn('[AudioDaw] Sampler sample did not decode:', err);
+                }
+            }
             track.fx = (ts.fx || []).filter(f => typeof AudioDawFx === 'undefined' || AudioDawFx.FX_DEFS[f.type])
                 .map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));
             track.automation = {
@@ -6988,6 +7688,10 @@ const AudioDaw = (() => {
                 const found = findClipById(state.selectedClipId);
                 if (found) doDeleteClip(found.clip, found.track);
             }
+            else if (state.selectedMidiClipId) {
+                const found = findMidiClip(state.selectedMidiClipId);
+                if (found) deleteMidiClip(found.clip, found.track);
+            }
         }
         else if (key === 'escape') {
             clearSelection();
@@ -7131,6 +7835,7 @@ const AudioDaw = (() => {
     }
 
     function resetState() {
+        stopAllLiveVoices();
         abortRecording();
         stopBeatAudition();
         stopPlayback();
@@ -7148,6 +7853,8 @@ const AudioDaw = (() => {
     }
 
     function destroyAll() {
+        stopAllLiveVoices();
+        AudioDawInstruments.setQwerty(false);
         abortRecording();
         stopBeatAudition();
         if (clipEditorPlayer) {
