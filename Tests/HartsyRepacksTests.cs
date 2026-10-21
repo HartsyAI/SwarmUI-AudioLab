@@ -84,6 +84,15 @@ public class HartsyRepacksTests
     }
 
     [Fact]
+    public void WhisperLargeV3AndTurbo_AreWithheld_UntilTheirCardsCarryTheirOwnSidecars()
+    {
+        Assert.Null(HartsyRepacks.CardFor("whisper_stt", "large-v3"));
+        Assert.Null(HartsyRepacks.CardFor("whisper_stt", "turbo"));
+        Assert.Contains("whisper_stt/large-v3", HartsyRepacks.PendingUpload);
+        Assert.Contains("whisper_stt/turbo", HartsyRepacks.PendingUpload);
+    }
+
+    [Fact]
     public void Urls_UseTheCardId()
     {
         string card = HartsyRepacks.CardFor("whisper_stt", "base");

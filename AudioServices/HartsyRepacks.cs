@@ -216,11 +216,9 @@ public static class HartsyRepacks
         {
             ["base"] = "c9618d12-d411-4fb0-acce-9d475b02a8e3", // Whisper Base
             ["large-v2"] = "163b99cd-b7fa-4b57-8382-3fe4cbe39abc", // Whisper Large v2
-            ["large-v3"] = "e9e78570-f4d9-4c66-a32b-46767e1cab86", // Whisper Large v3
             ["medium"] = "bc615007-6b9b-42bf-8c41-f158c664a0de", // Whisper Medium
             ["small"] = "7323b95b-dd12-4b2e-9525-33eb26015be5", // Whisper Small
             ["tiny"] = "949944e6-4477-4e32-85b4-985ee5271b47", // Whisper Tiny
-            ["turbo"] = "40cc4db8-2cc0-4e47-a162-8388e51ac554", // Whisper Turbo
         },
         ["whisperstreaming_stt"] = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -248,13 +246,15 @@ public static class HartsyRepacks
         },
     };
 
-    /// <summary>Local models ("provider/model") with no Hartsy card yet. They keep installing from upstream until one
-    /// is published, at which point the row moves into <see cref="_cards"/>.</summary>
+    /// <summary>Local models ("provider/model") with no usable Hartsy card: none yet, or a card withheld until its sidecars are correct. They install from upstream until then.</summary>
     internal static readonly HashSet<string> PendingUpload = new(StringComparer.OrdinalIgnoreCase)
     {
         "fishaudio_drama3_tts/native",
         "fishaudio_drama3_tts/int4",
         "rvc_clone/v2",
+        // Withheld: these cards still link Whisper Base's config.json, vocab.json, added_tokens.json and generation_config.json.
+        "whisper_stt/large-v3",
+        "whisper_stt/turbo",
     };
 
     /// <summary>Providers whose rows ride on another family's card, mapped to that family, so the card's files are

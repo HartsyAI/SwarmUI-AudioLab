@@ -110,6 +110,7 @@ public static class HartsyInstaller
             }
             if (!recorded && AudioEngineBridge.WeightsPresent(provider.Id, modelId))
             {
+                AdoptSiblingRecord(Path.GetFullPath(AudioConfiguration.ModelRoot), provider.Id, modelId, card);
                 return new(HartsyInstallStatus.UpstreamPresent, $"{provider.Name} '{modelId}' is already on disk.");
             }
             (CardManifest manifest, bool keyAccepted, string refusal) = await FetchManifestAsync(card, apiKey, cancel).ConfigureAwait(false);
@@ -184,9 +185,13 @@ public static class HartsyInstaller
             return;
         }
         string card = HartsyRepacks.CardFor(providerId, modelId);
-        if (card is null || _firstUseFailures.ContainsKey(card) || HasRecord(providerId, modelId)
-            || AudioEngineBridge.WeightsPresent(providerId, modelId))
+        if (card is null || _firstUseFailures.ContainsKey(card) || HasRecord(providerId, modelId))
         {
+            return;
+        }
+        if (AudioEngineBridge.WeightsPresent(providerId, modelId))
+        {
+            AdoptSiblingRecord(Path.GetFullPath(AudioConfiguration.ModelRoot), providerId, modelId, card);
             return;
         }
         AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId);
@@ -584,6 +589,40 @@ public static class HartsyInstaller
         return File.Exists(record) ? new(ReadRecordFiles(record).Select(f => LocalPath(root, f)), StringComparer.Ordinal) : new(StringComparer.Ordinal);
     }
 
+    /// <summary>Records this model as a user of the files another model's install of the same card placed, so that
+    /// removing the other model keeps them. Without this a model whose files are already on disk has no record, and
+    /// removing the other model deletes files this one still uses. Writes nothing when no sibling record exists.</summary>
+    internal static void AdoptSiblingRecord(string root, string providerId, string modelId, string card)
+    {
+        if (HasRecord(providerId, modelId))
+        {
+            return;
+        }
+        foreach (string other in AllRecords(root))
+        {
+            if (!string.Equals(RecordCard(other), card, StringComparison.Ordinal))
+            {
+                continue;
+            }
+            WriteRecord(root, providerId, modelId, card, ReadRecordFiles(other).Select(f => LocalPath(root, f)).ToList());
+            Logs.Info($"[AudioLab] '{providerId}/{modelId}' shares Hartsy card {card} with an installed model; recorded its files too.");
+            return;
+        }
+    }
+
+    /// <summary>The card id a record names, or null when the record cannot be read.</summary>
+    private static string RecordCard(string recordPath)
+    {
+        try
+        {
+            return JObject.Parse(File.ReadAllText(recordPath)).Value<string>("card");
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
     private static IEnumerable<string> AllRecords(string root)
     {
         string folder = Path.Combine(root, RecordFolder);
@@ -591,7 +630,7 @@ public static class HartsyInstaller
     }
 
     /// <summary>Records the files a model uses, relative to the audio models root.</summary>
-    private static void WriteRecord(string root, string providerId, string modelId, string card, IEnumerable<string> files)
+    internal static void WriteRecord(string root, string providerId, string modelId, string card, IEnumerable<string> files)
     {
         string path = RecordPath(root, providerId, modelId);
         Directory.CreateDirectory(Path.GetDirectoryName(path));

@@ -48,6 +48,8 @@ public static class AudioApiKeys
             new("Used by AudioLab for Udio AI music generation.")));
         RegisterApiKey(new("dolby_api", "dolby", "Dolby.io", "https://dashboard.dolby.io/",
             new("Used by AudioLab for Dolby.io Media Enhance audio processing.")));
+        RegisterApiKey(new("hartsy_api", "hartsy", "Hartsy", "https://hartsy.ai/",
+            new("Used by AudioLab to download Hartsy models that need a subscription tier, and shared with the Enhanced Downloader.")));
         Logs.Info("[AudioLab] Registered cloud provider API key types.");
     }
 

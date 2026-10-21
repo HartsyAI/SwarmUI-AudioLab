@@ -1,3 +1,4 @@
+using System.IO;
 using Hartsy.Extensions.AudioLab.AudioServices;
 using Newtonsoft.Json.Linq;
 using Xunit;
@@ -169,6 +170,36 @@ public class HartsyInstallerTests
         Dictionary<string, string> names = new() { ["card-00001-of-00001.safetensors"] = "model.safetensors" };
         Assert.Null(HartsyInstaller.TranslateShardIndex(index, names));
         Assert.Null(HartsyInstaller.TranslateShardIndex(JObject.Parse("{}"), names));
+    }
+
+    [Fact]
+    public void SharedCard_RemovingOneConsumer_KeepsTheFilesForTheOther()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "audiolab-shared-" + Guid.NewGuid().ToString("N"));
+        string previous = AudioConfiguration.ModelRoot;
+        try
+        {
+            AudioConfiguration.ModelRoot = root;
+            const string card = "5e0a1c2d-0000-4000-8000-000000000001";
+            string file = Path.Combine(root, "stt", "Whisper", "hartsy", "whisper-base_fp32.safetensors");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            File.WriteAllText(file, "weights");
+            HartsyInstaller.WriteRecord(root, "whisper_stt", "base", card, [file]);
+            HartsyInstaller.AdoptSiblingRecord(root, "whisperstreaming_stt", "base", card);
+
+            Assert.True(HartsyInstaller.RemoveInstall("whisper_stt", "base"));
+            Assert.True(File.Exists(file));
+            Assert.True(HartsyInstaller.RemoveInstall("whisperstreaming_stt", "base"));
+            Assert.False(File.Exists(file));
+        }
+        finally
+        {
+            AudioConfiguration.ModelRoot = previous;
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
     }
 
     [Theory]
