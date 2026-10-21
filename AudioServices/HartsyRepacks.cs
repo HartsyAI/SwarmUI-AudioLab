@@ -33,6 +33,11 @@ public static class HartsyRepacks
         {
             ["medium"] = "015876a5-3218-41e1-9b54-26a9077f1870", // AudioGen Medium
         },
+        ["auk_tts"] = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["base"] = "cc7d5cc0-66a2-46e3-b651-ede3f74a0b95", // AuK
+            ["flash"] = "0a0b69f6-faa6-494b-96ec-868167605ece", // AuK Flash
+        },
         ["bark_tts"] = new(StringComparer.OrdinalIgnoreCase)
         {
             ["default"] = "2654d7dd-c285-4229-9b44-045f66693728", // Bark
@@ -44,6 +49,10 @@ public static class HartsyRepacks
         ["chatterbox_tts"] = new(StringComparer.OrdinalIgnoreCase)
         {
             ["default"] = "09cbaa61-47a9-45ef-b760-eb087b891459", // Chatterbox TTS
+        },
+        ["controlfoley_sfx"] = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["large-44k"] = "f80d2ca1-0217-4ec8-89ec-d5cface9732a", // ControlFoley
         },
         ["cosyvoice_tts"] = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -71,6 +80,10 @@ public static class HartsyRepacks
         {
             ["v1-base"] = "304888f4-94f2-4826-b16a-870dc5a6f7ef", // F5-TTS
         },
+        ["fishaudio_tts"] = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["s2-pro"] = "753dfce5-3a61-467f-945b-60adb1607d82", // Fish Audio S2 Pro
+        },
         ["fishspeech_tts"] = new(StringComparer.OrdinalIgnoreCase)
         {
             ["fish-speech-1.4"] = "b5539bc0-672c-478e-84c3-3b0a939a4d9a", // Fish Speech 1.4 (a version of the Fish Speech card)
@@ -92,6 +105,11 @@ public static class HartsyRepacks
             ["3b-rl"] = "3f51bcef-5b5b-4319-8ed6-78eeb9aa2f00", // HeartMuLa 3B RL
             ["3b-rl-q4"] = "3f51bcef-5b5b-4319-8ed6-78eeb9aa2f00",
             ["3b-rl-q8"] = "3f51bcef-5b5b-4319-8ed6-78eeb9aa2f00",
+        },
+        ["indextts2_tts"] = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["v2_0"] = "06498fe8-0dd3-4d21-83a5-9d41fdb951d8", // IndexTTS 2.0
+            ["v2_5"] = "4f66d8cf-8493-48c6-b86d-5d735bd35be7", // IndexTTS 2.5
         },
         ["indextts_tts"] = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -137,6 +155,10 @@ public static class HartsyRepacks
             ["large"] = "57e56727-ab46-49ef-aeec-7dec2c484070", // MusicGen Large
             ["medium"] = "6e26c1da-1098-406d-aa5e-9e131b217723", // MusicGen Medium
             ["small"] = "87c05a55-058a-4d54-bbfc-faf2e18ff41f", // MusicGen Small
+        },
+        ["neutts_tts"] = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["air"] = "b308a4ff-9e9a-4b27-a32a-0ea220c6b0e3", // NeuTTS Air
         },
         ["openvoice_clone"] = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -230,15 +252,8 @@ public static class HartsyRepacks
     /// is published, at which point the row moves into <see cref="_cards"/>.</summary>
     internal static readonly HashSet<string> PendingUpload = new(StringComparer.OrdinalIgnoreCase)
     {
-        "auk_tts/flash",
-        "auk_tts/base",
-        "controlfoley_sfx/large-44k",
         "fishaudio_drama3_tts/native",
         "fishaudio_drama3_tts/int4",
-        "fishaudio_tts/s2-pro",
-        "indextts2_tts/v2_0",
-        "indextts2_tts/v2_5",
-        "neutts_tts/air",
         "rvc_clone/v2",
     };
 
