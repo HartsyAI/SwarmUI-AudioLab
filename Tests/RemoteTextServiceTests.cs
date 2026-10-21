@@ -296,6 +296,21 @@ public class RemoteTextServiceTests
     }
 
     [Fact]
+    public async Task StreamAsync_DoneWithFailure_KeepsTheTextAndEndsWithAnErrorStopCarryingTheFailure()
+    {
+        await using FakeVoiceTurnServer server = FakeVoiceTurnServer.Start();
+        (_, List<TextChunk> chunks, _) = await RunScriptedTurnAsync(server,
+        [
+            new JObject { ["done"] = true, ["full_text"] = "Partial reply", ["stopReason"] = "stop", ["failure"] = "engine ran out of memory" },
+        ]);
+        TextChunk result = Assert.Single(chunks, c => c.Kind == TextChunkKind.Result);
+        Assert.Equal("Partial reply", result.Text);
+        TextChunk stop = Assert.Single(chunks, c => c.Kind == TextChunkKind.StopReason);
+        Assert.Equal(StopReason.Error, stop.Stop);
+        Assert.Equal("engine ran out of memory", stop.Text);
+    }
+
+    [Fact]
     public async Task StreamAsync_ServerClosesWithoutDoneOrError_EndsWithAnErrorStopChunk()
     {
         await using FakeVoiceTurnServer server = FakeVoiceTurnServer.Start();

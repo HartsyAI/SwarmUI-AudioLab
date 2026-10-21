@@ -219,7 +219,16 @@ internal sealed class RemoteTextService : ITextService
                 }
                 await CloseGracefullyAsync(socket).ConfigureAwait(false);
                 yield return new TextChunk { Kind = TextChunkKind.Result, Text = Str(frame, "full_text") };
-                yield return new TextChunk { Kind = TextChunkKind.StopReason, Stop = MapStopReason(frame["stopReason"]?.ToString()) };
+                // LLMAssistant sets `failure` when the turn ended on an error after (or instead of) its text.
+                string failure = Str(frame, "failure");
+                if (string.IsNullOrEmpty(failure))
+                {
+                    yield return new TextChunk { Kind = TextChunkKind.StopReason, Stop = MapStopReason(frame["stopReason"]?.ToString()) };
+                }
+                else
+                {
+                    yield return new TextChunk { Kind = TextChunkKind.StopReason, Stop = StopReason.Error, Text = failure };
+                }
                 yield break;
             }
             if (frame["error"] is JToken errorToken)
