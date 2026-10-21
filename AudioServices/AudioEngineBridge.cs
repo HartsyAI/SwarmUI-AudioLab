@@ -1194,7 +1194,14 @@ public static class AudioEngineBridge
             }
             if (_engineWeightFolders.TryGetValue(providerId, out (string Category, string Folder) placed))
             {
-                return [Path.Combine(Path.GetFullPath(AudioConfiguration.ModelRoot), placed.Category, placed.Folder)];
+                // Each Demucs model is its own file in the shared folder (htdemucs.th, htdemucs_6s.th), so presence and
+                // installs are judged per model: one model's file must not answer for another.
+                string folder = Path.Combine(Path.GetFullPath(AudioConfiguration.ModelRoot), placed.Category, placed.Folder);
+                if (string.IsNullOrEmpty(modelId))
+                {
+                    return [folder];
+                }
+                return [Path.Combine(folder, modelId + ".th")];
             }
             AudioModelDefinition model = provider.Models.FirstOrDefault(m => string.Equals(m.Id, modelId, StringComparison.OrdinalIgnoreCase))
                 ?? provider.Models.FirstOrDefault();
