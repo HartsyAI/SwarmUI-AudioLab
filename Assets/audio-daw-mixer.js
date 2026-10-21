@@ -144,6 +144,9 @@ const AudioDawMixer = (() => {
         });
         if (hooks.onGrab) fader.addEventListener('pointerdown', () => hooks.onGrab());
         if (hooks.onRelease) fader.addEventListener('change', () => hooks.onRelease());
+        // A press with no movement, or a double-click reset, fires no change event: release on pointer up as well
+        if (hooks.onRelease) fader.addEventListener('pointerup', () => hooks.onRelease());
+        if (hooks.onRelease) fader.addEventListener('pointercancel', () => hooks.onRelease());
         lane.appendChild(fader);
         // OBS-style stereo meter pair + dB scale
         const meterWrap = createDiv(null, 'daw-meter-pair');

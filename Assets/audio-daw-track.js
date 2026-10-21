@@ -911,12 +911,19 @@ const AudioDawTrack = (() => {
         return lane;
     }
 
+    /** Polyline points for an automation lane, extended flat to both lane edges. */
+    function automationLinePoints(points, param, zoom) {
+        const pts = points.map(p => `${p.t * zoom},${autoToY(param, p.v)}`);
+        return `0,${autoToY(param, points[0].v)} ` + pts.join(' ') + ` 100000,${autoToY(param, points[points.length - 1].v)}`;
+    }
+
     function renderAutomationLane(track, zoom, callbacks) {
         const lane = track.autoLaneEl;
         if (!lane) return;
         lane.innerHTML = '';
         const param = track.automationParam || 'volume';
         const points = track.automation[param];
+        const dotEls = new Map(); // point -> its circle, so a segment drag can move the circles in place
         const svg = document.createElementNS(SVG_NS, 'svg');
         svg.setAttribute('height', AUTO_LANE_H);
         svg.setAttribute('width', '100%');
@@ -936,10 +943,7 @@ const AudioDawTrack = (() => {
 
         if (points.length) {
             const poly = document.createElementNS(SVG_NS, 'polyline');
-            const pts = points.map(p => `${p.t * zoom},${autoToY(param, p.v)}`);
-            // extend flat to lane edges
-            poly.setAttribute('points',
-                `0,${autoToY(param, points[0].v)} ` + pts.join(' ') + ` 100000,${autoToY(param, points[points.length - 1].v)}`);
+            poly.setAttribute('points', automationLinePoints(points, param, zoom));
             poly.classList.add('daw-automation-line');
             svg.appendChild(poly);
 
@@ -973,14 +977,20 @@ const AudioDawTrack = (() => {
                             ? Math.max(0, Math.min(2, startVals[i] + dv))
                             : Math.max(-1, Math.min(1, startVals[i] + dv));
                     });
-                    renderAutomationLane(track, currentZoom, callbacks);
+                    // Move the line and the two circles in place; the lane is rebuilt once, on pointer up
+                    poly.setAttribute('points', automationLinePoints(points, param, currentZoom));
+                    for (const p of targets) {
+                        const d = dotEls.get(p);
+                        if (d) d.setAttribute('cy', autoToY(param, p.v));
+                    }
                 };
-                // Window listeners: each move re-renders the lane, which replaces this polyline mid-drag
+                // Window listeners keep the drag alive; they are removed on pointer up
                 const onUp = (ue) => {
                     try { poly.releasePointerCapture(ue.pointerId); } catch (_) {}
                     window.removeEventListener('pointermove', onMove);
                     window.removeEventListener('pointerup', onUp);
                     window.removeEventListener('pointercancel', onUp);
+                    if (moved) renderAutomationLane(track, currentZoom, callbacks);
                     if (moved && callbacks.onAutomationChange) callbacks.onAutomationChange(track);
                     setTimeout(() => { track.autoSegmentDragged = false; }, 0);
                 };
@@ -998,6 +1008,7 @@ const AudioDawTrack = (() => {
             dot.setAttribute('cy', autoToY(param, pt.v));
             dot.setAttribute('r', 4);
             dot.classList.add('daw-automation-dot');
+            dotEls.set(pt, dot);
             dot.addEventListener('dblclick', (e) => {
                 e.stopPropagation();
                 if (callbacks.onAutomationGestureStart) callbacks.onAutomationGestureStart(track);

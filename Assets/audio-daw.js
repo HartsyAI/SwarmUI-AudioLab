@@ -6114,13 +6114,19 @@ const AudioDaw = (() => {
                     if (cs >= sel.end - 1e-6) {
                         mc.startTime -= len;
                         changed = true;
+                    } else if (cs >= sel.start) {
+                        // Starts inside the range: only the part past its end survives, moved to the range start
+                        const cut = sel.end - cs;
+                        mc.startTime = sel.start;
+                        mc.length = Math.max(0.05, AudioDawInstruments.midiClipLength(mc) - cut);
+                        for (const n of mc.notes) n.start -= cut;
+                        for (const c of mc.cc) c.t -= cut;
+                        changed = true;
                     } else {
-                        if (cs < sel.start) {
-                            const cEnd = cs + AudioDawInstruments.midiClipLength(mc);
-                            if (cEnd > sel.start) {
-                                mc.length = Math.max(0.05, (cEnd >= sel.end ? cEnd - len : sel.start) - cs);
-                                changed = true;
-                            }
+                        const cEnd = cs + AudioDawInstruments.midiClipLength(mc);
+                        if (cEnd > sel.start) {
+                            mc.length = Math.max(0.05, (cEnd >= sel.end ? cEnd - len : sel.start) - cs);
+                            changed = true;
                         }
                         for (const n of mc.notes) {
                             if (cs + n.start < sel.start && cs + n.start + n.dur > sel.start) {
@@ -8646,6 +8652,9 @@ const AudioDaw = (() => {
     }
 
     async function openProjectFromServer(name) {
+        // Same guard as New Project: ask before replacing a session with content, and persist that session first
+        if (sessionHasContent() && !confirm(translate('Open another project? Unsaved changes in this session are kept only in the autosave slot.'))) return;
+        flushAutosave();
         const overlay = showDawLoadingOverlay(translate('Loading project...'));
         try {
             const result = await AudioLabAPI.callAPI('AudioLabLoadProject', { name });
