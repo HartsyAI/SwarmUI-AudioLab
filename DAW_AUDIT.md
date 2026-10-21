@@ -94,6 +94,11 @@ Round 7 is rows 37 and 38.
 | 62 | Codex round 10 | A delete over empty space cleared the redo history | The undo snapshot was pushed before any change was found | 80a7493 |
 | 63 | Codex round 10 | A cancelled fade drag left the old fade scheduled | The drag listened for pointer up but not pointer cancel | 80a7493 |
 | 64 | Round 10 sweep | Ten more drags ignored a cancelled pointer, and a nudge at the start pushed an empty undo step | Each drag ended only on pointer up; the nudge pushed undo before checking the move | 80a7493 |
+| 65 | Codex round 11 | A shuffle delete gave a MIDI clip that started inside the range negative note times | The clip kept its start, and every later event moved by the whole range length | 190599a |
+| 66 | Codex round 11 | A mixer fader kept its Touch write open after a press with no change | The mixer fader released only on change | 190599a |
+| 67 | Codex round 11 | The recorder capacity check (checked, not a bug) | The check reserves a full quantum before the next write, and a 300-trial simulation dropped no samples | none |
+| 68 | Review body, 10:19 UTC | Open replaced an unsaved session without asking | openProjectFromServer loaded straight away and did not flush the autosave | 190599a |
+| 69 | Review body, 10:02 UTC | Dragging an automation segment rebuilt the lane on every move | Each move re-rendered the lane from inside the drag | 190599a |
 
 Rows 39 to 51 are the verified findings of this review. Rounds 8 and 9 of the Codex review are rows 45 and 52 to 60.
 
