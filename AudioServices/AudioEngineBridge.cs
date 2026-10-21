@@ -133,6 +133,10 @@ public static class AudioEngineBridge
         ["resemble_enhance_fx"] = "ResembleAI/resemble-enhance",
         ["yue2_music"] = "Comfy-Org/YuE2",
         ["sheetsage2_transcribe"] = "Comfy-Org/YuE2",
+        ["csm_tts"] = "unsloth/csm-1b",
+        ["orpheus_tts"] = "unsloth/orpheus-3b-0.1-ft",
+        ["stableaudio_music"] = "FastVideo/stable-audio-open-small-Diffusers",
+        ["vibevoice_tts"] = "microsoft/VibeVoice-1.5B",
     };
 
     /// <summary>Extra HuggingFace repos an engine-managed provider cannot run without, beyond the repo named by its
@@ -153,6 +157,8 @@ public static class AudioEngineBridge
     private static readonly Dictionary<string, (string Category, string File)> _engineWeightFiles = new(StringComparer.OrdinalIgnoreCase)
     {
         ["sheetsage2_transcribe"] = ("music", "audio_encoders/sheetsage2_bf16.safetensors"),
+        // A clone-category provider the speech service runs, so the engine caches it under "tts".
+        ["gptsovits_clone"] = ("tts", "gsv-v2final-pretrained/s2G2333k.pth"),
     };
 
     /// <summary>Engine-managed providers that don't use the HuggingFace cache at all, mapped to the
@@ -240,6 +246,7 @@ public static class AudioEngineBridge
         }
         try
         {
+            await HartsyInstaller.EnsureOnFirstUseAsync(providerId, AudioIo.Str(args, "__model_id"), cancel).ConfigureAwait(false);
             using IDisposable idleHold = await IdleRelease.BeginAsync(cancel).ConfigureAwait(false);
             return await RunWithVramRecoveryAsync(
                 () => DispatchAsync(providerId, binding, args, cancel),
@@ -551,6 +558,7 @@ public static class AudioEngineBridge
         }
         try
         {
+            await HartsyInstaller.EnsureOnFirstUseAsync(providerId, AudioIo.Str(args, "__model_id"), cancel).ConfigureAwait(false);
             using IDisposable idleHold = await IdleRelease.BeginAsync(cancel).ConfigureAwait(false);
             ModelSpec spec = BuildSpec(providerId, binding, args);
             return AudioIo.ScoreTranscript(await Engine.Transcribe
@@ -582,6 +590,7 @@ public static class AudioEngineBridge
         }
         try
         {
+            await HartsyInstaller.EnsureOnFirstUseAsync(providerId, AudioIo.Str(args, "__model_id"), cancel).ConfigureAwait(false);
             using IDisposable idleHold = await IdleRelease.BeginAsync(cancel).ConfigureAwait(false);
             ModelSpec spec = BuildSpec(providerId, binding, args);
             return AudioIo.ScorePlan(await run(spec, AudioEngineRequests.Music(args), cancel).ConfigureAwait(false));
@@ -624,6 +633,7 @@ public static class AudioEngineBridge
         {
             throw new InvalidOperationException($"Provider '{providerId}' has no native streaming Engine binding.");
         }
+        await HartsyInstaller.EnsureOnFirstUseAsync(providerId, AudioIo.Str(args, "__model_id"), cancel).ConfigureAwait(false);
         // Held until the caller stops enumerating, so a stream that is still speaking counts as in use.
         using IDisposable idleHold = await IdleRelease.BeginAsync(cancel).ConfigureAwait(false);
         ModelSpec spec = BuildSpec(providerId, binding, args);
@@ -680,8 +690,8 @@ public static class AudioEngineBridge
             AudioWeightsRegistry.DownloadSpec[] specs = AudioWeightsRegistry.SpecsFor(providerId, modelId);
             if (specs.Length > 0)
             {
-                string primary = Path.Combine(directory, specs[0].FileName);
-                return File.Exists(primary) ? primary : null;
+                // Any spelling of the folder: a Hartsy repack's link sits in the engine's lowercase one.
+                return AudioWeights.FindPlacedFile(provider, specs[0].FileName);
             }
             // User-placed models with no download registry (Demucs, RVC voices): probe the accepted extensions.
             foreach (string extension in new[] { "", ".safetensors", ".pth", ".pt", ".th" })
@@ -1234,8 +1244,8 @@ public static class AudioEngineBridge
             AudioProviderDefinition registryProvider = AudioProviderRegistry.GetById(providerId);
             if (registryProvider is not null)
             {
-                string dir = AudioWeights.WeightsDirectory(registryProvider);
-                return specs.All(spec => SpecSatisfied(spec, dir));
+                // Any spelling of the folder counts: a Hartsy repack's links land in the engine's lowercase one.
+                return specs.All(spec => AudioWeights.FindPlacedFile(registryProvider, spec) is not null);
             }
         }
         IReadOnlyList<string> locations = GetWeightLocations(providerId, modelId);
@@ -1276,25 +1286,6 @@ public static class AudioEngineBridge
             Logs.Debug($"[AudioLab] WeightsPresent probe of '{path}' threw: {ex.Message}");
             return false;
         }
-    }
-
-    /// <summary>True when a spec's file, or any file in its fallback chain, is on disk. A spec that downloaded
-    /// from its fallback source is stored under the fallback's name (YuE's xcodec repack vs the canonical .pth)
-    /// and is just as usable.</summary>
-    private static bool SpecSatisfied(AudioWeightsRegistry.DownloadSpec spec, string dir)
-    {
-        for (AudioWeightsRegistry.DownloadSpec s = spec; s is not null; s = s.Fallback)
-        {
-            try
-            {
-                if (File.Exists(Path.Combine(dir, s.FileName)))
-                {
-                    return true;
-                }
-            }
-            catch (Exception ex) { Logs.Debug($"[AudioLab] SpecSatisfied probe of '{s.FileName}' threw: {ex.Message}"); }
-        }
-        return false;
     }
 
     /// <summary>Points the Engine's models root at the same tree AudioLab installs into, so a placed checkpoint the

@@ -687,8 +687,10 @@ function audioLabShowInstallModal(engine) {
     let modelsListHtml = '';
     if (models.length > 0) {
         const modelRows = models.map(m => {
-            const sourceLink = m.source_url
-                ? `<a href="${escapeHtml(m.source_url)}" target="_blank" rel="noopener" style="font-size:0.85em">${escapeHtml(m.name)}</a>`
+            // The Hartsy card the install downloads from; the upstream page for a model not on Hartsy yet.
+            const modelUrl = m.hartsy_url || m.source_url;
+            const sourceLink = modelUrl
+                ? `<a href="${escapeHtml(modelUrl)}" target="_blank" rel="noopener" style="font-size:0.85em">${escapeHtml(m.name)}</a>`
                 : escapeHtml(m.name);
             const details = [];
             if (m.estimated_size) details.push(m.estimated_size);

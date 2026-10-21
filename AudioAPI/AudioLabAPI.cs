@@ -1088,6 +1088,8 @@ public static class AudioLabAPI
                         ["name"] = modelDef.Name,
                         ["description"] = modelDef.Description,
                         ["source_url"] = modelDef.SourceUrl,
+                        // The model's Hartsy card, which installs download from; null until one is published.
+                        ["hartsy_url"] = HartsyRepacks.PageUrlFor(provider.Id, modelDef.Id),
                         ["license"] = modelDef.License,
                         ["estimated_size"] = modelDef.EstimatedSize,
                         ["estimated_vram"] = modelDef.EstimatedVram,
@@ -1151,6 +1153,11 @@ public static class AudioLabAPI
         return null;
     }
 
+    /// <summary>The user's Hartsy API key, set in User Settings, or null. Only needed for a card their tier unlocks;
+    /// open cards download without one.</summary>
+    private static string HartsyApiKey(Session session)
+        => session?.User?.GetGenericData("hartsy_api", "key");
+
     /// <summary>Installs an audio engine via WebSocket with streaming progress. Optional
     /// <paramref name="model_id"/> installs one specific model's weights (variants are distinct multi-GB
     /// checkpoints); without it the provider's default model set is fetched.
@@ -1198,7 +1205,7 @@ public static class AudioLabAPI
             {
                 Logs.Info($"[AudioLab] Install progress: {msg}");
                 await ws.SendJson(new JObject { ["info"] = msg }, API.WebsocketTimeout);
-            }, Program.GlobalProgramCancel, model_id);
+            }, Program.GlobalProgramCancel, model_id, HartsyApiKey(session));
 
             if (success)
             {
@@ -1332,7 +1339,7 @@ public static class AudioLabAPI
                 await ws.SendJson(new JObject { ["info"] = $"Installing {model.Name}…" }, API.WebsocketTimeout);
                 bool success = await backend.InstallAndRegisterEngine(provider_id,
                     async msg => await ws.SendJson(new JObject { ["info"] = msg }, API.WebsocketTimeout),
-                    Program.GlobalProgramCancel, model.Id);
+                    Program.GlobalProgramCancel, model.Id, HartsyApiKey(session));
                 if (success)
                 {
                     ok++;

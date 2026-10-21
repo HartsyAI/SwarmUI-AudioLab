@@ -1266,8 +1266,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
     /// <summary>Installs an engine: fetches its weights via the in-process C# engine,
     /// registers models, and persists the installed state. When <paramref name="modelId"/> is given, only
-    /// that model's file set downloads (multi-GB variants are distinct checkpoints — never pull them all).</summary>
-    public async Task<bool> InstallAndRegisterEngine(string providerId, Func<string, Task> onProgress = null, CancellationToken cancel = default, string modelId = null)
+    /// that model's file set downloads (multi-GB variants are distinct checkpoints — never pull them all).
+    /// A model with a Hartsy card installs from it first; the upstream sources then fill only what it lacks.</summary>
+    /// <param name="hartsyApiKey">The user's Hartsy API key, for a card their tier unlocks. Optional.</param>
+    public async Task<bool> InstallAndRegisterEngine(string providerId, Func<string, Task> onProgress = null, CancellationToken cancel = default, string modelId = null, string hartsyApiKey = null)
     {
         AudioProviderDefinition definition = AudioProviderRegistry.GetById(providerId);
         if (definition == null)
@@ -1311,6 +1313,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
                         {
                             continue;
                         }
+                        await InstallFromHartsyAsync(definition, modelDef.Id, hartsyApiKey, onProgress, cancel);
+                        // After a Hartsy install this fetches only what the card lacks, and confirms the set is whole.
                         JObject result = await AudioEngineBridge.EnsureWeightsAsync(definition.Id, modelDef.Id, onProgress, cancel);
                         if (result?["success"]?.Value<bool>() != true)
                         {
@@ -1334,10 +1338,18 @@ public class DynamicAudioBackend : AbstractT2IBackend
                         installModel = definition.Models.FirstOrDefault(m => AudioWeightsRegistry.SpecsFor(definition.Id, m.Id).Length > 0)?.Id;
                     }
                     await AudioWeights.Report(onProgress, $"Downloading weights for {definition.Name}{(installModel is null ? "" : $" ({installModel})")} (in-process C# engine)...");
-                    bool registered = await AudioWeights.EnsureProviderWeightsAsync(definition, onProgress, cancel, installModel);
-                    if (!registered)
+                    if (installModel is not null && await InstallFromHartsyAsync(definition, installModel, hartsyApiKey, onProgress, cancel))
                     {
-                        await AudioWeights.Report(onProgress, $"No auto-download is registered for {definition.Name} yet. Place its .safetensors in {AudioWeights.WeightsDirectory(definition)} to enable it.");
+                        // The card's files are in place; fetch upstream only what it does not carry.
+                        await AudioWeights.EnsureMissingModelWeightsAsync(definition, installModel, onProgress, cancel);
+                    }
+                    else
+                    {
+                        bool registered = await AudioWeights.EnsureProviderWeightsAsync(definition, onProgress, cancel, installModel);
+                        if (!registered)
+                        {
+                            await AudioWeights.Report(onProgress, $"No auto-download is registered for {definition.Name} yet. Place its .safetensors in {AudioWeights.WeightsDirectory(definition)} to enable it.");
+                        }
                     }
                 }
             }
@@ -1403,6 +1415,28 @@ public class DynamicAudioBackend : AbstractT2IBackend
             await AudioWeights.Report(onProgress, $"Error: {ex.Message}");
             return false;
         }
+    }
+
+    /// <summary>Installs one model from its Hartsy card. False when it has no card, or the card cannot be used or
+    /// fails to download; the caller then installs from the upstream source as before.</summary>
+    private static async Task<bool> InstallFromHartsyAsync(AudioProviderDefinition definition, string modelId, string apiKey,
+        Func<string, Task> onProgress, CancellationToken cancel)
+    {
+        HartsyInstallResult result;
+        try
+        {
+            result = await HartsyInstaller.InstallAsync(definition, modelId, apiKey, onProgress, cancel);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            result = new(HartsyInstallStatus.Unavailable, ex.Message);
+        }
+        if (result.Status == HartsyInstallStatus.Unavailable)
+        {
+            Logs.Warning($"[AudioLab] Hartsy install of '{definition.Id}/{modelId}' failed, using the upstream source: {result.Message}");
+            await AudioWeights.Report(onProgress, $"Hartsy download unavailable ({result.Message}); using the upstream source instead.");
+        }
+        return result.Status == HartsyInstallStatus.Installed;
     }
 
     /// <summary>Uninstalls an engine: removes models from registry and persists the change. When
@@ -1486,6 +1520,14 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// currently-installed provider. Best-effort: logs and continues on per-path failure, never throws.</summary>
     private void DeleteProviderWeights(string providerId, AudioProviderDefinition definition)
     {
+        if (definition is not null)
+        {
+            foreach (AudioModelDefinition modelDef in definition.Models)
+            {
+                AudioEngineBridge.Unload(providerId, modelDef.Id);
+                HartsyInstaller.RemoveInstall(providerId, modelDef.Id);
+            }
+        }
         HashSet<string> mine = WeightLocationsForProvider(providerId, definition);
         // The locations above are derived from catalog metadata, which can name a different repo than the one
         // the engine actually downloaded from. Anything the artifact index admitted is ground truth, so fold in
@@ -1563,6 +1605,8 @@ public class DynamicAudioBackend : AbstractT2IBackend
         {
             return;
         }
+        AudioEngineBridge.Unload(providerId, modelId);
+        bool removedHartsy = HartsyInstaller.RemoveInstall(providerId, modelId);
         HashSet<string> mine = new(StringComparer.OrdinalIgnoreCase);
         foreach (string loc in AudioEngineBridge.GetWeightLocations(providerId, modelId))
         {
@@ -1573,7 +1617,15 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
         if (mine.Count == 0)
         {
-            Logs.Info($"[AudioLab] No deletable weight locations known for '{providerId}/{modelId}', nothing removed.");
+            if (removedHartsy)
+            {
+                ReconcileWeights();
+                Program.ModelRefreshEvent?.Invoke();
+            }
+            else
+            {
+                Logs.Info($"[AudioLab] No deletable weight locations known for '{providerId}/{modelId}', nothing removed.");
+            }
             return;
         }
         // Release any resident pipeline holding this model's files before deleting.
