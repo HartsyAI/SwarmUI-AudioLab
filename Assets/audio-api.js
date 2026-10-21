@@ -50,11 +50,15 @@ const AudioLabAPI = (() => {
      * @param {Object} [options]
      * @param {string} [options.language]
      * @param {string} [options.providerId]
+     * @param {string} [options.model] - model variant id (e.g. Whisper "turbo"); server default when omitted
+     * @param {string} [options.task] - Whisper: "transcribe" or "translate"
      */
     async function processSTT(audioData, options = {}) {
         const payload = { audio_data: audioData };
         if (options.language) payload.language = options.language;
         if (options.providerId) payload.provider_id = options.providerId;
+        if (options.model) payload.model = options.model;
+        if (options.task) payload.task = options.task;
         return await callAPI('ProcessSTT', payload);
     }
 

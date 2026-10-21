@@ -35,7 +35,7 @@ Docker, and nothing to install beyond the extension itself.
 | **38 local engines, 79 models** | 20 text to speech, 6 speech to text, 7 music and sound effect, 3 voice conversion, 2 audio processing |
 | **No Python** | Models load and run inside the SwarmUI process on the HartsyInference C# engine |
 | **Install only what you want** | Per model Install and Remove, with Download All for multi variant engines |
-| **Multi track DAW** | Timeline, mixer, effect chains, stem separation, drum machine, in place generation, saved sessions |
+| **Multi track DAW** | Multitrack recording from mics and interfaces, instrument tracks with a piano roll, markers and range editing, mixer, effect chains, stem separation, drum machine, in place generation, saved sessions |
 | **Wake word listener** | Voice satellites stream microphone audio in; detections are published on a WebSocket other extensions can subscribe to |
 | **Voice Agent** | A live, barge-in-capable phone call in your browser tab: your mic in, a spoken reply out, answered by LLMAssistant |
 | **Works like any Swarm model** | Pick an audio model in the Generate tab, type a prompt, and the result lands in your output history |
@@ -110,26 +110,26 @@ backend choice. Run one audio backend, and restart SwarmUI to change devices onc
 A few more settings live on the same card (restart this backend, under Server > Backends, for a change to take
 effect):
 
-- **VRAM Mode** — how hard the engine works to fit audio models in VRAM (`Auto`/`Performance`/`Balanced`/
+- **VRAM Mode**: how hard the engine works to fit audio models in VRAM (`Auto`/`Performance`/`Balanced`/
   `Aggressive`/`Maximum`).
-- **Evict Below Gb** — free host RAM, in GB, below which loading a new audio model unloads every other one. `0`
+- **Evict Below Gb**: free host RAM, in GB, below which loading a new audio model unloads every other one. `0`
   leaves the engine's own value (`vram.audioEvictBelowGb` in `~/.config/hartsyinference/settings.json`, else
   14 GB); any other value overrides that file.
-- **Keep Tts Stt Resident** — keep the last-used TTS model and the last-used STT model resident instead of
+- **Keep Tts Stt Resident**: keep the last-used TTS model and the last-used STT model resident instead of
   letting the Evict Below Gb sweep unload whichever one isn't about to run. Off by default: without it, switching
   back and forth between a TTS and an STT model under low free RAM reloads one of them from disk on every switch,
   since the sweep still evicts the idle one even while protecting the one about to run. On, both stay warm as
-  long as the box has room for both — this trades some RAM/VRAM headroom for that warm-switch latency, and uses
+  long as the box has room for both. This trades some RAM/VRAM headroom for that warm-switch latency, and uses
   the engine's `OpenSynthesizerAsync`/`OpenTranscriberAsync` leases rather than a coarser unload-everything step.
-- **Coordinate Vram On Out Of Memory** — on by default. AudioLab's engine is its own process-wide instance with
+- **Coordinate Vram On Out Of Memory**: on by default. AudioLab's engine is its own process-wide instance with
   no coordination against SwarmUI's other backends (ComfyUI, HartsyInference image/video, ...) sharing the same
   card, so a backend that still holds weights resident after a generation can leave an audio model with nowhere
   to fit, even though that memory is just sitting idle. When a model load or a generation hits an out-of-VRAM
-  error, this reserves — exclusively, so two overlapping AudioLab recoveries (or an existing reservation from
-  elsewhere) can never both free the same backend at once — every OTHER local backend that is currently idle
-  (never one mid-generation, and never one a reservation catches picking up new work in the meantime) to free
-  its memory — the same action Server > Backends > Free Memory Now triggers — waits a moment for that to
-  actually land, then retries once. A second failure is reported as-is: the request genuinely does not fit.
+  error, this reserves every OTHER local backend that is currently idle (never one mid-generation, and never one
+  a reservation catches picking up new work in the meantime) and has it free its memory, the same action Server >
+  Backends > Free Memory Now triggers. The reservation is exclusive, so two overlapping AudioLab recoveries (or an
+  existing reservation from elsewhere) can never both free the same backend at once. It then waits a moment for
+  that to actually land and retries once. A second failure is reported as-is: the request genuinely does not fit.
   This reacts to the error rather than predicting it ahead of a load. A remote SwarmUI backend is never a
   candidate: its idle state can't be verified from here, and freeing it would hit that remote machine's own
   `/API/FreeBackendMemory`, which frees unconditionally. AudioLab's own resident models are the engine's job,
@@ -139,7 +139,7 @@ effect):
   Resident is never evicted by either. Off restores the previous behavior (an out-of-VRAM error fails
   immediately); either way, a backend asked to free memory simply reloads its own models on its next
   generation, so nothing already running is ever interrupted.
-- **Unload Idle Models After Minutes** — `3` by default; `0` (or any negative value) turns it off, and the most it
+- **Unload Idle Models After Minutes**: `3` by default; `0` (or any negative value) turns it off, and the most it
   takes is `43200` (30 days). After this many minutes with no audio request, AudioLab releases its resident models
   and their device memory, the same release Server > Backends > Free Memory Now triggers.
   - *Why.* Audio models otherwise stay loaded after a generation. On a card shared with SwarmUI's image backend, that
@@ -272,7 +272,7 @@ The short version as of the most recent passes:
   TTS, Spark-TTS and StyleTTS 2 all produce intelligible, matching speech.
 - **A few have caveats worth knowing** before you rely on them: Bark sounds staticy, F5-TTS is correct but slow,
   VibeVoice is a long form model that destabilizes on short prompts, NeuTTS can append a garbled tail, and Dia
-  is a dialogue model, not a single-sentence narrator — start with `[S1]` and alternate `[S1]`/`[S2]` per speaker
+  is a dialogue model, not a single-sentence narrator: start with `[S1]` and alternate `[S1]`/`[S2]` per speaker
   turn, and give it roughly 5-20 seconds of speech worth of text; a short single sentence often comes back as
   non-speech rather than silence, confirmed as upstream Dia's own behavior (same input through the reference
   implementation fails the same way), not an engine bug.
@@ -282,7 +282,7 @@ The short version as of the most recent passes:
   autoregressive models are slow on consumer cards. YuE2 shares only its name with YuE: it plans an editable ABC
   score from your style tags and lyrics, then renders it to 48 kHz stereo, and its weights are non-commercial.
   Its duration is a hard token budget at 25 tokens a second, so a song asked for in under about 90 seconds
-  usually stops mid-phrase — the UI says so when that happens.
+  usually stops mid-phrase, and the UI says so when that happens.
 
 ### Measured speed
 
@@ -308,12 +308,75 @@ Voice cloning models require a reference clip and will tell you so rather than g
 
 ## The Audio Lab DAW
 
-The **Audio Lab** tab is a multi track editor built around what you generate. Open it from the top tab bar, or from
-the **Audio Lab** button on any audio result.
+The **Audio Lab** tab is a multi track editor built around what you generate, laid out like a pro DAW's edit window.
+Open it from the top tab bar, or from the **Audio Lab** button on any audio result.
 
-The transport strip carries record, play, stop, loop, a time or bars ruler, zoom, BPM and time signature, snap, and
-the Project, Import and Export menus. Tracks have mute, solo, volume, pan, arm and a level meter; clips drag along
-the timeline, snap to the grid, and can be split, duplicated, muted or deleted.
+The transport carries record (its arrow opens the input, count-in, pre-roll and latency options), return to zero,
+rewind, play, stop, forward and end; LOOP, CLICK and PUNCH; a main counter in bars|beats|ticks with min:sec under it
+(click to swap); the selection's Start, End and Length; the smart and range tools; the Slip, Grid and Shuffle edit
+modes with a grid value; BPM and meter; zoom with Fit; and the Project, Import and Export menus.
+
+Three rulers sit above the lanes: Bars|Beats, Min:Secs and Markers. Each track header shows the track number, record
+arm (R), input monitor (I), solo (S), mute (M) and automation (A), pan, volume, the input it records from, its inserts
+count, its level in dB and a meter. Right-click a header to rename, duplicate, recolor, resize or delete the track.
+
+### Recording
+
+Arm one track or several (R in the header, or Shift+R for the selected track) and press record: every armed track
+records its own take at once. Takes are captured losslessly on the audio clock, saved as 32-bit float WAV, and
+shifted by the measured input and output latency so overdubs line up with what you heard. If takes still land early
+or late on your hardware, set a manual offset in the record menu.
+
+- **Inputs.** Click the input name in a track header to pick the device and whether the track records a mono sum,
+  stereo, or one channel of a multi-input interface, such as a guitar on input 2. The record menu sets the default
+  device and turns on voice processing (echo and noise reduction) for speech; it is off by default so instruments
+  record clean.
+- **Monitoring.** I plays a track's input through that track's own effects, fader and pan, so you hear the processed
+  sound while you play. Armed tracks show an input meter before you record.
+- **Click and count-in.** CLICK plays a metronome, accented on the downbeat, while playing and recording. The record
+  menu adds a one or two bar count-in.
+- **Punch.** With PUNCH on, recording happens only inside the loop range, after an optional pre-roll. Pressing record
+  while playing punches in on the fly.
+
+A new take over an older one covers it: the newest plays, and the clip menu brings an older take to the front or
+sends one to the back. Microphones need a secure context (HTTPS or localhost), and the browser asks for access the
+first time.
+
+### Editing
+
+- **Selection.** Drag across empty lane space (or anywhere with the range tool, Y) to select a time range over the
+  tracks it spans. Delete it, split at its edges (T), copy, cut and paste it at the playhead, loop it (L), or export
+  just that range.
+- **Edit modes.** Slip moves clips freely. Grid snaps to the grid value: bars, note values, triplets or seconds.
+  Shuffle closes the gap when you delete and pushes later clips along when you paste. `,` and `.` nudge the selected
+  clip by one grid step.
+- **Markers.** Enter, or the + on the Markers ruler, adds one at the playhead. Drag to move, click to jump,
+  double-click to rename, and `[` and `]` step to the previous and next. Markers save with the project.
+- **Clips.** Drag the small handles at a clip's top corners for fade in and fade out (the curve is drawn on the
+  clip), drag its gain readout up or down for clip gain, and use the clip menu to split, duplicate, mute, or spot it
+  to an exact time.
+- **Crossfades and takes.** Select a range that spans the boundary between two clips and press F: the clips overlap and
+  fade into each other. On layered takes, right-click a clip and choose **Use this take for the selection** to comp
+  that range from another take.
+- **Tempo.** The **Tempo** row above the ruler holds tempo changes: double-click to add one where you point, drag to
+  move it, double-click to set its BPM, and right-click for options. Bars, the grid, snapping, the click and the
+  count-in follow the tempo map. Clips and MIDI stay in seconds, so a tempo change never stretches audio, and
+  tempo-synced delays retune at each change.
+
+Edits undo with Ctrl+Z, and trims and splits never touch the source audio.
+
+### Automation
+
+A on a track header opens its automation lane: click to add a point, drag points or whole line segments, and
+double-click a point to remove it. Volume automation scales the fader (x0 to x2) and pan automation offsets it, so
+the fader stays where you set it. The lane head picks the parameter and the mode:
+
+- **Read** plays the envelope. **Off** keeps it but ignores it, in playback and exports.
+- **Touch** writes while you hold the fader or pan knob during playback, then hands back to the existing envelope.
+- **Latch** writes from the first touch and keeps the last value going until you stop.
+- **Write** overwrites the whole pass with the controls as they stand, then switches the track to Touch.
+
+Each pass is one undo step.
 
 ### Sessions
 
@@ -323,7 +386,10 @@ DAW work is saved three ways, and they are independent:
   a crashed tab or an accidental refresh does not lose work.
 - **Local quick saves.** Named slots, also in IndexedDB, for fast checkpoints on the machine you are working on.
 - **Server side projects.** `Project` > `Save`, `Save As`, and `Open` store named projects against your SwarmUI user
-  account through the `AudioLabSaveProject` API, so they follow you between browsers and machines.
+  account through the `AudioLabSaveProject` API, so they follow you between browsers and machines. Each clip's audio
+  is its own file beside the project, and a save uploads only the audio the server does not have yet. A single clip
+  may hold 140 MB (about 12 minutes of mono 32-bit float at 48 kHz) and a project 4 GB. Recorded takes are lossless
+  32-bit float, about 11 MB per mono minute at 48 kHz.
 
 ![The Project menu](Assets/readme/daw-project-menu.png)
 
@@ -336,7 +402,19 @@ Delete and Mute. Track level volume stays in the Mixer, so clip gain and track g
 
 ### Mixer
 
-One strip per track plus a master strip, each with pan, fader, level meter, mute and solo.
+One strip per track plus a master strip, each with pan, fader, level meter, mute and solo. Effects are inserts before
+the fader, as on a console, so a compressor does not react to fader moves. The track headers carry the same
+controls and stay in step with the strips.
+
+**Aux buses and sends.** Add Track > Aux bus creates a return track with its own inserts, fader, pan, mute and solo;
+Aux bus with reverb comes with a fully wet reverb, the usual send and return setup. Send a track to a bus from its
+right-click menu (Send to a new reverb bus does both steps at once) or with + Send on its mixer strip. Each send has
+a level knob, a PRE button for a pre-fader send, and mutes with a click on its name. A bus stays audible while a
+soloed track feeds it. Stem exports keep each track dry and give each bus's return its own stem, so the stems still
+sum to the mix.
+
+The master limiter only acts on peaks: its look-ahead delay is trimmed from exports and its built-in makeup gain is
+undone, so a mix lines up with the timeline and matches its stems.
 
 ![The mixer](Assets/readme/daw-mixer.png)
 
@@ -358,29 +436,45 @@ new track in the arrangement.
 
 ### Instruments
 
-A 16 or 32 step drum machine with per lane gain, swing, audition, and Render to Track. Pads come from a generated
-one shot, an imported sample, or the currently selected clip.
+**Drum Machine.** A 16 or 32 step sequencer with per lane gain, swing, audition, and Render to Track. Pads come from a
+generated one shot, an imported sample, or the currently selected clip.
 
 ![The drum machine](Assets/readme/daw-instruments.png)
 
-**Piano / Keys** plays into the [Score](#score) tab rather than rendering audio. Pick a voice, hit `Record into
-score`, play the on-screen keyboard, and `Stop and write` quantizes what you played onto the score's grid and
-writes it in at the playhead bar, spelled for the current key. A MIDI keyboard is offered too, but only where the
-browser allows it: Web MIDI needs a secure context, so a SwarmUI reached at a LAN address over plain HTTP will not
-have it. The on-screen keys work either way.
+**Synth** and **Sampler** play instrument tracks (Add Track > Instrument track). The synth is two oscillators
+through a filter with its own envelope, with seven presets (Soft Keys, Warm Pad, Sub Bass, Saw Lead, Pluck, Organ,
+Bell) and every knob editable. The sampler plays the selected clip, or a sound generated from a description, across
+the keys from a root note you choose.
 
-Bass and synth appear as slots in the instrument browser and are not built yet; see [Roadmap](#roadmap).
+Play them from the on-screen keys, a MIDI keyboard, or the computer keyboard: turn it on from the track's input menu,
+then A to K play notes and Z and X shift the octave (letter shortcuts pause until you turn it off). An armed
+instrument track records what you play into a MIDI clip, latency compensated, with count-in and punch, alongside any
+armed audio tracks; MIDI-only recording works even where the browser blocks microphones. MIDI clips move, resize,
+mute, layer and duplicate like audio clips and export as `.mid`, and `.mid` files import onto a track (an empty
+project takes the file's tempo). Bounce an instrument track to audio to run stems or other AI processing on it.
+
+The **Piano Roll** tab edits the selected MIDI clip: click to add a note, drag to move it or drag its end to resize,
+double-click or Delete to remove, set velocity, quantize to the grid, and transpose by a semitone or an octave.
+A velocity lane under the roll sets each note's velocity. A sustain pedal (CC 64) on a MIDI keyboard is recorded
+with the notes, holds them until it comes up, and is kept in `.mid` files. Notes sound as you place them.
+
+**Keys to Score** plays into the [Score](#score) tab rather than rendering audio. Pick a voice, hit `Record into
+score`, play the on-screen keyboard, and `Stop and write` quantizes what you played onto the score's grid and
+writes it in at the playhead bar, spelled for the current key.
+
+A MIDI keyboard needs Web MIDI, which needs a secure context, so a SwarmUI reached at a LAN address over plain HTTP
+will not have it. The on-screen keys and the computer keyboard work either way.
 
 ### Score
 
-YuE2 cannot edit audio — it has no audio input at all. What it does have is the **ABC score** it writes before it
+YuE2 cannot edit audio: it has no audio input at all. What it does have is the **ABC score** it writes before it
 renders anything, and that score is editable. The Score tab is where you read it back, change it, and render the
 change.
 
 ![The Score tab before anything is loaded](Assets/readme/daw-score-start.png)
 
 An empty tab shows what it can start from rather than a sentence about it. **New blank score** writes eight empty
-bars in the project's own meter and tempo and hands you the staff to click notes into — nothing is generated and no
+bars in the project's own meter and tempo and hands you the staff to click notes into; nothing is generated and no
 model is needed. **Load from the clip** and **Transcribe a recording** name the selected clip, or say what to select
 instead. Dropping works too: a clip dragged off the timeline onto the sheet loads the score it carries, or offers to
 read one off it; an `.abc` or `.txt` file opens as a score; a `.wav`, `.mp3` or `.flac` lands as a track and offers to
@@ -394,14 +488,14 @@ Select a clip a YuE2 generation produced and press **Load from clip**; the plan 
 is seconds rather than minutes. **Paste** takes one from anywhere.
 
 **Transcribe clip** reads the score out of a recording instead: SheetSage2 listens and writes the melody, the
-chord symbols, the key, the meter and the tempo. One listen returns two renderings — **Melody**, which is what a
+chord symbols, the key, the meter and the tempo. One listen returns two renderings: **Melody**, which is what a
 cover is rendered from, and **Full**, which keeps the harmony. They are not a substitution apart, so the toggle
 switches between the model's own two scores rather than deleting quoted text from one of them. **Cover this clip**
 runs the whole loop: transcribe, keep the melody, render it in your Style. Separate a song in the **Stems** tab
 first and **Transcribe vocal stem** reads the vocal alone, which is a cleaner melody than the mix. A long dense
 clip can fill the decoder's context, and it says so and asks for a shorter section. SheetSage2 is about 1.4 GB
 and stays loaded afterwards; **Free audio models after** drops it when the transcription finishes, which releases
-every resident audio model rather than only this one — the engine has no per-model unload. SheetSage2's weights
+every resident audio model rather than only this one, since the engine has no per-model unload. SheetSage2's weights
 are CC BY-NC 4.0, non-commercial only.
 
 ![A transcribed score, with its chord symbols and sections](Assets/readme/daw-score.png)
@@ -422,7 +516,7 @@ Everything is a text edit on the ABC, so there is one code path and one undo sta
   chunk, every bar summing to the meter. Render stays disabled while an error stands. A bar whose durations do
   not add up is marked on the staff as well as listed, so it does not have to be hunted for.
 
-**Play** auditions the plan in the browser — chords comped, notes highlighted as they sound — so a reharmonisation
+**Play** auditions the plan in the browser (chords comped, notes highlighted as they sound), so a reharmonisation
 can be judged in seconds instead of a render. It pauses and resumes where it stood, the progress bar under the
 staff seeks on click, and the loop and tempo boxes repeat the plan or stretch it without editing the score, so
 two harmonies can be compared against each other rather than each from bar one. Double-click a note to hear the
@@ -434,11 +528,11 @@ derived from the score, not chosen: chord symbols present means `full`, none mea
 covers want. **Render variants** sends the same score under several style lines, or several seeds, at once.
 
 **Versions** is every clip carrying a score, drawn as the tree their `parent` links describe. Pick two and it tells
-you what actually differs — chord symbols, bar count, whether any note moved — and **Solo A** / **Solo B** compare
+you what actually differs (chord symbols, bar count, whether any note moved), and **Solo A** / **Solo B** compare
 them through the mixer's own solo.
 
 **Apply to project** sets the project tempo and time signature to what the score is written in, and a section chip
-jumps the playhead to that section in the clip the score came from — right-click still opens the section's menu.
+jumps the playhead to that section in the clip the score came from; right-click still opens the section's menu.
 
 Every field and control is named for a screen reader, the staff takes focus and shows it, and the validation
 list announces itself when it changes, so the tab is usable without a mouse.
@@ -448,17 +542,55 @@ The score is a plan the model performs, not a recording of it. Do not read exact
 ### Generate
 
 Generate straight into the arrangement without leaving the tab. Pick a category, pick one of your installed
-engines, and the result is added as a new track at the playhead and saved to your outputs like any other
-generation.
+engines, and the result lands at the playhead, on a new track or the selected one, and is saved to your outputs
+like any other generation. Each engine's own options (voices, speed, sampling and so on) show under the prompt and
+go with the request. Music engines that sing take lyrics plus a style description; the others take the description
+as their prompt. With Match project tempo on, ACE-Step gets the project's BPM and meter, and MusicGen and Stable
+Audio get the tempo in their description.
 
 ![Generating into the timeline](Assets/readme/daw-generate.png)
 
-Categories are Text to Speech, Music, Sound FX and Speech to Text. The Speech to Text category transcribes the
-selected clip, which is also how the transcript field fills itself.
+Categories are Text to Speech, Music, Sound FX and Speech to Text. Speech to Text transcribes the selected clip with
+the model you pick, which is also how a voice clone's transcript field fills itself.
+
+Generation runs through SwarmUI's Audio Backend, plus any audio model another backend serves natively: ACE-Step 1.5
+checkpoints run by HartsyInference appear as their own engine, with lyrics, style, BPM and meter. On a server with
+neither, the tab says so and links to Server > Backends instead of failing. Engine options you leave untouched are
+not sent, so each engine keeps its own defaults.
 
 ### Export
 
-`Export` renders the mixdown to WAV, MP3, OGG, FLAC or AAC, or straight back into your SwarmUI outputs.
+`Export` renders the whole song, the selection or the loop range to WAV (16 or 24-bit, or 32-bit float, at 44.1 or
+48 kHz), MP3, OGG, FLAC or AAC, or straight back into your SwarmUI outputs. **Stems** writes one WAV per track,
+all the same length, into a single ZIP, so they line up in any other DAW. A MIDI clip's menu exports it as `.mid`.
+
+### Keyboard shortcuts
+
+Press `?` in the DAW for this list.
+
+| Key | Action |
+| --- | --- |
+| Space | Play / pause (stops recording) |
+| R / Shift+R | Record / arm the selected track |
+| I | Monitor the selected track's input |
+| C / P | Metronome / punch recording |
+| L | Loop (loops the selection when there is one) |
+| Home / End | Jump to start / end |
+| Left / Right | Move the playhead one grid step (Shift: one bar) |
+| Enter / [ / ] | Add a marker / previous / next marker |
+| V / Y | Smart tool / range tool |
+| Ctrl+A | Select everything |
+| Ctrl+C / X / V | Copy / cut / paste at the playhead |
+| Delete | Delete the selection or the selected clip |
+| T | Split at the playhead (or at the selection edges) |
+| F | Crossfade the two clips across the selection |
+| , / . | Nudge the selected clip by one grid step |
+| Ctrl+D | Duplicate the selected clip |
+| M / S | Mute / solo the selected track |
+| Ctrl+Z / Ctrl+Shift+Z | Undo / redo |
+| Ctrl+S | Save project |
+| + / - / Z | Zoom in / out / to fit |
+| Esc | Clear the selection |
 
 ## Wake word listener
 
@@ -493,7 +625,7 @@ Satellites connect two ways, with the same wire protocol either way, so firmware
 reply back down the socket the satellite already has open, instead of the satellite opening its own connections
 to ask the assistant and request speech. Turning it on marks every transcript frame `handled`, so firmware new
 enough to read that stands down and waits for the reply on the socket; older firmware does not read the mark and
-answers the turn itself as well, so the reply is spoken twice — turn this on together with firmware that plays
+answers the turn itself as well, so the reply is spoken twice. Turn this on together with firmware that plays
 `audio` frames.
 
 With server-side turns on, **Satellite voice mode** picks which implementation runs:
@@ -737,11 +869,10 @@ No telemetry, no analytics, no update pings, no ads.
 
 Known and planned, so you can tell missing from broken:
 
-- **More DAW instruments.** The drum machine and Piano / Keys ship today. Bass and synth are visible slots in the
-  instrument browser and are not implemented; selecting one says so rather than failing silently. The piano roll
-  itself is still to come — keys currently capture as a played phrase, not an editable grid.
-- **Section markers on the timeline.** The Score tab knows a song's sections; the ruler still only draws the
-  playhead and the loop region.
+- **More DAW.** Groups and VCAs, automation for parameters beyond volume and pan, and a time signature change inside
+  the tempo map. [DAW_AUDIT.md](DAW_AUDIT.md) has the full list against a pro DAW.
+- **Score sections on the timeline.** The timeline has a Markers ruler, but the Score tab's sections are not placed
+  on it yet.
 - **Cloud API engines.** All 20 provider definitions exist but none are tested, so all are disabled. They get
   re-enabled per provider as each is verified.
 - **RealtimeSTT** needs a C# engine implementation.
@@ -771,11 +902,11 @@ own unless you launch with a `launch-dev` script; otherwise run the `update` scr
 host RAM, not VRAM, is usually the limit with multi gigabyte models. Close other heavy processes.
 
 **Out of VRAM right after generating an image or video.** An image/video backend sharing the card can still hold
-its weights resident. With **Coordinate Vram On Out Of Memory** on (the default), AudioLab retries automatically —
-see that setting above — so this should recover on its own; check the log for "Asking other idle backends to
+its weights resident. With **Coordinate Vram On Out Of Memory** on (the default), AudioLab retries automatically
+(see that setting above), so this should recover on its own; check the log for "Asking other idle backends to
 free memory" to confirm it did. If it still fails, the retry's one extra free was not enough: the other
 backend's model and the audio model you asked for do not fit on the card at the same time, and one of them
-needs to not be resident — close the other generation's tab/session, or use a smaller audio model.
+needs to not be resident: close the other generation's tab/session, or use a smaller audio model.
 
 ## License and credits
 
@@ -793,5 +924,5 @@ Its browser audition plays samples from [paulrosen/midi-js-soundfonts](https://g
 the set abcjs points at by default. Those are pre-rendered General MIDI soundfonts from the
 [MIDI.js](https://github.com/gleitz/MIDI.js) project, whose sets are released under Creative Commons Attribution
 (FluidR3_GM) and Attribution-ShareAlike (MusyngKite, FatBoy) licenses; that repository's `abcjs/` set carries no
-license file of its own. None of it is redistributed here — `Download samples` fetches it to a gitignored folder on
+license file of its own. None of it is redistributed here: `Download samples` fetches it to a gitignored folder on
 your own machine, and the licence that comes with it is upstream's, not AudioLab's.

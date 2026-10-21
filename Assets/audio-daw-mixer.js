@@ -39,8 +39,8 @@ const AudioDawMixer = (() => {
 
     /**
      * Small rotary knob widget. Drag vertically to change, double-click to reset.
-     * @param {Object} opts - { value, min, max, defaultValue, title, onChange(value) }
-     * @returns {HTMLElement}
+     * @param {Object} opts - { value, min, max, defaultValue, title, onChange(value), onGrab(), onRelease() }
+     * @returns {HTMLElement} with setValue(v) to move it without firing onChange
      */
     function createKnob(opts = {}) {
         const min = opts.min ?? -1;
@@ -64,6 +64,7 @@ const AudioDawMixer = (() => {
             e.preventDefault();
             e.stopPropagation();
             knob.setPointerCapture(e.pointerId);
+            if (opts.onGrab) opts.onGrab();
             const startY = e.clientY;
             const startVal = value;
             const onMove = (me) => {
@@ -73,12 +74,15 @@ const AudioDawMixer = (() => {
                 if (opts.onChange) opts.onChange(value);
             };
             const onUp = (ue) => {
-                knob.releasePointerCapture(ue.pointerId);
+                try { knob.releasePointerCapture(ue.pointerId); } catch (_) {}
                 knob.removeEventListener('pointermove', onMove);
                 knob.removeEventListener('pointerup', onUp);
+                knob.removeEventListener('pointercancel', onUp);
+                if (opts.onRelease) opts.onRelease();
             };
             knob.addEventListener('pointermove', onMove);
             knob.addEventListener('pointerup', onUp);
+            knob.addEventListener('pointercancel', onUp);
         });
         knob.addEventListener('dblclick', (e) => {
             e.stopPropagation();
@@ -86,6 +90,10 @@ const AudioDawMixer = (() => {
             apply();
             if (opts.onChange) opts.onChange(value);
         });
+        knob.setValue = (v) => {
+            value = Math.max(min, Math.min(max, v));
+            apply();
+        };
         return knob;
     }
 
@@ -99,15 +107,19 @@ const AudioDawMixer = (() => {
         container.innerHTML = '';
         meterEls = new Map();
         const strips = createDiv(null, 'daw-mixer-strips');
+        const busNames = new Map(state.tracks.filter(t => t.kind === 'bus').map(t => [t.id, t.name]));
         for (const track of state.tracks) {
-            strips.appendChild(buildStrip(track, onStateChange));
+            strips.appendChild(buildStrip(track, onStateChange, busNames));
         }
         strips.appendChild(buildMasterStrip(state, onStateChange));
         container.appendChild(strips);
     }
 
-    /** @param {string} title - full English tooltip phrase (translated here) */
-    function buildFader(gainValue, title, onGain) {
+    /**
+     * @param {string} title - full English tooltip phrase (translated here)
+     * @param {Object} [hooks] - { onGrab(), onRelease() } around a drag (automation writing)
+     */
+    function buildFader(gainValue, title, onGain, hooks = {}) {
         const wrap = createDiv(null, 'daw-strip-fader-wrap');
         const lane = createDiv(null, 'daw-strip-fader-lane');
         // 0 dB detent mark on the fader travel
@@ -130,6 +142,11 @@ const AudioDawMixer = (() => {
             fader.value = gainToFaderPos(1);
             onGain(1);
         });
+        if (hooks.onGrab) fader.addEventListener('pointerdown', () => hooks.onGrab());
+        if (hooks.onRelease) fader.addEventListener('change', () => hooks.onRelease());
+        // A press with no movement, or a double-click reset, fires no change event: release on pointer up as well
+        if (hooks.onRelease) fader.addEventListener('pointerup', () => hooks.onRelease());
+        if (hooks.onRelease) fader.addEventListener('pointercancel', () => hooks.onRelease());
         lane.appendChild(fader);
         // OBS-style stereo meter pair + dB scale
         const meterWrap = createDiv(null, 'daw-meter-pair');
@@ -155,7 +172,7 @@ const AudioDawMixer = (() => {
         return { wrap, fader, chans };
     }
 
-    function buildStrip(track, onStateChange) {
+    function buildStrip(track, onStateChange, busNames = new Map()) {
         const strip = createDiv(null, 'daw-mixer-strip');
         strip.dataset.trackId = track.id;
 
@@ -164,9 +181,13 @@ const AudioDawMixer = (() => {
         cap.style.background = track.color;
         strip.appendChild(cap);
         const name = createDiv(null, 'daw-strip-name');
-        name.textContent = track.name;
+        name.textContent = track.kind === 'bus' ? `${translate('AUX')} ${track.name}` : track.name;
         name.title = track.name;
         strip.appendChild(name);
+        if (track.kind === 'bus') strip.classList.add('bus');
+
+        // Sends to aux buses: level knob, pre/post, and a + to add one (the DAW owns the routing)
+        if (track.kind !== 'bus') strip.appendChild(buildSends(track, onStateChange, busNames));
 
         // Pan knob
         const panWrap = createDiv(null, 'daw-strip-pan');
@@ -176,7 +197,9 @@ const AudioDawMixer = (() => {
             onChange: (v) => {
                 track.pan = Math.round(v * 20) / 20;
                 if (onStateChange) onStateChange('pan', track);
-            }
+            },
+            onGrab: () => onStateChange?.('grab', { track, param: 'pan' }),
+            onRelease: () => onStateChange?.('release', { track, param: 'pan' })
         }));
         const panLbl = createSpan(null, 'daw-strip-pan-label');
         panLbl.textContent = translate('PAN');
@@ -190,6 +213,9 @@ const AudioDawMixer = (() => {
             track.volume = v;
             dbLabel.textContent = volumeToDb(v);
             if (onStateChange) onStateChange('volume', track);
+        }, {
+            onGrab: () => onStateChange?.('grab', { track, param: 'volume' }),
+            onRelease: () => onStateChange?.('release', { track, param: 'volume' })
         });
         strip.appendChild(wrap);
         strip.appendChild(dbLabel);
@@ -220,6 +246,57 @@ const AudioDawMixer = (() => {
         strip.appendChild(btns);
 
         return strip;
+    }
+
+    /** A strip's sends: one row per send (bus name, level knob, PRE toggle), plus a button to add one. */
+    function buildSends(track, onStateChange, busNames) {
+        const box = createDiv(null, 'daw-strip-sends');
+        for (const send of track.sends || []) {
+            const row = createDiv(null, 'daw-strip-send' + (send.muted ? ' muted' : ''));
+            const label = createSpan(null, 'daw-strip-send-name');
+            label.textContent = busNames.get(send.busId) || '?';
+            label.title = translate('Send level to this bus. Click to mute the send, right-click to remove it');
+            label.addEventListener('click', () => {
+                send.muted = !send.muted;
+                row.classList.toggle('muted', send.muted);
+                onStateChange?.('send', { track, send });
+            });
+            label.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                onStateChange?.('removeSend', { track, send });
+            });
+            row.appendChild(label);
+            const knob = createKnob({
+                value: send.level, min: 0, max: 1.41, defaultValue: 0.5,
+                title: translate('Send level (double-click for -6 dB)'),
+                onChange: (v) => {
+                    send.level = v;
+                    knob.title = `${translate('Send level')}: ${volumeToDb(v)}`;
+                    onStateChange?.('send', { track, send });
+                }
+            });
+            knob.classList.add('daw-strip-send-knob');
+            knob.title = `${translate('Send level')}: ${volumeToDb(send.level)}`;
+            row.appendChild(knob);
+            const pre = document.createElement('button');
+            pre.className = 'daw-mixer-btn daw-strip-send-pre' + (send.pre ? ' active-solo' : '');
+            pre.textContent = translate('PRE');
+            pre.title = translate('Pre-fader: the send ignores this track\'s fader');
+            pre.addEventListener('click', () => {
+                send.pre = !send.pre;
+                pre.classList.toggle('active-solo', send.pre);
+                onStateChange?.('routing', { track });
+            });
+            row.appendChild(pre);
+            box.appendChild(row);
+        }
+        const add = document.createElement('button');
+        add.className = 'daw-mixer-btn daw-strip-send-add';
+        add.textContent = '+ ' + translate('Send');
+        add.title = translate('Send this track to an aux bus');
+        add.addEventListener('click', (e) => onStateChange?.('addSend', { track, event: e }));
+        box.appendChild(add);
+        return box;
     }
 
     function buildMasterStrip(state, onStateChange) {

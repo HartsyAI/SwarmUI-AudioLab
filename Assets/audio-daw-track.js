@@ -83,12 +83,19 @@ const AudioDawTrack = (() => {
         return {
             id: `track-${id}`,
             name: opts.name || `Track ${id}`,
+            // instrument tracks play MIDI clips; a bus (aux) has no clips and sums what tracks send it
+            kind: ['instrument', 'bus'].includes(opts.kind) ? opts.kind : 'audio',
+            instrument: opts.instrument || null,     // AudioDawInstruments.createInstrument() for instrument tracks
+            midiClips: [],                           // [{id, name, startTime, length, notes: [{id, pitch, start, dur, vel}], muted, color}]
             clips: [],
             volume: 0.8,
             pan: 0.0,
             muted: false,
             soloed: false,
-            armed: false,
+            armed: false,                            // R: records on the transport's Record
+            monitor: false,                          // I: hear the live input through this track
+            input: { deviceId: null, channels: 'mono' }, // device (null = system default); 'mono', 'stereo' or a 1-based channel
+            takeCount: 0,
             color: opts.color || TRACK_COLORS[(id - 1) % TRACK_COLORS.length],
             height: opts.height || 100,
             collapsed: false,
@@ -96,6 +103,8 @@ const AudioDawTrack = (() => {
             automation: { volume: [], pan: [] },     // sorted [{t, v}] envelopes
             automationVisible: false,
             automationParam: 'volume',
+            automationMode: 'read',                  // 'read', 'touch', 'latch', 'write' or 'off'
+            sends: [],                               // [{busId, level, pre, muted}] to aux bus tracks
             // Runtime DOM refs (not serialized)
             headerEl: null,
             laneEl: null,
@@ -105,29 +114,56 @@ const AudioDawTrack = (() => {
 
     // ===== TRACK HEADER UI =====
 
+    /** Short text for a track's input: "Default · Mono", "USB Mic · In 2". */
+    function inputText(track, deviceLabel) {
+        if (track.kind === 'bus') return translate('AUX') + ' · ' + translate('Sends in');
+        if (track.kind === 'instrument') {
+            const inst = track.instrument;
+            return `MIDI · ${inst?.type === 'sampler' ? (inst.sampleName || translate('Sampler')) : (inst?.preset || translate('Synth'))}`;
+        }
+        const ch = track.input?.channels ?? 'mono';
+        const chText = ch === 'stereo' ? translate('Stereo') : (typeof ch === 'number' ? `${translate('In')} ${ch}` : translate('Mono'));
+        const dev = track.input?.deviceId ? (deviceLabel || translate('Input')) : translate('Default');
+        return `${dev} · ${chText}`;
+    }
+
+    /** Touch, Latch and Write record fader moves during playback. */
+    function isWriteMode(mode) {
+        return mode === 'touch' || mode === 'latch' || mode === 'write';
+    }
+
+    function dbText(v) {
+        return v <= 0 ? '-∞' : (20 * Math.log10(v)).toFixed(1);
+    }
+
     /**
-     * Build the track header DOM element.
+     * Build the track header DOM element, laid out like a pro DAW's track column:
+     * number + name; R (arm), I (input monitor), S, M, automation, pan, volume; input chooser, inserts, dB; meter.
      * @param {Object} track - Track data
-     * @param {Object} callbacks - Event callbacks { onMute, onSolo, onVolume, onArm, onSelect, onRename }
+     * @param {Object} callbacks - { onMute, onSolo, onVolume, onPan, onArm, onMonitor, onInputMenu, onOpenFx,
+     *   onSelect, onRename, onRecolor, onAutomationToggle, onRemove, onTrackMenu, inputLabel(track) }
+     * @param {number} index - position in the track list (shown as the track number)
      * @returns {HTMLElement}
      */
-    function buildTrackHeader(track, callbacks = {}) {
+    function buildTrackHeader(track, callbacks = {}, index = 0) {
         const header = createDiv(null, 'daw-track-header');
         header.dataset.trackId = track.id;
         header.style.height = track.height + 'px';
         header.style.borderLeft = `3px solid ${track.color}`;
-        header.title = translate('Right-click to change track color');
-
-        // Top row: name + remove button. Track color shows via the header's left
-        // border; right-click the header to recolor.
-        const topRow = createDiv(null, 'daw-track-name-row');
+        header.title = translate('Right-click for track options');
         header.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            if (callbacks.onRecolor) callbacks.onRecolor(track, e);
+            if (callbacks.onTrackMenu) callbacks.onTrackMenu(track, e);
+            else if (callbacks.onRecolor) callbacks.onRecolor(track, e);
         });
 
-        // Track name (editable)
+        // Row 1: number + name + remove
+        const topRow = createDiv(null, 'daw-track-name-row');
+        const num = createSpan(null, 'daw-track-num');
+        num.textContent = String(index + 1);
+        topRow.appendChild(num);
+
         const nameEl = document.createElement('span');
         nameEl.className = 'daw-track-name';
         nameEl.textContent = track.name;
@@ -145,6 +181,7 @@ const AudioDawTrack = (() => {
         nameEl.addEventListener('blur', () => {
             nameEl.contentEditable = 'false';
             track.name = nameEl.textContent.trim() || track.name;
+            nameEl.textContent = track.name;
             if (callbacks.onRename) callbacks.onRename(track);
         });
         nameEl.addEventListener('keydown', (e) => {
@@ -153,7 +190,6 @@ const AudioDawTrack = (() => {
         });
         topRow.appendChild(nameEl);
 
-        // Remove track button (visible on hover)
         const removeBtn = document.createElement('button');
         removeBtn.className = 'daw-track-remove';
         removeBtn.innerHTML = '&#x2715;';
@@ -163,39 +199,64 @@ const AudioDawTrack = (() => {
             if (callbacks.onRemove) callbacks.onRemove(track);
         });
         topRow.appendChild(removeBtn);
-
         header.appendChild(topRow);
 
-        // Control buttons row
+        // Row 2: R I S M, automation, pan, volume
         const controls = createDiv(null, 'daw-track-controls');
-
-        // Mute
-        const muteBtn = document.createElement('button');
-        muteBtn.className = 'daw-track-btn' + (track.muted ? ' active-mute' : '');
-        muteBtn.dataset.role = 'mute';
-        muteBtn.textContent = translate('M');
-        muteBtn.title = translate('Mute');
-        muteBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            track.muted = !track.muted;
-            muteBtn.classList.toggle('active-mute', track.muted);
-            if (callbacks.onMute) callbacks.onMute(track);
-        });
-        controls.appendChild(muteBtn);
-
-        // Solo
-        const soloBtn = document.createElement('button');
-        soloBtn.className = 'daw-track-btn' + (track.soloed ? ' active-solo' : '');
-        soloBtn.dataset.role = 'solo';
-        soloBtn.textContent = translate('S');
-        soloBtn.title = translate('Solo');
-        soloBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
+        const mkBtn = (role, label, title, activeClass, isActive, onClick) => {
+            const b = document.createElement('button');
+            b.className = 'daw-track-btn' + (isActive ? ' ' + activeClass : '');
+            b.dataset.role = role;
+            b.textContent = label;
+            b.title = title;
+            b.addEventListener('click', (e) => {
+                e.stopPropagation();
+                onClick(b);
+            });
+            controls.appendChild(b);
+            return b;
+        };
+        if (track.kind !== 'bus') {
+            mkBtn('arm', translate('R'), translate('Record arm: records on the transport\'s Record (Shift+R)'), 'active-arm', track.armed, (b) => {
+                if (callbacks.onArm) callbacks.onArm(track);
+                b.classList.toggle('active-arm', track.armed);
+            });
+            mkBtn('monitor', translate('I'), translate('Input monitor: hear the live input through this track (I)'), 'active-monitor', track.monitor, (b) => {
+                if (callbacks.onMonitor) callbacks.onMonitor(track);
+                b.classList.toggle('active-monitor', track.monitor);
+            });
+        }
+        mkBtn('solo', translate('S'), translate('Solo'), 'active-solo', track.soloed, (b) => {
             track.soloed = !track.soloed;
-            soloBtn.classList.toggle('active-solo', track.soloed);
+            b.classList.toggle('active-solo', track.soloed);
             if (callbacks.onSolo) callbacks.onSolo(track);
         });
-        controls.appendChild(soloBtn);
+        mkBtn('mute', translate('M'), translate('Mute'), 'active-mute', track.muted, (b) => {
+            track.muted = !track.muted;
+            b.classList.toggle('active-mute', track.muted);
+            if (callbacks.onMute) callbacks.onMute(track);
+        });
+        const autoBtn = mkBtn('automation', translate('A'), translate('Show/hide the automation lane'), 'active-solo', track.automationVisible, () => {
+            if (callbacks.onAutomationToggle) callbacks.onAutomationToggle(track);
+        });
+        autoBtn.classList.toggle('auto-writing', isWriteMode(track.automationMode));
+
+        // Pan knob (reuses the mixer's knob widget)
+        if (typeof AudioDawMixer !== 'undefined' && AudioDawMixer.createKnob) {
+            const knob = AudioDawMixer.createKnob({
+                value: track.pan || 0, min: -1, max: 1, defaultValue: 0,
+                title: translate('Pan (drag up/down, double-click to center)'),
+                onChange: (v) => {
+                    track.pan = Math.round(v * 20) / 20;
+                    if (callbacks.onPan) callbacks.onPan(track);
+                },
+                onGrab: () => callbacks.onFaderGrab?.(track, 'pan'),
+                onRelease: () => callbacks.onFaderRelease?.(track, 'pan')
+            });
+            knob.classList.add('daw-track-pan-knob');
+            knob.dataset.role = 'pan';
+            controls.appendChild(knob);
+        }
 
         // Volume slider (compact inline, dB taper shared with the mixer)
         const hasTaper = typeof AudioDawMixer !== 'undefined' && AudioDawMixer.gainToFaderPos;
@@ -208,62 +269,66 @@ const AudioDawTrack = (() => {
         volSlider.step = '0.005';
         volSlider.value = hasTaper ? AudioDawMixer.gainToFaderPos(track.volume) : track.volume;
         // Live readout: re-assigned on every drag, so it translates itself here and must stay off class="translate".
-        const volTitle = (v) => `${translate('Volume')}: ${v <= 0 ? '-∞' : (20 * Math.log10(v)).toFixed(1)} dB`;
+        const volTitle = (v) => `${translate('Volume')}: ${dbText(v)} dB`;
         volSlider.title = volTitle(track.volume);
+        controls.appendChild(volSlider);
+        header.appendChild(controls);
+
+        // Row 3: input chooser (a bus shows what feeds it), inserts, volume readout
+        const io = createDiv(null, 'daw-track-io');
+        const inBtn = document.createElement('button');
+        inBtn.className = 'daw-track-input';
+        inBtn.dataset.role = 'input';
+        inBtn.textContent = inputText(track, callbacks.inputLabel?.(track));
+        inBtn.title = track.kind === 'instrument'
+            ? translate('Instrument and MIDI input: the sound this track plays, keyboard and MIDI device')
+            : track.kind === 'bus'
+                ? translate('Aux bus: tracks send to it from their menu or the Mixer')
+                : translate('Input: device and channels this track records and monitors');
+        inBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (callbacks.onInputMenu) callbacks.onInputMenu(track, e);
+        });
+        io.appendChild(inBtn);
+        const fxBtn = document.createElement('button');
+        fxBtn.className = 'daw-track-fxcount' + (track.fx.length ? ' has-fx' : '');
+        fxBtn.dataset.role = 'fx';
+        fxBtn.textContent = track.fx.length ? `FX ${track.fx.length}` : 'FX';
+        fxBtn.title = track.fx.length
+            ? translate('Inserts') + ': ' + track.fx.map(f => f.type).join(', ')
+            : translate('No inserts. Click to add effects');
+        fxBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (callbacks.onOpenFx) callbacks.onOpenFx(track);
+        });
+        io.appendChild(fxBtn);
+        const volVal = createSpan(null, 'daw-track-vol-val');
+        volVal.dataset.role = 'volume-value';
+        volVal.textContent = dbText(track.volume);
+        volVal.title = translate('Track volume in dB (double-click the slider for 0 dB)');
+        io.appendChild(volVal);
+        header.appendChild(io);
+
         volSlider.addEventListener('input', (e) => {
             const p = parseFloat(e.target.value);
             track.volume = hasTaper ? AudioDawMixer.faderPosToGain(p) : p;
             volSlider.title = volTitle(track.volume);
+            volVal.textContent = dbText(track.volume);
             if (callbacks.onVolume) callbacks.onVolume(track);
         });
         volSlider.addEventListener('dblclick', () => {
             track.volume = 1;
             volSlider.value = hasTaper ? AudioDawMixer.gainToFaderPos(1) : 1;
             volSlider.title = volTitle(1);
+            volVal.textContent = dbText(1);
             if (callbacks.onVolume) callbacks.onVolume(track);
         });
-        controls.appendChild(volSlider);
-
-        // Arm (record)
-        const armBtn = document.createElement('button');
-        armBtn.className = 'daw-track-btn daw-track-arm' + (track.armed ? ' active-arm' : '');
-        armBtn.textContent = translate('R');
-        armBtn.title = translate('Arm for recording');
-        armBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            track.armed = !track.armed;
-            armBtn.classList.toggle('active-arm', track.armed);
-            if (callbacks.onArm) callbacks.onArm(track);
-        });
-        controls.appendChild(armBtn);
-
-        // Pan knob (reuses the mixer's knob widget)
-        if (typeof AudioDawMixer !== 'undefined' && AudioDawMixer.createKnob) {
-            const knob = AudioDawMixer.createKnob({
-                value: track.pan || 0, min: -1, max: 1, defaultValue: 0,
-                title: translate('Pan (drag up/down, double-click to center)'),
-                onChange: (v) => {
-                    track.pan = Math.round(v * 20) / 20;
-                    if (callbacks.onPan) callbacks.onPan(track);
-                }
-            });
-            knob.classList.add('daw-track-pan-knob');
-            controls.appendChild(knob);
-        }
-
-        // Automation lane toggle
-        const autoBtn = document.createElement('button');
-        autoBtn.className = 'daw-track-btn' + (track.automationVisible ? ' active-solo' : '');
-        autoBtn.dataset.role = 'automation';
-        autoBtn.textContent = translate('A');
-        autoBtn.title = translate('Show/hide automation lane');
-        autoBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (callbacks.onAutomationToggle) callbacks.onAutomationToggle(track);
-        });
-        controls.appendChild(autoBtn);
-
-        header.appendChild(controls);
+        // Grab and release bracket an automation write (Touch, Latch, Write)
+        volSlider.addEventListener('pointerdown', () => callbacks.onFaderGrab?.(track, 'volume'));
+        volSlider.addEventListener('change', () => callbacks.onFaderRelease?.(track, 'volume'));
+        // A press with no movement, or a double-click reset, fires no change event: release on pointer up as well
+        volSlider.addEventListener('pointerup', () => callbacks.onFaderRelease?.(track, 'volume'));
+        volSlider.addEventListener('pointercancel', () => callbacks.onFaderRelease?.(track, 'volume'));
 
         // Live stereo meter (OBS-style: zone gradient lights up to the level, L/R bars)
         const meter = createDiv(null, 'daw-meter-hpair daw-track-meter-pair');
@@ -278,6 +343,9 @@ const AudioDawTrack = (() => {
             track.meterChans.push({ mask, peak: peakTick });
         }
         header.appendChild(meter);
+        header.classList.toggle('armed', !!track.armed);
+        header.classList.toggle('instrument', track.kind === 'instrument');
+        header.classList.toggle('bus', track.kind === 'bus');
 
         // Click to select track
         header.addEventListener('click', () => {
@@ -285,6 +353,7 @@ const AudioDawTrack = (() => {
         });
 
         track.headerEl = header;
+        track.headerCallbacks = callbacks;
         return header;
     }
 
@@ -311,13 +380,43 @@ const AudioDawTrack = (() => {
      * inside the overflow-hidden clip element shows exactly the trimmed window.
      */
     function applyClipLayout(el, clip) {
+        const vis = clip.duration - clip.offset - clip.trimEnd;
+        const width = Math.max(vis * currentZoom, 4);
         el.style.left = (clip.startTime * currentZoom) + 'px';
-        el.style.width = Math.max((clip.duration - clip.offset - clip.trimEnd) * currentZoom, 4) + 'px';
+        el.style.width = width + 'px';
         const wsC = el.querySelector('.daw-clip-waveform');
         if (wsC) {
             wsC.style.width = (clip.duration * currentZoom) + 'px';
             wsC.style.transform = `translateX(${-clip.offset * currentZoom}px)`;
         }
+        // Fade shapes and their corner handles
+        const fiPx = Math.min(width, (clip.fadeIn || 0) * currentZoom);
+        const foPx = Math.min(width - fiPx, (clip.fadeOut || 0) * currentZoom);
+        const fadeIn = el.querySelector('.daw-clip-fade-in');
+        const fadeOut = el.querySelector('.daw-clip-fade-out');
+        if (fadeIn) {
+            fadeIn.style.width = fiPx + 'px';
+            fadeIn.style.display = fiPx > 0.5 ? '' : 'none';
+        }
+        if (fadeOut) {
+            fadeOut.style.width = foPx + 'px';
+            fadeOut.style.display = foPx > 0.5 ? '' : 'none';
+        }
+        const hIn = el.querySelector('.daw-clip-fade-handle-in');
+        const hOut = el.querySelector('.daw-clip-fade-handle-out');
+        if (hIn) hIn.style.left = Math.max(0, fiPx - 5) + 'px';
+        if (hOut) hOut.style.right = Math.max(0, foPx - 5) + 'px';
+        const gainEl = el.querySelector('.daw-clip-gain');
+        if (gainEl) gainEl.textContent = clipGainText(clip);
+    }
+
+    /** Pro-DAW style clip gain readout: "0 dB", "+2.5 dB", "-6 dB". */
+    function clipGainText(clip) {
+        const g = clip.gain ?? 1;
+        if (g <= 0) return '-∞ dB';
+        const db = 20 * Math.log10(g);
+        if (Math.abs(db) < 0.05) return '0 dB';
+        return (db > 0 ? '+' : '') + db.toFixed(1) + ' dB';
     }
 
     /**
@@ -359,6 +458,26 @@ const AudioDawTrack = (() => {
                 // Waveform container
                 const wsContainer = createDiv(null, 'daw-clip-waveform');
                 clipEl.appendChild(wsContainer);
+
+                // Fade shapes (the shaded, attenuated corners) and their drag handles
+                const fadeInShape = createDiv(null, 'daw-clip-fade daw-clip-fade-in');
+                const fadeOutShape = createDiv(null, 'daw-clip-fade daw-clip-fade-out');
+                clipEl.appendChild(fadeInShape);
+                clipEl.appendChild(fadeOutShape);
+                const fadeInHandle = createDiv(null, 'daw-clip-fade-handle daw-clip-fade-handle-in');
+                fadeInHandle.title = translate('Drag to set the fade-in');
+                const fadeOutHandle = createDiv(null, 'daw-clip-fade-handle daw-clip-fade-handle-out');
+                fadeOutHandle.title = translate('Drag to set the fade-out');
+                clipEl.appendChild(fadeInHandle);
+                clipEl.appendChild(fadeOutHandle);
+                setupFadeDrag(fadeInHandle, 'in', clipEl, clip, track, callbacks);
+                setupFadeDrag(fadeOutHandle, 'out', clipEl, clip, track, callbacks);
+
+                // Clip gain readout, drag up/down to change it
+                const gainEl = createDiv(null, 'daw-clip-gain');
+                gainEl.title = translate('Clip gain: drag up or down, double-click for 0 dB');
+                clipEl.appendChild(gainEl);
+                setupGainDrag(gainEl, clipEl, clip, track, callbacks);
 
                 // Trim handles (left = offset, right = trimEnd)
                 const trimL = createDiv(null, 'daw-clip-trim daw-clip-trim-left');
@@ -419,7 +538,9 @@ const AudioDawTrack = (() => {
 
             // Update position, size, waveform alignment, and colors (track may be recolored)
             applyClipLayout(entry.el, clip);
-            entry.el.style.backgroundColor = hexToRgba(clip.color || track.color, 0.3);
+            // Opaque, so a later clip visibly covers the one below it (it is also the one heard)
+            entry.el.style.backgroundColor = `color-mix(in srgb, ${clip.color || track.color} 28%, var(--background-soft))`;
+            entry.el.style.zIndex = String(2 + track.clips.indexOf(clip));
             if (entry.ws) {
                 try { entry.ws.setOptions({ waveColor: clip.color || track.color }); } catch (_) {}
             }
@@ -446,6 +567,8 @@ const AudioDawTrack = (() => {
 
         clipEl.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
+            // The range tool selects across clips instead; let the lanes take the gesture
+            if (callbacks.isRangeTool && callbacks.isRangeTool()) return;
             isDragging = false;
             dragStartX = e.clientX;
             dragStartY = e.clientY;
@@ -527,16 +650,18 @@ const AudioDawTrack = (() => {
             const onUp = (ue) => {
                 edgeDir = 0;
                 if (edgeRaf) { cancelAnimationFrame(edgeRaf); edgeRaf = null; }
-                clipEl.releasePointerCapture(ue.pointerId);
+                try { clipEl.releasePointerCapture(ue.pointerId); } catch (_) {}
                 clipEl.removeEventListener('pointermove', onMove);
                 clipEl.removeEventListener('pointerup', onUp);
+                clipEl.removeEventListener('pointercancel', onUp);
                 clipEl.classList.remove('dragging');
                 document.querySelectorAll('.daw-track-lane').forEach(l => l.classList.remove('daw-drop-target'));
                 if (callbacks.onClipDragOver) callbacks.onClipDragOver(-1, -1);
 
                 if (isDragging) {
                     // Dropped off the timeline: the clip was read, not moved, so it goes back where it was.
-                    if (outsideDrop && callbacks.onClipDropOutside
+                    // A cancelled touch has no drop position, so it is never a drop off the timeline
+                    if (outsideDrop && ue.type !== 'pointercancel' && callbacks.onClipDropOutside
                         && callbacks.onClipDropOutside(clip, track, ue.clientX, ue.clientY)) {
                         clip.startTime = dragStartTime;
                         applyClipLayout(clipEl, clip);
@@ -559,6 +684,7 @@ const AudioDawTrack = (() => {
 
             clipEl.addEventListener('pointermove', onMove);
             clipEl.addEventListener('pointerup', onUp);
+            clipEl.addEventListener('pointercancel', onUp);
         });
     }
 
@@ -570,6 +696,7 @@ const AudioDawTrack = (() => {
     function setupTrimDrag(handle, side, clipEl, clip, track, callbacks) {
         handle.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
+            if (callbacks.isRangeTool && callbacks.isRangeTool()) return;
             e.stopPropagation();
             e.preventDefault();
             handle.setPointerCapture(e.pointerId);
@@ -605,13 +732,103 @@ const AudioDawTrack = (() => {
                 applyClipLayout(clipEl, clip);
             };
             const onUp = (ue) => {
-                handle.releasePointerCapture(ue.pointerId);
+                try { handle.releasePointerCapture(ue.pointerId); } catch (_) {}
                 handle.removeEventListener('pointermove', onMove);
                 handle.removeEventListener('pointerup', onUp);
+                handle.removeEventListener('pointercancel', onUp);
                 if (moved && callbacks.onClipTrimEnd) callbacks.onClipTrimEnd(clip, track);
             };
             handle.addEventListener('pointermove', onMove);
             handle.addEventListener('pointerup', onUp);
+            handle.addEventListener('pointercancel', onUp);
+        });
+    }
+
+    /**
+     * Drag a clip's top corner to set its fade. The fade-in runs from the clip start, the fade-out to its end;
+     * the two never overlap. Undo snapshots via onClipFadeStart, rescheduling via onClipFadeEnd.
+     */
+    function setupFadeDrag(handle, side, clipEl, clip, track, callbacks) {
+        handle.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            if (callbacks.isRangeTool && callbacks.isRangeTool()) return;
+            e.stopPropagation();
+            e.preventDefault();
+            handle.setPointerCapture(e.pointerId);
+            const startX = e.clientX;
+            const start = { fadeIn: clip.fadeIn || 0, fadeOut: clip.fadeOut || 0 };
+            let moved = false;
+            const onMove = (me) => {
+                if (!moved && Math.abs(me.clientX - startX) > 2) {
+                    moved = true;
+                    if (callbacks.onClipFadeStart) callbacks.onClipFadeStart(clip, track);
+                }
+                if (!moved) return;
+                const vis = clip.duration - clip.offset - clip.trimEnd;
+                const dSec = (me.clientX - startX) / currentZoom;
+                if (side === 'in') {
+                    clip.fadeIn = Math.max(0, Math.min(vis - (clip.fadeOut || 0), start.fadeIn + dSec));
+                } else {
+                    clip.fadeOut = Math.max(0, Math.min(vis - (clip.fadeIn || 0), start.fadeOut - dSec));
+                }
+                applyClipLayout(clipEl, clip);
+            };
+            const onUp = (ue) => {
+                try { handle.releasePointerCapture(ue.pointerId); } catch (_) {}
+                handle.removeEventListener('pointermove', onMove);
+                handle.removeEventListener('pointerup', onUp);
+                handle.removeEventListener('pointercancel', onUp);
+                if (moved && callbacks.onClipFadeEnd) callbacks.onClipFadeEnd(clip, track);
+            };
+            handle.addEventListener('pointermove', onMove);
+            handle.addEventListener('pointerup', onUp);
+            handle.addEventListener('pointercancel', onUp);
+        });
+        handle.addEventListener('click', (e) => e.stopPropagation());
+    }
+
+    /** Drag the clip gain readout up/down (0.25 dB per pixel, -24 to +12 dB); double-click resets to 0 dB. */
+    function setupGainDrag(gainEl, clipEl, clip, track, callbacks) {
+        gainEl.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            if (callbacks.isRangeTool && callbacks.isRangeTool()) return;
+            e.stopPropagation();
+            e.preventDefault();
+            gainEl.setPointerCapture(e.pointerId);
+            const startY = e.clientY;
+            const g0 = clip.gain ?? 1;
+            const db0 = g0 > 0 ? 20 * Math.log10(g0) : -24;
+            let moved = false;
+            const onMove = (me) => {
+                if (!moved && Math.abs(me.clientY - startY) > 2) {
+                    moved = true;
+                    if (callbacks.onClipGainStart) callbacks.onClipGainStart(clip, track);
+                }
+                if (!moved) return;
+                const db = Math.max(-24, Math.min(12, db0 + (startY - me.clientY) * 0.25));
+                clip.gain = Math.pow(10, db / 20);
+                gainEl.textContent = clipGainText(clip);
+                if (callbacks.onClipGainChange) callbacks.onClipGainChange(clip, track);
+            };
+            const onUp = (ue) => {
+                try { gainEl.releasePointerCapture(ue.pointerId); } catch (_) {}
+                gainEl.removeEventListener('pointermove', onMove);
+                gainEl.removeEventListener('pointerup', onUp);
+                gainEl.removeEventListener('pointercancel', onUp);
+                if (moved && callbacks.onClipGainEnd) callbacks.onClipGainEnd(clip, track);
+            };
+            gainEl.addEventListener('pointermove', onMove);
+            gainEl.addEventListener('pointerup', onUp);
+            gainEl.addEventListener('pointercancel', onUp);
+        });
+        gainEl.addEventListener('click', (e) => e.stopPropagation());
+        gainEl.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            if (callbacks.onClipGainStart) callbacks.onClipGainStart(clip, track);
+            clip.gain = 1;
+            gainEl.textContent = clipGainText(clip);
+            if (callbacks.onClipGainChange) callbacks.onClipGainChange(clip, track);
+            if (callbacks.onClipGainEnd) callbacks.onClipGainEnd(clip, track);
         });
     }
 
@@ -642,14 +859,30 @@ const AudioDawTrack = (() => {
      */
     function syncHeaderControls(track) {
         if (!track.headerEl) return;
-        const muteBtn = track.headerEl.querySelector('[data-role="mute"]');
-        const soloBtn = track.headerEl.querySelector('[data-role="solo"]');
-        const volSlider = track.headerEl.querySelector('[data-role="volume"]');
-        if (muteBtn) muteBtn.classList.toggle('active-mute', track.muted);
-        if (soloBtn) soloBtn.classList.toggle('active-solo', track.soloed);
+        const q = (role) => track.headerEl.querySelector(`[data-role="${role}"]`);
+        q('mute')?.classList.toggle('active-mute', track.muted);
+        q('solo')?.classList.toggle('active-solo', track.soloed);
+        q('arm')?.classList.toggle('active-arm', !!track.armed);
+        q('monitor')?.classList.toggle('active-monitor', !!track.monitor);
+        track.headerEl.classList.toggle('armed', !!track.armed);
+        const volSlider = q('volume');
         if (volSlider) {
             volSlider.value = (typeof AudioDawMixer !== 'undefined' && AudioDawMixer.gainToFaderPos)
                 ? AudioDawMixer.gainToFaderPos(track.volume) : track.volume;
+        }
+        const volVal = q('volume-value');
+        if (volVal) volVal.textContent = dbText(track.volume);
+        q('pan')?.setValue?.(track.pan || 0);
+        q('automation')?.classList.toggle('auto-writing', isWriteMode(track.automationMode));
+        const inBtn = q('input');
+        if (inBtn) inBtn.textContent = inputText(track, track.headerCallbacks?.inputLabel?.(track));
+        const fxBtn = q('fx');
+        if (fxBtn) {
+            fxBtn.textContent = track.fx.length ? `FX ${track.fx.length}` : 'FX';
+            fxBtn.classList.toggle('has-fx', track.fx.length > 0);
+            fxBtn.title = track.fx.length
+                ? translate('Inserts') + ': ' + track.fx.map(f => f.type).join(', ')
+                : translate('No inserts. Click to add effects');
         }
     }
 
@@ -678,12 +911,19 @@ const AudioDawTrack = (() => {
         return lane;
     }
 
+    /** Polyline points for an automation lane, extended flat to both lane edges. */
+    function automationLinePoints(points, param, zoom) {
+        const pts = points.map(p => `${p.t * zoom},${autoToY(param, p.v)}`);
+        return `0,${autoToY(param, points[0].v)} ` + pts.join(' ') + ` 100000,${autoToY(param, points[points.length - 1].v)}`;
+    }
+
     function renderAutomationLane(track, zoom, callbacks) {
         const lane = track.autoLaneEl;
         if (!lane) return;
         lane.innerHTML = '';
         const param = track.automationParam || 'volume';
         const points = track.automation[param];
+        const dotEls = new Map(); // point -> its circle, so a segment drag can move the circles in place
         const svg = document.createElementNS(SVG_NS, 'svg');
         svg.setAttribute('height', AUTO_LANE_H);
         svg.setAttribute('width', '100%');
@@ -699,14 +939,11 @@ const AudioDawTrack = (() => {
         base.classList.add('daw-automation-baseline');
         svg.appendChild(base);
 
-        let segmentDragged = false; // suppress the click-to-add that follows a segment drag
+        // Suppresses the click-to-add that follows a segment drag; kept on the track because the drag re-renders the lane
 
         if (points.length) {
             const poly = document.createElementNS(SVG_NS, 'polyline');
-            const pts = points.map(p => `${p.t * zoom},${autoToY(param, p.v)}`);
-            // extend flat to lane edges
-            poly.setAttribute('points',
-                `0,${autoToY(param, points[0].v)} ` + pts.join(' ') + ` 100000,${autoToY(param, points[points.length - 1].v)}`);
+            poly.setAttribute('points', automationLinePoints(points, param, zoom));
             poly.classList.add('daw-automation-line');
             svg.appendChild(poly);
 
@@ -731,7 +968,7 @@ const AudioDawTrack = (() => {
                 const onMove = (me) => {
                     if (!moved) {
                         moved = true;
-                        segmentDragged = true;
+                        track.autoSegmentDragged = true;
                         if (callbacks.onAutomationGestureStart) callbacks.onAutomationGestureStart(track);
                     }
                     const dv = (startY - me.clientY) / AUTO_LANE_H * range;
@@ -740,17 +977,26 @@ const AudioDawTrack = (() => {
                             ? Math.max(0, Math.min(2, startVals[i] + dv))
                             : Math.max(-1, Math.min(1, startVals[i] + dv));
                     });
-                    renderAutomationLane(track, currentZoom, callbacks);
+                    // Move the line and the two circles in place; the lane is rebuilt once, on pointer up
+                    poly.setAttribute('points', automationLinePoints(points, param, currentZoom));
+                    for (const p of targets) {
+                        const d = dotEls.get(p);
+                        if (d) d.setAttribute('cy', autoToY(param, p.v));
+                    }
                 };
+                // Window listeners keep the drag alive; they are removed on pointer up
                 const onUp = (ue) => {
                     try { poly.releasePointerCapture(ue.pointerId); } catch (_) {}
-                    poly.removeEventListener('pointermove', onMove);
-                    poly.removeEventListener('pointerup', onUp);
+                    window.removeEventListener('pointermove', onMove);
+                    window.removeEventListener('pointerup', onUp);
+                    window.removeEventListener('pointercancel', onUp);
+                    if (moved) renderAutomationLane(track, currentZoom, callbacks);
                     if (moved && callbacks.onAutomationChange) callbacks.onAutomationChange(track);
-                    setTimeout(() => { segmentDragged = false; }, 0);
+                    setTimeout(() => { track.autoSegmentDragged = false; }, 0);
                 };
-                poly.addEventListener('pointermove', onMove);
-                poly.addEventListener('pointerup', onUp);
+                window.addEventListener('pointermove', onMove);
+                window.addEventListener('pointerup', onUp);
+                window.addEventListener('pointercancel', onUp);
             });
         }
 
@@ -762,6 +1008,7 @@ const AudioDawTrack = (() => {
             dot.setAttribute('cy', autoToY(param, pt.v));
             dot.setAttribute('r', 4);
             dot.classList.add('daw-automation-dot');
+            dotEls.set(pt, dot);
             dot.addEventListener('dblclick', (e) => {
                 e.stopPropagation();
                 if (callbacks.onAutomationGestureStart) callbacks.onAutomationGestureStart(track);
@@ -790,9 +1037,10 @@ const AudioDawTrack = (() => {
                     dot.setAttribute('cy', autoToY(param, pt.v));
                 };
                 const onUp = (ue) => {
-                    dot.releasePointerCapture(ue.pointerId);
+                    try { dot.releasePointerCapture(ue.pointerId); } catch (_) {}
                     dot.removeEventListener('pointermove', onMove);
                     dot.removeEventListener('pointerup', onUp);
+                    dot.removeEventListener('pointercancel', onUp);
                     if (moved) {
                         sortPoints();
                         renderAutomationLane(track, currentZoom, callbacks);
@@ -801,13 +1049,14 @@ const AudioDawTrack = (() => {
                 };
                 dot.addEventListener('pointermove', onMove);
                 dot.addEventListener('pointerup', onUp);
+                dot.addEventListener('pointercancel', onUp);
             });
             svg.appendChild(dot);
         });
 
         // Click empty space to add a point (line clicks are segment drags, handled above)
         svg.addEventListener('click', (e) => {
-            if (segmentDragged) return;
+            if (track.autoSegmentDragged) return;
             if (e.target !== svg && e.target !== base) return;
             const rect = svg.getBoundingClientRect();
             let t = (e.clientX - rect.left) / currentZoom;
@@ -848,6 +1097,12 @@ const AudioDawTrack = (() => {
             muted: track.muted,
             soloed: track.soloed,
             armed: track.armed,
+            monitor: !!track.monitor,
+            input: { deviceId: track.input?.deviceId || null, channels: track.input?.channels ?? 'mono' },
+            takeCount: track.takeCount || 0,
+            kind: track.kind || 'audio',
+            instrument: track.instrument ? JSON.parse(JSON.stringify(track.instrument)) : null,
+            midiClips: (track.midiClips || []).map(c => ({ ...c, notes: c.notes.map(n => ({ ...n })), cc: (c.cc || []).map(e => ({ ...e })) })),
             color: track.color,
             height: track.height,
             // Deep copies: undo snapshots must never alias the live objects
@@ -858,6 +1113,8 @@ const AudioDawTrack = (() => {
             },
             automationVisible: track.automationVisible,
             automationParam: track.automationParam,
+            automationMode: track.automationMode || 'read',
+            sends: (track.sends || []).map(sd => ({ ...sd })),
             clips: track.clips.map(c => ({
                 id: c.id,
                 blobKey: c.blobKey,

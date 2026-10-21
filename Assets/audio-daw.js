@@ -36,21 +36,21 @@ const AudioDaw = (() => {
     let audioCtx = null;
     let rafId = null;
     let blobStore = new Map(); // blobKey -> { blob, decodedBuffer }
-    // Live playback session graph; null when stopped. See buildTrackChain/scheduleClip.
-    // { ctx, masterGain, chains: Map<trackId, {trackGain, trackPan}>,
-    //   liveClips: [{clipId, trackId, iteration, source, fadeGain, clipGain}],
-    //   baseCtxTime, baseTimelineTime, schedulerId, loop: {nextWrapCtxTime, nextIterScheduled, iteration}|null }
+    // Transport session; null when stopped. Sources play into the persistent mixer graph (see ensureMixer).
+    // { ctx, liveClips: [{clipId, trackId, iteration, source, fadeGain, clipGain}], clicks, clickSeen,
+    //   baseCtxTime, baseTimelineTime, endTime, schedulerId, loop: {nextWrapCtxTime, nextIterScheduled, iteration}|null }
     let playback = null;
     const LOOKAHEAD = 0.2;         // seconds ahead the loop scheduler pre-schedules the next iteration
     const SCHEDULER_TICK_MS = 25;  // setInterval period (rAF would stall in background tabs)
     const START_EPSILON = 0.03;    // shared start instant so no source starts "in the past"
-    // Active mic recording session; null when idle. { track, startP, recorder, placeholderEl }
+    // Recording session; null when idle. { takes: [{track, entry, latency, stopFrame}], placeholders, punch,
+    //   postRoll, startP, startCtx, stopping }
     let recording = null;
     // Guards against double-triggering a Demucs pass while one is running
     let stemsSeparating = false;
     // Clip-editor waveform preview player (destroyed on each panel re-render)
     let clipEditorPlayer = null;
-    let recordSettings = { deviceId: null, voiceMode: false };
+    let recordSettings = loadRecordSettings();
 
     function getDefaultState() {
         return {
@@ -59,6 +59,7 @@ const AudioDaw = (() => {
             masterLimiterEnabled: true,
             beatPattern: { steps: 16, swing: 0, lanes: [] },
             bpm: 120,
+            tempoMap: [],          // later tempo changes [{id, t (seconds), bpm}]; bpm runs from zero
             timeSignature: [4, 4],
             currentTime: 0,
             isPlaying: false,
@@ -66,14 +67,22 @@ const AudioDaw = (() => {
             loopEnabled: false,
             loopStart: 0,
             loopEnd: 0,
+            metronome: false,    // CLICK: metronome while the transport runs
+            punchEnabled: false, // PUNCH: record only over the loop range
+            selection: null,     // {start, end, trackIds} time range across tracks
             rulerMode: 'time', // 'time' | 'beats'
-            snapEnabled: true,
+            markers: [],      // [{id, time, name, color}] sorted by time
+            snapEnabled: true,  // mirrors editMode !== 'slip' (older projects stored only this)
+            editMode: 'grid',   // 'slip' | 'grid' | 'shuffle'
+            gridValue: 'auto',  // a GRID_VALUES id
+            tool: 'smart',      // 'smart' | 'range'
             zoom: 100,        // pixels per second
             scrollLeft: 0,
             totalDuration: 10,
             contentDuration: 0, // end of the last clip — playback/export stop here
             selectedTrackId: null,
             selectedClipId: null,
+            selectedMidiClipId: null,
             undoStack: [],
             redoStack: []
         };
@@ -81,21 +90,16 @@ const AudioDaw = (() => {
 
     // ===== PUBLIC API =====
 
-    // ===== TAB VISIBILITY =====
-    // The tab <li> is hidden with a class (not inline style) because permissions.js
-    // re-applies inline display on permission-gated elements and would undo us.
+    // ===== TAB =====
+    // The tab is always reachable (Swarm's own tab permission still gates it); it used to stay hidden until an
+    // autosave, a saved project or an audio result existed, which left a first-time user no way in.
 
     function dawTabLink() { return document.getElementById('maintab_audiolab'); }
 
     function showDawTab() {
         const link = dawTabLink();
         if (!link) return;
-        link.closest('.nav-item')?.classList.remove('daw-tab-hidden');
         link.click();
-    }
-
-    function hideDawTab() {
-        dawTabLink()?.closest('.nav-item')?.classList.add('daw-tab-hidden');
     }
 
     /**
@@ -109,6 +113,8 @@ const AudioDaw = (() => {
         const top = container.getBoundingClientRect().top;
         // 28px clearance keeps the DAW footer above the fixed version display
         container.style.height = Math.max(400, window.innerHeight - top - 28) + 'px';
+        if (timeline) timeline.redraw();
+        applyBottomBarLayout();
     }
 
     /** Bind to the static tab DOM and build the UI. Idempotent per session. */
@@ -118,6 +124,8 @@ const AudioDaw = (() => {
         initialized = true;
         sizeDawContainer();
         resetState();
+        AudioDawInstruments.setSampleResolver((key) => blobStore.get(key)?.decodedBuffer || null);
+        AudioDawInstruments.setLiveHandler({ noteOn: liveNoteOn, noteOff: liveNoteOff, control: liveControl });
         initLayout();
         renderAllTracks();
         updateTimeDisplay();
@@ -169,9 +177,14 @@ const AudioDaw = (() => {
      * UNCLEAN end (crash, page nav) — never for junk sessions.
      */
     function close() {
-        const hasContent = state && state.tracks.some(t => t.clips.length > 0);
-        if (!hasContent) { finishClose(); return; }
+        if (!sessionHasContent()) { finishClose(); return; }
         showCloseDialog();
+    }
+
+    /** Anything worth keeping: audio clips, MIDI clips or drum machine pads. */
+    function sessionHasContent() {
+        return !!state && (state.tracks.some(t => t.clips.length > 0 || t.midiClips?.length > 0)
+            || state.beatPattern?.lanes?.length > 0);
     }
 
     function showCloseDialog() {
@@ -190,8 +203,10 @@ const AudioDaw = (() => {
             const name = prompt(translate('Project name:'), currentProjectName || 'My Project');
             if (!name || !name.trim()) return; // keep dialog open — treat as cancel
             dlg.remove();
-            await saveProjectToServer(name.trim());
-            finishClose();
+            const saved = await saveProjectToServer(name.trim());
+            if (saved) {
+                finishClose();
+            }
         }, ' basic-button btn-primary', translate('Save the project to the server, then close'));
         quickAppendButton(row, translate('Discard'), () => {
             dlg.remove();
@@ -202,14 +217,13 @@ const AudioDaw = (() => {
         (document.getElementById('daw_container') || document.body).appendChild(dlg);
     }
 
-    /** Full teardown: delete the crash-recovery autosave, free all memory, hide the tab. */
+    /** Full teardown: delete the crash-recovery autosave, free all memory, return to the Generate tab. */
     function finishClose() {
         if (typeof AudioDawStore !== 'undefined') {
             AudioDawStore.deleteProject(AUTOSAVE_SLOT).catch(() => {});
         }
         destroyAll();
         initialized = false;
-        hideDawTab();
         document.getElementById('text2imagetabbutton')?.click();
     }
 
@@ -257,8 +271,9 @@ const AudioDaw = (() => {
         const onMove = (clientX) => {
             if (!dragging) return;
             const mainRect = main.getBoundingClientRect();
-            const newWidth = Math.max(120, Math.min(clientX - mainRect.left, mainRect.width * 0.4));
+            const newWidth = Math.max(160, Math.min(clientX - mainRect.left, mainRect.width * 0.4));
             main.style.setProperty('--daw-header-width', newWidth + 'px');
+            if (timeline) timeline.redraw();
         };
         document.addEventListener('mousemove', (e) => onMove(e.clientX));
         document.addEventListener('touchmove', (e) => onMove(e.touches[0].clientX));
@@ -288,9 +303,11 @@ const AudioDaw = (() => {
         const bar = document.getElementById('daw_bottom_bar');
         const btn = document.getElementById('daw_bbar_button');
         if (!bar) return;
-        const px = parseInt(localStorage.getItem('daw_bbar_px')) || 380;
+        const px = parseInt(localStorage.getItem('daw_bbar_px')) || 300;
         const tabsH = document.getElementById('daw_bbar_tabs')?.offsetHeight || 38;
-        bar.style.height = (bottomBarShut ? tabsH : Math.max(120, px)) + 'px';
+        // The arrangement keeps at least ~45% of the DAW, however tall the panel was dragged on a bigger screen
+        const containerH = document.getElementById('daw_container')?.clientHeight || 800;
+        bar.style.height = (bottomBarShut ? tabsH : Math.max(120, Math.min(px, Math.round(containerH * 0.55)))) + 'px';
         bar.classList.toggle('daw-bbar-shut', bottomBarShut);
         if (btn) btn.innerHTML = bottomBarShut ? '&#x290A;' : '&#x290B;';
     }
@@ -305,7 +322,7 @@ const AudioDaw = (() => {
             e.stopPropagation();
             if (bottomBarShut) {
                 // Reopen to a useful height even if it was dragged tiny before
-                localStorage.setItem('daw_bbar_px', Math.max(380, parseInt(localStorage.getItem('daw_bbar_px')) || 0));
+                localStorage.setItem('daw_bbar_px', Math.max(300, parseInt(localStorage.getItem('daw_bbar_px')) || 0));
             }
             setBottomBarShut(!bottomBarShut);
         });
@@ -333,12 +350,15 @@ const AudioDaw = (() => {
         document.getElementById('daw_bbar_tabs')?.addEventListener('click', (e) => {
             if (bottomBarShut && e.target.closest('.nav-link')) setBottomBarShut(false);
         });
+        document.getElementById('daw_bbar_tabs')?.addEventListener('shown.bs.tab', (e) => {
+            if (state && e.target.dataset.tab === 'pianoroll') renderPianoRollPane();
+        });
         applyBottomBarLayout();
     }
 
     // ===== TRANSPORT BAR =====
 
-    // Inline SVG icons — all currentColor so they inherit theme colors (no hardcoded colors).
+    // Inline SVG icons, all currentColor so they inherit theme colors (no hardcoded colors).
     const svgFill = (path) => `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${path}</svg>`;
     const svgLine = (path) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
     const DAW_ICONS = {
@@ -348,9 +368,18 @@ const AudioDaw = (() => {
         stop: svgFill('<rect x="6" y="6" width="12" height="12" rx="1.5"/>'),
         toStart: svgFill('<rect x="5" y="5" width="3" height="14" rx="1"/><path d="M19.2 5.7v12.6a0.6 0.6 0 0 1-0.95 0.5L10 12.5a0.6 0.6 0 0 1 0-1l8.25-6.3a0.6 0.6 0 0 1 0.95 0.5z"/>'),
         toEnd: svgFill('<rect x="16" y="5" width="3" height="14" rx="1"/><path d="M4.8 5.7v12.6a0.6 0.6 0 0 0 0.95 0.5L14 12.5a0.6 0.6 0 0 0 0-1L5.75 5.2a0.6 0.6 0 0 0-0.95 0.5z"/>'),
+        rewind: svgFill('<path d="M11.6 6.3v11.4a0.6 0.6 0 0 1-0.96 0.48L3.4 12.5a0.6 0.6 0 0 1 0-0.96l7.24-5.7a0.6 0.6 0 0 1 0.96 0.47z"/><path d="M20.6 6.3v11.4a0.6 0.6 0 0 1-0.96 0.48L12.4 12.5a0.6 0.6 0 0 1 0-0.96l7.24-5.7a0.6 0.6 0 0 1 0.96 0.47z"/>'),
+        forward: svgFill('<path d="M3.4 6.3v11.4a0.6 0.6 0 0 0 0.96 0.48l7.24-5.68a0.6 0.6 0 0 0 0-0.96L4.36 5.84a0.6 0.6 0 0 0-0.96 0.47z"/><path d="M12.4 6.3v11.4a0.6 0.6 0 0 0 0.96 0.48l7.24-5.68a0.6 0.6 0 0 0 0-0.96l-7.24-5.7a0.6 0.6 0 0 0-0.96 0.47z"/>'),
+        smartTool: svgLine('<path d="M6 3l12 8.5-5.2 1.3L10 19z"/>'),
+        rangeTool: svgLine('<path d="M9 4h6M12 4v16M9 20h6"/>'),
         caretDown: svgFill('<path d="M7.5 10l4.5 5 4.5-5z"/>'),
         refresh: svgLine('<path d="M3 4v6h6"/><path d="M4.2 15a8 8 0 1 0 1.9-8.4L3 10"/>')
     };
+
+    /** One bar (bars ruler) or five seconds (time ruler): the rewind / fast-forward step. */
+    function transportStep() {
+        return state.rulerMode === 'beats' ? barsSecondsFrom(state.currentTime) : 5;
+    }
 
     function buildTransport() {
         transportEl.innerHTML = '';
@@ -361,14 +390,25 @@ const AudioDaw = (() => {
             transportEl.appendChild(g);
             return g;
         };
+        const mkBtn = (group, html, title, onClick, cls = '') => {
+            const b = document.createElement('button');
+            b.className = 'daw-transport-btn' + cls;
+            b.innerHTML = html;
+            b.title = title;
+            b.addEventListener('click', onClick);
+            group.appendChild(b);
+            return b;
+        };
+        const mkText = (group, text, title, onClick, cls, active) =>
+            mkBtn(group, escapeHtml(text), title, onClick, ' daw-btn-text ' + cls + (active ? ' active' : ''));
 
-        // ── Transport: record (+mic), rewind, play, stop, end, loop ──
+        // ── Transport: record (+settings), return to zero, rewind, play, stop, forward, end ──
         const transGroup = mkGroup();
         const recWrap = createDiv(null, 'daw-btn-group');
         const recBtn = document.createElement('button');
-        recBtn.className = 'daw-transport-btn daw-btn-rec';
+        recBtn.className = 'daw-transport-btn daw-btn-rec' + (recording ? ' active' : '');
         recBtn.innerHTML = DAW_ICONS.record;
-        recBtn.title = translate('Record into armed track (R)');
+        recBtn.title = translate('Record the armed tracks (R)');
         recBtn.addEventListener('click', () => {
             if (recording) stopRecordingFlow(); else startRecordingFlow();
         });
@@ -376,60 +416,93 @@ const AudioDaw = (() => {
         const micBtn = document.createElement('button');
         micBtn.className = 'daw-transport-btn daw-btn-mic-settings';
         micBtn.innerHTML = DAW_ICONS.caretDown;
-        micBtn.title = translate('Microphone settings');
+        micBtn.title = translate('Record settings: default input, count-in, pre-roll, latency');
         micBtn.addEventListener('click', (e) => showMicSettingsMenu(e));
         recWrap.appendChild(micBtn);
         transGroup.appendChild(recWrap);
-        quickAppendButton(transGroup, DAW_ICONS.toStart, () => seekTo(0), ' daw-transport-btn', translate('Rewind to start'));
-        const playBtn = document.createElement('button');
-        playBtn.className = 'daw-transport-btn daw-btn-play';
-        playBtn.innerHTML = DAW_ICONS.play;
-        playBtn.title = translate('Play / Pause (Space)');
-        playBtn.addEventListener('click', togglePlayback);
-        transGroup.appendChild(playBtn);
-        quickAppendButton(transGroup, DAW_ICONS.stop, () => {
+        mkBtn(transGroup, DAW_ICONS.toStart, translate('Return to zero (Home)'), () => seekTo(0));
+        mkBtn(transGroup, DAW_ICONS.rewind, translate('Rewind one bar, or 5 s on the time grid (Shift+Left)'),
+            () => seekTo(Math.max(0, state.currentTime - transportStep())));
+        mkBtn(transGroup, state.isPlaying ? DAW_ICONS.pause : DAW_ICONS.play, translate('Play / Pause (Space)'), togglePlayback, ' daw-btn-play');
+        mkBtn(transGroup, DAW_ICONS.stop, translate('Stop'), () => {
             if (recording) { stopRecordingFlow(); return; }
             stopPlayback();
             seekTo(0);
-        }, ' daw-transport-btn', translate('Stop'));
-        quickAppendButton(transGroup, DAW_ICONS.toEnd, () => seekTo(state.contentDuration), ' daw-transport-btn', translate('Go to end'));
-        const loopBtn = document.createElement('button');
-        loopBtn.className = 'daw-transport-btn daw-btn-text daw-btn-loop' + (state.loopEnabled ? ' active' : '');
-        loopBtn.textContent = translate('LOOP');
-        loopBtn.title = translate('Toggle Loop (L)');
-        loopBtn.addEventListener('click', toggleLoop);
-        transGroup.appendChild(loopBtn);
-
-        // ── LCD position cluster: time + bars.beats ──
-        const lcd = createDiv(null, 'daw-lcd');
-        timeDisplayEl = createSpan(null, 'daw-lcd-time');
-        timeDisplayEl.textContent = '0:00.0 / 0:00.0';
-        const lcdBeats = createSpan(null, 'daw-lcd-beats');
-        lcdBeats.textContent = '1.1.1';
-        lcdBeats.title = translate('Position in bars.beats.sixteenths');
-        lcd.appendChild(timeDisplayEl);
-        lcd.appendChild(lcdBeats);
-        transportEl.appendChild(lcd);
-
-        const spacer = createDiv(null, 'daw-transport-spacer');
-        transportEl.appendChild(spacer);
-
-        // ── Zoom ──
-        const zoomGroup = mkGroup(' daw-tgroup-fields');
-        const zoomLabel = createSpan(null, 'daw-transport-label');
-        zoomLabel.textContent = translate('ZOOM');
-        const zoomSlider = document.createElement('input');
-        zoomSlider.type = 'range';
-        zoomSlider.className = 'daw-transport-zoom';
-        zoomSlider.min = '10';
-        zoomSlider.max = '500';
-        zoomSlider.value = state.zoom;
-        zoomSlider.title = translate('Timeline zoom (pixels per second)');
-        zoomSlider.addEventListener('input', (e) => {
-            setZoom(parseInt(e.target.value));
         });
-        zoomGroup.appendChild(zoomLabel);
-        zoomGroup.appendChild(zoomSlider);
+        mkBtn(transGroup, DAW_ICONS.forward, translate('Forward one bar, or 5 s on the time grid (Shift+Right)'),
+            () => seekTo(state.currentTime + transportStep()));
+        mkBtn(transGroup, DAW_ICONS.toEnd, translate('Go to end (End)'), () => seekTo(state.contentDuration));
+
+        const modeGroup = mkGroup();
+        mkText(modeGroup, translate('LOOP'), translate('Loop playback over the loop range (L)'), toggleLoop, 'daw-btn-loop', state.loopEnabled);
+        mkText(modeGroup, translate('CLICK'), translate('Metronome while playing and recording (C). Count-in is in the record menu'), toggleMetronome, 'daw-btn-click', state.metronome);
+        mkText(modeGroup, translate('PUNCH'), translate('Punch recording: Record replaces only the loop range, after a pre-roll (P)'), togglePunch, 'daw-btn-punch', state.punchEnabled);
+
+        // ── Counters: main + sub position, selection start / end / length ──
+        const lcd = createDiv(null, 'daw-lcd');
+        const mkCounter = (cls, labelCls) => {
+            const row = createDiv(null, 'daw-lcd-row');
+            const lbl = createSpan(null, 'daw-lcd-label ' + labelCls);
+            const val = createSpan(null, cls);
+            row.appendChild(lbl);
+            row.appendChild(val);
+            lcd.appendChild(row);
+            return row;
+        };
+        const mainRow = mkCounter('daw-lcd-main', 'daw-lcd-main-label');
+        mkCounter('daw-lcd-sub', 'daw-lcd-sub-label');
+        mainRow.title = translate('Click to swap the main counter between bars and minutes:seconds');
+        mainRow.addEventListener('click', () => setRulerMode(state.rulerMode === 'beats' ? 'time' : 'beats'));
+        timeDisplayEl = mainRow.querySelector('.daw-lcd-main');
+        transportEl.appendChild(lcd);
+        const selLcd = createDiv(null, 'daw-lcd daw-lcd-sel');
+        for (const [cls, label] of [['daw-lcd-sel-start', translate('Start')], ['daw-lcd-sel-end', translate('End')], ['daw-lcd-sel-len', translate('Length')]]) {
+            const row = createDiv(null, 'daw-lcd-row');
+            const lbl = createSpan(null, 'daw-lcd-label');
+            lbl.textContent = label;
+            row.appendChild(lbl);
+            row.appendChild(createSpan(null, cls));
+            selLcd.appendChild(row);
+        }
+        selLcd.title = translate('Selection: drag across empty lanes (or use the range tool) to select a time range');
+        transportEl.appendChild(selLcd);
+
+        // ── Edit: tool, edit mode, grid value ──
+        const editGroup = mkGroup(' daw-tgroup-edit');
+        const toolBtns = [];
+        const mkTool = (tool, icon, title) => {
+            const b = mkBtn(editGroup, icon, title, () => setTool(tool), ' daw-tool-btn' + (state.tool === tool ? ' active' : ''));
+            b.dataset.tool = tool;
+            toolBtns.push(b);
+        };
+        mkTool('smart', DAW_ICONS.smartTool, translate('Smart tool: drag clips to move, edges to trim, corners to fade, empty space to select (V)'));
+        mkTool('range', DAW_ICONS.rangeTool, translate('Range tool: drag anywhere, even over clips, to select a time range (Y)'));
+        const sep = createSpan(null, 'daw-tgroup-sep');
+        editGroup.appendChild(sep);
+        for (const [mode, label, title] of [
+            ['slip', translate('SLIP'), translate('Slip: clips move freely, no grid')],
+            ['grid', translate('GRID'), translate('Grid: moves, trims and the playhead snap to the grid value')],
+            ['shuffle', translate('SHUF'), translate('Shuffle: deleting closes the gap, pasting pushes later clips along')]
+        ]) {
+            const b = mkText(editGroup, label, title, () => setEditMode(mode), 'daw-seg daw-edit-mode', state.editMode === mode);
+            b.dataset.mode = mode;
+        }
+        const gridSel = document.createElement('select');
+        gridSel.className = 'daw-transport-grid';
+        gridSel.title = translate('Grid value: what moves, trims and nudges snap to');
+        for (const g of GRID_VALUES) {
+            const opt = document.createElement('option');
+            opt.value = g.id;
+            opt.textContent = translate(g.label);
+            gridSel.appendChild(opt);
+        }
+        gridSel.value = state.gridValue;
+        gridSel.addEventListener('change', () => {
+            state.gridValue = gridSel.value;
+            if (state.editMode === 'slip') setEditMode('grid');
+            updateLaneGrid();
+        });
+        editGroup.appendChild(gridSel);
 
         // ── Tempo: BPM + time signature ──
         const tempoGroup = mkGroup(' daw-tgroup-fields');
@@ -442,87 +515,65 @@ const AudioDaw = (() => {
         bpmInputEl.min = 20;
         bpmInputEl.max = 300;
         bpmInputEl.addEventListener('change', (e) => {
-            state.bpm = parseInt(e.target.value) || 120;
-            if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
-            updateLaneGrid();
-            if (playback && typeof AudioDawFx !== 'undefined') {
-                for (const [id, chain] of playback.chains) {
-                    const tr = state.tracks.find(t => t.id === id);
-                    if (tr) AudioDawFx.syncDelayTimes(chain.fxChain, tr.fx, state.bpm, playback.ctx.currentTime);
-                }
-            }
+            pushUndo();
+            state.bpm = Math.max(20, Math.min(300, parseInt(e.target.value) || 120));
+            refreshTempoViews();
         });
         const sigSelect = document.createElement('select');
         sigSelect.className = 'daw-transport-timesig';
         sigSelect.title = translate('Time signature');
-        for (const sig of ['4/4', '3/4', '6/8', '2/4', '5/4']) {
+        for (const sig of ['4/4', '3/4', '6/8', '2/4', '5/4', '7/8', '12/8']) {
             const opt = document.createElement('option');
             opt.value = sig;
             opt.textContent = sig;
             sigSelect.appendChild(opt);
         }
-        sigSelect.value = state.timeSignature.join('/');
+        const curSig = state.timeSignature.join('/');
+        if (![...sigSelect.options].some(o => o.value === curSig)) {
+            const opt = document.createElement('option');
+            opt.value = curSig;
+            opt.textContent = curSig;
+            sigSelect.appendChild(opt);
+        }
+        sigSelect.value = curSig;
         sigSelect.addEventListener('change', () => {
+            pushUndo();
             state.timeSignature = sigSelect.value.split('/').map(Number);
-            if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
-            updateLaneGrid();
+            refreshTempoViews();
         });
         tempoGroup.appendChild(bpmLabel);
         tempoGroup.appendChild(bpmInputEl);
         tempoGroup.appendChild(sigSelect);
 
-        // ── Ruler mode: TIME | BARS segmented radio ──
-        const rulerGroup = mkGroup();
-        const segBtns = [];
-        const mkSeg = (label, mode, title) => {
-            const b = document.createElement('button');
-            b.className = 'daw-transport-btn daw-btn-text daw-seg' + (state.rulerMode === mode ? ' active' : '');
-            b.textContent = label;
-            b.title = title;
-            b.addEventListener('click', () => {
-                state.rulerMode = mode;
-                if (timeline) timeline.setMode(mode);
-                segBtns.forEach(([btn, m]) => btn.classList.toggle('active', m === mode));
-                updateLaneGrid();
-            });
-            segBtns.push([b, mode]);
-            rulerGroup.appendChild(b);
-        };
-        mkSeg(translate('TIME'), 'time', translate('Ruler shows minutes:seconds'));
-        mkSeg(translate('BARS'), 'beats', translate('Ruler shows bars/beats at the project tempo'));
+        // ── Zoom ──
+        const zoomGroup = mkGroup(' daw-tgroup-fields');
+        const zoomSlider = document.createElement('input');
+        zoomSlider.type = 'range';
+        zoomSlider.className = 'daw-transport-zoom';
+        zoomSlider.min = '10';
+        zoomSlider.max = '1000';
+        zoomSlider.value = state.zoom;
+        zoomSlider.title = translate('Timeline zoom (+ / -)');
+        zoomSlider.addEventListener('input', (e) => setZoom(parseInt(e.target.value)));
+        mkBtn(zoomGroup, '&#x2212;', translate('Zoom out (-)'), () => setZoom(state.zoom / 1.25), ' daw-zoom-step');
+        zoomGroup.appendChild(zoomSlider);
+        mkBtn(zoomGroup, '+', translate('Zoom in (+)'), () => setZoom(state.zoom * 1.25), ' daw-zoom-step');
+        mkBtn(zoomGroup, translate('FIT'), translate('Zoom to fit the whole song (Z)'), zoomToFit, ' daw-btn-text daw-zoom-fit');
 
-        // ── Workspace toggles: snap-to-grid, sound palette ──
+        // ── Sound palette ──
         const togGroup = mkGroup();
-        const snapBtn = document.createElement('button');
-        snapBtn.className = 'daw-transport-btn daw-btn-text daw-btn-snap' + (state.snapEnabled ? ' active' : '');
-        snapBtn.textContent = translate('SNAP');
-        snapBtn.title = translate('Snap to grid');
-        snapBtn.addEventListener('click', () => {
-            state.snapEnabled = !state.snapEnabled;
-            snapBtn.classList.toggle('active', state.snapEnabled);
-        });
-        togGroup.appendChild(snapBtn);
-        const palBtn = document.createElement('button');
-        palBtn.className = 'daw-transport-btn daw-btn-text daw-btn-palette';
-        palBtn.textContent = translate('SOUNDS');
-        palBtn.title = translate('Sound Palette: generate SFX/loops on demand (audition, then add)');
-        palBtn.addEventListener('click', () => togglePalette(palBtn));
-        togGroup.appendChild(palBtn);
+        const palBtn = mkText(togGroup, translate('SOUNDS'), translate('Sound Palette: generate SFX/loops on demand (audition, then add)'),
+            () => togglePalette(palBtn), 'daw-btn-palette', !!paletteEl);
 
-        // (Master volume/meter/loudness live in the Mixer's Master strip — one
-        // master control, not two.)
-
-        // Second spacer: floats the controls cluster over the working area and
-        // pins the file operations + close to the far right.
-        const spacer2 = createDiv(null, 'daw-transport-spacer');
-        transportEl.appendChild(spacer2);
+        const spacer = createDiv(null, 'daw-transport-spacer');
+        transportEl.appendChild(spacer);
 
         // ── File operations (DAW menu-bar convention) + window close ──
         const fileGroup = mkGroup();
         const mkFileBtn = (label, title, fn) => {
             const b = document.createElement('button');
             b.className = 'daw-transport-btn daw-btn-text';
-            b.innerHTML = `${label} &#x25BE;`;
+            b.innerHTML = `${escapeHtml(label)} &#x25BE;`;
             b.title = title;
             b.addEventListener('click', fn);
             fileGroup.appendChild(b);
@@ -530,13 +581,44 @@ const AudioDaw = (() => {
         };
         mkFileBtn(translate('PROJECT'), translate('Save, load, or start projects'), (e) => showProjectMenu(e));
         mkFileBtn(translate('IMPORT'), translate('Add audio from your outputs or your computer'), (e) => showImportMenu(e));
-        mkFileBtn(translate('EXPORT'), translate('Export the mixdown (WAV/MP3/OGG/FLAC/AAC or to Outputs)'), (e) => showExportMenu(e));
+        mkFileBtn(translate('EXPORT'), translate('Export the mixdown, a range, or stems'), (e) => showExportMenu(e));
         const closeBtn = document.createElement('button');
         closeBtn.className = 'daw-transport-btn daw-btn-close';
         closeBtn.innerHTML = '&#x2715;';
         closeBtn.title = translate('Close Audio Lab');
         closeBtn.addEventListener('click', close);
         transportEl.appendChild(closeBtn);
+        updateTimeDisplay();
+    }
+
+    /** Smart or range tool. */
+    function setTool(tool) {
+        state.tool = tool === 'range' ? 'range' : 'smart';
+        transportEl?.querySelectorAll('.daw-tool-btn').forEach(b => b.classList.toggle('active', b.dataset.tool === state.tool));
+        clipLanesEl?.classList.toggle('daw-tool-range', state.tool === 'range');
+    }
+
+    /** Slip, grid or shuffle editing. */
+    function setEditMode(mode) {
+        state.editMode = ['slip', 'grid', 'shuffle'].includes(mode) ? mode : 'grid';
+        state.snapEnabled = state.editMode !== 'slip';
+        transportEl?.querySelectorAll('.daw-edit-mode').forEach(b => b.classList.toggle('active', b.dataset.mode === state.editMode));
+    }
+
+    /** Which scale leads: the main counter, the lane grid and the brighter ruler row. */
+    function setRulerMode(mode) {
+        state.rulerMode = mode === 'beats' ? 'beats' : 'time';
+        if (timeline) timeline.setMode(state.rulerMode);
+        updateLaneGrid();
+        updateTimeDisplay();
+    }
+
+    /** Zoom so the whole song fits the visible lanes. */
+    function zoomToFit() {
+        const width = (clipLanesEl?.clientWidth || 800) - 40;
+        const dur = Math.max(1, state.contentDuration || state.totalDuration);
+        setZoom(width / dur);
+        if (clipLanesEl) clipLanesEl.scrollLeft = 0;
     }
 
     // ===== FOOTER =====
@@ -545,43 +627,201 @@ const AudioDaw = (() => {
     function showImportMenu(e) {
         dawMenu(e, [
             { label: translate('From Outputs…'), action: () => showOutputsPicker(e) },
-            { label: translate('From Computer…'), action: () => importAudioToTrack() }
+            { label: translate('From Computer…'), action: () => importAudioToTrack() },
+            { label: translate('MIDI file…'), action: () => importMidiFile(getSelectedTrack()?.kind === 'instrument' ? getSelectedTrack() : null) }
+        ]);
+    }
+
+    // ===== GRID =====
+
+    // Note values count quarter-note beats (the DAW's BPM is quarter notes per minute); triplets fit three
+    // in the space of two.
+    const GRID_VALUES = [
+        { id: 'auto', label: 'Grid: auto' },
+        { id: 'bar', label: '1 bar', bars: 1 },
+        { id: '1/2', label: '1/2 note', beats: 2 },
+        { id: '1/4', label: '1/4 note', beats: 1 },
+        { id: '1/8', label: '1/8 note', beats: 0.5 },
+        { id: '1/16', label: '1/16 note', beats: 0.25 },
+        { id: '1/32', label: '1/32 note', beats: 0.125 },
+        { id: '1/8t', label: '1/8 triplet', beats: 1 / 3 },
+        { id: '1/16t', label: '1/16 triplet', beats: 1 / 6 },
+        { id: '1s', label: '1 second', seconds: 1 },
+        { id: '0.5s', label: '500 ms', seconds: 0.5 },
+        { id: '0.1s', label: '100 ms', seconds: 0.1 },
+        { id: '10ms', label: '10 ms', seconds: 0.01 }
+    ];
+
+    // ===== TEMPO MAP =====
+    // state.bpm runs from zero and state.tempoMap holds later changes [{id, t, bpm}]. Clips and MIDI live in
+    // seconds, so a tempo change moves the bars (ruler, grid, snapping, counters, click), never the audio.
+
+    let tempoCache = null;
+
+    /** The session's tempo map ({beatsAt, timeAtBeat, bpmAt, segments}), rebuilt only when the tempo changes. */
+    function tempo() {
+        const key = state.bpm + '|' + (state.tempoMap || []).map(c => `${c.t}:${c.bpm}`).join(',');
+        if (!tempoCache || tempoCache.key !== key) {
+            tempoCache = { key, map: AudioDawTimeline.makeTempoMap(state.bpm, state.tempoMap || []) };
+        }
+        return tempoCache.map;
+    }
+
+    function bpmAt(t) {
+        return tempo().bpmAt(Math.max(0, t));
+    }
+
+    /** Quarter-note beats in a bar, which the tempo map counts: 4/4 is 4, 6/8 is 3, 7/8 is 3.5. */
+    function beatsPerBar() {
+        return (state.timeSignature[0] || 4) * 4 / (state.timeSignature[1] || 4);
+    }
+
+    /** Seconds from t to n bars later, through the tempo map. */
+    function barsSecondsFrom(t, n = 1) {
+        const tm = tempo();
+        return tm.timeAtBeat(tm.beatsAt(t) + n * beatsPerBar()) - t;
+    }
+
+    /** Seconds of the fewest whole bars (at least one) from t that cover `seconds`. */
+    function wholeBarsFrom(t, seconds) {
+        const tm = tempo();
+        const beats = tm.beatsAt(t + seconds) - tm.beatsAt(t);
+        return barsSecondsFrom(t, Math.max(1, Math.ceil(beats / beatsPerBar() - 1e-6)));
+    }
+
+    /** The grid in beats when it is musical (null for a seconds grid). Auto follows the zoom at the tempo around `at`. */
+    function gridBeats(at) {
+        const g = GRID_VALUES.find(x => x.id === state.gridValue);
+        if (g && g.bars) return g.bars * beatsPerBar();
+        if (g && g.beats) return g.beats;
+        if (g && g.seconds) return null;
+        if (state.rulerMode === 'beats') {
+            const secPerBeat = 60 / bpmAt(at);
+            let beats = 1;
+            while ((beats / 2) * secPerBeat * state.zoom >= 12 && beats > 1 / 4 + 1e-9) beats /= 2;
+            return beats;
+        }
+        return null;
+    }
+
+    /** Seconds per grid step around `at` (the playhead by default). Auto follows the zoom: the finest musical
+     *  (or round-second) step >= ~12 px. */
+    function gridStep(at = state?.currentTime || 0) {
+        const gb = gridBeats(at);
+        if (gb !== null) return gb * 60 / bpmAt(at);
+        const g = GRID_VALUES.find(x => x.id === state.gridValue);
+        if (g && g.seconds) return g.seconds;
+        let grid = 5;
+        for (const step of [5, 1, 0.5, 0.1]) {
+            if (step * state.zoom >= 12) grid = step;
+        }
+        return grid;
+    }
+
+    /** Quantize a timeline position to the grid (musical grids through the tempo map). No-op in Slip mode. */
+    function snapTime(t) {
+        if (!state || state.editMode === 'slip') return t;
+        const gb = gridBeats(t);
+        if (gb !== null) {
+            const tm = tempo();
+            return tm.timeAtBeat(Math.round(tm.beatsAt(t) / gb) * gb);
+        }
+        const grid = gridStep(t);
+        return Math.round(t / grid) * grid;
+    }
+
+    /** Push the tempo to every view that shows bars. */
+    function refreshTempoViews() {
+        if (timeline) timeline.setTempo(state.bpm, state.timeSignature, state.tempoMap || []);
+        if (bpmInputEl) bpmInputEl.value = state.bpm;
+        updateLaneGrid();
+        updateTimeDisplay();
+        retuneTempoDelays();
+    }
+
+    let tempoSeq = 0;
+
+    /** A tempo change at t (snapped to the grid); at zero it sets the session tempo instead. */
+    function addTempoChange(t) {
+        t = Math.max(0, snapTime(t));
+        if (t < 0.01) {
+            editTempo(null);
+            return;
+        }
+        if ((state.tempoMap || []).some(c => Math.abs(c.t - t) < 0.001)) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('There is already a tempo change here'), 'notice-pop-yellow');
+            return;
+        }
+        const val = prompt(translate('Tempo from here (BPM):'), String(Math.round(bpmAt(t) * 100) / 100));
+        if (val === null) return;
+        const bpm = parseFloat(val);
+        if (!(bpm >= 20 && bpm <= 400)) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Tempo must be between 20 and 400 BPM'), 'notice-pop-yellow');
+            return;
+        }
+        pushUndo();
+        state.tempoMap = [...(state.tempoMap || []), { id: `tempo-${Date.now().toString(36)}-${++tempoSeq}`, t, bpm }]
+            .sort((a, b) => a.t - b.t);
+        refreshTempoViews();
+    }
+
+    /** Set a tempo change's BPM, or the session tempo (id null). */
+    function editTempo(id) {
+        const c = id ? (state.tempoMap || []).find(x => x.id === id) : null;
+        if (id && !c) return;
+        const val = prompt(c ? translate('Tempo from here (BPM):') : translate('Session tempo (BPM):'), String(c ? c.bpm : state.bpm));
+        if (val === null) return;
+        const bpm = parseFloat(val);
+        if (!(bpm >= 20 && bpm <= 400)) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Tempo must be between 20 and 400 BPM'), 'notice-pop-yellow');
+            return;
+        }
+        pushUndo();
+        if (c) c.bpm = bpm;
+        else state.bpm = bpm;
+        refreshTempoViews();
+    }
+
+    function moveTempo(id, t) {
+        const c = (state.tempoMap || []).find(x => x.id === id);
+        if (!c || Math.abs(c.t - t) < 1e-4) return;
+        pushUndo();
+        c.t = Math.max(0.01, t);
+        state.tempoMap.sort((a, b) => a.t - b.t);
+        refreshTempoViews();
+    }
+
+    function deleteTempo(id) {
+        if (!(state.tempoMap || []).some(x => x.id === id)) return;
+        pushUndo();
+        state.tempoMap = state.tempoMap.filter(x => x.id !== id);
+        refreshTempoViews();
+    }
+
+    function showTempoMenu(id, e) {
+        dawMenu(e, [
+            { label: translate('Set tempo…'), action: () => editTempo(id) },
+            { label: translate('Delete tempo change'), action: () => deleteTempo(id) }
         ]);
     }
 
     // ===== TIMELINE =====
 
-    /**
-     * Quantize a timeline position to the active grid. No-op when snap is off.
-     * Beats mode: nearest beat, refining to 1/2 or 1/4 beat when zoomed in.
-     * Time mode: finest of 5s/1s/0.5s/0.1s that still spans >= ~12px.
-     */
-    function snapTime(t) {
-        if (!state || !state.snapEnabled) return t;
-        let grid;
-        if (state.rulerMode === 'beats') {
-            const secPerBeat = 60 / state.bpm;
-            grid = secPerBeat;
-            while ((grid / 2) * state.zoom >= 12 && grid > secPerBeat / 4 + 1e-9) grid /= 2;
-        } else {
-            grid = 5;
-            for (const g of [5, 1, 0.5, 0.1]) {
-                if (g * state.zoom >= 12) grid = g;
-            }
-        }
-        return Math.round(t / grid) * grid;
-    }
-
     function initTimeline() {
         rulerContainer.innerHTML = '';
         timeline = AudioDawTimeline.create(rulerContainer, {
             zoom: state.zoom,
-            height: 30,
             totalDuration: state.totalDuration,
             mode: state.rulerMode,
             bpm: state.bpm,
             timeSig: state.timeSignature
         });
+        timeline.setTempo(state.bpm, state.timeSignature, state.tempoMap || []);
+        timeline.on('tempoAdd', (t) => addTempoChange(t));
+        timeline.on('tempoMove', (id, t) => moveTempo(id, t));
+        timeline.on('tempoEdit', (id) => editTempo(id));
+        timeline.on('tempoContext', (id, e) => showTempoMenu(id, e));
+        document.getElementById('daw_main')?.style.setProperty('--daw-ruler-h', timeline.getHeight() + 'px');
         timeline.setSnapper(snapTime);
         timeline.on('seek', (time) => {
             seekTo(snapTime(time));
@@ -606,6 +846,126 @@ const AudioDaw = (() => {
             updateLoopShade();
             resyncPlayback(); // live bounds drag while playing reschedules the window
         });
+        timeline.on('markerAdd', (time) => addMarker(time));
+        timeline.on('markerMove', (id, time) => {
+            const m = state.markers.find(x => x.id === id);
+            if (!m) return;
+            pushUndo();
+            m.time = Math.max(0, time);
+            refreshMarkers();
+        });
+        timeline.on('markerClick', (id) => {
+            const m = state.markers.find(x => x.id === id);
+            if (m) seekTo(m.time);
+        });
+        timeline.on('markerRename', (id) => renameMarker(id));
+        timeline.on('markerContext', (id, e) => showMarkerMenu(id, e));
+        timeline.setMarkers(state.markers);
+        timeline.setPunch(state.punchEnabled);
+        timeline.setLoop(state.loopEnabled, state.loopStart, state.loopEnd);
+        renderRulerCorner();
+    }
+
+    /** Ruler names beside the rulers, like a pro DAW's ruler column. */
+    function renderRulerCorner() {
+        const corner = document.querySelector('#daw_main .daw-ruler-corner');
+        if (!corner) return;
+        corner.innerHTML = '';
+        for (const [name, cls] of [[translate('Bars|Beats'), 'bars'], [translate('Min:Secs'), 'time'], [translate('Tempo'), 'tempo'], [translate('Markers'), 'markers']]) {
+            const row = createDiv(null, 'daw-ruler-name daw-ruler-name-' + cls);
+            row.textContent = name;
+            corner.appendChild(row);
+        }
+        const add = document.createElement('button');
+        add.className = 'daw-marker-add';
+        add.textContent = '+';
+        add.title = translate('Add a marker at the playhead (Enter)');
+        add.addEventListener('click', () => addMarker(state.currentTime));
+        corner.querySelector('.daw-ruler-name-markers')?.appendChild(add);
+        const addTempo = document.createElement('button');
+        addTempo.className = 'daw-marker-add';
+        addTempo.textContent = '+';
+        addTempo.title = translate('Add a tempo change at the playhead');
+        addTempo.addEventListener('click', () => addTempoChange(state.currentTime));
+        corner.querySelector('.daw-ruler-name-tempo')?.appendChild(addTempo);
+    }
+
+    // ===== MARKERS =====
+
+    let markerSeq = 0;
+
+    function sortMarkers() {
+        state.markers.sort((a, b) => a.time - b.time);
+    }
+
+    /** Push markers to the ruler and draw their lines through the lanes. */
+    function refreshMarkers() {
+        sortMarkers();
+        if (timeline) timeline.setMarkers(state.markers);
+        if (!clipLanesEl) return;
+        let layer = clipLanesEl.querySelector('.daw-marker-lines');
+        if (!layer) {
+            layer = createDiv(null, 'daw-marker-lines');
+            clipLanesEl.appendChild(layer);
+        }
+        layer.innerHTML = '';
+        for (const m of state.markers) {
+            const line = createDiv(null, 'daw-marker-line');
+            line.style.left = (m.time * state.zoom) + 'px';
+            if (m.color) line.style.setProperty('--marker-color', m.color);
+            layer.appendChild(line);
+        }
+    }
+
+    function addMarker(time, name = null) {
+        if (state.markers.some(m => Math.abs(m.time - time) < 0.001)) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('There is already a marker here'), 'notice-pop-yellow');
+            return;
+        }
+        pushUndo();
+        state.markers.push({
+            id: `marker-${Date.now().toString(36)}-${++markerSeq}`,
+            time: Math.max(0, time),
+            name: name || `${translate('Marker')} ${state.markers.length + 1}`,
+            color: null
+        });
+        refreshMarkers();
+    }
+
+    function renameMarker(id) {
+        const m = state.markers.find(x => x.id === id);
+        if (!m) return;
+        const name = prompt(translate('Marker name:'), m.name);
+        if (!name || !name.trim() || name.trim() === m.name) return;
+        pushUndo();
+        m.name = name.trim();
+        refreshMarkers();
+    }
+
+    function showMarkerMenu(id, e) {
+        const m = state.markers.find(x => x.id === id);
+        if (!m) return;
+        dawMenu(e, [
+            { label: translate('Jump here'), action: () => seekTo(m.time) },
+            { label: translate('Rename…'), action: () => renameMarker(id) },
+            { label: translate('Move to playhead'), action: () => { pushUndo(); m.time = state.currentTime; refreshMarkers(); } },
+            {
+                label: translate('Select to next marker'),
+                action: () => {
+                    const next = state.markers.find(x => x.time > m.time + 1e-6);
+                    setSelection({ start: m.time, end: next ? next.time : Math.max(state.contentDuration, m.time + 1), trackIds: state.tracks.map(t => t.id) });
+                }
+            },
+            { label: translate('Delete marker'), action: () => { pushUndo(); state.markers = state.markers.filter(x => x.id !== id); refreshMarkers(); } }
+        ]);
+    }
+
+    /** Jump to the previous (-1) or next (+1) marker from the playhead. */
+    function jumpMarker(dir) {
+        const t = state.currentTime;
+        const list = state.markers;
+        const m = dir > 0 ? list.find(x => x.time > t + 1e-3) : [...list].reverse().find(x => x.time < t - 1e-3);
+        if (m) seekTo(m.time);
     }
 
     // ===== BOTTOM PANEL =====
@@ -665,7 +1025,8 @@ const AudioDaw = (() => {
                     label: n,
                     action: () => {
                         pushUndo();
-                        track.fx = chains[n].map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));
+                        track.fx = chains[n].filter(f => typeof AudioDawFx === 'undefined' || AudioDawFx.FX_DEFS[f.type])
+                            .map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));
                         rebuildTrackFx(track);
                         updateBottomPanel();
                     }
@@ -673,17 +1034,18 @@ const AudioDaw = (() => {
             },
             onParamChange: (track, fx, index) => {
                 fxGestureUndo();
-                const chain = playback?.chains.get(track.id);
+                const chain = mixer?.chains.get(track.id);
                 if (chain?.fxChain) {
-                    AudioDawFx.applyEffectParams(chain.fxChain, index, fx, playback.ctx.currentTime,
-                        { bpm: state.bpm, ctx: playback.ctx });
+                    AudioDawFx.applyEffectParams(chain.fxChain, index, fx, mixer.ctx.currentTime,
+                        { bpm: bpmAt(currentTimelineTime()), ctx: mixer.ctx });
+                    if (fx.type === 'delay' && fx.params.sync && state.tempoMap?.length) retuneTempoDelays();
                 }
             },
             onToggle: (track, fx, index) => {
                 pushUndo();
-                const chain = playback?.chains.get(track.id);
+                const chain = mixer?.chains.get(track.id);
                 if (chain?.fxChain) {
-                    AudioDawFx.setEffectEnabled(chain.fxChain, index, fx, playback.ctx.currentTime);
+                    AudioDawFx.setEffectEnabled(chain.fxChain, index, fx, mixer.ctx.currentTime);
                 }
             },
             onAdd: (track, type) => {
@@ -710,13 +1072,8 @@ const AudioDaw = (() => {
             },
             onMasterLimiter: (enabled) => {
                 state.masterLimiterEnabled = enabled;
-                // Master path topology change: cleanly restart the graph if playing
-                if (state.isPlaying) {
-                    const P = currentTimelineTime();
-                    stopPlayback();
-                    state.currentTime = P;
-                    startPlayback();
-                }
+                // The master path rewires in place; sources keep playing
+                if (mixer) wireMasterOut();
             }
         };
     }
@@ -778,8 +1135,7 @@ const AudioDaw = (() => {
                     }
                     sig.value = want;
                 }
-                if (timeline) timeline.setTempo(state.bpm, state.timeSignature);
-                updateLaneGrid();
+                refreshTempoViews();
             },
             /** A recording dropped on the Score sheet lands as a track like any other import. */
             importClip: async (file) => {
@@ -918,10 +1274,11 @@ const AudioDaw = (() => {
                     e.stopPropagation();
                     const sel = getClip();
                     if (sel) {
+                        pushUndo();
                         sel.clip.muted = !sel.clip.muted;
-                        applyClipGain(sel.clip);
                         renderAllTracks();
                         updateBottomPanel();
+                        resyncPlayback(); // a muted clip stops covering the one below it
                     }
                 });
                 actions.appendChild(muteBtn);
@@ -1017,12 +1374,24 @@ const AudioDaw = (() => {
         if (mixerContent) {
             if (typeof AudioDawMixer !== 'undefined') {
                 AudioDawMixer.render(mixerContent, state, (prop, val) => {
+                    if (prop !== 'grab' && prop !== 'release') scheduleAutosave();
                     if (prop === 'masterVolume') { state.masterVolume = val; updatePlaybackGains(); }
-                    else if (prop === 'pan') { updatePlaybackGains(); }
-                    else if (prop === 'mute' || prop === 'solo' || prop === 'volume') {
+                    else if (prop === 'pan') { automationInput(val, 'pan'); updatePlaybackGains(); }
+                    else if (prop === 'volume') {
+                        automationInput(val, 'volume');
                         updatePlaybackGains();
                         AudioDawTrack.syncHeaderControls(val); // val is the track here
                     }
+                    else if (prop === 'mute' || prop === 'solo') {
+                        updatePlaybackGains();
+                        AudioDawTrack.syncHeaderControls(val);
+                    }
+                    else if (prop === 'grab') automationGrab(val.track, val.param);
+                    else if (prop === 'release') automationRelease(val.track, val.param);
+                    else if (prop === 'send') updatePlaybackGains(); // level or mute: a param write
+                    else if (prop === 'routing') { scheduleAutosave(); rebuildRouting(val.track); }
+                    else if (prop === 'removeSend') removeSend(val.track, val.send.busId);
+                    else if (prop === 'addSend') showAddSendMenu(val.track, val.event);
                 });
             } else {
                 mixerContent.innerHTML = '';
@@ -1043,8 +1412,37 @@ const AudioDaw = (() => {
             AudioDawFx.renderFxPanel(fxContent, getSelectedTrack(), fxPanelCallbacks());
         }
 
+        renderPianoRollPane();
+
         // Selection only — the Score pane itself is built once, so an in-progress edit is never wiped.
         if (typeof AudioDawScore !== 'undefined') AudioDawScore.onSelection(findClipById(state.selectedClipId));
+    }
+
+    /** Piano roll for the selected MIDI clip. Also re-run when its tab is shown, since a hidden pane drops the scroll to the notes. */
+    function renderPianoRollPane() {
+        const prPane = bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="pianoroll"]');
+        if (!prPane) return;
+        const found = findMidiClip(state.selectedMidiClipId);
+        AudioDawInstruments.renderPianoRoll(prPane, found?.clip || null, found?.track || null, {
+            zoom: Math.max(80, Math.min(400, state.zoom * 1.5)),
+            // The clip's own tempo, the same one the grid is drawn with (bpm below)
+            gridStep: () => gridStep(found ? found.clip.startTime : state.currentTime),
+            snap: (t) => found ? snapTime(found.clip.startTime + t) - found.clip.startTime : t,
+            bpm: () => found ? bpmAt(found.clip.startTime) : state.bpm,
+            play: (pitch, vel) => {
+                if (!found) return;
+                const ctx = getAudioContext();
+                if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
+                AudioDawInstruments.startVoice(ctx, chainFor(found.track).input, found.track.instrument, pitch, vel, ctx.currentTime, 0.3, instrumentSample(found.track));
+                kickMeters();
+            },
+            onGestureStart: () => pushUndo(),
+            onChanged: () => {
+                updateTotalDuration();
+                renderAllTracks();
+                resyncPlayback();
+            }
+        });
     }
 
     /** Simple inline mixer fallback when AudioDawMixer module isn't loaded. */
@@ -1202,11 +1600,15 @@ const AudioDaw = (() => {
         modelLabel.textContent = translate('Model:');
         const modelSelect = document.createElement('select');
         modelSelect.className = 'daw-stems-select';
-        for (const [id, def] of Object.entries(STEM_MODELS)) {
+        for (const id of stemModelChoices()) {
             const opt = document.createElement('option');
             opt.value = id;
-            opt.textContent = def.label;
+            opt.textContent = STEM_MODELS[id].label;
             modelSelect.appendChild(opt);
+        }
+        if (!generateEngines) {
+            // First render before the engine list arrived: redraw once it has, so only real variants show.
+            ensureEnginesList().then(() => { if (container.isConnected) renderStemsPanel(container); }).catch(() => {});
         }
         modelRow.appendChild(modelLabel);
         modelRow.appendChild(modelSelect);
@@ -1329,6 +1731,13 @@ const AudioDaw = (() => {
         htdemucs_6s: { label: 'HTDemucs 6-stem, adds guitar + piano', stems: ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'] }
     };
 
+    /** Demucs variants this server can run: demucs_fx's installed models, else the two the engine ships. */
+    function stemModelChoices() {
+        const eng = (generateEngines || []).find(e => e.id === 'demucs_fx');
+        const ids = (eng?.models || []).filter(m => m.installed !== false).map(m => m.id).filter(id => STEM_MODELS[id]);
+        return ids.length ? ids : ['htdemucs', 'htdemucs_6s'];
+    }
+
     // Track colors per stem name (+ the synthesized "instrumental" combine track).
     const STEM_COLORS = {
         vocals: '#cc5de8', drums: '#ff922b', bass: '#22b8cf',
@@ -1361,6 +1770,7 @@ const AudioDaw = (() => {
     // ===== GENERATE TAB =====
 
     let generateEngines = null; // engine list cache for the Generate tab
+    let generateBackendStatus = null; // 'RUNNING', another BackendStatus, or 'NOT_FOUND' (no Audio Backend)
 
     /**
      * Generate through SwarmUI's core pipeline (GenerateText2ImageWS) — the same
@@ -1447,20 +1857,178 @@ const AudioDaw = (() => {
     }
 
     /** Fetch + cache the engine list (shared by the Generate tab, palette, and beat pads). */
-    async function ensureEnginesList() {
-        if (!generateEngines) {
+    async function ensureEnginesList(force = false) {
+        if (!generateEngines || force) {
             const result = await AudioLabAPI.callAPI('AudioLabListEngines');
             if (!result.success) throw new Error(result.error || 'Failed to list engines');
-            generateEngines = result.engines || [];
+            generateEngines = [...(result.engines || []), ...await nativeAudioEngines()];
+            generateBackendStatus = result.backend_status || 'NOT_FOUND';
         }
         return generateEngines;
     }
 
-    /** First installed model's Swarm-registry name for an engine id (cached engine list). */
+    // Audio models another backend serves natively (HartsyInference runs ACE-Step from the main model folder),
+    // keyed by core compat class. They generate through the same core request as the Audio Backend's engines.
+    const NATIVE_AUDIO_CLASSES = {
+        'ace-step-1_5': { id: 'native_acestep', name: 'ACE-Step 1.5', features: ['text2audio', 'audio_ace_inputs'] }
+    };
+
+    /** Engine entries for natively served audio models, from core's model list (none when it cannot be read). */
+    async function nativeAudioEngines() {
+        let files = [];
+        try {
+            const res = await new Promise((resolve, reject) => genericRequest('ListModels', { path: '', depth: 8, subtype: 'Stable-Diffusion' }, resolve, 0, reject));
+            files = res.files || [];
+        }
+        catch (_) {
+            return [];
+        }
+        const engines = new Map();
+        for (const f of files) {
+            const def = NATIVE_AUDIO_CLASSES[f.compat_class];
+            // The Audio Backend's own registrations already come through its engine list
+            if (!def || !f.name || f.name.startsWith('Audio Models/')) continue;
+            if (!engines.has(def.id)) {
+                engines.set(def.id, { id: def.id, name: def.name, category: 'AudioGeneration', installed: true, available: true, native: true, features: def.features, models: [] });
+            }
+            const file = f.name.split('/').pop().replace(/\.[^.]+$/, '');
+            engines.get(def.id).models.push({ id: f.name, name: f.title && f.title !== f.name ? f.title : file, installed: true, swarm_model: f.name });
+        }
+        // Fastest first: the plain turbo checkpoint, then the other turbos, then the rest
+        const rank = (m) => /turbo/i.test(m.id) ? (/(xl|shift|continuous)/i.test(m.id) ? 1 : 0) : 2;
+        for (const eng of engines.values()) eng.models.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+        return [...engines.values()];
+    }
+
+    /** First installed model's Swarm-registry name for an installed engine (cached engine list). */
     function dawSwarmModelFor(engineId) {
-        const eng = (generateEngines || []).find(x => x.id === engineId);
+        const eng = (generateEngines || []).find(x => x.id === engineId && x.installed);
         const m = (eng?.models || []).find(x => x.installed !== false);
         return m?.swarm_model || null;
+    }
+
+    // Engines whose Prompt carries LYRICS and Text2Audio Style the description (DynamicAudioBackend maps
+    // them that way); every other generator reads its description from the Prompt.
+    const LYRIC_MUSIC_ENGINES = new Set(['acestep_music', 'native_acestep', 'yue_music', 'yue2_music', 'heartlib_music', 'minimax_music3']);
+    // Engines that read core's BPM / time signature params (feature audio_ace_inputs).
+    const TEMPO_PARAM_ENGINES = new Set(['acestep_music', 'native_acestep']);
+    // Core's Text2Audio Time Signature takes beats per bar, from this set only.
+    const CORE_BEATS_PER_BAR = ['2', '3', '4', '6'];
+    // Preference order when a feature (palette loops) needs "any music engine".
+    const MUSIC_ENGINE_ORDER = ['acestep_music', 'native_acestep', 'musicgen_music', 'stableaudio_music', 'minimax_music3', 'heartlib_music', 'yue2_music', 'yue_music'];
+    // Speech-category engines that are not speech-to-text (the Score tab drives these).
+    const NON_SPEECH_STT = new Set(['sheetsage2_transcribe']);
+
+    /**
+     * Prompt + core params for a music or SFX request, routed the way the backend reads each engine.
+     * Tempo hints become core BPM/meter params where the engine takes them, and a "120 BPM" tag on the
+     * description otherwise (MusicGen and Stable Audio were trained on tagged descriptions).
+     * @returns {{prompt: string, params: Object}}
+     */
+    function buildAudioGenRequest(engineId, { description, lyrics = '', duration = 0, seed = -1, tempoHints = false }) {
+        const params = {};
+        let prompt;
+        if (LYRIC_MUSIC_ENGINES.has(engineId)) {
+            params.textaudiostyle = description;
+            prompt = lyrics;
+        }
+        else {
+            prompt = description;
+            if (tempoHints && !TEMPO_PARAM_ENGINES.has(engineId) && !/\bbpm\b/i.test(description)) {
+                prompt += `, ${Math.round(bpmAt(state.currentTime))} BPM`;
+            }
+        }
+        if (duration > 0) params.textaudioduration = Math.max(1, Math.min(1000, duration));
+        if (seed >= 0) params.seed = seed;
+        if (tempoHints && TEMPO_PARAM_ENGINES.has(engineId)) {
+            params.textaudiobpm = Math.max(10, Math.min(300, Math.round(bpmAt(state.currentTime))));
+            const beats = String(state.timeSignature[0]);
+            if (CORE_BEATS_PER_BAR.includes(beats)) params.textaudiotimesignature = beats;
+        }
+        return { prompt, params };
+    }
+
+    /** First installed music engine in preference order, or null. */
+    function preferredMusicEngine() {
+        for (const id of MUSIC_ENGINE_ORDER) {
+            if (dawSwarmModelFor(id)) return id;
+        }
+        return null;
+    }
+
+    // Params the DAW form sets itself, or that take media the DAW supplies from clips.
+    // Whisper beam size and initial prompt are skipped: the engine's transcription request reads only language and task
+    const ENGINE_OPTION_SKIP = new Set(['textaudioduration', 'textaudiostyle', 'textaudiobpm', 'textaudiotimesignature',
+        'audioformat', 'audiooutputformat', 'audioquality', 'streamchunksize', 'referenceaudio', 'referencetext',
+        'whisperbeamsize', 'whisperinitialprompt']);
+    const ENGINE_OPTION_SKIP_TYPES = new Set(['audio', 'video', 'image', 'audio_list', 'video_list', 'image_list', 'model']);
+
+    /** Core param definitions that belong to an engine: any of its feature flags, minus what the DAW drives. */
+    function engineOptionParams(engine) {
+        if (!engine || typeof gen_param_types === 'undefined' || !gen_param_types) return [];
+        const features = new Set(engine.features || []);
+        return gen_param_types.filter(p => {
+            if (!p.feature_flag || ENGINE_OPTION_SKIP.has(p.id) || ENGINE_OPTION_SKIP_TYPES.has(p.type)) return false;
+            return p.feature_flag.split(',').some(f => features.has(f.trim()));
+        });
+    }
+
+    /**
+     * Render an engine's own params with core's widgets (same controls as the Generate tab).
+     * @returns {{el: HTMLElement, read: function(): Object}} read() returns the values to send
+     */
+    function renderEngineOptions(engine, idPrefix) {
+        const wrap = createDiv(null, 'daw-gen-options');
+        const params = engineOptionParams(engine);
+        if (!params.length || typeof getHtmlForParam !== 'function') {
+            return { el: wrap, read: () => ({}) };
+        }
+        const details = document.createElement('details');
+        details.className = 'daw-gen-options-box';
+        const summary = document.createElement('summary');
+        summary.textContent = translate('Engine options') + ` (${params.length})`;
+        details.appendChild(summary);
+        const body = createDiv(null, 'daw-gen-options-body');
+        const runnables = [];
+        for (const p of params) {
+            const made = getHtmlForParam(p, idPrefix);
+            if (!made) continue;
+            const cell = createDiv(null, 'daw-gen-option');
+            cell.innerHTML = made.html;
+            body.appendChild(cell);
+            if (made.runnable) runnables.push(made.runnable);
+        }
+        details.appendChild(body);
+        wrap.appendChild(details);
+        // What each control showed before the user touched it. A dropdown whose default is not one of its values
+        // shows its first option instead, so comparing against the default would send a choice nobody made.
+        const initial = {};
+        // Widgets that size themselves need to be in the DOM, which happens once the caller appends wrap.
+        setTimeout(() => {
+            for (const run of runnables) { try { run(); } catch (_) {} }
+            if (typeof applyTranslations === 'function') applyTranslations(body);
+            for (const p of params) {
+                const input = document.getElementById(idPrefix + p.id);
+                if (input) initial[p.id] = `${getInputVal(input)}`;
+            }
+        }, 0);
+        const read = () => {
+            const out = {};
+            for (const p of params) {
+                const input = document.getElementById(idPrefix + p.id);
+                if (!input) continue;
+                const toggle = document.getElementById(idPrefix + p.id + '_toggle');
+                if (p.toggleable && toggle && !toggle.checked) continue;
+                const val = getInputVal(input);
+                if (val === null || val === undefined || val === '') continue;
+                // Untouched controls are not sent, so the engine keeps its own defaults (a toggle switched on counts as a choice)
+                const chosen = p.toggleable && toggle?.checked;
+                if (!chosen && `${val}` === (p.id in initial ? initial[p.id] : `${p.default}`)) continue;
+                out[p.id] = val;
+            }
+            return out;
+        };
+        return { el: wrap, read };
     }
 
     /** Bottom-panel tab: generate TTS/music/SFX with an installed engine straight into a track. */
@@ -1474,16 +2042,38 @@ const AudioDaw = (() => {
         // name/desc are translated where they are rendered (translate() needs to run per language switch).
     ];
     let generateCategory = 'tts';
+    const generateEngineChoice = {}; // category -> last engine picked, kept across panel rebuilds
+    let generatePlacement = 'new'; // 'new' track or the 'selected' track
 
     function enginesForCategory(cat) {
         const list = (generateEngines || []).filter(e => e.installed);
         if (cat === 'tts') return list.filter(e => e.category === 'TTS');
-        if (cat === 'stt') return list.filter(e => e.category === 'STT');
+        if (cat === 'stt') return list.filter(e => e.category === 'STT' && !NON_SPEECH_STT.has(e.id));
         const gen = list.filter(e => e.category === 'AudioGeneration');
         return cat === 'sfx' ? gen.filter(e => /sfx/i.test(e.id)) : gen.filter(e => !/sfx/i.test(e.id));
     }
 
-    async function renderGeneratePanel(container) {
+    /** Card shown in place of the form when no Audio Backend exists: the model names it needs do not exist yet. */
+    function buildBackendNotice(container) {
+        const card = createDiv(null, 'daw-fx-card daw-gen-notice');
+        const title = createDiv(null, 'daw-fx-card-title');
+        title.textContent = translate('No Audio Backend on this server');
+        card.appendChild(title);
+        const text = createDiv(null, 'daw-stems-desc');
+        text.textContent = translate('Generation runs through SwarmUI\'s Audio Backend. Add one under Server > Backends, install engines from its card, then refresh this tab.');
+        card.appendChild(text);
+        const row = createDiv(null, 'daw-clip-editor-actions');
+        quickAppendButton(row, translate('Open Backends'), () => {
+            document.getElementById('servertabbutton')?.click();
+            setTimeout(() => document.getElementById('serverbackendstabbutton')?.click(), 50);
+        }, ' basic-button btn-primary', translate('Go to Server > Backends'));
+        quickAppendButton(row, translate('Refresh'), () => renderGeneratePanel(container, { refresh: true }),
+            ' basic-button', translate('Check again for an Audio Backend and installed engines'));
+        card.appendChild(row);
+        return card;
+    }
+
+    async function renderGeneratePanel(container, { refresh = false } = {}) {
         container.innerHTML = '';
         const panel = createDiv(null, 'daw-generate-panel');
         container.appendChild(panel);
@@ -1491,12 +2081,19 @@ const AudioDaw = (() => {
         status.textContent = translate('Loading engines...');
         panel.appendChild(status);
         try {
-            await ensureEnginesList();
+            await ensureEnginesList(refresh);
         } catch (err) {
             status.textContent = translate('Failed to load engines:') + ' ' + err.message;
+            quickAppendButton(panel, translate('Retry'), () => renderGeneratePanel(container, { refresh: true }), ' basic-button btn-sm');
             return;
         }
         status.remove();
+
+        // Without an Audio Backend the Audio Models names do not exist, but natively served models still work
+        if (generateBackendStatus === 'NOT_FOUND' && !generateEngines.some(e => e.native)) {
+            panel.appendChild(buildBackendNotice(container));
+            return;
+        }
 
         // Category cards; fall back to the first category that has an engine
         if (!enginesForCategory(generateCategory).length) {
@@ -1514,7 +2111,7 @@ const AudioDaw = (() => {
                 + `<span class="daw-fx-pick-desc">${count ? translate(cat.desc) : translate('No engine installed')}</span>`;
             pick.addEventListener('click', () => {
                 if (!count) {
-                    if (typeof doNoticePopover === 'function') doNoticePopover(translate(cat.name) + ': ' + translate('No installed engine. Add one under Server -> Backends'), 'notice-pop-yellow');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate(cat.name) + ': ' + translate('No installed engine. Install one from the Audio Backend card under Server > Backends'), 'notice-pop-yellow');
                     return;
                 }
                 generateCategory = cat.id;
@@ -1524,11 +2121,19 @@ const AudioDaw = (() => {
         }
         panel.appendChild(browser);
 
+        if (generateBackendStatus && generateBackendStatus !== 'RUNNING' && generateBackendStatus !== 'NOT_FOUND') {
+            const warn = createDiv(null, 'daw-stems-clipinfo daw-gen-warn');
+            warn.textContent = translate('The Audio Backend is') + ` ${String(generateBackendStatus).toLowerCase()}. `
+                + translate('Generations wait until it is running.');
+            panel.appendChild(warn);
+        }
+
         const engines = enginesForCategory(generateCategory);
         if (!engines.length) {
             const none = createDiv(null, 'daw-stems-desc');
-            none.textContent = translate('No audio engines installed. Add one from the Audio Backend card under Server -> Backends.');
+            none.textContent = translate('No audio engines installed. Install one from the Audio Backend card under Server > Backends, then refresh.');
             panel.appendChild(none);
+            quickAppendButton(panel, translate('Refresh'), () => renderGeneratePanel(container, { refresh: true }), ' basic-button btn-sm');
             return;
         }
 
@@ -1552,8 +2157,12 @@ const AudioDaw = (() => {
             opt.textContent = eng.name;
             engineSelect.appendChild(opt);
         }
+        const remembered = generateEngineChoice[generateCategory];
+        if (remembered && engines.some(e => e.id === remembered)) engineSelect.value = remembered;
         engineRow.appendChild(engineLabel);
         engineRow.appendChild(engineSelect);
+        quickAppendButton(engineRow, '&#x21bb;', () => renderGeneratePanel(container, { refresh: true }),
+            ' basic-button btn-sm daw-gen-refresh', translate('Refresh the engine list'));
         mainCol.appendChild(engineRow);
 
         const currentEngine = () => engines.find(x => x.id === engineSelect.value) || engines[0];
@@ -1581,6 +2190,15 @@ const AudioDaw = (() => {
             modelRow.style.display = models.length > 1 ? '' : 'none';
         }
 
+        // Engine-specific params (voices, speed, sampling), rebuilt per engine with core's own widgets
+        const optionsHost = createDiv(null, 'daw-gen-options-host');
+        let engineOptions = { read: () => ({}) };
+        function rebuildOptions() {
+            optionsHost.innerHTML = '';
+            engineOptions = renderEngineOptions(currentEngine(), 'dawgen_');
+            optionsHost.appendChild(engineOptions.el);
+        }
+
         // ==== Speech to Text: transcription workflow (produces text, not audio) ====
         if (generateCategory === 'stt') {
             const resultArea = document.createElement('textarea');
@@ -1588,6 +2206,7 @@ const AudioDaw = (() => {
             resultArea.rows = 4;
             resultArea.placeholder = translate('Transcription appears here…');
             mainCol.appendChild(resultArea);
+            mainCol.appendChild(optionsHost);
 
             const actionRow = createDiv(null, 'daw-stems-action-row');
             const hint = createSpan(null, 'daw-stems-clipinfo');
@@ -1600,15 +2219,20 @@ const AudioDaw = (() => {
             goBtn.addEventListener('click', async () => {
                 const sel = findClipById(state.selectedClipId);
                 if (!sel) {
-                    if (typeof doNoticePopover === 'function') doNoticePopover('Select a clip to transcribe', 'notice-pop-yellow');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('Select a clip to transcribe'), 'notice-pop-yellow');
                     return;
                 }
                 goBtn.disabled = true;
                 const busy = createBusyIndicator(translate('Transcribing…'), 'generate');
                 sideCol.appendChild(busy);
                 try {
-                    const b64 = await AudioLabCore.readAsBase64(sel.clip.blob);
-                    const result = await AudioLabAPI.processSTT(b64, { providerId: currentEngine().id });
+                    const b64 = await AudioLabCore.readAsBase64(await clipAudioBlob(sel.clip));
+                    // The engine's own options (Language, and Whisper's Task) go with the request
+                    const opts = engineOptions.read();
+                    const result = await AudioLabAPI.processSTT(b64, {
+                        providerId: currentEngine().id, model: modelSelect.value || null,
+                        language: opts.language, task: opts.whispertask
+                    });
                     if (!result.success || !result.transcription) throw new Error(result.error || 'No transcription returned');
                     resultArea.value = result.transcription.trim();
                 } catch (err) {
@@ -1627,12 +2251,17 @@ const AudioDaw = (() => {
             copyBtn.addEventListener('click', () => {
                 if (!resultArea.value) return;
                 navigator.clipboard?.writeText(resultArea.value);
-                if (typeof doNoticePopover === 'function') doNoticePopover('Copied to clipboard', 'notice-pop-green');
+                if (typeof doNoticePopover === 'function') doNoticePopover(translate('Copied to clipboard'), 'notice-pop-green');
             });
             copyRow.appendChild(copyBtn);
             sideCol.appendChild(copyRow);
-            engineSelect.addEventListener('change', rebuildModels);
+            engineSelect.addEventListener('change', () => {
+                generateEngineChoice[generateCategory] = engineSelect.value;
+                rebuildModels();
+                rebuildOptions();
+            });
             rebuildModels();
+            rebuildOptions();
             return;
         }
 
@@ -1648,6 +2277,7 @@ const AudioDaw = (() => {
             : translate('Describe the sound: "punchy kick drum", "rain on a tin roof"...');
         mainCol.appendChild(promptArea);
 
+        // Lyrics only exist for engines that sing them; the rest would silently ignore the box.
         let lyricsArea = null;
         if (isMusicCat) {
             lyricsArea = document.createElement('textarea');
@@ -1656,6 +2286,7 @@ const AudioDaw = (() => {
             lyricsArea.placeholder = translate('Lyrics (optional, leave empty for instrumental)');
             mainCol.appendChild(lyricsArea);
         }
+        mainCol.appendChild(optionsHost);
 
         // Options: duration + seed (music/SFX), tempo hints (music)
         let durationInput = null, seedInput = null, tempoCheck = null;
@@ -1668,6 +2299,7 @@ const AudioDaw = (() => {
             durationInput.type = 'number';
             durationInput.className = 'daw-clip-fade-input';
             durationInput.min = '1';
+            durationInput.max = '1000';
             durationInput.value = isMusicCat ? '20' : '3';
             const seedLabel = document.createElement('label');
             seedLabel.className = 'daw-stems-ctl-label';
@@ -1692,7 +2324,7 @@ const AudioDaw = (() => {
                 const tempoLbl = document.createElement('label');
                 tempoLbl.htmlFor = 'daw_gen_tempo_hints';
                 tempoLbl.className = 'daw-stems-ctl-label';
-                tempoLbl.textContent = translate('Match project tempo') + ` (${state.bpm} BPM, ${state.timeSignature.join('/')})`;
+                tempoLbl.textContent = translate('Match project tempo') + ` (${Math.round(bpmAt(state.currentTime))} BPM, ${state.timeSignature.join('/')})`;
                 tempoRow.appendChild(tempoCheck);
                 tempoRow.appendChild(tempoLbl);
                 sideCol.appendChild(tempoRow);
@@ -1724,14 +2356,14 @@ const AudioDaw = (() => {
             sttBtn.addEventListener('click', async () => {
                 const sel = findClipById(state.selectedClipId);
                 if (!sel) {
-                    if (typeof doNoticePopover === 'function') doNoticePopover('Select a clip to transcribe', 'notice-pop-yellow');
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('Select a clip to transcribe'), 'notice-pop-yellow');
                     return;
                 }
                 sttBtn.disabled = true;
                 sttBtn.textContent = translate('Transcribing…');
                 try {
-                    const b64 = await AudioLabCore.readAsBase64(sel.clip.blob);
-                    const result = await AudioLabAPI.processSTT(b64);
+                    const b64 = await AudioLabCore.readAsBase64(await clipAudioBlob(sel.clip));
+                    const result = await AudioLabAPI.processSTT(b64, { providerId: enginesForCategory('stt')[0]?.id });
                     if (!result.success || !result.transcription) throw new Error(result.error || 'No transcription returned');
                     refTextInput.value = result.transcription.trim();
                     refCheck.checked = true;
@@ -1758,10 +2390,29 @@ const AudioDaw = (() => {
 
         const supportsVoiceRef = () => (currentEngine()?.features || []).includes('tts_voice_ref');
 
+        // Where the result lands: a new track, or the selected track (at the playhead either way)
+        const placeRow = createDiv(null, 'daw-stems-model-row');
+        const placeLabel = document.createElement('label');
+        placeLabel.className = 'daw-stems-ctl-label';
+        placeLabel.textContent = translate('Place on:');
+        const placeSelect = document.createElement('select');
+        placeSelect.className = 'daw-stems-select';
+        for (const [v, l] of [['new', translate('New track')], ['selected', translate('Selected track')]]) {
+            const opt = document.createElement('option');
+            opt.value = v;
+            opt.textContent = l;
+            placeSelect.appendChild(opt);
+        }
+        placeSelect.value = generatePlacement;
+        placeSelect.addEventListener('change', () => { generatePlacement = placeSelect.value; });
+        placeRow.appendChild(placeLabel);
+        placeRow.appendChild(placeSelect);
+        sideCol.appendChild(placeRow);
+
         // Action row: hint above a full-width Generate button
         const actionRow = createDiv(null, 'daw-stems-action-row');
         const hint = createSpan(null, 'daw-stems-clipinfo');
-        hint.textContent = translate('Result is added as a new track at the playhead (and saved to your outputs).');
+        hint.textContent = translate('Result lands at the playhead (and is saved to your outputs).');
         actionRow.appendChild(hint);
         const goBtn = document.createElement('button');
         goBtn.className = 'basic-button btn-sm daw-stems-go';
@@ -1770,13 +2421,19 @@ const AudioDaw = (() => {
         sideCol.appendChild(actionRow);
 
         function refreshVisibility() {
+            const eng = currentEngine();
             if (isTts) {
                 refRow.style.display = supportsVoiceRef() ? '' : 'none';
                 refNote.style.display = supportsVoiceRef() ? 'none' : '';
             }
+            if (lyricsArea) lyricsArea.style.display = LYRIC_MUSIC_ENGINES.has(eng?.id) ? '' : 'none';
             rebuildModels();
+            rebuildOptions();
         }
-        engineSelect.addEventListener('change', refreshVisibility);
+        engineSelect.addEventListener('change', () => {
+            generateEngineChoice[generateCategory] = engineSelect.value;
+            refreshVisibility();
+        });
         refreshVisibility();
 
         goBtn.addEventListener('click', async () => {
@@ -1785,44 +2442,44 @@ const AudioDaw = (() => {
             const models = (eng.models || []).filter(m => m.installed !== false);
             const modelDef = models.find(m => m.id === modelSelect.value) || models[0];
             if (!modelDef?.swarm_model) {
-                if (typeof doNoticePopover === 'function') doNoticePopover('No installed model for this engine', 'notice-pop-yellow');
+                if (typeof doNoticePopover === 'function') doNoticePopover(translate('No installed model for this engine'), 'notice-pop-yellow');
                 return;
             }
             const promptText = promptArea.value.trim();
             if (!promptText) {
                 if (typeof doNoticePopover === 'function') {
-                    doNoticePopover(isTts ? 'Enter text to speak first' : 'Enter a prompt first', 'notice-pop-yellow');
+                    doNoticePopover(isTts ? translate('Enter text to speak first') : translate('Enter a prompt first'), 'notice-pop-yellow');
                 }
                 return;
             }
-            // Core T2I params — same pipeline + param ids as the main Generate tab
-            const params = {};
+            const lyricsText = (isMusicCat && LYRIC_MUSIC_ENGINES.has(eng.id)) ? (lyricsArea?.value.trim() || '') : '';
+            // Core T2I params: same pipeline + param ids as the main Generate tab
+            let request;
             if (isTts) {
+                request = { prompt: promptText, params: {} };
                 if (refCheck.checked && supportsVoiceRef()) {
                     const sel = findClipById(state.selectedClipId);
                     if (!sel) {
-                        if (typeof doNoticePopover === 'function') doNoticePopover('Select a clip to use as voice reference', 'notice-pop-yellow');
+                        if (typeof doNoticePopover === 'function') doNoticePopover(translate('Select a clip to use as voice reference'), 'notice-pop-yellow');
                         return;
                     }
-                    const b64 = await AudioLabCore.readAsBase64(sel.clip.blob);
-                    params.referenceaudio = `data:${sel.clip.blob.type || 'audio/wav'};base64,${b64}`;
-                    if (refTextInput.value.trim()) params.referencetext = refTextInput.value.trim();
-                }
-            } else {
-                // Core's convention: Prompt carries the lyrics, Text2Audio Style carries the style.
-                // The style box is the main one here, so it moves to text2audiostyle and the lyrics box
-                // becomes the prompt (see dawSwarmGenerate below, which sends promptText as the prompt).
-                if (isMusicCat) {
-                    params.text2audiostyle = promptText;
-                }
-                params.text2audioduration = Math.max(1, parseFloat(durationInput.value) || (isMusicCat ? 20 : 3));
-                const seed = parseInt(seedInput.value);
-                if (!isNaN(seed) && seed >= 0) params.seed = seed;
-                if (isMusicCat && tempoCheck?.checked) {
-                    params.text2audiobpm = state.bpm;
-                    params.text2audiotimesignature = state.timeSignature.join('/');
+                    const refBlob = await clipAudioBlob(sel.clip);
+                    const b64 = await AudioLabCore.readAsBase64(refBlob);
+                    request.params.referenceaudio = `data:${refBlob.type || 'audio/wav'};base64,${b64}`;
+                    if (refTextInput.value.trim()) request.params.referencetext = refTextInput.value.trim();
                 }
             }
+            else {
+                const seed = parseInt(seedInput.value);
+                request = buildAudioGenRequest(eng.id, {
+                    description: promptText,
+                    lyrics: lyricsText,
+                    duration: parseFloat(durationInput.value) || (isMusicCat ? 20 : 3),
+                    seed: isNaN(seed) ? -1 : seed,
+                    tempoHints: !!tempoCheck?.checked
+                });
+            }
+            Object.assign(request.params, engineOptions.read());
 
             // Non-blocking: only the Generate button locks; the rest of the DAW
             // stays usable while the engine works (progress on the tab too).
@@ -1830,31 +2487,35 @@ const AudioDaw = (() => {
             const busy = createBusyIndicator(translate('Generating with') + ` ${eng.name}…`, 'generate');
             sideCol.appendChild(busy);
             try {
-                const lyricsText = isMusicCat ? (lyricsArea?.value.trim() || '') : '';
                 const { blob, metadata } = await dawSwarmGenerate({
                     model: modelDef.swarm_model,
-                    prompt: isMusicCat ? lyricsText : promptText,
-                    params,
+                    prompt: request.prompt,
+                    params: request.params,
                     onProgress: (frac) => busy.setProgress(frac)
                 });
                 pushUndo();
-                const track = addTrack({ name: eng.name });
-                await addClipToTrack(track, blob, {
-                    name: promptText.slice(0, 28) || eng.name,
+                const sel = generatePlacement === 'selected' ? getSelectedTrack() : null;
+                const target = sel && sel.kind !== 'bus' ? sel : null;
+                const track = target || addTrack({ name: eng.name });
+                const label = promptText.slice(0, 28) || eng.name;
+                const clip = await addClipToTrack(track, blob, {
+                    name: label,
                     startTime: snapTime(state.currentTime),
                     meta: buildClipScoreMeta(metadata, {
                         style: isMusicCat ? promptText : '',
                         lyrics: lyricsText,
                         model: modelDef.swarm_model,
                         engineId: eng.id,
-                        label: promptText.slice(0, 28) || eng.name
+                        label
                     })
                 });
+                state.selectedTrackId = track.id;
+                state.selectedClipId = clip.id;
                 updateTotalDuration();
                 renderAllTracks();
                 updateBottomPanel();
                 resyncPlayback();
-                if (typeof doNoticePopover === 'function') doNoticePopover('Generated clip added (also saved to your outputs)', 'notice-pop-green');
+                if (typeof doNoticePopover === 'function') doNoticePopover(translate('Generated clip added (also saved to your outputs)'), 'notice-pop-green');
             } catch (err) {
                 console.error('[AudioDaw] Generate failed:', err);
                 if (typeof doNoticePopover === 'function') doNoticePopover(translate('Generate failed:') + ' ' + err.message, 'notice-pop-red');
@@ -1893,51 +2554,261 @@ const AudioDaw = (() => {
         return audioBufferToWav(out);
     }
 
-    /**
-     * Render the arrangement offline through the SAME node graph + scheduleClip
-     * math as live playback, so exports always match what you hear.
-     */
-    async function renderMixdownBuffer() {
-        if (state.tracks.length === 0 || state.contentDuration <= 0) return null;
-        const sampleRate = 44100;
-        // Export ends with the music; leave room only when FX tails need to ring out.
-        const hasTails = state.tracks.some(t => (t.fx || []).some(f =>
-            f.enabled && (f.type === 'reverb' || f.type === 'delay')));
-        const renderEnd = state.contentDuration + (hasTails ? 5 : 0.1);
-        const totalSamples = Math.max(1, Math.ceil(renderEnd * sampleRate));
-        const offlineCtx = new OfflineAudioContext(2, totalSamples, sampleRate);
-        const masterGain = offlineCtx.createGain();
-        masterGain.gain.value = state.masterVolume;
-        let masterOut = masterGain;
-        if (state.masterLimiterEnabled && typeof AudioDawFx !== 'undefined') {
-            const lim = AudioDawFx.buildMasterLimiter(offlineCtx);
-            masterGain.connect(lim);
-            masterOut = lim;
+    // Export choices (per browser): range is per session, quality is remembered
+    const exportSettings = (() => {
+        const base = { range: 'song', bitDepth: 16, sampleRate: 44100 };
+        try {
+            const saved = JSON.parse(localStorage.getItem('audiolab_daw_export') || '{}');
+            return { ...base, bitDepth: saved.bitDepth || 16, sampleRate: saved.sampleRate || 44100 };
         }
-        masterOut.connect(offlineCtx.destination);
-        const soloActive = hasSoloTracks();
-        for (const track of state.tracks) {
-            if (track.muted || (soloActive && !track.soloed)) continue; // no point rendering silence
-            const chain = buildTrackChain(offlineCtx, track, masterGain);
-            scheduleTrackAutomation(chain, track, { t0Ctx: 0, t0Timeline: 0, windowEnd: renderEnd, fresh: true });
-            for (const clip of track.clips) {
-                if (clip.muted) continue;
-                scheduleClip(offlineCtx, chain.trackGain, clip,
-                    { t0Ctx: 0, t0Timeline: 0, windowEnd: renderEnd });
-            }
+        catch (_) {
+            return base;
         }
-        return await offlineCtx.startRendering();
+    })();
+
+    function saveExportSettings() {
+        try {
+            localStorage.setItem('audiolab_daw_export', JSON.stringify({ bitDepth: exportSettings.bitDepth, sampleRate: exportSettings.sampleRate }));
+        } catch (_) {}
     }
 
-    /** Render mixdown to a WAV Blob (export). */
-    async function renderMixdownBlob() {
+    /** What an export covers: the whole song, the selection, or the loop range (falling back to the song). */
+    function exportBounds() {
+        if (exportSettings.range === 'selection' && state.selection) {
+            return { start: state.selection.start, end: state.selection.end, exact: true, label: 'selection' };
+        }
+        if (exportSettings.range === 'loop' && state.loopEnd > state.loopStart) {
+            return { start: state.loopStart, end: state.loopEnd, exact: true, label: 'loop' };
+        }
+        return { start: 0, end: state.contentDuration, exact: false, label: 'mix' };
+    }
+
+    /**
+     * Render offline through the SAME node graph + scheduleClip math as live playback, so exports always match
+     * what you hear. A whole-song export runs on while reverb/delay tails ring out; a range export ends exactly
+     * at its end.
+     * @param {Object} [opts] - { start, end, exact (no tail), trackIds: stems, render only these tracks, as if soloed,
+     *   without the master limiter so the stems sum back to the mix }
+     */
+    /** Seconds an export must run past its last note so the enabled effects finish: a reverb's impulse and predelay,
+     *  or a delay's decay to -60 dB. */
+    function fxTailSeconds(tracks) {
+        let tail = 0.1;
+        for (const t of tracks) {
+            for (const f of t.fx || []) {
+                if (!f.enabled) continue;
+                if (f.type === 'reverb') {
+                    tail = Math.max(tail, 9); // impulse up to 8 s, plus up to 200 ms predelay
+                }
+                else if (f.type === 'delay') {
+                    const fb = Math.min(0.95, Math.max(0.01, f.params.feedback ?? 0.35));
+                    const time = f.params.sync ? 4 : (f.params.time ?? 0.35);
+                    tail = Math.max(tail, Math.min(30, 60 * time / (-20 * Math.log10(fb))));
+                }
+            }
+        }
+        return tail;
+    }
+
+    /** The tracks a bus stem renders: unmuted tracks with an unmuted send into the bus. */
+    function busStemSenders(bus) {
+        return state.tracks.filter(t => t.kind !== 'bus' && !t.muted && (t.sends || []).some(sd => sd.busId === bus.id && !sd.muted));
+    }
+
+    async function renderMixdownBuffer({ start = 0, end = state.contentDuration, exact = false, trackIds = null } = {}) {
+        const stems = !!trackIds;
+        const tracks = stems ? state.tracks.filter(t => trackIds.includes(t.id)) : state.tracks;
+        if (!tracks.length || end - start <= 0) return null;
+        const sampleRate = exportSettings.sampleRate;
+        // A bus stem also renders the tracks that send to it, so their effects and instruments size its tail too
+        const stemBus = stems && tracks.length === 1 && tracks[0].kind === 'bus' ? tracks[0] : null;
+        const renderSet = stemBus ? busStemSenders(stemBus) : tracks.filter(t => t.kind !== 'bus');
+        const tailTracks = stemBus ? [stemBus, ...renderSet] : tracks;
+        const hasTails = !exact && tailTracks.some(t => (t.fx || []).some(f =>
+            f.enabled && (f.type === 'reverb' || f.type === 'delay')));
+        // Instrument voices ring past their last note-off: the release, or a one-shot sample playing out
+        let instTail = 0;
+        if (!exact) {
+            for (const t of tailTracks) {
+                if (t.kind !== 'instrument' || !t.instrument || !t.midiClips?.length) continue;
+                let tail = (t.instrument.release ?? 0.2) + 0.05;
+                if (t.instrument.type === 'sampler' && t.instrument.oneShot) tail = Math.max(tail, instrumentSample(t)?.duration || 0);
+                instTail = Math.max(instTail, tail);
+            }
+        }
+        const renderLen = (end - start) + (exact ? 0 : Math.max(hasTails ? fxTailSeconds(tailTracks) : 0.1, instTail));
+        const totalSamples = Math.max(1, Math.ceil(renderLen * sampleRate));
+        // The limiter's look-ahead is rendered past the end and trimmed off the front, so the mix lines up with
+        // the timeline (and with the stems, which skip the limiter)
+        const useLimiter = !stems && state.masterLimiterEnabled && typeof AudioDawFx !== 'undefined';
+        const limProf = useLimiter ? await masterLimiterProfile(sampleRate) : null;
+        const lead = limProf ? limProf.frames : 0;
+        const offlineCtx = new OfflineAudioContext(2, totalSamples + lead, sampleRate);
+        const masterGain = offlineCtx.createGain();
+        masterGain.gain.value = stems ? 1 : state.masterVolume;
+        let masterOut = masterGain;
+        if (useLimiter) {
+            const lim = AudioDawFx.buildMasterLimiter(offlineCtx);
+            const trim = offlineCtx.createGain();
+            trim.gain.value = 1 / limProf.gain;
+            masterGain.connect(lim);
+            lim.connect(trim);
+            masterOut = trim;
+        }
+        masterOut.connect(offlineCtx.destination);
+        const soloActive = !stems && hasSoloTracks();
+        const origin = { t0Ctx: 0, t0Timeline: start, windowEnd: start + renderLen };
+        // Aux buses first, so sends have somewhere to go. A track's stem is dry (no sends) and a bus's stem is what
+        // its senders feed it (their direct outputs left out), so the stems still sum to the mix.
+        const busChains = new Map();
+        for (const bus of state.tracks.filter(t => t.kind === 'bus')) {
+            if (stems ? bus !== stemBus : (bus.muted || !soloAudible(bus))) continue;
+            const chain = buildTrackChain(offlineCtx, bus, masterGain);
+            if (stems) {
+                chain.trackGain.gain.value = bus.volume;
+                chain.soloGain.gain.value = 1;
+            }
+            scheduleTrackAutomation(chain, bus, { ...origin, fresh: true });
+            scheduleTempoDelays(chain, bus, origin);
+            busChains.set(bus.id, chain);
+        }
+        for (const track of renderSet) {
+            // A track silent by solo still renders when its sends reach a soloed bus
+            const feedsSoloedBus = (track.sends || []).some(sd => !sd.muted && state.tracks.some(b => b.id === sd.busId && b.soloed));
+            if (track.muted || (soloActive && !track.soloed && !feedsSoloedBus)) continue; // no point rendering silence
+            const chain = buildTrackChain(offlineCtx, track, stemBus ? null : masterGain);
+            if (stems) {
+                // another track's solo must not silence its stem
+                chain.trackGain.gain.value = track.volume;
+                chain.soloGain.gain.value = 1;
+            }
+            if (!stems || stemBus) {
+                connectSends(offlineCtx, chain, track, (busId) => busChains.get(busId)?.input || null, { ignoreSolo: stems });
+            }
+            scheduleTrackAutomation(chain, track, { ...origin, fresh: true });
+            scheduleTempoDelays(chain, track, origin);
+            const plan = trackAudibleSegments(track);
+            for (const clip of track.clips) {
+                if (clip.muted) continue;
+                scheduleClip(offlineCtx, chain.input, clip, origin, plan.get(clip.id));
+            }
+            if (typeof AudioDawInstruments !== 'undefined' && AudioDawInstruments.scheduleTrack) {
+                AudioDawInstruments.scheduleTrack(offlineCtx, chain.input, track, origin);
+            }
+        }
+        const rendered = await offlineCtx.startRendering();
+        if (!lead) return rendered;
+        const out = new AudioBuffer({ numberOfChannels: rendered.numberOfChannels, length: totalSamples, sampleRate });
+        for (let ch = 0; ch < rendered.numberOfChannels; ch++) {
+            out.copyToChannel(rendered.getChannelData(ch).subarray(lead, lead + totalSamples), ch);
+        }
+        return out;
+    }
+
+    /** Render the chosen export range to a WAV Blob at the chosen bit depth (null when there is nothing). */
+    async function renderMixdownBlob(bounds = exportBounds()) {
         try {
-            const rendered = await renderMixdownBuffer();
-            return rendered ? audioBufferToWav(rendered) : null;
+            const rendered = await renderMixdownBuffer(bounds);
+            return rendered ? audioBufferToWav(rendered, { bitDepth: exportSettings.bitDepth }) : null;
         } catch (err) {
             console.error('[AudioDaw] Mixdown render failed:', err);
             return null;
         }
+    }
+
+    /** File-name stem for exports: the project name, or "audiolab". */
+    function exportBaseName() {
+        return (currentProjectName || 'audiolab').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'audiolab';
+    }
+
+    const CRC_TABLE = (() => {
+        const t = new Uint32Array(256);
+        for (let n = 0; n < 256; n++) {
+            let c = n;
+            for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+            t[n] = c >>> 0;
+        }
+        return t;
+    })();
+
+    function crc32(bytes) {
+        let c = 0xFFFFFFFF;
+        for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+        return (c ^ 0xFFFFFFFF) >>> 0;
+    }
+
+    /** Minimal ZIP (stored, uncompressed): stems arrive as one download instead of a burst a browser may block. */
+    function zipStore(files) {
+        const enc = new TextEncoder();
+        const parts = [];
+        const central = [];
+        let offset = 0;
+        for (const f of files) {
+            const name = enc.encode(f.name);
+            const crc = crc32(f.data);
+            const size = f.data.length;
+            const local = new DataView(new ArrayBuffer(30));
+            local.setUint32(0, 0x04034b50, true);
+            local.setUint16(4, 20, true);
+            local.setUint16(6, 0x0800, true); // UTF-8 names
+            local.setUint16(12, 0x21, true);  // 1980-01-01
+            local.setUint32(14, crc, true);
+            local.setUint32(18, size, true);
+            local.setUint32(22, size, true);
+            local.setUint16(26, name.length, true);
+            parts.push(new Uint8Array(local.buffer), name, f.data);
+            const cen = new DataView(new ArrayBuffer(46));
+            cen.setUint32(0, 0x02014b50, true);
+            cen.setUint16(4, 20, true);
+            cen.setUint16(6, 20, true);
+            cen.setUint16(8, 0x0800, true);
+            cen.setUint16(14, 0x21, true);
+            cen.setUint32(16, crc, true);
+            cen.setUint32(20, size, true);
+            cen.setUint32(24, size, true);
+            cen.setUint16(28, name.length, true);
+            cen.setUint32(42, offset, true);
+            central.push(new Uint8Array(cen.buffer), name);
+            offset += 30 + name.length + size;
+        }
+        const cenSize = central.reduce((n, c) => n + c.length, 0);
+        const end = new DataView(new ArrayBuffer(22));
+        end.setUint32(0, 0x06054b50, true);
+        end.setUint16(8, files.length, true);
+        end.setUint16(10, files.length, true);
+        end.setUint32(12, cenSize, true);
+        end.setUint32(16, offset, true);
+        return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
+    }
+
+    /** Every track with content, rendered on its own over the export range, in one ZIP. */
+    async function doExportStems() {
+        const bounds = exportBounds();
+        // Every track with content, plus each aux bus something sends to (its return is a stem of its own)
+        const fed = (bus) => state.tracks.some(t => !t.muted && (t.sends || []).some(sd => sd.busId === bus.id && !sd.muted));
+        const tracks = state.tracks.filter(t => !t.muted && (t.clips.length || t.midiClips?.length || (t.kind === 'bus' && fed(t))));
+        if (!tracks.length || bounds.end - bounds.start <= 0) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Nothing to export'), 'notice-pop-yellow');
+            return;
+        }
+        const overlay = showDawLoadingOverlay(translate('Rendering stems...'));
+        try {
+            const files = [];
+            for (const [i, track] of tracks.entries()) {
+                const buf = await renderMixdownBuffer({ ...bounds, trackIds: [track.id] });
+                if (!buf) continue;
+                const wav = audioBufferToWav(buf, { bitDepth: exportSettings.bitDepth });
+                const safe = track.name.replace(/[\\/:*?"<>|]+/g, '_').trim() || `Track ${i + 1}`;
+                files.push({ name: `${String(i + 1).padStart(2, '0')} ${safe}.wav`, data: new Uint8Array(await wav.arrayBuffer()) });
+            }
+            downloadBlob(zipStore(files), `${exportBaseName()}-stems.zip`);
+            if (typeof doNoticePopover === 'function') doNoticePopover(`${files.length} ` + translate('stems exported'), 'notice-pop-green');
+        }
+        catch (err) {
+            console.error('[AudioDaw] Stem export failed:', err);
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Stem export failed:') + ' ' + err.message, 'notice-pop-red');
+        }
+        hideDawLoadingOverlay(overlay);
     }
 
     function findClipById(clipId) {
@@ -1949,6 +2820,24 @@ const AudioDaw = (() => {
         return null;
     }
 
+    /**
+     * The audio a clip actually plays (its trimmed window) as a Blob. Untrimmed clips hand back their source
+     * blob; trimmed or split clips share a source with other clips, so their window is rendered to WAV.
+     */
+    async function clipAudioBlob(clip) {
+        if ((clip.offset || 0) <= 1e-6 && (clip.trimEnd || 0) <= 1e-6) return clip.blob;
+        const buf = clip.decodedBuffer || await AudioDawTrack.decodeClip(clip);
+        const sr = buf.sampleRate;
+        const start = Math.max(0, Math.floor((clip.offset || 0) * sr));
+        const visible = clip.duration - (clip.offset || 0) - (clip.trimEnd || 0);
+        const len = Math.max(1, Math.min(buf.length - start, Math.round(visible * sr)));
+        const out = new AudioBuffer({ numberOfChannels: buf.numberOfChannels, length: len, sampleRate: sr });
+        for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+            out.copyToChannel(buf.getChannelData(ch).subarray(start, start + len), ch);
+        }
+        return audioBufferToWav(out);
+    }
+
     // ===== SCROLL SYNC =====
 
     function setupScrollSync() {
@@ -1958,8 +2847,8 @@ const AudioDaw = (() => {
             if (syncing) return;
             syncing = true;
             state.scrollLeft = clipLanesEl.scrollLeft;
-            // Sync ruler horizontal scroll
-            if (rulerContainer) rulerContainer.scrollLeft = clipLanesEl.scrollLeft;
+            // The ruler follows (its canvas only draws the visible slice)
+            if (timeline) timeline.setScrollLeft(clipLanesEl.scrollLeft);
             // Sync track headers vertical scroll
             if (trackHeadersEl) trackHeadersEl.scrollTop = clipLanesEl.scrollTop;
             syncing = false;
@@ -2000,36 +2889,158 @@ const AudioDaw = (() => {
                 laneScrub(laneTimeAt(e));
                 const onMove = (me) => laneScrub(laneTimeAt(me));
                 const onUp = (ue) => {
-                    el.releasePointerCapture(ue.pointerId);
+                    try { el.releasePointerCapture(ue.pointerId); } catch (_) {}
                     el.removeEventListener('pointermove', onMove);
                     el.removeEventListener('pointerup', onUp);
-                    seekTo(laneTimeAt(ue));
+                    el.removeEventListener('pointercancel', onUp);
+                    if (ue.type !== 'pointercancel') seekTo(laneTimeAt(ue));
                 };
                 el.addEventListener('pointermove', onMove);
                 el.addEventListener('pointerup', onUp);
+                el.addEventListener('pointercancel', onUp);
             });
         };
-        setupLaneScrub(clipLanesEl, (e) => e.target === clipLanesEl || e.target.classList.contains('daw-track-lane'));
         if (playheadEl) setupLaneScrub(playheadEl, () => true);
+        setupLaneSelection();
+    }
+
+    // ===== RANGE SELECTION =====
+    // Smart tool: a click on empty lane space places the playhead and selects that track; a drag selects a time
+    // range across every track the drag spans. Range tool: the same drag works over clips too.
+
+    function laneAtY(clientY) {
+        for (const lane of clipLanesEl.querySelectorAll('.daw-track-lane')) {
+            const r = lane.getBoundingClientRect();
+            if (clientY >= r.top && clientY <= r.bottom) return lane;
+        }
+        return null;
+    }
+
+    /** Track ids from one lane to another, inclusive, in arrangement order. */
+    function tracksBetween(laneA, laneB) {
+        const ids = state.tracks.map(t => t.id);
+        const a = ids.indexOf(laneA?.dataset.trackId);
+        const b = ids.indexOf(laneB?.dataset.trackId);
+        if (a < 0 && b < 0) return [];
+        const lo = Math.min(a < 0 ? b : a, b < 0 ? a : b);
+        const hi = Math.max(a, b);
+        return ids.slice(lo, hi + 1);
+    }
+
+    function setupLaneSelection() {
+        const timeAtX = (clientX) => {
+            const rect = clipLanesEl.getBoundingClientRect();
+            return Math.max(0, (clientX - rect.left + clipLanesEl.scrollLeft) / state.zoom);
+        };
+        clipLanesEl.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            const onEmpty = e.target === clipLanesEl || e.target.classList.contains('daw-track-lane');
+            const overClip = !!e.target.closest('.daw-clip:not(.daw-clip-recording)');
+            if (!onEmpty && !(state.tool === 'range' && overClip)) return;
+            e.preventDefault();
+            clipLanesEl.setPointerCapture(e.pointerId);
+            const startX = e.clientX, startY = e.clientY;
+            const t0 = timeAtX(e.clientX);
+            const lane0 = laneAtY(e.clientY);
+            let dragging = false;
+            const onMove = (me) => {
+                if (!dragging && Math.abs(me.clientX - startX) < 4 && Math.abs(me.clientY - startY) < 4) return;
+                dragging = true;
+                const t1 = timeAtX(me.clientX);
+                const lane1 = laneAtY(me.clientY) || lane0;
+                setSelection({ start: Math.min(t0, t1), end: Math.max(t0, t1), trackIds: tracksBetween(lane0, lane1) }, { snap: true });
+            };
+            const onUp = (ue) => {
+                try { clipLanesEl.releasePointerCapture(ue.pointerId); } catch (_) {}
+                clipLanesEl.removeEventListener('pointermove', onMove);
+                clipLanesEl.removeEventListener('pointerup', onUp);
+                clipLanesEl.removeEventListener('pointercancel', onUp);
+                if (dragging || ue.type === 'pointercancel') return;
+                // A click: playhead here, selection cleared, the lane's track selected
+                clearSelection();
+                const id = lane0?.dataset.trackId;
+                if (id && id !== state.selectedTrackId) {
+                    state.selectedTrackId = id;
+                    updateTrackSelection();
+                    updateBottomPanel();
+                }
+                seekTo(snapTime(t0));
+            };
+            clipLanesEl.addEventListener('pointermove', onMove);
+            clipLanesEl.addEventListener('pointerup', onUp);
+            clipLanesEl.addEventListener('pointercancel', onUp);
+        });
+    }
+
+    /**
+     * Set the time selection. Edges snap to the grid unless in Slip mode; a range under a millisecond clears it.
+     * @param {{start: number, end: number, trackIds: string[]}|null} sel
+     */
+    function setSelection(sel, { snap = false } = {}) {
+        if (sel && snap) sel = { ...sel, start: snapTime(sel.start), end: snapTime(sel.end) };
+        state.selection = sel && sel.end - sel.start > 0.001 && sel.trackIds?.length ? sel : null;
+        renderSelection();
+        updateTimeDisplay();
+    }
+
+    function clearSelection() {
+        if (!state.selection) return;
+        state.selection = null;
+        renderSelection();
+        updateTimeDisplay();
+    }
+
+    /** Selection bands on the selected tracks' lanes, and the band on the ruler. */
+    function renderSelection() {
+        if (!clipLanesEl) return;
+        clipLanesEl.querySelectorAll('.daw-sel-band').forEach(el => el.remove());
+        const sel = state.selection;
+        if (timeline) timeline.setSelection(sel);
+        if (!sel) return;
+        for (const id of sel.trackIds) {
+            const track = state.tracks.find(t => t.id === id);
+            if (!track?.laneEl) continue;
+            const band = createDiv(null, 'daw-sel-band');
+            band.style.left = (sel.start * state.zoom) + 'px';
+            band.style.width = Math.max(1, (sel.end - sel.start) * state.zoom) + 'px';
+            track.laneEl.appendChild(band);
+        }
     }
 
     // ===== TRACK MANAGEMENT =====
 
+    /** "Track 2": the lowest free number for a default track name. */
+    function nextTrackName(prefix = 'Track') {
+        let n = 1;
+        while (state.tracks.some(t => t.name === `${prefix} ${n}`)) n++;
+        return `${prefix} ${n}`;
+    }
+
     function addTrack(opts = {}) {
+        if (!opts.name) opts = { ...opts, name: nextTrackName(translate('Track')) };
         const track = AudioDawTrack.createTrack(opts);
         state.tracks.push(track);
         if (!state.selectedTrackId) state.selectedTrackId = track.id;
         return track;
     }
 
+    /** Blob keys of clips still decoding: no track holds them yet, so the store's cleanup must leave them alone. */
+    const pendingBlobKeys = new Set();
+
     async function addClipToTrack(track, blob, opts = {}) {
         const clip = AudioDawTrack.createClip(blob, opts);
 
         // Store in blob store
         blobStore.set(clip.blobKey, { blob, decodedBuffer: null });
+        pendingBlobKeys.add(clip.blobKey);
 
         // Decode audio
-        await AudioDawTrack.decodeClip(clip);
+        try {
+            await AudioDawTrack.decodeClip(clip);
+        }
+        finally {
+            pendingBlobKeys.delete(clip.blobKey);
+        }
 
         // Update blob store with decoded buffer
         const stored = blobStore.get(clip.blobKey);
@@ -2053,6 +3064,13 @@ const AudioDaw = (() => {
         if (idx === -1) return;
         const track = state.tracks[idx];
         // Blobs stay in blobStore for undo; garbageCollectBlobs() reclaims them later
+        closeTrackInput(track.id);
+        dropChain(track.id);
+        if (track.kind === 'bus') {
+            for (const t of state.tracks) {
+                if ((t.sends || []).some(sd => sd.busId === track.id)) t.sends = t.sends.filter(sd => sd.busId !== track.id);
+            }
+        }
         AudioDawTrack.destroyTrack(track);
         state.tracks.splice(idx, 1);
         if (state.selectedTrackId === trackId) {
@@ -2076,9 +3094,22 @@ const AudioDaw = (() => {
             // (volume skipped: rebuilding mid-drag would fight the slider)
             onMute: () => { updatePlaybackGains(); updateBottomPanel(); },
             onSolo: () => { updatePlaybackGains(); updateBottomPanel(); },
-            onVolume: () => { updatePlaybackGains(); },
-            onPan: () => { updatePlaybackGains(); },
-            onArm: () => {},
+            onVolume: (track) => { automationInput(track, 'volume'); updatePlaybackGains(); },
+            onPan: (track) => { automationInput(track, 'pan'); updatePlaybackGains(); },
+            onFaderGrab: (track, param) => automationGrab(track, param),
+            onFaderRelease: (track, param) => automationRelease(track, param),
+            onArm: (track) => toggleArm(track),
+            onMonitor: (track) => toggleMonitor(track),
+            onInputMenu: (track, e) => track.kind === 'instrument' ? showInstrumentMenu(track, e)
+                : track.kind === 'bus' ? showBusInputsMenu(track, e) : showTrackInputMenu(track, e),
+            onOpenFx: (track) => {
+                state.selectedTrackId = track.id;
+                updateTrackSelection();
+                updateBottomPanel();
+                switchBottomTab('fx');
+            },
+            onTrackMenu: (track, e) => showTrackMenu(track, e),
+            inputLabel: (track) => deviceLabels.get(track.input?.deviceId) || null,
             onSelect: (track) => {
                 state.selectedTrackId = track.id;
                 updateTrackSelection();
@@ -2104,6 +3135,7 @@ const AudioDaw = (() => {
             snapTime: (t) => snapTime(t),
             onClipSelect: (clip, track) => {
                 state.selectedClipId = clip.id;
+                state.selectedMidiClipId = null;
                 state.selectedTrackId = track.id;
                 updateTrackSelection();
                 updateBottomPanel();
@@ -2120,6 +3152,15 @@ const AudioDaw = (() => {
                 updateBottomPanel();
                 resyncPlayback();
             },
+            isRangeTool: () => state.tool === 'range',
+            onClipFadeStart: () => pushUndo(),
+            onClipFadeEnd: () => {
+                updateBottomPanel();
+                resyncPlayback(); // fades are baked into scheduled ramps
+            },
+            onClipGainStart: () => pushUndo(),
+            onClipGainChange: (clip) => applyClipGain(clip),
+            onClipGainEnd: () => updateBottomPanel(),
             onClipMove: () => {
                 updateTotalDuration();
                 resyncPlayback();
@@ -2143,6 +3184,12 @@ const AudioDaw = (() => {
             onClipCrossTrack: (clip, srcTrack, targetTrackId) => {
                 const targetTrack = state.tracks.find(t => t.id === targetTrackId);
                 if (!targetTrack) return;
+                if (targetTrack.kind === 'bus') {
+                    // An aux bus holds no clips: the clip stays on its own track
+                    renderAllTracks();
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('An aux bus holds no clips. Send a track to it instead'), 'notice-pop-yellow');
+                    return;
+                }
                 // Remove from source track
                 const idx = srcTrack.clips.indexOf(clip);
                 if (idx !== -1) srcTrack.clips.splice(idx, 1);
@@ -2159,23 +3206,45 @@ const AudioDaw = (() => {
             }
         };
 
-        for (const track of state.tracks) {
-            const header = AudioDawTrack.buildTrackHeader(track, trackCallbacks);
+        for (const [index, track] of state.tracks.entries()) {
+            const header = AudioDawTrack.buildTrackHeader(track, trackCallbacks, index);
             trackHeadersEl.appendChild(header);
 
             const lane = AudioDawTrack.buildClipLane(track, state.zoom, clipCallbacks);
             clipLanesEl.appendChild(lane);
+            if (track.kind === 'bus') {
+                const hint = createDiv(null, 'daw-bus-lane-hint');
+                const senders = busSenders(track);
+                hint.textContent = senders.length
+                    ? translate('Aux bus, fed by') + ' ' + senders.map(t => t.name).join(', ')
+                    : translate('Aux bus. Send tracks to it from their menu or the Mixer');
+                lane.appendChild(hint);
+            }
 
             AudioDawTrack.renderClips(track, state.zoom, clipCallbacks, state.selectedClipId);
+            if (track.kind === 'instrument') {
+                AudioDawInstruments.renderMidiClips(track, lane, {
+                    zoom: state.zoom,
+                    snapTime,
+                    selectedClipId: state.selectedMidiClipId,
+                    isRangeTool: () => state.tool === 'range',
+                    onSelect: (clip) => selectMidiClip(clip, track),
+                    onOpen: (clip) => selectMidiClip(clip, track, true),
+                    onContext: (e, clip) => showMidiClipMenu(e, clip, track),
+                    onGestureStart: () => pushUndo(),
+                    onChanged: () => {
+                        updateTotalDuration();
+                        renderAllTracks();
+                        updateBottomPanel();
+                        resyncPlayback();
+                    }
+                });
+            }
 
             if (track.automationVisible) {
-                const autoCallbacks = {
-                    snapTime: (t) => snapTime(t),
-                    onAutomationGestureStart: () => pushUndo(),
-                    onAutomationChange: (tr) => rescheduleTrackAutomation(tr)
-                };
+                const autoCallbacks = automationLaneCallbacks();
                 clipLanesEl.appendChild(AudioDawTrack.buildAutomationLane(track, state.zoom, autoCallbacks));
-                // Matching header spacer keeps headers aligned; hosts the param picker
+                // Matching header spacer keeps headers aligned; hosts the param picker and the automation mode
                 const spacer = createDiv(null, 'daw-automation-head');
                 const sel = document.createElement('select');
                 sel.className = 'daw-fx-select';
@@ -2191,6 +3260,19 @@ const AudioDaw = (() => {
                     AudioDawTrack.renderAutomationLane(track, state.zoom, autoCallbacks);
                 });
                 spacer.appendChild(sel);
+                const modeSel = document.createElement('select');
+                modeSel.className = 'daw-fx-select daw-automation-mode';
+                modeSel.title = translate('Automation mode. Read plays the envelope; Touch writes while you hold a fader or pan knob during playback; Latch keeps writing after you let go; Write overwrites the whole pass; Off ignores the envelope');
+                for (const [mode, label] of [['read', 'Read'], ['touch', 'Touch'], ['latch', 'Latch'], ['write', 'Write'], ['off', 'Off']]) {
+                    const opt = document.createElement('option');
+                    opt.value = mode;
+                    opt.textContent = translate(label);
+                    modeSel.appendChild(opt);
+                }
+                modeSel.value = track.automationMode || 'read';
+                modeSel.classList.toggle('writing', isWriteMode(modeSel.value));
+                modeSel.addEventListener('change', () => setAutomationMode(track, modeSel.value));
+                spacer.appendChild(modeSel);
                 trackHeadersEl.appendChild(spacer);
             }
         }
@@ -2199,17 +3281,57 @@ const AudioDaw = (() => {
         const addBtn = document.createElement('button');
         addBtn.className = 'daw-add-track';
         addBtn.innerHTML = `+ <span>${escapeHtml(translate('Add Track'))}</span>`;
-        addBtn.title = translate('Add an empty track');
-        addBtn.addEventListener('click', () => {
-            pushUndo();
-            const track = addTrack();
-            state.selectedTrackId = track.id;
-            renderAllTracks();
+        addBtn.title = translate('Add an audio or instrument track');
+        addBtn.addEventListener('click', (e) => {
+            dawMenu(e, [
+                { label: translate('Audio track'), action: () => {
+                    pushUndo();
+                    const track = addTrack();
+                    state.selectedTrackId = track.id;
+                    renderAllTracks();
+                }},
+                { label: translate('Instrument track (synth)'), action: () => addInstrumentTrack('synth') },
+                { label: translate('Instrument track (sampler)'), action: () => {
+                    const track = addInstrumentTrack('sampler');
+                    openInstrumentPanel(track, 'sampler');
+                }},
+                { label: translate('Import MIDI file…'), action: () => importMidiFile() },
+                { label: translate('Aux bus'), action: () => addBusTrack() },
+                { label: translate('Aux bus with reverb'), action: () => addBusTrack({ reverb: true }) }
+            ]);
         });
         trackHeadersEl.appendChild(addBtn);
 
         updateTrackSelection();
         updateClipLanesWidth();
+        renderSelection();
+        refreshMarkers();
+        renderEmptyState();
+    }
+
+    /** An empty session says how to start instead of showing blank lanes. */
+    function renderEmptyState() {
+        clipLanesEl.querySelector('.daw-empty-state')?.remove();
+        if (state.tracks.length) return;
+        const box = createDiv(null, 'daw-empty-state');
+        const title = createDiv(null, 'daw-empty-title');
+        title.textContent = translate('Start a session');
+        box.appendChild(title);
+        const hint = createDiv(null, 'daw-empty-hint');
+        hint.textContent = translate('Add a track and press R to record from a microphone or instrument, bring in audio, or generate speech, music and sound effects.');
+        box.appendChild(hint);
+        const row = createDiv(null, 'daw-empty-actions');
+        quickAppendButton(row, translate('+ Audio track'), () => {
+            pushUndo();
+            const track = addTrack();
+            state.selectedTrackId = track.id;
+            renderAllTracks();
+        }, ' basic-button btn-primary', translate('An empty track to record or drop audio onto'));
+        quickAppendButton(row, translate('Record'), () => startRecordingFlow(), ' basic-button', translate('Record from the default input onto a new track (R)'));
+        quickAppendButton(row, translate('Import audio…'), () => importAudioToTrack(), ' basic-button', translate('Add audio files from your computer'));
+        quickAppendButton(row, translate('Generate…'), () => switchBottomTab('generate'), ' basic-button', translate('Make speech, music or sound effects with your installed engines'));
+        box.appendChild(row);
+        clipLanesEl.appendChild(box);
     }
 
     function updateTrackSelection() {
@@ -2235,20 +3357,22 @@ const AudioDaw = (() => {
         // totalDuration = ruler length, kept longer so clips can be dragged past the end.
         let content = 0;
         for (const track of state.tracks) {
-            const td = AudioDawTrack.getTrackDuration(track);
+            let td = AudioDawTrack.getTrackDuration(track);
+            for (const mc of track.midiClips || []) td = Math.max(td, mc.startTime + AudioDawInstruments.midiClipLength(mc));
             if (td > content) content = td;
         }
         state.contentDuration = content;
         state.totalDuration = Math.max(10, content) + 5;
         if (timeline) timeline.setDuration(state.totalDuration);
         updateClipLanesWidth();
+        updateTimeDisplay();
     }
 
     // ===== PLAYBACK ENGINE (Web Audio API) =====
 
     function getAudioContext() {
         if (!audioCtx || audioCtx.state === 'closed') {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
         }
         return audioCtx;
     }
@@ -2257,79 +3381,589 @@ const AudioDaw = (() => {
         return state.tracks.some(t => t.soloed);
     }
 
-    /** Effective gain for a track's chain given mute/solo state. */
-    function computeTrackGain(track) {
-        const soloActive = hasSoloTracks();
-        const audible = !track.muted && (!soloActive || track.soloed);
-        return audible ? track.volume : 0;
+    /** A bus stays audible under solo while a soloed track sends to it (or it is soloed itself). */
+    function busFedBySolo(bus) {
+        return state.tracks.some(t => t.soloed && t.kind !== 'bus' && (t.sends || []).some(sd => sd.busId === bus.id && !sd.muted));
     }
 
-    /** Create a track's persistent node chain: trackGain -> trackPan -> masterGain (+ analyser tap for meters). */
+    /** Whether a track's direct output is heard under solo: soloed itself, or a bus that a soloed track feeds. */
+    function soloAudible(track) {
+        return !hasSoloTracks() || !!track.soloed || (track.kind === 'bus' && busFedBySolo(track));
+    }
+
+    /** One send's gain: its level, silent with its source (a pre-fader send skips the fader, never the mute). Under
+     *  solo a send still speaks when its aux bus is soloed, so soloing a return hears what feeds it. */
+    function sendGain(track, send, { ignoreSolo = false } = {}) {
+        if (send.muted || track.muted) return 0;
+        const bus = state.tracks.find(t => t.id === send.busId);
+        if (!ignoreSolo && hasSoloTracks() && !track.soloed && !bus?.soloed) return 0;
+        return send.level;
+    }
+
+    /** Wire a track's sends from its chain into aux bus inputs (busInputFor(busId) -> AudioNode or null). */
+    function connectSends(ctx, chain, track, busInputFor, opts = {}) {
+        for (const send of track.sends || []) {
+            const dest = busInputFor(send.busId);
+            if (!dest) continue;
+            const g = ctx.createGain();
+            g.gain.value = sendGain(track, send, opts);
+            (send.pre ? chain.preTap : chain.postTap).connect(g);
+            g.connect(dest);
+            chain.sendGains.set(send.busId, g);
+        }
+    }
+
+    /**
+     * Create a track's persistent node chain, in pro signal-flow order:
+     * input (clips, live input) -> inserts (pre-fader) -> trackGain (fader, mute) -> volAuto -> trackPan -> soloGain
+     * -> masterGain, plus an analyser tap for meters. volAuto carries the volume envelope so live fader moves
+     * and automation ramps never fight over one AudioParam.
+     */
     function buildTrackChain(ctx, track, masterGain) {
+        const input = ctx.createGain();
         const trackGain = ctx.createGain();
-        trackGain.gain.value = computeTrackGain(track);
-        // Insert FX after the static fader; volAuto carries the volume envelope so
-        // live fader moves and automation ramps never fight over one AudioParam.
+        trackGain.gain.value = track.muted ? 0 : track.volume;
         const fxChain = (typeof AudioDawFx !== 'undefined')
-            ? AudioDawFx.buildFxChain(ctx, track.fx, { bpm: state.bpm }) : null;
+            ? AudioDawFx.buildFxChain(ctx, track.fx, { bpm: bpmAt(state.currentTime) }) : null;
+        if (fxChain) {
+            input.connect(fxChain.input);
+            fxChain.output.connect(trackGain);
+        } else {
+            input.connect(trackGain);
+        }
         const volAuto = ctx.createGain();
         volAuto.gain.value = 1;
-        if (fxChain) {
-            trackGain.connect(fxChain.input);
-            fxChain.output.connect(volAuto);
-        } else {
-            trackGain.connect(volAuto);
-        }
+        trackGain.connect(volAuto);
+        // Solo sits after the pan, so post-fader sends are not solo-muted: a soloed bus hears the sends into it
+        const soloGain = ctx.createGain();
+        soloGain.gain.value = soloAudible(track) ? 1 : 0;
         let trackPan = null;
         if (ctx.createStereoPanner) {
             trackPan = ctx.createStereoPanner();
             trackPan.pan.value = track.pan || 0;
             volAuto.connect(trackPan);
-            trackPan.connect(masterGain);
+            trackPan.connect(soloGain);
         } else {
-            volAuto.connect(masterGain);
+            volAuto.connect(soloGain);
         }
+        if (masterGain) soloGain.connect(masterGain);
         let analysers = null;
         let meterSplitter = null;
         if (typeof OfflineAudioContext === 'undefined' || !(ctx instanceof OfflineAudioContext)) {
             // Per-channel L/R taps for OBS-style stereo metering
             meterSplitter = ctx.createChannelSplitter(2);
-            (trackPan || volAuto).connect(meterSplitter);
+            soloGain.connect(meterSplitter);
             analysers = [ctx.createAnalyser(), ctx.createAnalyser()];
             analysers.forEach((a, i) => { a.fftSize = 512; meterSplitter.connect(a, i); });
         }
-        return { trackGain, fxChain, volAuto, trackPan, analysers, meterSplitter };
+        // Send taps: pre-fader after the inserts, post-fader after the pan
+        const preTap = fxChain ? fxChain.output : input;
+        const postTap = trackPan || volAuto;
+        return { input, trackGain, fxChain, volAuto, trackPan, soloGain, analysers, meterSplitter, preTap, postTap, sendGains: new Map() };
     }
 
     /** Fully disconnect one track chain (incl. FX feedback loops, which otherwise persist). */
     function disposeChain(chain) {
+        try { chain.input.disconnect(); } catch (_) {}
         try { chain.trackGain.disconnect(); } catch (_) {}
+        try { chain.soloGain.disconnect(); } catch (_) {}
         if (typeof AudioDawFx !== 'undefined') AudioDawFx.disposeFxChain(chain.fxChain);
         try { chain.volAuto.disconnect(); } catch (_) {}
         if (chain.trackPan) { try { chain.trackPan.disconnect(); } catch (_) {} }
         if (chain.meterSplitter) { try { chain.meterSplitter.disconnect(); } catch (_) {} }
         for (const a of chain.analysers || []) { try { a.disconnect(); } catch (_) {} }
+        for (const g of chain.sendGains?.values() || []) { try { g.disconnect(); } catch (_) {} }
+    }
+
+    // ===== MIXER GRAPH =====
+    // Lives while the DAW is open, independent of the transport: a master bus plus one chain per track.
+    // Playback only schedules sources into chain inputs, so monitored inputs keep sounding (and meters keep
+    // moving) while stopped, and effect tails ring out after Stop the way a hardware desk does.
+
+    let mixer = null; // { ctx, masterGain, masterLimiter, masterSplitter, masterAnalysers, clickBus, chains: Map }
+
+    function ensureMixer() {
+        const ctx = getAudioContext();
+        if (mixer && mixer.ctx === ctx) return mixer;
+        const masterGain = ctx.createGain();
+        masterGain.gain.value = state.masterVolume;
+        const masterSplitter = ctx.createChannelSplitter(2);
+        const masterAnalysers = [ctx.createAnalyser(), ctx.createAnalyser()];
+        masterAnalysers.forEach((a, i) => { a.fftSize = 512; masterSplitter.connect(a, i); });
+        // The metronome goes straight to the speakers: never through the master, never into an export
+        const clickBus = ctx.createGain();
+        clickBus.gain.value = recordSettings.clickVolume;
+        clickBus.connect(ctx.destination);
+        mixer = { ctx, masterGain, masterLimiter: null, masterSplitter, masterAnalysers, clickBus, chains: new Map() };
+        wireMasterOut();
+        return mixer;
+    }
+
+    /** (Re)wire master -> optional limiter -> speakers and meter tap. Runs at creation and on a limiter toggle. */
+    function wireMasterOut() {
+        const m = mixer;
+        try { m.masterGain.disconnect(); } catch (_) {}
+        if (m.masterLimiter) {
+            try { m.masterLimiter.disconnect(); } catch (_) {}
+            m.masterLimiter = null;
+        }
+        let out = m.masterGain;
+        if (m.masterTrim) {
+            try { m.masterTrim.disconnect(); } catch (_) {}
+            m.masterTrim = null;
+        }
+        if (state.masterLimiterEnabled && typeof AudioDawFx !== 'undefined') {
+            m.masterLimiter = AudioDawFx.buildMasterLimiter(m.ctx);
+            m.masterTrim = m.ctx.createGain(); // undoes the compressor's makeup gain once measured
+            m.masterGain.connect(m.masterLimiter);
+            m.masterLimiter.connect(m.masterTrim);
+            out = m.masterTrim;
+            const trim = m.masterTrim;
+            masterLimiterProfile(m.ctx.sampleRate).then(prof => { trim.gain.value = 1 / prof.gain; });
+        }
+        out.connect(m.ctx.destination);
+        out.connect(m.masterSplitter);
+    }
+
+    /** A track's chain, built on first use. A new chain picks up the track's live input if it is monitored. */
+    function chainFor(track) {
+        const m = ensureMixer();
+        let chain = m.chains.get(track.id);
+        if (!chain) {
+            chain = buildTrackChain(m.ctx, track, m.masterGain);
+            m.chains.set(track.id, chain);
+            if (track.kind !== 'bus') {
+                connectSends(m.ctx, chain, track, (busId) => {
+                    const bus = state.tracks.find(t => t.id === busId && t.kind === 'bus');
+                    return bus ? chainFor(bus).input : null;
+                });
+            }
+            if (!playback) holdTrackAutomation(chain, track, state.currentTime);
+            const entry = trackInputs.get(track.id);
+            if (entry) applyMonitor(track, entry);
+        }
+        return chain;
+    }
+
+    function dropChain(trackId) {
+        const chain = mixer?.chains.get(trackId);
+        if (!chain) return;
+        const entry = trackInputs.get(trackId);
+        if (entry?.monitorChain === chain) {
+            try { entry.route.output.disconnect(chain.input); } catch (_) {}
+            entry.monitorChain = null;
+        }
+        disposeChain(chain);
+        mixer.chains.delete(trackId);
+        // A bus's senders feed its old input: drop them too, they rebuild and reconnect on next use
+        const track = state?.tracks.find(t => t.id === trackId);
+        if (track?.kind === 'bus') {
+            for (const t of state.tracks) {
+                if (t.kind !== 'bus' && (t.sends || []).some(sd => sd.busId === trackId)) dropChain(t.id);
+            }
+        }
+    }
+
+    /** Stopped transport: give every live input its chain back after a rebuild (monitoring keeps sounding). */
+    function restoreLiveChains() {
+        if (!mixer || !state) return;
+        for (const t of state.tracks) {
+            if (trackInputs.has(t.id)) chainFor(t);
+        }
+    }
+
+    /** Sends changed shape (added, removed, pre or post): rebuild the sender's chain so the graph matches. */
+    function rebuildRouting(track) {
+        if (!mixer) return;
+        dropChain(track.id);
+        if (playback) resyncPlayback();
+        else restoreLiveChains();
+    }
+
+    // ===== AUX BUSES AND SENDS =====
+
+    /** Tracks with a send to this bus. */
+    function busSenders(bus) {
+        return state.tracks.filter(t => t.kind !== 'bus' && (t.sends || []).some(sd => sd.busId === bus.id));
+    }
+
+    /** A new aux bus at the bottom; with reverb it carries a fully wet reverb, the classic send-return setup. */
+    function addBusTrack({ reverb = false, snapshot = true } = {}) {
+        if (snapshot) pushUndo();
+        const bus = addTrack({ kind: 'bus', name: nextTrackName(reverb ? translate('Reverb Bus') : translate('Bus')) });
+        bus.volume = 1;
+        if (reverb && typeof AudioDawFx !== 'undefined') {
+            const fx = AudioDawFx.createEffectState('reverb');
+            if (fx) {
+                fx.params.mix = 1; // a return carries only the wet signal; the dry stays on the source track
+                bus.fx.push(fx);
+            }
+        }
+        renderAllTracks();
+        updateBottomPanel();
+        return bus;
+    }
+
+    /** Route a track to a bus (once). Level defaults to -6 dB, post-fader. */
+    function addSend(track, busId, { level = 0.5, snapshot = true } = {}) {
+        if (track.kind === 'bus' || (track.sends || []).some(sd => sd.busId === busId)) return;
+        if (snapshot) pushUndo();
+        track.sends = [...(track.sends || []), { busId, level, pre: false, muted: false }];
+        rebuildRouting(track);
+        renderAllTracks();
+        updateBottomPanel();
+    }
+
+    function removeSend(track, busId) {
+        if (!(track.sends || []).some(sd => sd.busId === busId)) return;
+        pushUndo();
+        track.sends = track.sends.filter(sd => sd.busId !== busId);
+        rebuildRouting(track);
+        renderAllTracks();
+        updateBottomPanel();
+    }
+
+    /** Track menu entries: a toggle per bus, and one-step reverb send. A bus lists what feeds it instead. */
+    function sendMenuItems(track) {
+        const buses = state.tracks.filter(t => t.kind === 'bus');
+        if (track.kind === 'bus') {
+            const senders = busSenders(track);
+            return [{ heading: translate('Fed by') },
+                ...(senders.length ? senders.map(t => ({ label: t.name, disabled: true }))
+                    : [{ label: translate('No sends yet'), disabled: true }])];
+        }
+        const has = (bus) => (track.sends || []).some(sd => sd.busId === bus.id);
+        return [
+            { heading: translate('Sends') },
+            ...buses.map(bus => ({
+                label: translate('Send to') + ' ' + bus.name, checked: has(bus),
+                action: () => has(bus) ? removeSend(track, bus.id) : addSend(track, bus.id)
+            })),
+            { label: translate('Send to a new reverb bus'), action: () => {
+                pushUndo();
+                const bus = addBusTrack({ reverb: true, snapshot: false });
+                addSend(track, bus.id, { snapshot: false });
+            }}
+        ];
+    }
+
+    /** The Mixer's + Send button. */
+    function showAddSendMenu(track, e) {
+        const items = sendMenuItems(track).filter(it => !it.heading);
+        dawMenu(e, items.length ? items : [{ label: translate('No aux buses yet'), disabled: true }]);
+    }
+
+    /** A bus's input button: what feeds it, and a shortcut to the Mixer where sends are set. */
+    function showBusInputsMenu(bus, e) {
+        dawMenu(e, [
+            ...sendMenuItems(bus),
+            { label: translate('Open the Mixer'), action: () => switchBottomTab('mixer') }
+        ]);
+    }
+
+    // ===== AUTOMATION WRITING (Touch, Latch, Write) =====
+    // While playing, moving the fader or pan of a track in a write mode records envelope points instead of moving
+    // the track's static level. Envelopes are relative to the fader (volume x0..2, pan offset -1..1), so a move is
+    // measured against where the control sat when grabbed, starting from the envelope's value at that moment.
+
+    const autoWrite = { base: new Map(), active: new Map(), undoPushed: false };
+
+    function isWriteMode(mode) {
+        return mode === 'touch' || mode === 'latch' || mode === 'write';
+    }
+
+    function writeKey(track, param) {
+        return `${track.id}|${param}`;
+    }
+
+    /** The envelope's value at t (identity when there are no points: x1 volume, 0 pan offset). */
+    function envelopeAt(track, param, t) {
+        const env = track.automation?.[param] || [];
+        const ident = param === 'volume' ? 1 : 0;
+        return env.length && typeof AudioDawFx !== 'undefined' ? AudioDawFx.envelopeValueAt(env, t) : ident;
+    }
+
+    /** Pass start: remember each track's static levels, and open Write mode's whole-pass writes. */
+    function automationPassStart() {
+        autoWrite.base.clear();
+        autoWrite.active.clear();
+        autoWrite.undoPushed = false;
+        for (const t of state.tracks) {
+            autoWrite.base.set(t.id, { volume: t.volume, pan: t.pan || 0 });
+            if (t.automationMode === 'write') {
+                openWrite(t, 'volume', { overwrite: true });
+                openWrite(t, 'pan', { overwrite: true });
+            }
+        }
+    }
+
+    function openWrite(track, param, { overwrite = false } = {}) {
+        const key = writeKey(track, param);
+        let w = autoWrite.active.get(key);
+        if (w) return w;
+        if (!autoWrite.undoPushed) {
+            pushUndo();
+            autoWrite.undoPushed = true;
+        }
+        if (!autoWrite.base.has(track.id)) autoWrite.base.set(track.id, { volume: track.volume, pan: track.pan || 0 });
+        const base = autoWrite.base.get(track.id);
+        const t = currentTimelineTime();
+        // Write mode writes the fader as it stands (identity); Touch and Latch pick up the envelope where it is
+        const v0 = overwrite ? (param === 'volume' ? 1 : 0) : envelopeAt(track, param, t);
+        w = { track, param, points: [{ t, v: v0 }], grab: { control: param === 'volume' ? base.volume : base.pan, v0 },
+            touching: false, latched: track.automationMode !== 'touch' };
+        autoWrite.active.set(key, w);
+        return w;
+    }
+
+    function writing(track, param) {
+        return !!playback && autoWrite.active.has(writeKey(track, param));
+    }
+
+    /** A grab on a fader or pan knob: in Touch or Latch this opens a write at the envelope's current value. */
+    function automationGrab(track, param) {
+        if (!playback || !isWriteMode(track.automationMode)) return;
+        // With no write open, the static level is wherever the fader sits now, including Read-mode moves since the pass began
+        if (!autoWrite.active.has(writeKey(track, 'volume')) && !autoWrite.active.has(writeKey(track, 'pan'))) {
+            autoWrite.base.set(track.id, { volume: track.volume, pan: track.pan || 0 });
+        }
+        const w = openWrite(track, param);
+        const base = autoWrite.base.get(track.id);
+        w.touching = true;
+        // Measure the move from where the control sits now, starting at the envelope value being written
+        w.grab = { control: param === 'volume' ? base.volume : base.pan, v0: w.points[w.points.length - 1].v };
+    }
+
+    /**
+     * A fader or pan move. While writing, the move becomes an envelope point and plays live, and the track's
+     * static level is put back (the control shows the move until it is released).
+     */
+    function automationInput(track, param) {
+        if (!playback || !isWriteMode(track.automationMode)) return;
+        let w = autoWrite.active.get(writeKey(track, param));
+        if (!w) {
+            // A move without a grab event (keyboard on the control): treat it as a touch
+            automationGrab(track, param);
+            w = autoWrite.active.get(writeKey(track, param));
+            if (!w) return;
+        }
+        const base = autoWrite.base.get(track.id);
+        let v;
+        if (param === 'volume') {
+            const moved = track.volume;
+            v = w.grab.control > 0 ? w.grab.v0 * moved / w.grab.control : (moved > 0 ? 2 : 0);
+            v = Math.max(0, Math.min(2, v));
+            track.volume = base.volume;
+        }
+        else {
+            const moved = track.pan || 0;
+            v = Math.max(-1, Math.min(1, w.grab.v0 + (moved - w.grab.control)));
+            track.pan = base.pan;
+        }
+        recordAutomationPoint(w, currentTimelineTime(), v);
+        const chain = mixer?.chains.get(track.id);
+        if (chain) {
+            const now = chain.volAuto.context.currentTime;
+            const prm = param === 'volume' ? chain.volAuto.gain : chain.trackPan?.pan;
+            if (prm) {
+                try { prm.cancelScheduledValues(now); } catch (_) {}
+                prm.setTargetAtTime(param === 'volume' ? v : Math.max(-1, Math.min(1, base.pan + v)), now, 0.01);
+            }
+        }
+    }
+
+    function recordAutomationPoint(w, t, v) {
+        const last = w.points[w.points.length - 1];
+        if (last && (t < last.t - 0.05 || t > last.t + 0.5)) {
+            // The playhead jumped (loop wrap, seek): commit what was written and carry on from here
+            commitAutomationWrite(w, { returnToOld: !w.latched });
+            w.points = [];
+        }
+        const prev = w.points[w.points.length - 1];
+        if (prev && t - prev.t < 0.03) prev.v = v;
+        else w.points.push({ t, v });
+    }
+
+    /** Release: Touch commits and hands back to the existing envelope; Latch and Write keep the last value going. */
+    function automationRelease(track, param) {
+        const w = autoWrite.active.get(writeKey(track, param));
+        if (!w) return;
+        w.touching = false;
+        if (w.latched) return;
+        commitAutomationWrite(w, { returnToOld: true });
+        autoWrite.active.delete(writeKey(track, param));
+        rescheduleTrackAutomation(track);
+        AudioDawTrack.syncHeaderControls(track);
+        refreshAutomationViews();
+    }
+
+    /** Latched writes hold their value as the playhead moves. */
+    function automationTick() {
+        if (!playback || !autoWrite.active.size) return;
+        const t = currentTimelineTime();
+        for (const w of autoWrite.active.values()) {
+            if (w.touching || !w.latched) continue;
+            const last = w.points[w.points.length - 1];
+            if (last && t - last.t >= 0.1) recordAutomationPoint(w, t, last.v);
+        }
+    }
+
+    /** Pass end: every write still open commits at the stop point; Write mode becomes Touch for the next pass. */
+    function automationPassEnd(stopT) {
+        if (!autoWrite.active.size) return;
+        const switched = new Set();
+        for (const w of autoWrite.active.values()) {
+            const last = w.points[w.points.length - 1];
+            if (last && stopT > last.t + 0.01 && stopT - last.t < 0.5) w.points.push({ t: stopT, v: last.v });
+            commitAutomationWrite(w, { returnToOld: true });
+            if (w.track.automationMode === 'write') {
+                w.track.automationMode = 'touch';
+                switched.add(w.track.name);
+            }
+            AudioDawTrack.syncHeaderControls(w.track);
+        }
+        autoWrite.active.clear();
+        if (switched.size) {
+            renderAllTracks(); // the lane heads show the new mode
+            if (typeof doNoticePopover === 'function') {
+                doNoticePopover(translate('Write pass recorded. Switched to Touch so the next pass does not overwrite it') + `: ${[...switched].join(', ')}`, 'notice-pop-blue');
+            }
+        }
+        else {
+            refreshAutomationViews();
+        }
+        scheduleAutosave();
+    }
+
+    /**
+     * Merge a written segment into the track's envelope: the old curve leads in, the new points replace whatever
+     * was under them, and with returnToOld the old curve takes over again just after.
+     */
+    function commitAutomationWrite(w, { returnToOld }) {
+        const pts = w.points;
+        if (!pts.length) return;
+        // A pass that wrote exactly what was already there (an untouched pan in Write mode) changes nothing
+        if (pts.every(p => Math.abs(p.v - envelopeAt(w.track, w.param, p.t)) < 1e-4)) {
+            w.points = [];
+            return;
+        }
+        const env = w.track.automation[w.param] || [];
+        const t0 = pts[0].t;
+        const t1 = pts[pts.length - 1].t;
+        const lead = Math.max(0, t0 - 0.01);
+        const tail = t1 + 0.05;
+        const before = envelopeAt(w.track, w.param, lead);
+        const after = envelopeAt(w.track, w.param, tail);
+        const kept = env.filter(p => p.t < lead || p.t > (returnToOld ? tail : t1));
+        const merged = kept.concat(t0 > 0.01 ? [{ t: lead, v: before }] : [], pts.map(p => ({ ...p })),
+            returnToOld ? [{ t: tail, v: after }] : []);
+        merged.sort((a, b) => a.t - b.t);
+        const unique = merged.filter((p, i) => i === 0 || p.t - merged[i - 1].t > 1e-4);
+        // A held value (Latch, Write) is a run of equal points: keep only its ends
+        w.track.automation[w.param] = unique.filter((p, i) => i === 0 || i === unique.length - 1
+            || Math.abs(p.v - unique[i - 1].v) > 1e-4 || Math.abs(p.v - unique[i + 1].v) > 1e-4);
+        w.points = [];
+    }
+
+    /** Redraw automation lanes after a write (only the lanes, so a pass in progress is not disturbed). */
+    function refreshAutomationViews() {
+        for (const t of state.tracks) {
+            if (t.automationVisible && t.autoLaneEl) {
+                AudioDawTrack.renderAutomationLane(t, state.zoom, automationLaneCallbacks());
+            }
+        }
+    }
+
+    function automationLaneCallbacks() {
+        return {
+            snapTime: (t) => snapTime(t),
+            onAutomationGestureStart: () => pushUndo(),
+            onAutomationChange: (tr) => rescheduleTrackAutomation(tr)
+        };
+    }
+
+    /** Track menu entries for the automation mode. */
+    function automationModeItems(track) {
+        const names = { read: 'Read', touch: 'Touch', latch: 'Latch', write: 'Write', off: 'Off' };
+        return [{ heading: translate('Automation') },
+            ...Object.keys(names).map(mode => ({
+                label: translate(names[mode]), checked: (track.automationMode || 'read') === mode,
+                action: () => setAutomationMode(track, mode)
+            }))];
+    }
+
+    function setAutomationMode(track, mode) {
+        const was = track.automationMode || 'read';
+        if (was === mode) return;
+        // A mode change mid-pass commits what the old mode wrote: Touch, Latch and Write each hold differently
+        for (const param of ['volume', 'pan']) {
+            const w = autoWrite.active.get(writeKey(track, param));
+            if (w) {
+                commitAutomationWrite(w, { returnToOld: true });
+                autoWrite.active.delete(writeKey(track, param));
+            }
+        }
+        track.automationMode = mode;
+        if (playback && !autoWrite.base.has(track.id)) autoWrite.base.set(track.id, { volume: track.volume, pan: track.pan || 0 });
+        if (playback && mode === 'write') {
+            openWrite(track, 'volume', { overwrite: true });
+            openWrite(track, 'pan', { overwrite: true });
+        }
+        rescheduleTrackAutomation(track);
+        AudioDawTrack.syncHeaderControls(track);
+        renderAllTracks();
+        scheduleAutosave();
+    }
+
+    /** Drop chains whose track is gone. */
+    function pruneChains() {
+        if (!mixer) return;
+        const live = new Set(state.tracks.map(t => t.id));
+        for (const id of [...mixer.chains.keys()]) {
+            if (!live.has(id)) dropChain(id);
+        }
+    }
+
+    function destroyMixer() {
+        if (!mixer) return;
+        for (const id of [...mixer.chains.keys()]) dropChain(id);
+        for (const node of [mixer.masterGain, mixer.masterLimiter, mixer.masterTrim, mixer.masterSplitter, mixer.clickBus, ...mixer.masterAnalysers]) {
+            if (node) { try { node.disconnect(); } catch (_) {} }
+        }
+        mixer = null;
     }
 
     /** Topology change on a track's FX (add/remove/reorder): rebuild its chain live. */
     function rebuildTrackFx(track) {
-        if (!playback) return;
-        const chain = playback.chains.get(track.id);
-        if (chain) {
-            disposeChain(chain);
-            playback.chains.delete(track.id);
-        }
-        resyncPlayback(); // lazily recreates the chain during rescheduling
+        AudioDawTrack.syncHeaderControls(track); // the header's inserts badge
+        if (!mixer) return;
+        dropChain(track.id);
+        if (playback) resyncPlayback(); // recreates the chain while rescheduling
+        else restoreLiveChains(); // a monitored input (or one feeding this bus) needs its chain back now
     }
 
     /** Schedule volume/pan envelopes onto a chain using the same origin math as clips. */
     function scheduleTrackAutomation(chain, track, { t0Ctx, t0Timeline, windowEnd = Infinity, fresh = true }) {
         if (typeof AudioDawFx === 'undefined') return;
+        if (track.automationMode === 'off') {
+            // Off: the envelopes are kept but not played
+            if (fresh) {
+                try { chain.volAuto.gain.cancelScheduledValues(t0Ctx); } catch (_) {}
+                chain.volAuto.gain.setValueAtTime(1, t0Ctx);
+                if (chain.trackPan) {
+                    try { chain.trackPan.pan.cancelScheduledValues(t0Ctx); } catch (_) {}
+                    chain.trackPan.pan.setValueAtTime(track.pan || 0, t0Ctx);
+                }
+            }
+            return;
+        }
+        // A param being written live is driven by the control, not its old envelope
+        const live = !!playback && chain.volAuto.context === playback.ctx;
         const auto = track.automation || {};
-        if (auto.volume?.length) {
+        if (auto.volume?.length && !(live && writing(track, 'volume'))) {
             AudioDawFx.scheduleEnvelope(chain.volAuto.gain, auto.volume, { t0Ctx, t0Timeline, windowEnd, fresh });
         }
-        if (chain.trackPan && auto.pan?.length) {
+        if (chain.trackPan && auto.pan?.length && !(live && writing(track, 'pan'))) {
             AudioDawFx.scheduleEnvelope(chain.trackPan.pan, auto.pan, {
                 t0Ctx, t0Timeline, windowEnd, fresh,
                 transform: (v) => Math.max(-1, Math.min(1, (track.pan || 0) + v))
@@ -2337,11 +3971,68 @@ const AudioDaw = (() => {
         }
     }
 
+    /** Stopped transport: hold each envelope at its value under the playhead, so monitoring hears that level (and
+     *  tempo-synced delays at the tempo there). */
+    function holdTrackAutomation(chain, track, at) {
+        const now = chain.volAuto.context.currentTime;
+        const hasFx = typeof AudioDawFx !== 'undefined' && track.automationMode !== 'off';
+        const vol = track.automation?.volume;
+        try { chain.volAuto.gain.cancelScheduledValues(now); } catch (_) {}
+        chain.volAuto.gain.setValueAtTime(vol?.length && hasFx ? AudioDawFx.envelopeValueAt(vol, at) : 1, now);
+        if (chain.trackPan) {
+            const pan = track.automation?.pan;
+            const base = track.pan || 0;
+            try { chain.trackPan.pan.cancelScheduledValues(now); } catch (_) {}
+            chain.trackPan.pan.setValueAtTime(pan?.length && hasFx
+                ? Math.max(-1, Math.min(1, base + AudioDawFx.envelopeValueAt(pan, at))) : base, now);
+        }
+        if (chain.fxChain && typeof AudioDawFx !== 'undefined') {
+            AudioDawFx.syncDelayTimes(chain.fxChain, track.fx || [], bpmAt(at), now, true);
+        }
+    }
+
+    /** Tempo-synced delays follow the tempo map: the tempo where the window starts, then each change inside it. */
+    function scheduleTempoDelays(chain, track, { t0Ctx, t0Timeline, windowEnd = Infinity, fresh = true }) {
+        if (!chain.fxChain || typeof AudioDawFx === 'undefined') return;
+        AudioDawFx.syncDelayTimes(chain.fxChain, track.fx || [], bpmAt(t0Timeline), t0Ctx, fresh);
+        for (const c of state.tempoMap || []) {
+            if (c.t > t0Timeline && c.t < windowEnd) {
+                AudioDawFx.syncDelayTimes(chain.fxChain, track.fx || [], c.bpm, t0Ctx + (c.t - t0Timeline));
+            }
+        }
+    }
+
+    /** After a tempo or delay edit: live delays held at the playhead when stopped, re-queued from it when playing. */
+    function retuneTempoDelays() {
+        if (!mixer || !state) return;
+        for (const track of state.tracks) {
+            const chain = mixer.chains.get(track.id);
+            if (!chain?.fxChain) continue;
+            if (!playback) {
+                holdTrackAutomation(chain, track, state.currentTime);
+                continue;
+            }
+            scheduleTempoDelays(chain, track, {
+                t0Ctx: playback.ctx.currentTime, t0Timeline: currentTimelineTime(),
+                windowEnd: playback.loop ? state.loopEnd : Infinity, fresh: true
+            });
+            if (playback.loop?.nextIterScheduled) {
+                scheduleTempoDelays(chain, track, {
+                    t0Ctx: playback.loop.nextWrapCtxTime, t0Timeline: state.loopStart, windowEnd: state.loopEnd, fresh: false
+                });
+            }
+        }
+    }
+
     /** Live envelope edit: re-anchor + re-ramp this track's automation from the current position. */
     function rescheduleTrackAutomation(track) {
-        if (!playback || typeof AudioDawFx === 'undefined') return;
-        const chain = playback.chains.get(track.id);
+        if (typeof AudioDawFx === 'undefined') return;
+        const chain = mixer?.chains.get(track.id);
         if (!chain) return;
+        if (!playback) {
+            holdTrackAutomation(chain, track, state.currentTime);
+            return;
+        }
         const now = playback.ctx.currentTime;
         const P = currentTimelineTime();
         const W = playback.loop ? state.loopEnd : Infinity;
@@ -2369,6 +4060,138 @@ const AudioDaw = (() => {
                 t0Ctx: playback.loop.nextWrapCtxTime, t0Timeline: state.loopStart,
                 windowEnd: state.loopEnd, fresh: false
             });
+        }
+    }
+
+    // ===== LIVE INPUTS (arm + monitor) =====
+    // A track's input is open while the track is armed (R) or monitoring (I): the device stream (shared per
+    // device), a channel route, and a capture node that always meters the input and records only while the
+    // transport records. Monitoring connects the route into the track's own chain, so the input is heard
+    // through the track's inserts, fader and pan, like a channel on a desk.
+
+    const trackInputs = new Map(); // trackId -> { key, handle, route, capture, latency, label, level, channels, monitorChain }
+    const inputPending = new Map(); // trackId -> Promise, so rapid toggles apply in order
+
+    function inputKey(track) {
+        const inp = track.input || {};
+        return `${inp.deviceId || ''}|${inp.channels ?? 'mono'}|${recordSettings.voiceMode ? 1 : 0}`;
+    }
+
+    /** Open, re-route or close a track's input to match its arm/monitor state. Serialized per track. */
+    function syncTrackInput(track) {
+        const prev = inputPending.get(track.id) || Promise.resolve();
+        const next = prev.catch(() => {}).then(() => syncTrackInputNow(track));
+        inputPending.set(track.id, next);
+        next.catch(() => {}).finally(() => {
+            if (inputPending.get(track.id) === next) inputPending.delete(track.id);
+        });
+        return next;
+    }
+
+    async function syncTrackInputNow(track) {
+        if (!state || !state.tracks.includes(track) || !(track.armed || track.monitor) || track.kind === 'instrument') {
+            closeTrackInput(track.id);
+            return;
+        }
+        let entry = trackInputs.get(track.id);
+        const key = inputKey(track);
+        if (entry && entry.key !== key) {
+            closeTrackInput(track.id);
+            entry = null;
+        }
+        if (!entry) {
+            const support = AudioDawInput.support();
+            if (!support.mic) throw new Error(translate('Audio input needs HTTPS (or localhost) in this browser'));
+            if (!support.worklet) throw new Error(translate('This browser cannot capture audio (no AudioWorklet)'));
+            const ctx = getAudioContext();
+            if (ctx.state === 'suspended') { try { await ctx.resume(); } catch (_) {} }
+            ensureMixer();
+            const handle = await AudioDawInput.openStream(track.input?.deviceId || null, { voiceMode: recordSettings.voiceMode });
+            let route = null, capture = null;
+            try {
+                route = AudioDawInput.createRoute(ctx, handle.stream, track.input?.channels ?? 'mono');
+                capture = await AudioDawInput.createCapture(ctx, route.output, route.captureChannels);
+            }
+            catch (err) {
+                route?.dispose();
+                handle.release();
+                throw err;
+            }
+            // The track may have been disarmed or removed while the device opened, or the DAW hidden meanwhile
+            if (!state || !state.tracks.includes(track) || !(track.armed || track.monitor) || (!recording && dawHidden())) {
+                capture.dispose();
+                route.dispose();
+                handle.release();
+                return;
+            }
+            entry = {
+                key, handle, route, capture, level: 0, monitorChain: null,
+                channels: route.captureChannels,
+                latency: AudioDawInput.streamLatency(handle.stream),
+                label: AudioDawInput.streamLabel(handle.stream)
+            };
+            capture.onPeak = (v) => {
+                entry.level = v;
+                if (v >= 0.985) entry.clipped = true;
+            };
+            trackInputs.set(track.id, entry);
+            kickMeters();
+        }
+        applyMonitor(track, entry);
+        AudioDawTrack.syncHeaderControls(track);
+    }
+
+    /** Connect or disconnect a live input to its track's chain, following the track's I button. */
+    function applyMonitor(track, entry) {
+        const want = track.monitor ? chainFor(track) : null;
+        if (entry.monitorChain && entry.monitorChain !== want) {
+            try { entry.route.output.disconnect(entry.monitorChain.input); } catch (_) {}
+            entry.monitorChain = null;
+        }
+        if (want && entry.monitorChain !== want) {
+            entry.route.output.connect(want.input);
+            entry.monitorChain = want;
+        }
+    }
+
+    function closeTrackInput(trackId) {
+        const entry = trackInputs.get(trackId);
+        if (!entry) return;
+        trackInputs.delete(trackId);
+        if (entry.monitorChain) {
+            try { entry.route.output.disconnect(entry.monitorChain.input); } catch (_) {}
+        }
+        entry.capture.dispose();
+        entry.route.dispose();
+        entry.handle.release();
+    }
+
+    function closeAllInputs() {
+        for (const id of [...trackInputs.keys()]) closeTrackInput(id);
+    }
+
+    /** Never leave the microphone hot while the DAW is hidden. Showing the DAW again re-opens what is armed or monitored. */
+    /** True while the DAW's tab is off screen. */
+    function dawHidden() {
+        const el = document.getElementById('daw_container');
+        return !!el && el.offsetParent === null;
+    }
+
+    function releaseInputsIfHidden() {
+        if (!recording && dawHidden()) closeAllInputs();
+    }
+
+    function reportInputError(track, err) {
+        console.error('[AudioDaw] Input failed for', track?.name, err);
+        if (typeof doNoticePopover === 'function') {
+            doNoticePopover(`${track?.name || translate('Track')}: ` + translate('input failed:') + ' ' + (err?.message || err), 'notice-pop-red');
+        }
+    }
+
+    /** Re-open every live input, e.g. after the voice-processing setting changed. */
+    function resyncAllInputs() {
+        for (const t of state.tracks) {
+            if (t.armed || t.monitor) syncTrackInput(t).catch(err => reportInputError(t, err));
         }
     }
 
@@ -2442,47 +4265,60 @@ const AudioDaw = (() => {
         }
     }
 
-    /** Push live stereo levels + peak-hold ticks into header meters, mixer strips, and the master meter. */
+    /**
+     * Push live levels + peak-hold ticks into header meters, mixer strips and the master meter.
+     * An armed track shows its INPUT level unless it is playing back (what a record-armed channel shows).
+     * @returns {boolean} whether any meter is still showing signal
+     */
     function updateMeters() {
-        if (!playback) return;
+        if (!mixer || !state) return false;
+        let active = false;
         for (const track of state.tracks) {
-            const chain = playback.chains.get(track.id);
-            if (!chain?.analysers) continue;
-            const peaks = readChanPeaks(chain.analysers);
+            const input = trackInputs.get(track.id);
+            let peaks;
+            if (input && track.armed && (!state.isPlaying || recording)) {
+                peaks = [input.level, input.level];
+                track.headerEl?.classList.toggle('input-clipped', !!input.clipped);
+            }
+            else {
+                const chain = mixer.chains.get(track.id);
+                peaks = chain?.analysers ? readChanPeaks(chain.analysers) : [0, 0];
+            }
             const strip = AudioDawMixer.getMeterEl?.(track.id);
             for (let ch = 0; ch < 2; ch++) {
                 const pct = levelToPct(peaks[ch]);
                 const held = heldPeak(`${track.id}:${ch}`, pct);
+                if (pct > 0 || held > 0) active = true;
                 setMeterChan(track.meterChans?.[ch], pct, held, false);
                 setMeterChan(strip?.chans?.[ch], pct, held, true);
             }
         }
-        if (playback.masterAnalysers) {
-            const peaks = readChanPeaks(playback.masterAnalysers);
-            const strip = AudioDawMixer.getMeterEl?.('__master__');
-            for (let ch = 0; ch < 2; ch++) {
-                const pct = levelToPct(peaks[ch]);
-                const held = heldPeak(`__master__:${ch}`, pct);
-                setMeterChan(strip?.chans?.[ch], pct, held, true);
-            }
-            // ~Loudness readout (slow RMS EMA; not true K-weighted LUFS but tracks it usefully)
-            const rms = readRms(playback.masterAnalysers[0]);
-            loudnessEma = loudnessEma * 0.95 + rms * 0.05;
-            const lufsEl = document.querySelector('.daw-master-lufs');
-            if (lufsEl) {
-                const db = loudnessEma > 1e-5 ? (20 * Math.log10(loudnessEma)).toFixed(1) : '-\u221E';
-                lufsEl.textContent = db + ' LU';
-                lufsEl.title = translate('Approximate loudness (RMS). Streaming targets sit around -14.');
-            }
-            // Clip latch: lights when the master pins, click to reset
-            if (Math.max(peaks[0], peaks[1]) >= 0.985) {
-                const clipDot = document.querySelector('.daw-master-clip');
-                if (clipDot) clipDot.classList.add('lit');
-            }
+        const peaks = readChanPeaks(mixer.masterAnalysers);
+        const strip = AudioDawMixer.getMeterEl?.('__master__');
+        for (let ch = 0; ch < 2; ch++) {
+            const pct = levelToPct(peaks[ch]);
+            const held = heldPeak(`__master__:${ch}`, pct);
+            if (pct > 0 || held > 0) active = true;
+            setMeterChan(strip?.chans?.[ch], pct, held, true);
         }
+        // ~Loudness readout (slow RMS EMA; not true K-weighted LUFS but tracks it usefully)
+        const rms = readRms(mixer.masterAnalysers[0]);
+        loudnessEma = loudnessEma * 0.95 + rms * 0.05;
+        const lufsEl = document.querySelector('.daw-master-lufs');
+        if (lufsEl) {
+            const db = loudnessEma > 1e-5 ? (20 * Math.log10(loudnessEma)).toFixed(1) : '-∞';
+            lufsEl.textContent = db + ' LU';
+            lufsEl.title = translate('Approximate loudness (RMS). Streaming targets sit around -14.');
+        }
+        // Clip latch: lights when the master pins, click to reset
+        if (Math.max(peaks[0], peaks[1]) >= 0.985) {
+            const clipDot = document.querySelector('.daw-master-clip');
+            if (clipDot) clipDot.classList.add('lit');
+        }
+        return active;
     }
 
-    /** Zero out every meter and held peak (playback stopped). */
+    /** Zero out every meter and held peak. */
     function resetMeters() {
         meterPeaks.clear();
         for (const track of state?.tracks || []) {
@@ -2491,80 +4327,162 @@ const AudioDaw = (() => {
         if (AudioDawMixer.resetMeters) AudioDawMixer.resetMeters();
     }
 
+    // Meters run on their own rAF loop: while playing, while any input is live, and for a moment after both
+    // stop so held peaks and effect tails fall away instead of freezing.
+    let meterRaf = null;
+    let meterBusyAt = 0;
+
+    function kickMeters() {
+        meterBusyAt = performance.now();
+        if (!meterRaf) meterRaf = requestAnimationFrame(meterLoop);
+    }
+
+    function meterLoop() {
+        meterRaf = null;
+        if (!state || !mixer) return;
+        const active = updateMeters();
+        const now = performance.now();
+        if (active || state.isPlaying || trackInputs.size) meterBusyAt = now;
+        if (now - meterBusyAt < 1500) {
+            meterRaf = requestAnimationFrame(meterLoop);
+        }
+        else {
+            resetMeters();
+        }
+    }
+
+    /** Seconds of a clip that play: its source length minus the trimmed head and tail. */
+    function visibleDur(clip) {
+        return clip.duration - clip.offset - clip.trimEnd;
+    }
+
     /**
-     * Schedule one clip into a context — the single source of truth for placement
-     * math, used identically by live playback, loop iterations, and offline export.
-     * Node chain per clip: source -> fadeGain (fade ramps only) -> clipGain (mute/gain) -> destNode.
+     * Where each clip on a track is heard. Clips layer: a later clip (the newest take, the last one dropped)
+     * covers the ones before it, the way a pro DAW's playlist does, so a clip only plays where no later,
+     * unmuted clip sits. Shared by live playback and export.
+     * @returns {Map<string, Array<[number, number]>>} clipId -> audible timeline intervals
+     */
+    function trackAudibleSegments(track) {
+        const out = new Map();
+        const clips = track.clips;
+        const spans = clips.map(c => [c.startTime, c.startTime + visibleDur(c)]);
+        const fades = clips.map(c => {
+            const vis = visibleDur(c);
+            const fi = Math.min(c.fadeIn || 0, vis);
+            return { fi, fo: Math.min(c.fadeOut || 0, vis - fi) };
+        });
+        for (let i = 0; i < clips.length; i++) {
+            let segs = [spans[i]];
+            for (let j = i + 1; j < clips.length && segs.length; j++) {
+                if (clips[j].muted) continue; // a muted clip on top lets the one below through
+                let [cs, ce] = spans[j];
+                // A crossfade: where this clip ends inside the upper one's fade-in while fading out over the overlap
+                // (or starts inside its fade-out while fading in), both play there instead of the upper one covering
+                const [is, ie] = spans[i];
+                if (ie > cs && ie <= cs + fades[j].fi + 1e-6 && fades[i].fo > 0 && ie - fades[i].fo <= cs + 1e-3) cs = ie;
+                if (is < ce && is >= ce - fades[j].fo - 1e-6 && fades[i].fi > 0 && is + fades[i].fi >= ce - 1e-3) ce = is;
+                if (ce - cs <= 0.002) continue;
+                const next = [];
+                for (const [s, e] of segs) {
+                    if (ce <= s || cs >= e) {
+                        next.push([s, e]);
+                        continue;
+                    }
+                    if (cs > s) next.push([s, cs]);
+                    if (ce < e) next.push([ce, e]);
+                }
+                segs = next.filter(([s, e]) => e - s > 0.002);
+            }
+            out.set(clips[i].id, segs);
+        }
+        return out;
+    }
+
+    const SEAM_FADE = 0.004; // seconds: a click-free seam where a covering clip starts or ends
+
+    /**
+     * Schedule one clip into a context: the single source of truth for placement math, used identically by
+     * live playback, loop iterations, and offline export.
+     * Nodes per clip: one source + fadeGain per audible segment -> clipGain (mute/gain) -> destNode (track input).
      * @param {BaseAudioContext} ctx
-     * @param {AudioNode} destNode - the track's trackGain
+     * @param {AudioNode} destNode - the track chain's input (ahead of the inserts)
      * @param {Object} clip
      * @param {Object} origin - { t0Ctx, t0Timeline, windowEnd }: ctx time t0Ctx corresponds
      *   to timeline time t0Timeline; nothing is scheduled at/after windowEnd (loop/export bound).
-     * @returns {{source, fadeGain, clipGain}|null}
+     * @param {Array<[number, number]>} [segments] - audible timeline intervals (trackAudibleSegments); whole clip if omitted
+     * @returns {{clipGain: GainNode, sources: Array<{source, fadeGain}>}|null}
      */
-    function scheduleClip(ctx, destNode, clip, { t0Ctx, t0Timeline, windowEnd = Infinity }) {
+    function scheduleClip(ctx, destNode, clip, { t0Ctx, t0Timeline, windowEnd = Infinity }, segments = null) {
         const P = t0Timeline;
-        const visibleDur = clip.duration - clip.offset - clip.trimEnd;
-        if (!clip.decodedBuffer || visibleDur <= 0) return null;
+        const vis = visibleDur(clip);
+        if (!clip.decodedBuffer || vis <= 0) return null;
         const clipStart = clip.startTime;
-        const clipEnd = clipStart + visibleDur;
-        if (clipEnd <= P || clipStart >= windowEnd) return null;
+        const clipEnd = clipStart + vis;
+        const parts = (segments || [[clipStart, clipEnd]]).map(([s, e]) => ({
+            s, e,
+            // A seam is an edge another clip made; the clip's own start and end are not seams
+            seamIn: s > clipStart + 1e-6,
+            seamOut: e < clipEnd - 1e-6,
+            from: Math.max(s, P),
+            to: Math.min(e, windowEnd)
+        })).filter(p => p.to - p.from > 0.001);
+        if (!parts.length) return null;
 
-        const into = Math.max(0, P - clipStart);
-        const when = t0Ctx + Math.max(0, clipStart - P);
-        const bufferOffset = clip.offset + into;
-        const playDuration = Math.min(visibleDur - into, windowEnd - Math.max(P, clipStart));
-        if (playDuration <= 0) return null;
-
-        const source = ctx.createBufferSource();
-        source.buffer = clip.decodedBuffer;
-        const fadeGain = ctx.createGain();
         const clipGain = ctx.createGain();
         clipGain.gain.value = clip.muted ? 0 : (clip.gain ?? 1);
-        source.connect(fadeGain);
-        fadeGain.connect(clipGain);
         clipGain.connect(destNode);
-
-        // Fade envelope; a mid-clip start resumes at the exact instantaneous value
-        const fi = Math.min(clip.fadeIn || 0, visibleDur);
-        const fo = Math.min(clip.fadeOut || 0, visibleDur - fi);
-        if (fi > 0 || fo > 0) {
-            const u0 = into;
-            const foStart = visibleDur - fo;
-            let startVal = 1;
-            if (fi > 0 && u0 < fi) startVal = u0 / fi;
-            else if (fo > 0 && u0 > foStart) startVal = (visibleDur - u0) / fo;
-            fadeGain.gain.setValueAtTime(startVal, when);
-            if (fi > 0 && u0 < fi) fadeGain.gain.linearRampToValueAtTime(1, when + (fi - u0));
-            if (fo > 0 && u0 < visibleDur) {
-                if (u0 < foStart) fadeGain.gain.setValueAtTime(1, when + (foStart - u0));
-                fadeGain.gain.linearRampToValueAtTime(0, when + (visibleDur - u0));
+        const fi = Math.min(clip.fadeIn || 0, vis);
+        const fo = Math.min(clip.fadeOut || 0, vis - fi);
+        const sources = [];
+        for (const part of parts) {
+            // Gain at timeline time t: the clip's fades times the seam ramps
+            const gainAt = (t) => {
+                const u = t - clipStart;
+                let g = 1;
+                if (fi > 0 && u < fi) g = Math.min(g, u / fi);
+                if (fo > 0 && u > vis - fo) g = Math.min(g, (vis - u) / fo);
+                if (part.seamIn) g *= Math.min(1, (t - part.s) / SEAM_FADE);
+                if (part.seamOut) g *= Math.min(1, (part.e - t) / SEAM_FADE);
+                return Math.max(0, Math.min(1, g));
+            };
+            const when = t0Ctx + (part.from - P);
+            const source = ctx.createBufferSource();
+            source.buffer = clip.decodedBuffer;
+            const fadeGain = ctx.createGain();
+            source.connect(fadeGain);
+            fadeGain.connect(clipGain);
+            const knees = [clipStart + fi, clipEnd - fo, part.s + SEAM_FADE, part.e - SEAM_FADE, part.to]
+                .filter(t => t > part.from + 1e-6 && t <= part.to + 1e-9)
+                .sort((a, b) => a - b);
+            const g0 = gainAt(part.from);
+            if (g0 < 1 || knees.some(t => gainAt(t) < 1)) {
+                fadeGain.gain.setValueAtTime(g0, when);
+                for (const t of knees) fadeGain.gain.linearRampToValueAtTime(gainAt(t), t0Ctx + (t - P));
             }
+            source.start(when, clip.offset + (part.from - clipStart), part.to - part.from);
+            sources.push({ source, fadeGain });
         }
-
-        source.start(when, bufferOffset, playDuration);
-        return { source, fadeGain, clipGain };
+        return { clipGain, sources };
     }
 
     /**
      * Schedule every clip of every track from timeline time P.
-     * ALL clips are scheduled — muted ones at gain 0 — so mute/solo/unmute during
+     * ALL clips are scheduled (muted ones at gain 0), so mute/solo/unmute during
      * playback is always a pure AudioParam write, never a missing source.
      */
     function scheduleTransportFrom(P, { t0Ctx, windowEnd = Infinity, iteration = 0 }) {
         const ctx = playback.ctx;
         for (const track of state.tracks) {
-            let chain = playback.chains.get(track.id);
-            if (!chain) {
-                chain = buildTrackChain(ctx, track, playback.masterGain);
-                playback.chains.set(track.id, chain);
-            }
+            const chain = chainFor(track);
             scheduleTrackAutomation(chain, track, { t0Ctx, t0Timeline: P, windowEnd, fresh: iteration === 0 });
+            scheduleTempoDelays(chain, track, { t0Ctx, t0Timeline: P, windowEnd, fresh: iteration === 0 });
+            const plan = trackAudibleSegments(track);
             for (const clip of track.clips) {
-                const nodes = scheduleClip(ctx, chain.trackGain, clip, { t0Ctx, t0Timeline: P, windowEnd });
+                const nodes = scheduleClip(ctx, chain.input, clip, { t0Ctx, t0Timeline: P, windowEnd }, plan.get(clip.id));
                 if (!nodes) continue;
                 const entry = { clipId: clip.id, trackId: track.id, iteration, ...nodes };
-                nodes.source.onended = () => {
+                // Segments run in time order, so the last one ending retires the entry
+                nodes.sources[nodes.sources.length - 1].source.onended = () => {
                     if (!playback) return;
                     const i = playback.liveClips.indexOf(entry);
                     if (i >= 0) playback.liveClips.splice(i, 1);
@@ -2574,20 +4492,31 @@ const AudioDaw = (() => {
         }
     }
 
-    /** Param-only update of the whole gain topology (mute/solo/volume/pan/master). */
+    /** Param-only update of the whole gain topology (mute/solo/volume/pan/master), live or stopped. */
     function updatePlaybackGains() {
-        if (!playback) return;
-        const now = playback.ctx.currentTime;
-        playback.masterGain.gain.setTargetAtTime(state.masterVolume, now, 0.015);
+        if (!mixer) return;
+        const now = mixer.ctx.currentTime;
+        mixer.masterGain.gain.setTargetAtTime(state.masterVolume, now, 0.015);
         for (const track of state.tracks) {
-            const chain = playback.chains.get(track.id);
+            const chain = mixer.chains.get(track.id);
             if (!chain) continue;
-            chain.trackGain.gain.setTargetAtTime(computeTrackGain(track), now, 0.015);
-            const panEnv = track.automation?.pan;
-            if (chain.trackPan && !(panEnv?.length)) {
+            chain.trackGain.gain.setTargetAtTime(track.muted ? 0 : track.volume, now, 0.015);
+            chain.soloGain.gain.setTargetAtTime(soloAudible(track) ? 1 : 0, now, 0.015);
+            for (const send of track.sends || []) {
+                chain.sendGains?.get(send.busId)?.gain.setTargetAtTime(sendGain(track, send), now, 0.015);
+            }
+            const panEnv = track.automationMode === 'off' ? null : track.automation?.pan;
+            if (writing(track, 'pan')) {
+                // A live pan write owns the pan right now
+            }
+            else if (chain.trackPan && !(panEnv?.length)) {
                 chain.trackPan.pan.setTargetAtTime(track.pan || 0, now, 0.015);
             }
             else if (chain.trackPan && panEnv?.length && typeof AudioDawFx !== 'undefined') {
+                if (!playback) {
+                    holdTrackAutomation(chain, track, state.currentTime);
+                    continue;
+                }
                 // Envelope active: re-anchor + re-ramp instead of fighting scheduled ramps
                 const xf = (v) => Math.max(-1, Math.min(1, (track.pan || 0) + v));
                 const P = currentTimelineTime();
@@ -2633,10 +4562,17 @@ const AudioDaw = (() => {
 
     function toggleLoop() {
         state.loopEnabled = !state.loopEnabled;
-        // First enable with no region set: default to the whole arrangement
+        // First enable with no region set: the selection if there is one, else the whole arrangement
         if (state.loopEnabled && state.loopEnd <= state.loopStart) {
-            state.loopStart = 0;
-            state.loopEnd = state.contentDuration || state.totalDuration;
+            const sel = state.selection;
+            if (sel && sel.end > sel.start) {
+                state.loopStart = sel.start;
+                state.loopEnd = sel.end;
+            }
+            else {
+                state.loopStart = 0;
+                state.loopEnd = state.contentDuration || state.totalDuration;
+            }
         }
         const btn = transportEl?.querySelector('.daw-btn-loop');
         if (btn) btn.classList.toggle('active', state.loopEnabled);
@@ -2645,47 +4581,35 @@ const AudioDaw = (() => {
         resyncPlayback();
     }
 
-    async function startPlayback() {
-        if (state.isPlaying) return;
+    /**
+     * Start the transport at state.currentTime.
+     * @param {Object} [opts] - { delay: seconds before the timeline starts moving (count-in), from: timeline
+     *   position override }
+     * @returns {Promise<Object|null>} the playback session, or null when stopped before it began
+     */
+    async function startPlayback({ delay = 0 } = {}) {
+        if (state.isPlaying) return playback;
         state.isPlaying = true;
         updatePlayButton(true);
-
-        // Safety: a wedged recording session (record-end never fired) must not put
-        // plain playback into record mode (unclamped playhead, no end-stop)
-        if (recording && (!recording.recorder || !recording.recorder.isRecording())) {
-            abortRecording();
-        }
 
         const ctx = getAudioContext();
         if (ctx.state === 'suspended') {
             try { await ctx.resume(); } catch (_) {}
         }
-        if (!state.isPlaying) return; // user hit stop while we awaited the resume
-
-        const masterGain = ctx.createGain();
-        masterGain.gain.value = state.masterVolume;
-        let masterLimiter = null;
-        let masterOut = masterGain;
-        if (state.masterLimiterEnabled && typeof AudioDawFx !== 'undefined') {
-            masterLimiter = AudioDawFx.buildMasterLimiter(ctx);
-            masterGain.connect(masterLimiter);
-            masterOut = masterLimiter;
-        }
-        masterOut.connect(ctx.destination);
-        // Post-limiter stereo taps for the master meter
-        const masterSplitter = ctx.createChannelSplitter(2);
-        masterOut.connect(masterSplitter);
-        const masterAnalysers = [ctx.createAnalyser(), ctx.createAnalyser()];
-        masterAnalysers.forEach((a, i) => { a.fftSize = 512; masterSplitter.connect(a, i); });
+        if (!state.isPlaying) return null; // user hit stop while we awaited the resume
+        ensureMixer();
 
         const P = state.currentTime;
-        const t0Ctx = ctx.currentTime + START_EPSILON;
+        const t0Ctx = ctx.currentTime + START_EPSILON + delay;
         // Loop is suppressed while recording (a take shouldn't wrap onto itself)
         const loopArmed = !recording && state.loopEnabled && state.loopEnd > state.loopStart && P < state.loopEnd;
         playback = {
-            ctx, masterGain, masterLimiter, masterAnalysers,
-            chains: new Map(),
+            ctx,
             liveClips: [],
+            clicks: [],
+            clickSeen: null,
+            voices: [],
+            noteSeen: null,
             baseCtxTime: t0Ctx,
             baseTimelineTime: P,
             // Stop at the end of the music, not the ruler; starting past the
@@ -2698,9 +4622,13 @@ const AudioDaw = (() => {
                 iteration: 0
             } : null
         };
+        automationPassStart();
         scheduleTransportFrom(P, { t0Ctx, windowEnd: loopArmed ? state.loopEnd : Infinity, iteration: 0 });
         playback.schedulerId = setInterval(schedulerTick, SCHEDULER_TICK_MS);
+        schedulerTick(); // first clicks now, not a tick later
         animatePlayhead();
+        kickMeters();
+        return playback;
     }
 
     /**
@@ -2740,77 +4668,129 @@ const AudioDaw = (() => {
                 });
                 loop.nextIterScheduled = true;
             }
+        } else if (recording?.punch && !recording.stopping
+            && currentTimelineTime() >= recording.punch.out + recording.postRoll) {
+            // Punch recording runs out its post-roll, then stops itself
+            stopRecordingFlow();
+            return;
         } else if (!recording && currentTimelineTime() >= playback.endTime) {
             // While recording, playback runs past the end so the take can extend the song
             stopPlayback();
             state.currentTime = 0;
             updatePlayheadPosition();
             updateTimeDisplay();
+            return;
         }
+        scheduleClicks();
+        scheduleInstrumentNotes();
+        automationTick();
     }
 
-    /** Stop and disconnect all live sources + chains + master; leaves state.isPlaying alone. */
+    /**
+     * Metronome: schedule clicks for beats inside the next ~200 ms of audio time. Beats count from timeline
+     * zero, accented on each bar's downbeat (a fractional bar clicks on its denominator unit, see
+     * AudioDawTimeline.clickUnit). With a loop armed the next pass is mapped onto its own start, so the first
+     * click after a wrap is on time; instants already scheduled are skipped.
+     */
+    function scheduleClicks() {
+        if (!playback || !mixer || !state.metronome) return;
+        const ctx = playback.ctx;
+        const tm = tempo();
+        const unit = AudioDawTimeline.clickUnit(state.timeSignature);
+        const perBar = beatsPerBar() / unit;
+        const now = ctx.currentTime;
+        const horizon = now + 0.2;
+        const passes = [{ baseCtx: playback.baseCtxTime, baseTl: playback.baseTimelineTime, end: playback.loop ? state.loopEnd : Infinity }];
+        if (playback.loop) passes.push({ baseCtx: playback.loop.nextWrapCtxTime, baseTl: state.loopStart, end: state.loopEnd });
+        if (!playback.clickSeen) playback.clickSeen = new Set();
+        for (const pass of passes) {
+            const tlFrom = pass.baseTl + Math.max(0, now - pass.baseCtx);
+            const tlTo = Math.min(pass.end, pass.baseTl + (horizon - pass.baseCtx));
+            for (let k = Math.ceil(tm.beatsAt(tlFrom) / unit - 1e-6); ; k++) {
+                const bt = tm.timeAtBeat(k * unit);
+                if (bt > tlTo + 1e-9 || bt >= pass.end - 1e-6) break;
+                const when = pass.baseCtx + (bt - pass.baseTl);
+                if (when < now - 0.005) continue;
+                const key = Math.round(when * 1000);
+                if (playback.clickSeen.has(key)) continue;
+                playback.clickSeen.add(key);
+                playback.clicks.push(AudioDawInput.scheduleClick(ctx, mixer.clickBus, when, k % perBar === 0));
+            }
+        }
+        if (playback.clickSeen.size > 256) {
+            for (const key of playback.clickSeen) {
+                if (key < (now - 1) * 1000) playback.clickSeen.delete(key);
+            }
+        }
+        if (playback.clicks.length > 64) playback.clicks.splice(0, playback.clicks.length - 64);
+    }
+
+    /** Stop and disconnect one scheduled clip (all of its segments). */
+    function stopLiveClip(n) {
+        for (const s of n.sources) {
+            s.source.onended = null;
+            try { s.source.stop(); } catch (_) {}
+            try { s.source.disconnect(); } catch (_) {}
+            try { s.fadeGain.disconnect(); } catch (_) {}
+        }
+        try { n.clipGain.disconnect(); } catch (_) {}
+    }
+
+    /** Stop every scheduled source and pending click; the mixer graph stays up. */
     function teardownPlaybackGraph() {
         if (!playback) return;
         clearInterval(playback.schedulerId);
-        for (const n of playback.liveClips) {
-            n.source.onended = null;
-            try { n.source.stop(); } catch (_) {}
-            try { n.source.disconnect(); } catch (_) {}
-            try { n.fadeGain.disconnect(); } catch (_) {}
-            try { n.clipGain.disconnect(); } catch (_) {}
+        for (const n of playback.liveClips) stopLiveClip(n);
+        for (const osc of playback.clicks || []) {
+            try { osc.stop(); } catch (_) {}
         }
-        for (const chain of playback.chains.values()) {
-            disposeChain(chain);
-        }
-        try { playback.masterGain.disconnect(); } catch (_) {}
-        if (playback.masterLimiter) { try { playback.masterLimiter.disconnect(); } catch (_) {} }
+        killPlaybackVoices();
         playback = null;
-        resetMeters();
+        if (mixer && state) {
+            for (const track of state.tracks) {
+                const chain = mixer.chains.get(track.id);
+                if (chain) holdTrackAutomation(chain, track, state.currentTime);
+            }
+        }
     }
 
     function stopPlayback() {
         if (!state || !state.isPlaying) return;
         state.currentTime = Math.min(currentTimelineTime(), playback?.endTime ?? state.totalDuration);
+        automationPassEnd(state.currentTime);
         state.isPlaying = false;
         updatePlayButton(false);
         cancelAnimationFrame(rafId);
         teardownPlaybackGraph();
         updatePlayheadPosition();
         updateTimeDisplay();
+        kickMeters(); // let tails and held peaks fall
     }
 
     /**
      * Re-schedule playback from the current position after a topology change
      * (clip add/move/delete/trim, track add/remove, undo/redo, loop change).
-     * Keeps chains for surviving tracks, the scheduler, and the rAF loop —
+     * Keeps chains for surviving tracks, the scheduler, and the rAF loop:
      * no play-button churn, no UI flicker. No-op when stopped.
      */
     function resyncPlayback() {
+        pruneChains();
         if (!state.isPlaying || !playback) return;
         const ctx = playback.ctx;
         const P = Math.max(0, Math.min(currentTimelineTime(), state.totalDuration));
-        for (const n of playback.liveClips) {
-            n.source.onended = null;
-            try { n.source.stop(); } catch (_) {}
-            try { n.source.disconnect(); } catch (_) {}
-            try { n.fadeGain.disconnect(); } catch (_) {}
-            try { n.clipGain.disconnect(); } catch (_) {}
-        }
+        for (const n of playback.liveClips) stopLiveClip(n);
         playback.liveClips = [];
-        // Drop chains for removed tracks (missing ones are lazily created on schedule)
-        const liveIds = new Set(state.tracks.map(t => t.id));
-        for (const [id, chain] of playback.chains) {
-            if (!liveIds.has(id)) {
-                disposeChain(chain);
-                playback.chains.delete(id);
-            }
+        for (const osc of playback.clicks) {
+            try { osc.stop(); } catch (_) {}
         }
+        playback.clicks = [];
+        playback.clickSeen = null;
+        killPlaybackVoices();
         const t0Ctx = ctx.currentTime + START_EPSILON;
         playback.baseCtxTime = t0Ctx;
         playback.baseTimelineTime = P;
         playback.endTime = P < state.contentDuration ? state.contentDuration : state.totalDuration;
-        const loopArmed = state.loopEnabled && state.loopEnd > state.loopStart && P < state.loopEnd;
+        const loopArmed = !recording && state.loopEnabled && state.loopEnd > state.loopStart && P < state.loopEnd;
         playback.loop = loopArmed ? {
             nextWrapCtxTime: t0Ctx + (state.loopEnd - P),
             nextIterScheduled: false,
@@ -2824,6 +4804,12 @@ const AudioDaw = (() => {
         state.currentTime = Math.max(0, Math.min(time, state.totalDuration));
         updatePlayheadPosition();
         updateTimeDisplay();
+        if (!state.isPlaying && mixer) {
+            for (const track of state.tracks) {
+                const chain = mixer.chains.get(track.id);
+                if (chain) holdTrackAutomation(chain, track, state.currentTime);
+            }
+        }
         resyncPlayback();
     }
 
@@ -2843,9 +4829,7 @@ const AudioDaw = (() => {
             return;
         }
         if (recording) {
-            // Grow the live-waveform placeholder and stretch the timeline as needed
-            recording.placeholderEl.style.width =
-                Math.max(4, (state.currentTime - recording.startP) * state.zoom) + 'px';
+            updateRecordingPlaceholders();
             if (state.currentTime + 5 > state.totalDuration) {
                 state.totalDuration = state.currentTime + 5;
                 if (timeline) timeline.setDuration(state.totalDuration);
@@ -2854,7 +4838,6 @@ const AudioDaw = (() => {
         }
         updatePlayheadPosition();
         updateTimeDisplay();
-        updateMeters();
         // Follow the transport on the staff, when the selected clip is the one the open score produced.
         if (typeof AudioDawScore !== 'undefined') AudioDawScore.syncTime(state.currentTime);
         rafId = requestAnimationFrame(animatePlayhead);
@@ -2872,21 +4855,50 @@ const AudioDaw = (() => {
         if (btn) btn.innerHTML = playing ? DAW_ICONS.pause : DAW_ICONS.play;
     }
 
+    const TICKS_PER_BEAT = 960;
+
+    /** Bar|beat|tick (960 ticks per beat), the way a pro DAW's counter reads; a length counts from zero. */
+    function formatBBT(t, { length = false, from = 0 } = {}) {
+        const tm = tempo();
+        const perBar = beatsPerBar();
+        // A length counts the beats it spans from where it starts (tempo changes make that differ by position)
+        const beats = length ? tm.beatsAt(from + Math.max(0, t)) - tm.beatsAt(from) : tm.beatsAt(Math.max(0, t));
+        const totalTicks = Math.round(beats * TICKS_PER_BEAT);
+        const ticksPerBar = perBar * TICKS_PER_BEAT;
+        const bar = Math.floor(totalTicks / ticksPerBar);
+        const beat = Math.floor((totalTicks % ticksPerBar) / TICKS_PER_BEAT);
+        const tick = String(totalTicks % TICKS_PER_BEAT).padStart(3, '0');
+        return length ? `${bar}|${beat}|${tick}` : `${bar + 1}|${beat + 1}|${tick}`;
+    }
+
+    /** m:ss.mmm (h:mm:ss.mmm past an hour). */
+    function formatMinSec(t) {
+        const ms = Math.round(Math.max(0, t) * 1000);
+        const h = Math.floor(ms / 3600000);
+        const m = Math.floor((ms % 3600000) / 60000);
+        const s = Math.floor((ms % 60000) / 1000);
+        const body = `${String(s).padStart(2, '0')}.${String(ms % 1000).padStart(3, '0')}`;
+        return h ? `${h}:${String(m).padStart(2, '0')}:${body}` : `${m}:${body}`;
+    }
+
+    /** Main + sub counters and the selection's start / end / length, in the leading scale. */
     function updateTimeDisplay() {
-        if (!timeDisplayEl) return;
-        const current = durationStringifyColons2(state.currentTime);
-        const total = durationStringifyColons2(state.totalDuration);
-        timeDisplayEl.textContent = `${current} / ${total}`;
-        const beatsEl = transportEl?.querySelector('.daw-lcd-beats');
-        if (beatsEl) {
-            const beatLen = 60 / state.bpm;
-            const beatsPerBar = state.timeSignature[0] || 4;
-            const totalBeats = state.currentTime / beatLen;
-            const bar = Math.floor(totalBeats / beatsPerBar) + 1;
-            const beat = Math.floor(totalBeats % beatsPerBar) + 1;
-            const sixteenth = Math.floor((totalBeats % 1) * 4) + 1;
-            beatsEl.textContent = `${bar}.${beat}.${sixteenth}`;
-        }
+        if (!transportEl || !state) return;
+        const beats = state.rulerMode === 'beats';
+        const fmt = (t, length = false, from = 0) => beats ? formatBBT(t, { length, from }) : formatMinSec(t);
+        const set = (sel, text) => {
+            const el = transportEl.querySelector(sel);
+            if (el && el.textContent !== text) el.textContent = text;
+        };
+        const t = state.currentTime;
+        set('.daw-lcd-main-label', beats ? translate('BARS') : translate('TIME'));
+        set('.daw-lcd-main', fmt(t));
+        set('.daw-lcd-sub-label', beats ? translate('TIME') : translate('BARS'));
+        set('.daw-lcd-sub', beats ? formatMinSec(t) : formatBBT(t));
+        const sel = state.selection;
+        set('.daw-lcd-sel-start', fmt(sel ? sel.start : t));
+        set('.daw-lcd-sel-end', fmt(sel ? sel.end : t));
+        set('.daw-lcd-sel-len', fmt(sel ? sel.end - sel.start : 0, true, sel ? sel.start : t));
     }
 
     /**
@@ -2896,9 +4908,40 @@ const AudioDaw = (() => {
     function updateLaneGrid() {
         if (!clipLanesEl) return;
         let minor, major;
+        clipLanesEl.style.backgroundPosition = '';
+        clipLanesEl.style.backgroundSize = '';
+        clipLanesEl.style.backgroundRepeat = '';
+        const tm = tempo();
+        if (state.rulerMode === 'beats' && tm.segments.length > 1) {
+            // One pair of repeating layers per tempo segment, each starting on that segment's first bar or beat
+            const majorColor = 'color-mix(in srgb, var(--text-soft) 22%, transparent)';
+            const minorColor = 'color-mix(in srgb, var(--text-soft) 9%, transparent)';
+            const perBar = beatsPerBar();
+            const end = Math.max(state.totalDuration, state.contentDuration || 0) + 60;
+            const images = [], positions = [], sizes = [];
+            tm.segments.forEach((seg, i) => {
+                const segEnd = i + 1 < tm.segments.length ? tm.segments[i + 1].t : end;
+                const beatPx = 60 / seg.bpm * state.zoom;
+                const layer = (firstT, stepPx, color) => {
+                    const x = firstT * state.zoom;
+                    const w = segEnd * state.zoom - x;
+                    if (w <= 0) return;
+                    images.push(`repeating-linear-gradient(90deg, ${color} 0 1px, transparent 1px ${stepPx}px)`);
+                    positions.push(`${x}px 0`);
+                    sizes.push(`${w}px 100%`);
+                };
+                layer(tm.timeAtBeat(Math.ceil(seg.beat / perBar - 1e-9) * perBar), beatPx * perBar, majorColor);
+                if (beatPx >= 8) layer(tm.timeAtBeat(Math.ceil(seg.beat - 1e-9)), beatPx, minorColor);
+            });
+            clipLanesEl.style.backgroundImage = images.join(', ');
+            clipLanesEl.style.backgroundPosition = positions.join(', ');
+            clipLanesEl.style.backgroundSize = sizes.join(', ');
+            clipLanesEl.style.backgroundRepeat = images.map(() => 'no-repeat').join(', ');
+            return;
+        }
         if (state.rulerMode === 'beats') {
             minor = 60 / state.bpm;
-            major = minor * (state.timeSignature[0] || 4);
+            major = minor * beatsPerBar();
         } else {
             if (state.zoom >= 100) { minor = 0.5; major = 5; }
             else if (state.zoom >= 50) { minor = 1; major = 5; }
@@ -2924,8 +4967,9 @@ const AudioDaw = (() => {
             shade = createDiv(null, 'daw-loop-shade');
             clipLanesEl.appendChild(shade);
         }
-        const visible = state.loopEnabled && state.loopEnd > state.loopStart;
+        const visible = (state.loopEnabled || state.punchEnabled) && state.loopEnd > state.loopStart;
         shade.style.display = visible ? '' : 'none';
+        shade.classList.toggle('punch', !!state.punchEnabled);
         if (visible) {
             shade.style.left = (state.loopStart * state.zoom) + 'px';
             shade.style.width = ((state.loopEnd - state.loopStart) * state.zoom) + 'px';
@@ -2935,7 +4979,15 @@ const AudioDaw = (() => {
     // ===== ZOOM =====
 
     function setZoom(newZoom) {
-        state.zoom = Math.max(10, Math.min(500, newZoom));
+        const old = state.zoom;
+        state.zoom = Math.max(10, Math.min(1000, newZoom));
+        // Keep the playhead where it was on screen (or the left edge, when the playhead is out of view)
+        let keepScroll = null;
+        if (clipLanesEl && old !== state.zoom) {
+            const px = state.currentTime * old - clipLanesEl.scrollLeft;
+            const visible = px >= 0 && px <= clipLanesEl.clientWidth;
+            keepScroll = visible ? state.currentTime * state.zoom - px : clipLanesEl.scrollLeft / old * state.zoom;
+        }
         if (timeline) timeline.setZoom(state.zoom);
         for (const track of state.tracks) {
             AudioDawTrack.updateZoom(track, state.zoom);
@@ -2944,6 +4996,9 @@ const AudioDaw = (() => {
         updatePlayheadPosition();
         updateLaneGrid();
         updateLoopShade();
+        refreshMarkers();
+        renderSelection();
+        if (keepScroll !== null) clipLanesEl.scrollLeft = Math.max(0, keepScroll);
         // Keep the transport slider in sync (keyboard +/- also zooms)
         const slider = transportEl?.querySelector('.daw-transport-zoom');
         if (slider) slider.value = state.zoom;
@@ -2976,7 +5031,8 @@ const AudioDaw = (() => {
 
     /**
      * Single floating-menu implementation for all DAW dropdowns/context menus.
-     * items: [{ label, action, checked?, disabled? }] — `checked` renders a ✓ column.
+     * items: [{ label, action, checked?, disabled?, hint? } | { heading }]: `checked` renders a ✓ column,
+     * and a heading item is an unclickable section title.
      * Auto-clamps to the viewport; closes on outside click. Returns the menu element.
      */
     function dawMenu(e, items) {
@@ -2986,8 +5042,15 @@ const AudioDaw = (() => {
         menu.style.position = 'fixed';
         menu.style.zIndex = '99999';
         for (const item of items) {
+            if (item.heading !== undefined) {
+                const head = createDiv(null, 'daw-context-heading');
+                head.textContent = item.heading;
+                menu.appendChild(head);
+                continue;
+            }
             const btn = document.createElement('button');
             btn.className = 'daw-context-item';
+            if (item.hint) btn.title = item.hint;
             btn.textContent = (item.checked === undefined ? '' : (item.checked ? '✓ ' : '   ')) + item.label;
             if (item.disabled) btn.disabled = true;
             btn.addEventListener('click', () => {
@@ -3085,94 +5148,1449 @@ const AudioDaw = (() => {
         }
     }
 
+    // ===== TRACK ARM / MONITOR / INPUT MENUS =====
+
+    const deviceLabels = new Map(); // deviceId -> label, filled whenever the device list is read
+    let monitorHintShown = false;
+
+    async function refreshDeviceLabels() {
+        const devices = await AudioDawInput.listDevices();
+        for (const d of devices) {
+            if (d.label) deviceLabels.set(d.deviceId, d.label);
+        }
+        return devices;
+    }
+
+    /** R: arm or disarm a track. Arming opens and meters its input. */
+    function toggleArm(track) {
+        if (track.kind === 'bus') {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('An aux bus has no input to record. Arm an audio or instrument track'), 'notice-pop-yellow');
+            return;
+        }
+        if (recording) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Stop recording before changing which tracks are armed'), 'notice-pop-yellow');
+            return;
+        }
+        track.armed = !track.armed;
+        AudioDawTrack.syncHeaderControls(track);
+        syncTrackInput(track).then(() => refreshDeviceLabels().then(() => AudioDawTrack.syncHeaderControls(track)))
+            .catch(err => {
+                track.armed = false;
+                AudioDawTrack.syncHeaderControls(track);
+                reportInputError(track, err);
+            });
+    }
+
+    /** I: hear the live input through the track (inserts, fader, pan). */
+    function toggleMonitor(track) {
+        if (track.kind === 'bus') return;
+        track.monitor = !track.monitor;
+        if (track.monitor && !monitorHintShown) {
+            monitorHintShown = true;
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Input monitoring is on. Use headphones: speakers feed back into a microphone'), 'notice-pop-blue');
+        }
+        AudioDawTrack.syncHeaderControls(track);
+        syncTrackInput(track).catch(err => {
+            track.monitor = false;
+            AudioDawTrack.syncHeaderControls(track);
+            reportInputError(track, err);
+        });
+    }
+
+    /** A track's input: device, channels, arm and monitor. */
+    async function showTrackInputMenu(track, e) {
+        const items = [];
+        const support = AudioDawInput.support();
+        if (!support.mic) {
+            dawMenu(e, [{ label: translate('Audio input needs HTTPS (or localhost)'), disabled: true }]);
+            return;
+        }
+        if (recording && track.armed) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Stop recording before changing this track\'s input'), 'notice-pop-yellow');
+            return;
+        }
+        const devices = await refreshDeviceLabels();
+        const labelsHidden = !devices.length || devices.every(d => !d.label);
+        const setInput = (patch) => {
+            track.input = { deviceId: track.input?.deviceId || null, channels: track.input?.channels ?? 'mono', ...patch };
+            AudioDawTrack.syncHeaderControls(track);
+            if (track.armed || track.monitor) syncTrackInput(track).catch(err => reportInputError(track, err));
+        };
+        items.push({ heading: translate('Input device') });
+        if (labelsHidden) {
+            items.push({
+                label: translate('Allow microphone access to list inputs…'),
+                action: async () => {
+                    try {
+                        await AudioDawInput.requestAccess();
+                        showTrackInputMenu(track, e);
+                    }
+                    catch (err) {
+                        reportInputError(track, err);
+                    }
+                }
+            });
+        }
+        items.push({ label: translate('System default input'), checked: !track.input?.deviceId, action: () => setInput({ deviceId: null }) });
+        if (!labelsHidden) {
+            devices.forEach((d, i) => items.push({
+                label: d.label || (translate('Input') + ` ${i + 1}`),
+                checked: track.input?.deviceId === d.deviceId,
+                action: () => setInput({ deviceId: d.deviceId })
+            }));
+        }
+        const open = trackInputs.get(track.id);
+        const available = open ? AudioDawInput.streamChannels(open.handle.stream) : 2;
+        const ch = track.input?.channels ?? 'mono';
+        items.push({ heading: translate('Channels') });
+        items.push({ label: translate('Mono (all channels summed)'), checked: ch === 'mono', action: () => setInput({ channels: 'mono' }) });
+        items.push({ label: translate('Stereo (1 + 2)'), checked: ch === 'stereo', action: () => setInput({ channels: 'stereo' }) });
+        for (let n = 1; n <= Math.max(2, available); n++) {
+            items.push({ label: `${translate('Input')} ${n} ${translate('only')}`, checked: ch === n, action: () => setInput({ channels: n }) });
+        }
+        items.push({ heading: translate('This track') });
+        items.push({ label: translate('Record arm (Shift+R)'), checked: !!track.armed, action: () => toggleArm(track) });
+        items.push({ label: translate('Monitor input (I)'), checked: !!track.monitor, action: () => toggleMonitor(track) });
+        if (open) {
+            items.push({
+                label: `${open.label || translate('Input')}: ${open.channels === 2 ? translate('stereo') : translate('mono')}, ${Math.round(open.latency * 1000)} ms ${translate('input latency')}`,
+                disabled: true
+            });
+        }
+        dawMenu(e, items);
+    }
+
+    /** Right-click on a track header. */
+    function showTrackMenu(track, e) {
+        const heights = [[translate('Small'), 64], [translate('Medium'), 100], [translate('Large'), 160]];
+        dawMenu(e, [
+            {
+                label: translate('Rename…'),
+                action: () => {
+                    const name = prompt(translate('Track name:'), track.name);
+                    if (!name || !name.trim() || name.trim() === track.name) return;
+                    pushUndo();
+                    track.name = name.trim();
+                    renderAllTracks();
+                    updateBottomPanel();
+                }
+            },
+            { label: translate('Duplicate track'), action: () => duplicateTrack(track) },
+            { label: translate('Color…'), action: () => showTrackColorMenu(track, e) },
+            ...(track.kind === 'bus' ? [] : [{ label: track.kind === 'instrument' ? translate('Instrument…') : translate('Input…'),
+                action: () => track.kind === 'instrument' ? showInstrumentMenu(track, e) : showTrackInputMenu(track, e) }]),
+            ...sendMenuItems(track),
+            ...automationModeItems(track),
+            { heading: translate('Height') },
+            ...heights.map(([label, h]) => ({ label, checked: track.height === h, action: () => setTrackHeight(track, h) })),
+            { heading: '' },
+            {
+                label: translate('Delete track'),
+                disabled: state.tracks.length <= 1,
+                action: () => {
+                    pushUndo();
+                    removeTrack(track.id);
+                    updateTotalDuration();
+                    renderAllTracks();
+                    updateBottomPanel();
+                    resyncPlayback();
+                }
+            }
+        ]);
+    }
+
+    /** Waveforms are drawn at the lane height, so a height change re-creates the track's clip views. */
+    function setTrackHeight(track, h) {
+        track.height = h;
+        for (const [, entry] of track.clipElements) {
+            if (entry.ws) entry.ws.destroy();
+            entry.el.remove();
+        }
+        track.clipElements.clear();
+        renderAllTracks();
+    }
+
+    /** A copy of a track right below it: same clips (shared audio), inserts, automation and mix. */
+    function duplicateTrack(track) {
+        pushUndo();
+        const ts = AudioDawTrack.serializeTrack(track);
+        const copy = AudioDawTrack.createTrack({ name: nextCopyName(track.name), color: track.color, height: track.height });
+        copy.volume = ts.volume;
+        copy.pan = ts.pan;
+        copy.muted = ts.muted;
+        copy.input = { ...ts.input };
+        copy.fx = ts.fx;
+        copy.automation = ts.automation;
+        copy.automationVisible = ts.automationVisible;
+        copy.automationParam = ts.automationParam;
+        copy.automationMode = ts.automationMode || 'read';
+        copy.sends = (ts.sends || []).map(sd => ({ ...sd }));
+        copy.kind = ts.kind;
+        copy.instrument = ts.instrument;
+        for (const mc of ts.midiClips) {
+            const nc = newMidiClip(copy, mc.startTime, mc.length, mc.notes, mc.name, mc.cc);
+            nc.muted = !!mc.muted;
+            nc.color = mc.color || null;
+        }
+        for (const c of track.clips) {
+            const nc = AudioDawTrack.createClip(c.blob, { name: c.name, startTime: c.startTime, color: c.color, blobKey: c.blobKey });
+            nc.decodedBuffer = c.decodedBuffer;
+            nc.duration = c.duration;
+            nc.offset = c.offset;
+            nc.trimEnd = c.trimEnd;
+            nc.gain = c.gain;
+            nc.fadeIn = c.fadeIn;
+            nc.fadeOut = c.fadeOut;
+            nc.muted = c.muted;
+            copy.clips.push(nc);
+        }
+        state.tracks.splice(state.tracks.indexOf(track) + 1, 0, copy);
+        state.selectedTrackId = copy.id;
+        renderAllTracks();
+        updateBottomPanel();
+        resyncPlayback();
+    }
+
+    /** CLICK: metronome on/off. Turning it off silences clicks already queued. */
+    function toggleMetronome() {
+        state.metronome = !state.metronome;
+        transportEl?.querySelector('.daw-btn-click')?.classList.toggle('active', state.metronome);
+        if (!state.metronome && playback) {
+            for (const osc of playback.clicks) {
+                try { osc.stop(); } catch (_) {}
+            }
+            playback.clicks = [];
+            playback.clickSeen = null;
+        }
+    }
+
+    /** PUNCH: Record replaces only the loop range (set by the loop handles, or the selection). */
+    function togglePunch() {
+        state.punchEnabled = !state.punchEnabled;
+        if (state.punchEnabled && !(state.loopEnd > state.loopStart)) {
+            const sel = state.selection;
+            if (sel && sel.end > sel.start) {
+                state.loopStart = sel.start;
+                state.loopEnd = sel.end;
+                if (timeline) timeline.setLoop(state.loopEnabled, state.loopStart, state.loopEnd);
+            }
+            else if (typeof doNoticePopover === 'function') {
+                doNoticePopover(translate('Punch records over the loop range. Turn on LOOP and drag its handles, or select a range first'), 'notice-pop-yellow');
+            }
+        }
+        transportEl?.querySelector('.daw-btn-punch')?.classList.toggle('active', state.punchEnabled);
+        if (timeline?.setPunch) timeline.setPunch(state.punchEnabled);
+        updateLoopShade();
+    }
+
+    // ===== INSTRUMENT TRACKS =====
+    // Instrument tracks play MIDI clips through AudioDawInstruments' synth or sampler, into the track's own
+    // chain (inserts, fader, pan) like any other track. Live notes come from the computer keyboard, the
+    // on-screen keys or a MIDI device; while the transport records, armed instrument tracks capture them.
+
+    /** Like core's quickAppendButton, but returns the button and takes plain text (never HTML). */
+    function appendButton(div, text, fn, classes = '', title = '') {
+        const b = document.createElement('button');
+        b.className = 'basic-button' + classes;
+        b.textContent = text;
+        b.title = title;
+        b.addEventListener('click', (e) => fn(e, b));
+        div.appendChild(b);
+        return b;
+    }
+
+    let midiClipSeq = 0;
+    const liveVoices = new Map(); // `${trackId}:${pitch}` -> voice
+    let midiRecording = null;      // { startP, punch, takes: [{track, notes, open: Map<pitch, {start, vel}>}] }
+    let liveHintShown = false;
+
+    /** A sampler's decoded sample, from the blob store. */
+    function instrumentSample(track) {
+        const key = track.instrument?.sampleKey;
+        return key ? blobStore.get(key)?.decodedBuffer || null : null;
+    }
+
+    function newMidiClip(track, startTime, length, notes = [], name = null, cc = []) {
+        const clip = {
+            id: `midi-${Date.now().toString(36)}-${++midiClipSeq}`,
+            name: name || `${track.name} MIDI`,
+            startTime: Math.max(0, startTime),
+            length: Math.max(0.05, length),
+            notes: notes.map((n, i) => ({ id: i + 1, pitch: n.pitch, start: n.start, dur: n.dur, vel: n.vel ?? 100 })),
+            cc: (cc || []).map(e => ({ t: e.t, n: e.n, v: e.v })).sort((a, b) => a.t - b.t), // sustain pedal (CC 64)
+            muted: false,
+            color: null
+        };
+        track.midiClips.push(clip);
+        return clip;
+    }
+
+    function findMidiClip(id) {
+        if (!id) return null;
+        for (const track of state.tracks) {
+            const clip = (track.midiClips || []).find(c => c.id === id);
+            if (clip) return { clip, track };
+        }
+        return null;
+    }
+
+    /** New instrument track (synth preset or empty sampler), selected and ready to play. */
+    function addInstrumentTrack(type = 'synth', preset = 'Soft Keys', { snapshot = true } = {}) {
+        if (snapshot) pushUndo();
+        const inst = AudioDawInstruments.createInstrument(type, preset);
+        const track = addTrack({ kind: 'instrument', instrument: inst, name: nextTrackName(type === 'sampler' ? translate('Sampler') : preset) });
+        state.selectedTrackId = track.id;
+        renderAllTracks();
+        updateBottomPanel();
+        return track;
+    }
+
+    /** Which instrument tracks hear live notes: the armed ones, else the selected one. */
+    function liveTargets() {
+        const armed = state.tracks.filter(t => t.kind === 'instrument' && t.armed);
+        if (armed.length) return armed;
+        const sel = getSelectedTrack();
+        return sel?.kind === 'instrument' ? [sel] : [];
+    }
+
+    /** Timeline time of what the performer hears right now (the scheduled clock runs ahead by the output latency). */
+    function heardTimelineNow() {
+        return Math.max(0, currentTimelineTime() - outputLatency(getAudioContext()));
+    }
+
+    // Sustain pedal (CC 64) from a MIDI keyboard: while it is down, released keys keep sounding until it comes up
+    let liveSustain = false;
+    const sustainedVoices = new Map(); // `${trackId}:${pitch}` -> voice held by the pedal
+
+    function liveControl(num, value) {
+        if (num !== 64) return;
+        const down = value >= 64;
+        if (down === liveSustain) return;
+        liveSustain = down;
+        if (midiRecording && audioCtx) {
+            const ctx = getAudioContext();
+            if (ctx.currentTime - outputLatency(ctx) >= midiRecording.startCtx - 0.05) {
+                for (const take of midiRecording.takes) take.cc.push({ t: heardTimelineNow(), n: 64, v: value });
+            }
+        }
+        if (!down) {
+            const ctx = getAudioContext();
+            for (const voice of sustainedVoices.values()) voice.stop(ctx.currentTime);
+            sustainedVoices.clear();
+        }
+    }
+
+    function liveNoteOn(pitch, vel) {
+        // While the Keys to Score card records, the keyboard writes into the score instead
+        if (keysState.recording) {
+            keysDown(pitch);
+            return;
+        }
+        const targets = liveTargets();
+        if (!targets.length) {
+            if (!liveHintShown && typeof doNoticePopover === 'function') {
+                liveHintShown = true;
+                doNoticePopover(translate('Select or arm an instrument track to play it (Add Track > Instrument)'), 'notice-pop-yellow');
+            }
+            return;
+        }
+        const ctx = getAudioContext();
+        if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
+        ensureMixer();
+        for (const track of targets) {
+            const key = `${track.id}:${pitch}`;
+            liveVoices.get(key)?.stop(ctx.currentTime);
+            sustainedVoices.get(key)?.stop(ctx.currentTime);
+            sustainedVoices.delete(key);
+            liveVoices.set(key, AudioDawInstruments.startVoice(ctx, chainFor(track).input, track.instrument, pitch, vel, ctx.currentTime, null, instrumentSample(track)));
+            const take = midiRecording?.takes.find(t => t.track === track);
+            // Heard time against the capture start, with a little slack for notes played just ahead of the downbeat
+            if (take && ctx.currentTime - outputLatency(ctx) >= midiRecording.startCtx - 0.05) {
+                take.open.set(pitch, { start: heardTimelineNow(), vel });
+            }
+        }
+        kickMeters();
+        document.querySelectorAll(`.daw-keys-key[data-midi="${pitch}"]`).forEach(k => k.classList.add('pressed'));
+    }
+
+    function liveNoteOff(pitch) {
+        if (keysState.recording) keysUp(pitch);
+        const ctx = getAudioContext();
+        for (const [key, voice] of liveVoices) {
+            if (key.endsWith(':' + pitch)) {
+                // The pedal holds a released key until it comes up
+                if (liveSustain) sustainedVoices.set(key, voice);
+                else voice.stop(ctx.currentTime);
+                liveVoices.delete(key);
+            }
+        }
+        for (const take of midiRecording?.takes || []) {
+            const open = take.open.get(pitch);
+            if (open) {
+                take.notes.push({ pitch, start: open.start, dur: Math.max(0.02, heardTimelineNow() - open.start), vel: open.vel });
+                take.open.delete(pitch);
+            }
+        }
+        document.querySelectorAll(`.daw-keys-key[data-midi="${pitch}"]`).forEach(k => k.classList.remove('pressed'));
+    }
+
+    function stopAllLiveVoices() {
+        const now = audioCtx && audioCtx.state !== 'closed' ? audioCtx.currentTime : 0;
+        for (const voice of liveVoices.values()) voice.stop(now);
+        liveVoices.clear();
+    }
+
+    /** Transport: schedule instrument notes inside the next ~250 ms, for the current pass and the next loop pass. */
+    function scheduleInstrumentNotes() {
+        if (!playback || !mixer) return;
+        const tracks = state.tracks.filter(t => t.kind === 'instrument' && t.instrument && t.midiClips?.length);
+        if (!tracks.length) return;
+        const ctx = playback.ctx;
+        const now = ctx.currentTime;
+        const horizon = now + 0.25;
+        const passes = [{ baseCtx: playback.baseCtxTime, baseTl: playback.baseTimelineTime, end: playback.loop ? state.loopEnd : Infinity }];
+        if (playback.loop) passes.push({ baseCtx: playback.loop.nextWrapCtxTime, baseTl: state.loopStart, end: state.loopEnd });
+        if (!playback.noteSeen) playback.noteSeen = new Set();
+        for (const pass of passes) {
+            const from = pass.baseTl + Math.max(0, now - pass.baseCtx);
+            const to = Math.min(pass.end, pass.baseTl + (horizon - pass.baseCtx));
+            if (to <= from) continue;
+            for (const track of tracks) {
+                const voices = AudioDawInstruments.scheduleWindow(ctx, chainFor(track).input, track, pass, from, to, playback.noteSeen);
+                if (voices.length) playback.voices.push(...voices);
+            }
+        }
+        if (playback.voices.length > 512) playback.voices.splice(0, playback.voices.length - 512);
+        if (playback.noteSeen.size > 4096) {
+            // Keep the keys of the passes still in the lookahead: a clear would schedule their queued notes twice
+            const live = passes.map(p => `${p.baseCtx.toFixed(4)}|`);
+            for (const k of playback.noteSeen) {
+                if (!live.some(prefix => k.startsWith(prefix))) playback.noteSeen.delete(k);
+            }
+        }
+    }
+
+    function killPlaybackVoices() {
+        for (const v of playback?.voices || []) v.kill();
+        if (playback) {
+            playback.voices = [];
+            playback.noteSeen = null;
+        }
+    }
+
+    /** Start capturing live notes for the armed instrument tracks (called once the transport runs). */
+    /** startCtx: the audio-clock time capture begins, so notes played during a count-in are not kept. */
+    function beginMidiRecording(tracks, startP, punch, startCtx = 0) {
+        midiRecording = tracks.length ? { startP, punch, startCtx, takes: tracks.map(track => ({ track, notes: [], open: new Map(), cc: [] })) } : null;
+        // A pedal held as recording starts is down from the first moment of the take
+        if (midiRecording && liveSustain) {
+            for (const take of midiRecording.takes) take.cc.push({ t: punch ? punch.in : startP, n: 64, v: 127 });
+        }
+    }
+
+    /** Close held notes and turn each instrument take into a MIDI clip. Returns the clips made (not rendered). */
+    function finishMidiRecording() {
+        const rec = midiRecording;
+        midiRecording = null;
+        if (!rec) return [];
+        const end = heardTimelineNow();
+        const made = [];
+        for (const take of rec.takes) {
+            for (const [pitch, open] of take.open) take.notes.push({ pitch, start: open.start, dur: Math.max(0.02, end - open.start), vel: open.vel });
+            const lo = rec.punch ? rec.punch.in : rec.startP;
+            const hi = rec.punch ? rec.punch.out : Infinity;
+            const notes = take.notes.filter(n => n.start >= lo - 0.02 && n.start < hi)
+                .map(n => ({ pitch: n.pitch, start: Math.max(0, n.start - lo), dur: n.dur, vel: n.vel }));
+            if (!notes.length) continue;
+            const last = notes.reduce((m, n) => Math.max(m, n.start + n.dur), 0);
+            const cc = take.cc.filter(c => c.t >= lo - 0.02 && c.t < hi).map(c => ({ t: Math.max(0, c.t - lo), n: c.n, v: c.v }));
+            made.push({ track: take.track, start: lo, length: rec.punch ? rec.punch.out - rec.punch.in : wholeBarsFrom(lo, last), notes, cc });
+        }
+        return made;
+    }
+
+    /** Instrument track menu: sound, playing, clips, bounce. */
+    async function showInstrumentMenu(track, e) {
+        const inst = track.instrument || {};
+        const items = [{ heading: translate('Sound') }];
+        for (const name of Object.keys(AudioDawInstruments.SYNTH_PRESETS)) {
+            items.push({
+                label: translate('Synth') + ': ' + translate(name),
+                checked: inst.type === 'synth' && inst.preset === name,
+                action: () => {
+                    pushUndo();
+                    track.instrument = AudioDawInstruments.createInstrument('synth', name);
+                    AudioDawTrack.syncHeaderControls(track);
+                    updateBottomPanel();
+                }
+            });
+        }
+        items.push({ label: translate('Sampler (play a clip across the keys)'), checked: inst.type === 'sampler', action: () => openInstrumentPanel(track, 'sampler') });
+        items.push({ heading: translate('Play') });
+        items.push({ label: translate('Computer keyboard plays notes (A to K, Z/X octave)'), checked: AudioDawInstruments.qwertyEnabled(), action: () => toggleQwerty() });
+        const midiNames = AudioDawInstruments.midiInputNames();
+        items.push({
+            label: midiNames.length ? `${translate('MIDI in')}: ${midiNames.join(', ')}` : translate('Connect a MIDI keyboard…'),
+            disabled: !AudioDawInstruments.midiPossible(),
+            hint: AudioDawInstruments.midiPossible() ? '' : translate('Web MIDI needs HTTPS (or localhost) and a supporting browser'),
+            action: () => connectMidiKeyboard()
+        });
+        items.push({ label: translate('Instrument panel…'), action: () => openInstrumentPanel(track, inst.type === 'sampler' ? 'sampler' : 'synth') });
+        items.push({ heading: translate('Clips') });
+        items.push({ label: translate('New MIDI clip at the playhead (4 bars)'), action: () => {
+            pushUndo();
+            const start = snapTime(state.currentTime);
+            const clip = newMidiClip(track, start, barsSecondsFrom(start, 4));
+            updateTotalDuration();
+            selectMidiClip(clip, track, true);
+        }});
+        items.push({ label: translate('Import MIDI file…'), action: () => importMidiFile(track) });
+        items.push({ label: translate('Bounce to an audio track'), disabled: !(track.midiClips || []).length, action: () => bounceTrack(track) });
+        dawMenu(e, items);
+    }
+
+    function toggleQwerty() {
+        AudioDawInstruments.setQwerty(!AudioDawInstruments.qwertyEnabled());
+        document.getElementById('daw_container')?.classList.toggle('daw-qwerty-on', AudioDawInstruments.qwertyEnabled());
+        if (typeof doNoticePopover === 'function') {
+            doNoticePopover(AudioDawInstruments.qwertyEnabled()
+                ? translate('Computer keyboard plays notes: A W S E D F T G Y H U J K, Z/X shift the octave. Letter shortcuts pause until you turn it off')
+                : translate('Computer keyboard is back to shortcuts'), 'notice-pop-blue');
+        }
+        const pane = bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="beats"]');
+        if (pane) renderBeatsPanel(pane);
+    }
+
+    async function connectMidiKeyboard() {
+        try {
+            const names = await AudioDawInstruments.connectMidi();
+            if (typeof doNoticePopover === 'function') {
+                doNoticePopover(names.length ? translate('MIDI in:') + ' ' + names.join(', ') : translate('MIDI is on, but no input is connected'), names.length ? 'notice-pop-green' : 'notice-pop-yellow');
+            }
+            const pane = bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="beats"]');
+            if (pane) renderBeatsPanel(pane);
+        }
+        catch (err) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('MIDI access failed:') + ' ' + err.message, 'notice-pop-yellow');
+        }
+    }
+
+    /** Select a MIDI clip (and its track); optionally open it in the piano roll. */
+    function selectMidiClip(clip, track, open = false) {
+        state.selectedMidiClipId = clip.id;
+        state.selectedTrackId = track.id;
+        state.selectedClipId = null;
+        renderAllTracks();
+        updateBottomPanel();
+        if (open) switchBottomTab('pianoroll');
+    }
+
+    function showMidiClipMenu(e, clip, track) {
+        dawMenu(e, [
+            { label: translate('Open in the piano roll'), action: () => selectMidiClip(clip, track, true) },
+            { label: translate('Duplicate'), action: () => {
+                pushUndo();
+                const copy = newMidiClip(track, clip.startTime + AudioDawInstruments.midiClipLength(clip), clip.length, clip.notes, clip.name, clip.cc);
+                copy.muted = !!clip.muted;
+                copy.color = clip.color || null;
+                updateTotalDuration(); // the copy can end past the old song end
+                selectMidiClip(copy, track);
+                resyncPlayback();
+            }},
+            { label: clip.muted ? translate('Unmute Clip') : translate('Mute Clip'), action: () => {
+                pushUndo();
+                clip.muted = !clip.muted;
+                renderAllTracks();
+                resyncPlayback();
+            }},
+            { label: translate('Bring to front'), action: () => {
+                pushUndo();
+                track.midiClips.splice(track.midiClips.indexOf(clip), 1);
+                track.midiClips.push(clip);
+                renderAllTracks();
+            }},
+            { label: translate('Export as MIDI file'), action: () => {
+                const { len, notes, cc } = midiClipExport(clip);
+                const tempos = (state.tempoMap || []).filter(c => c.t > clip.startTime && c.t < clip.startTime + len)
+                    .map(c => ({ t: c.t - clip.startTime, bpm: c.bpm }));
+                downloadBlob(AudioDawInstruments.writeMidiFile(notes, bpmAt(clip.startTime), cc, tempos), `${(clip.name || 'clip').replace(/[\\/:*?"<>|]+/g, '_')}.mid`);
+            }},
+            { label: translate('Delete'), action: () => deleteMidiClip(clip, track) }
+        ]);
+    }
+
+    function deleteMidiClip(clip, track) {
+        pushUndo();
+        track.midiClips = track.midiClips.filter(c => c !== clip);
+        if (state.editMode === 'shuffle') {
+            // Shuffle closes the gap, as for audio clips: what follows slides left by the clip's length
+            const len = AudioDawInstruments.midiClipLength(clip);
+            for (const c of track.midiClips) {
+                if (c.startTime >= clip.startTime + len - 1e-6) c.startTime -= len;
+            }
+        }
+        if (state.selectedMidiClipId === clip.id) state.selectedMidiClipId = null;
+        updateTotalDuration();
+        renderAllTracks();
+        updateBottomPanel();
+        resyncPlayback();
+    }
+
+    /** Import a .mid file onto an instrument track (a new synth track when none is given). */
+    function importMidiFile(track = null) {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.mid,.midi,audio/midi';
+        input.onchange = async () => {
+            const file = input.files[0];
+            if (!file) return;
+            try {
+                const parsed = AudioDawInstruments.parseMidiFile(await file.arrayBuffer());
+                if (!parsed.notes.length) throw new Error(translate('The file has no notes'));
+                pushUndo();
+                const empty = !state.tracks.some(t => t.clips.length || t.midiClips?.length);
+                // An empty project takes the file's tempo so the notes land on the grid
+                if (empty && parsed.bpm) {
+                    state.bpm = Math.round(parsed.bpm * 100) / 100;
+                    state.tempoMap = [];
+                    refreshTempoViews();
+                }
+                const target = track || addInstrumentTrack('synth', 'Soft Keys', { snapshot: false });
+                const last = parsed.notes.reduce((m, n) => Math.max(m, n.start + n.dur), 0);
+                const clipStart = snapTime(state.currentTime);
+                if (empty && parsed.tempos?.length) {
+                    // and its later tempo changes, placed where the clip lands
+                    state.tempoMap = parsed.tempos.filter(x => x.t > 0.001).map(x => ({ id: `tempo-${Date.now().toString(36)}-${++tempoSeq}`, t: clipStart + x.t, bpm: x.bpm }));
+                    refreshTempoViews();
+                }
+                const clip = newMidiClip(target, clipStart, last + 0.05, parsed.notes, file.name.replace(/\.[^.]+$/, ''), parsed.cc);
+                updateTotalDuration();
+                selectMidiClip(clip, target);
+                resyncPlayback();
+                if (typeof doNoticePopover === 'function') doNoticePopover(`${parsed.notes.length} ` + translate('notes imported'), 'notice-pop-green');
+            }
+            catch (err) {
+                if (typeof doNoticePopover === 'function') doNoticePopover(translate('MIDI import failed:') + ' ' + err.message, 'notice-pop-red');
+            }
+        };
+        input.click();
+    }
+
+    /** Render an instrument track (with its inserts and mix) to a new audio track, for stems or AI processing. */
+    async function bounceTrack(track) {
+        const end = Math.max(...(track.midiClips || []).map(c => c.startTime + AudioDawInstruments.midiClipLength(c)), 0);
+        if (end <= 0) return;
+        const overlay = showDawLoadingOverlay(translate('Bouncing') + ` ${track.name}...`);
+        try {
+            const buf = await renderMixdownBuffer({ start: 0, end: end + 0.5, trackIds: [track.id] });
+            if (!buf) throw new Error('Nothing to bounce');
+            pushUndo();
+            const audio = addTrack({ name: `${track.name} (${translate('audio')})`, color: track.color });
+            await addClipToTrack(audio, audioBufferToWav(buf, { bitDepth: 32 }), { name: track.name, startTime: 0 });
+            state.tracks.splice(state.tracks.indexOf(audio), 1);
+            state.tracks.splice(state.tracks.indexOf(track) + 1, 0, audio);
+            updateTotalDuration();
+            renderAllTracks();
+            updateBottomPanel();
+            resyncPlayback();
+        }
+        catch (err) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Bounce failed:') + ' ' + err.message, 'notice-pop-red');
+        }
+        hideDawLoadingOverlay(overlay);
+    }
+
+    /** Show the Instruments tab on the synth or sampler card for this track. */
+    function openInstrumentPanel(track, kind) {
+        state.selectedTrackId = track.id;
+        activeInstrument = kind;
+        updateTrackSelection();
+        const pane = bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="beats"]');
+        if (pane) renderBeatsPanel(pane);
+        switchBottomTab('beats');
+    }
+
+    /** Synth or sampler controls for the selected instrument track, plus the playable keys. */
+    function renderInstrumentCard(card, container, kind) {
+        const track = getSelectedTrack();
+        if (!track || track.kind !== 'instrument') {
+            const msg = createDiv(null, 'daw-stems-desc');
+            msg.textContent = translate('Instrument tracks play MIDI: record from the keys below, a MIDI keyboard or the computer keyboard, or import a .mid file. Select one, or create one:');
+            card.appendChild(msg);
+            const row = createDiv(null, 'daw-clip-editor-actions');
+            appendButton(row, kind === 'sampler' ? translate('+ Sampler track') : translate('+ Synth track'), () => {
+                addInstrumentTrack(kind === 'sampler' ? 'sampler' : 'synth');
+                renderBeatsPanel(container);
+            }, ' basic-button btn-primary');
+            card.appendChild(row);
+            return;
+        }
+        const inst = track.instrument;
+        const head = createDiv(null, 'daw-stems-action-row');
+        const title = createSpan(null, 'daw-fx-toolbar-title');
+        title.textContent = `${track.name}: ${inst.type === 'sampler' ? translate('Sampler') : translate('Synth')}`;
+        head.appendChild(title);
+        if (inst.type === 'synth' && kind === 'synth') {
+            const presetSel = document.createElement('select');
+            presetSel.className = 'daw-fx-select';
+            for (const name of Object.keys(AudioDawInstruments.SYNTH_PRESETS)) {
+                const o = document.createElement('option');
+                o.value = name;
+                o.textContent = translate(name);
+                presetSel.appendChild(o);
+            }
+            presetSel.value = inst.preset;
+            presetSel.addEventListener('change', () => {
+                pushUndo();
+                track.instrument = AudioDawInstruments.createInstrument('synth', presetSel.value);
+                AudioDawTrack.syncHeaderControls(track);
+                renderBeatsPanel(container);
+            });
+            head.appendChild(presetSel);
+            for (const [key, label] of [['osc1', translate('Osc 1')], ['osc2', translate('Osc 2')]]) {
+                const lbl = createSpan(null, 'daw-fx-knob-label');
+                lbl.textContent = label;
+                head.appendChild(lbl);
+                const sel = document.createElement('select');
+                sel.className = 'daw-fx-select';
+                for (const w of AudioDawInstruments.WAVES) {
+                    const o = document.createElement('option');
+                    o.value = w;
+                    o.textContent = translate(w);
+                    sel.appendChild(o);
+                }
+                sel.value = inst[key];
+                sel.addEventListener('change', () => { pushUndo(); inst[key] = sel.value; });
+                head.appendChild(sel);
+            }
+        }
+        else if (kind === 'synth') {
+            const note = createSpan(null, 'daw-stems-clipinfo');
+            note.textContent = translate('This track is a sampler. Pick a synth sound from its instrument menu to switch.');
+            head.appendChild(note);
+        }
+        card.appendChild(head);
+
+        if (inst.type === 'synth' && kind === 'synth') {
+            const knobs = createDiv(null, 'daw-fx-knobs');
+            let gesture = null;
+            for (const spec of AudioDawInstruments.SYNTH_KNOBS) {
+                const isLog = spec.taper === 'log';
+                const toNorm = (v) => isLog ? Math.log(v / spec.min) / Math.log(spec.max / spec.min) : v;
+                const fromNorm = (n) => isLog ? spec.min * Math.pow(spec.max / spec.min, n) : n;
+                const col = createDiv(null, 'daw-fx-knob-col');
+                const val = createSpan(null, 'daw-fx-knob-val');
+                val.textContent = spec.fmt(inst[spec.key]);
+                const knob = AudioDawMixer.createKnob({
+                    value: toNorm(inst[spec.key]),
+                    min: isLog ? 0 : spec.min,
+                    max: isLog ? 1 : spec.max,
+                    defaultValue: toNorm(AudioDawInstruments.SYNTH_PRESETS[inst.preset]?.[spec.key] ?? inst[spec.key]),
+                    title: translate(spec.label),
+                    onChange: (v) => {
+                        if (gesture) clearTimeout(gesture);
+                        else pushUndo();
+                        gesture = setTimeout(() => { gesture = null; }, 800);
+                        inst[spec.key] = fromNorm(v);
+                        val.textContent = spec.fmt(inst[spec.key]);
+                    }
+                });
+                const lbl = createSpan(null, 'daw-fx-knob-label');
+                lbl.textContent = translate(spec.label);
+                col.appendChild(knob);
+                col.appendChild(lbl);
+                col.appendChild(val);
+                knobs.appendChild(col);
+            }
+            card.appendChild(knobs);
+        }
+        else if (kind === 'sampler') {
+            const row = createDiv(null, 'daw-stems-action-row');
+            const info = createSpan(null, 'daw-stems-clipinfo');
+            info.textContent = inst.type === 'sampler'
+                ? (inst.sampleName ? translate('Sample') + `: ${inst.sampleName}` : translate('No sample yet. Use the selected clip, or generate one.'))
+                : translate('This track plays a synth. Make it a sampler:');
+            row.appendChild(info);
+            const setSample = async (name, blob) => {
+                const blobKey = `sample-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+                const decodedBuffer = await AudioLabCore.decodeToBuffer(blob);
+                pushUndo();
+                blobStore.set(blobKey, { blob, decodedBuffer });
+                const base = inst.type === 'sampler' ? inst : AudioDawInstruments.createInstrument('sampler');
+                track.instrument = { ...base, sampleKey: blobKey, sampleName: name.slice(0, 40) };
+                AudioDawTrack.syncHeaderControls(track);
+                renderBeatsPanel(container);
+            };
+            appendButton(row, translate('Use selected clip'), async () => {
+                const sel = findClipById(state.selectedClipId);
+                if (!sel) {
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('Select an audio clip first'), 'notice-pop-yellow');
+                    return;
+                }
+                await setSample(sel.clip.name, await clipAudioBlob(sel.clip));
+            }, ' basic-button btn-sm');
+            const promptIn = document.createElement('input');
+            promptIn.type = 'text';
+            promptIn.className = 'daw-generate-reftext';
+            promptIn.placeholder = translate('Or describe a sound to generate: "warm analog bass pluck"');
+            row.appendChild(promptIn);
+            const genBtn = appendButton(row, translate('Generate sample'), async () => {
+                const prompt = promptIn.value.trim();
+                if (!prompt) return;
+                genBtn.disabled = true;
+                try {
+                    await ensureEnginesList().catch(() => {});
+                    const model = dawSwarmModelFor('audiogen_sfx') || dawSwarmModelFor(preferredMusicEngine());
+                    if (!model) throw new Error(translate('No sound effects or music engine is installed'));
+                    const { blob } = await dawSwarmGenerate({ model, prompt, params: { textaudioduration: 2, seed: Math.floor(Math.random() * 1e9) } });
+                    await setSample(prompt, blob);
+                }
+                catch (err) {
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('Sample generation failed:') + ' ' + err.message, 'notice-pop-red');
+                }
+                genBtn.disabled = false;
+            }, ' basic-button btn-sm btn-primary');
+            card.appendChild(row);
+            if (inst.type === 'sampler') {
+                const opts = createDiv(null, 'daw-stems-model-row');
+                const lbl = createSpan(null, 'daw-stems-ctl-label');
+                lbl.textContent = translate('Root note');
+                opts.appendChild(lbl);
+                const rootSel = document.createElement('select');
+                rootSel.className = 'daw-fx-select';
+                for (let m = 36; m <= 84; m++) {
+                    const o = document.createElement('option');
+                    o.value = String(m);
+                    o.textContent = AudioDawInstruments.noteName(m);
+                    rootSel.appendChild(o);
+                }
+                rootSel.value = String(inst.rootNote || 60);
+                rootSel.title = translate('The key that plays the sample at its own pitch');
+                rootSel.addEventListener('change', () => { pushUndo(); inst.rootNote = parseInt(rootSel.value); });
+                opts.appendChild(rootSel);
+                card.appendChild(opts);
+            }
+        }
+
+        // Playable keys: two octaves from the keyboard octave, plus computer keyboard and MIDI
+        const keysHead = createDiv(null, 'daw-stems-action-row');
+        const qwertyBtn = appendButton(keysHead, AudioDawInstruments.qwertyEnabled() ? translate('Computer keyboard: on') : translate('Computer keyboard: off'),
+            () => toggleQwerty(), ' basic-button btn-sm' + (AudioDawInstruments.qwertyEnabled() ? ' btn-primary' : ''),
+            translate('Play notes with A W S E D F T G Y H U J K; Z/X shift the octave'));
+        qwertyBtn.dataset.role = 'qwerty';
+        if (AudioDawInstruments.midiPossible()) {
+            const names = AudioDawInstruments.midiInputNames();
+            appendButton(keysHead, names.length ? `${translate('MIDI in')}: ${names.join(', ')}` : translate('Connect MIDI keyboard'),
+                () => connectMidiKeyboard(), ' basic-button btn-sm');
+        }
+        else {
+            const midiNote = createSpan(null, 'daw-stems-clipinfo');
+            midiNote.textContent = translate('A MIDI keyboard needs HTTPS (or localhost). The keys work everywhere.');
+            keysHead.appendChild(midiNote);
+        }
+        const hint = createSpan(null, 'daw-stems-clipinfo');
+        hint.textContent = translate('Arm the track (R) and press Record to capture what you play.');
+        keysHead.appendChild(hint);
+        card.appendChild(keysHead);
+        card.appendChild(buildPlayableKeys(48));
+    }
+
+    /** Two octaves of on-screen keys that play the live instrument tracks. */
+    function buildPlayableKeys(base) {
+        const wrap = createDiv(null, 'daw-keys-wrap');
+        const BLACK = [1, 1, 0, 1, 1, 1, 0];
+        const WHITE = [0, 2, 4, 5, 7, 9, 11];
+        const NAMES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+        const blackRow = createDiv(null, 'daw-keys-row');
+        const whiteRow = createDiv(null, 'daw-keys-row');
+        const mkKey = (label, midi) => {
+            const b = document.createElement('button');
+            b.className = 'basic-button btn-sm daw-keys-key';
+            b.textContent = label;
+            b.dataset.midi = String(midi);
+            b.addEventListener('pointerdown', (e) => { e.preventDefault(); b.setPointerCapture?.(e.pointerId); liveNoteOn(midi, 100); });
+            b.addEventListener('pointerup', () => liveNoteOff(midi));
+            b.addEventListener('pointercancel', () => liveNoteOff(midi));
+            return b;
+        };
+        for (let o = 0; o < 2; o++) {
+            for (let i = 0; i < 7; i++) {
+                const white = base + o * 12 + WHITE[i];
+                whiteRow.appendChild(mkKey(`${NAMES[i]}${Math.floor(white / 12) - 1}`, white));
+                if (BLACK[i]) blackRow.appendChild(mkKey(`${NAMES[i]}♯`, white + 1));
+                else blackRow.appendChild(createDiv(null, 'daw-keys-key daw-keys-gap'));
+            }
+        }
+        whiteRow.appendChild(mkKey(`C${Math.floor((base + 24) / 12) - 1}`, base + 24));
+        blackRow.appendChild(createDiv(null, 'daw-keys-key daw-keys-gap'));
+        wrap.appendChild(blackRow);
+        wrap.appendChild(whiteRow);
+        return wrap;
+    }
+
+    // ===== EDIT OPERATIONS (range, clipboard, layering, nudge) =====
+
+    let clipboard = null; // { items: [{trackOffset, rel, clip} or {trackOffset, rel, midi, instrument}], length }
+
+    /** Copy of a clip sharing its audio, with the given window (no undo, no render). */
+    function cloneClip(c, overrides = {}) {
+        const nc = AudioDawTrack.createClip(c.blob, { name: c.name, startTime: c.startTime, color: c.color, blobKey: c.blobKey });
+        nc.decodedBuffer = c.decodedBuffer;
+        nc.duration = c.duration;
+        nc.offset = c.offset;
+        nc.trimEnd = c.trimEnd;
+        nc.gain = c.gain;
+        nc.fadeIn = c.fadeIn;
+        nc.fadeOut = c.fadeOut;
+        nc.muted = c.muted;
+        return Object.assign(nc, overrides);
+    }
+
+    /** The part of a clip inside [start, end), as a new clip (null when they do not overlap). */
+    function clipPortion(clip, start, end) {
+        const cs = clip.startTime;
+        const ce = cs + visibleDur(clip);
+        const s = Math.max(cs, start);
+        const e = Math.min(ce, end);
+        if (e - s < 0.001) return null;
+        const piece = cloneClip(clip);
+        piece.startTime = s;
+        piece.offset = clip.offset + (s - cs);
+        piece.trimEnd = clip.trimEnd + (ce - e);
+        piece.fadeIn = s > cs ? 0 : Math.min(clip.fadeIn || 0, e - s);
+        piece.fadeOut = e < ce ? 0 : Math.min(clip.fadeOut || 0, e - s);
+        return piece;
+    }
+
+    /** Remove [start, end) from the selected tracks. Shuffle mode closes the gap. */
+    function deleteRange(sel, { snapshot = true } = {}) {
+        // Taken before any change and pushed only if one happens, so an empty range keeps the redo history
+        const before = snapshot ? takeSnapshot() : null;
+        let changed = false;
+        const len = sel.end - sel.start;
+        for (const id of sel.trackIds) {
+            const track = state.tracks.find(t => t.id === id);
+            if (!track) continue;
+            const kept = [];
+            for (const clip of track.clips) {
+                const cs = clip.startTime;
+                const ce = cs + visibleDur(clip);
+                if (ce <= sel.start + 1e-6 || cs >= sel.end - 1e-6) {
+                    kept.push(clip);
+                    continue;
+                }
+                changed = true;
+                const left = clipPortion(clip, cs, sel.start);
+                const right = clipPortion(clip, sel.end, ce);
+                // One surviving piece keeps the clip's score metadata, as with split (copies never carry it)
+                const keeper = left || right;
+                if (keeper && clip.meta) keeper.meta = JSON.parse(JSON.stringify(clip.meta));
+                if (left) kept.push(left);
+                if (right) kept.push(right);
+            }
+            if (state.editMode === 'shuffle') {
+                for (const c of kept) {
+                    if (c.startTime >= sel.end - 1e-6) {
+                        c.startTime -= len;
+                        changed = true;
+                    }
+                }
+            }
+            track.clips = kept;
+            // Instrument clips: a clip wholly inside the range goes, as audio does; otherwise the notes starting
+            // inside it go. Shuffle pulls later notes and clips in.
+            if (track.midiClips) {
+                const keptMidi = track.midiClips.filter(mc => mc.startTime < sel.start - 1e-6
+                    || mc.startTime + AudioDawInstruments.midiClipLength(mc) > sel.end + 1e-6);
+                if (keptMidi.length !== track.midiClips.length) changed = true;
+                track.midiClips = keptMidi;
+            }
+            for (const mc of track.midiClips || []) {
+                const cs = mc.startTime;
+                const noteCount = mc.notes.length;
+                const ccCount = (mc.cc || []).length;
+                mc.notes = mc.notes.filter(n => cs + n.start < sel.start || cs + n.start >= sel.end);
+                mc.cc = (mc.cc || []).filter(c => cs + c.t < sel.start || cs + c.t >= sel.end);
+                if (mc.notes.length !== noteCount || mc.cc.length !== ccCount) changed = true;
+                // A note sounding across the range start stops there; the part past the range end stays as its own note
+                const tails = [];
+                for (const n of mc.notes) {
+                    const t = cs + n.start;
+                    if (t < sel.start && t + n.dur > sel.start) {
+                        if (t + n.dur > sel.end) tails.push({ ...n, start: sel.end - cs, dur: t + n.dur - sel.end });
+                        n.dur = sel.start - t;
+                        changed = true;
+                    }
+                }
+                mc.notes.push(...tails);
+                // A pedal still down at the range start is released there, so the notes it sustains stop there too
+                if (cs < sel.start && cs + AudioDawInstruments.midiClipLength(mc) > sel.start) {
+                    let down = false;
+                    for (const e of mc.cc) {
+                        if (e.n === 64 && cs + e.t < sel.start) down = e.v >= 64;
+                    }
+                    if (down) {
+                        mc.cc.push({ t: sel.start - cs, n: 64, v: 0 });
+                        mc.cc.sort((a, b) => a.t - b.t);
+                        changed = true;
+                    }
+                }
+                if (state.editMode === 'shuffle') {
+                    if (cs >= sel.end - 1e-6) {
+                        mc.startTime -= len;
+                        changed = true;
+                    } else if (cs >= sel.start) {
+                        // Starts inside the range: only the part past its end survives, moved to the range start
+                        const cut = sel.end - cs;
+                        mc.startTime = sel.start;
+                        mc.length = Math.max(0.05, AudioDawInstruments.midiClipLength(mc) - cut);
+                        for (const n of mc.notes) n.start -= cut;
+                        for (const c of mc.cc) c.t -= cut;
+                        changed = true;
+                    } else {
+                        const cEnd = cs + AudioDawInstruments.midiClipLength(mc);
+                        if (cEnd > sel.start) {
+                            mc.length = Math.max(0.05, (cEnd >= sel.end ? cEnd - len : sel.start) - cs);
+                            changed = true;
+                        }
+                        for (const n of mc.notes) {
+                            if (cs + n.start >= sel.end) {
+                                n.start -= len;
+                                changed = true;
+                            }
+                        }
+                        for (const c of mc.cc) {
+                            if (cs + c.t >= sel.end) {
+                                c.t -= len;
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (before && changed) pushUndo(before);
+        if (findClipById(state.selectedClipId) === null) state.selectedClipId = null;
+        if (state.selectedMidiClipId && !findMidiClip(state.selectedMidiClipId)) state.selectedMidiClipId = null;
+        updateTotalDuration();
+        renderAllTracks();
+        updateBottomPanel();
+        resyncPlayback();
+    }
+
+    /** Split every clip on the selected tracks at the selection's edges. */
+    function splitAtSelection(sel) {
+        let undoPushed = false; // taken at the first real split, so a range with nothing to split keeps redo
+        for (const id of sel.trackIds) {
+            const track = state.tracks.find(t => t.id === id);
+            if (!track) continue;
+            const out = [];
+            for (const clip of track.clips) {
+                let pieces = [clip];
+                for (const at of [sel.start, sel.end]) {
+                    const next = [];
+                    for (const p of pieces) {
+                        const rel = at - p.startTime;
+                        if (rel > 0.001 && rel < visibleDur(p) - 0.001) {
+                            if (!undoPushed) {
+                                pushUndo();
+                                undoPushed = true;
+                            }
+                            next.push(...splitClipAt(p, rel));
+                        }
+                        else {
+                            next.push(p);
+                        }
+                    }
+                    pieces = next;
+                }
+                out.push(...pieces);
+            }
+            track.clips = out;
+        }
+        renderAllTracks();
+        updateBottomPanel();
+        resyncPlayback();
+    }
+
+    /**
+     * The notes of a MIDI clip that start inside [start, end), as a clip-shaped copy (null when there are none).
+     * Matches deleteRange, which removes exactly these notes. `startTime` is absolute.
+     */
+    function midiPortion(mc, start, end) {
+        const len = AudioDawInstruments.midiClipLength(mc);
+        const s = Math.max(mc.startTime, start);
+        const e = Math.min(mc.startTime + len, end);
+        if (e - s < 0.001) return null;
+        const notes = mc.notes
+            .filter(n => n.start < len && mc.startTime + n.start >= s && mc.startTime + n.start < e)
+            .map(n => ({ pitch: n.pitch, start: mc.startTime + n.start - s, dur: Math.min(n.dur, len - n.start), vel: n.vel }));
+        if (!notes.length) return null;
+        const cc = (mc.cc || []).filter(c => mc.startTime + c.t >= s && mc.startTime + c.t < e)
+            .map(c => ({ t: mc.startTime + c.t - s, n: c.n, v: c.v }));
+        // A pedal already down where the piece starts stays down in the copy
+        const pedal = (mc.cc || []).filter(c => c.n === 64 && mc.startTime + c.t < s).pop();
+        if (pedal && pedal.v >= 64) cc.unshift({ t: 0, n: 64, v: pedal.v });
+        return { name: mc.name, startTime: s, length: e - s, notes, cc, muted: !!mc.muted, color: mc.color || null };
+    }
+
+    /** A track's instrument as it is now, so editing the track later does not change what gets pasted. */
+    function snapshotInstrument(track) {
+        return track.instrument ? JSON.parse(JSON.stringify(track.instrument)) : null;
+    }
+
+    /** Copy the selection (the parts of clips inside it, per track) or else the selected clip. */
+    function copySelection() {
+        const sel = state.selection;
+        if (sel) {
+            const order = state.tracks.map(t => t.id).filter(id => sel.trackIds.includes(id));
+            const items = [];
+            order.forEach((id, offset) => {
+                const track = state.tracks.find(t => t.id === id);
+                for (const clip of track.clips) {
+                    const piece = clipPortion(clip, sel.start, sel.end);
+                    if (piece) items.push({ trackOffset: offset, clip: piece, rel: piece.startTime - sel.start });
+                }
+                for (const mc of track.midiClips || []) {
+                    const midi = midiPortion(mc, sel.start, sel.end);
+                    if (midi) items.push({ trackOffset: offset, midi, instrument: snapshotInstrument(track), rel: midi.startTime - sel.start });
+                }
+            });
+            clipboard = { items, length: sel.end - sel.start };
+        }
+        else if (state.selectedMidiClipId) {
+            const found = findMidiClip(state.selectedMidiClipId);
+            const midi = found ? midiPortion(found.clip, found.clip.startTime, found.clip.startTime + AudioDawInstruments.midiClipLength(found.clip)) : null;
+            if (!midi) return false;
+            clipboard = { items: [{ trackOffset: 0, midi, instrument: snapshotInstrument(found.track), rel: 0 }], length: midi.length };
+        }
+        else {
+            const found = findClipById(state.selectedClipId);
+            if (!found) return false;
+            clipboard = { items: [{ trackOffset: 0, clip: cloneClip(found.clip), rel: 0 }], length: visibleDur(found.clip) };
+        }
+        if (typeof doNoticePopover === 'function') {
+            doNoticePopover(translate('Copied') + ` ${clipboard.items.length} ` + (clipboard.items.length === 1 ? translate('clip') : translate('clips')), 'notice-pop-green');
+        }
+        return true;
+    }
+
+    function cutSelection() {
+        const sel = state.selection;
+        if (sel) {
+            if (!copySelection()) return;
+            deleteRange(sel);
+            clearSelection();
+            return;
+        }
+        if (state.selectedMidiClipId) {
+            const midiFound = findMidiClip(state.selectedMidiClipId);
+            if (midiFound && copySelection()) deleteMidiClip(midiFound.clip, midiFound.track);
+            return;
+        }
+        const found = findClipById(state.selectedClipId);
+        if (found && copySelection()) doDeleteClip(found.clip, found.track);
+    }
+
+    /** Paste at the playhead, starting on the selected track. Shuffle mode pushes later clips along. */
+    function pasteClipboard() {
+        if (!clipboard?.items.length) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Nothing to paste. Copy a clip or a selection first'), 'notice-pop-yellow');
+            return;
+        }
+        pushUndo();
+        const at = state.currentTime;
+        const base = Math.max(0, state.tracks.findIndex(t => t.id === state.selectedTrackId));
+        const touched = new Set();
+        const madeInstrument = new Map(); // trackOffset -> instrument track made for MIDI that landed on an audio track
+        for (const item of clipboard.items) {
+            let track = state.tracks[base + item.trackOffset];
+            if (item.midi && track?.kind !== 'instrument') {
+                // MIDI only plays on an instrument track: make one with the copied instrument
+                track = madeInstrument.get(item.trackOffset);
+                if (!track) {
+                    const inst = item.instrument ? JSON.parse(JSON.stringify(item.instrument)) : AudioDawInstruments.createInstrument('synth', 'Soft Keys');
+                    track = addTrack({ kind: 'instrument', instrument: inst, name: nextTrackName(inst.type === 'sampler' ? translate('Sampler') : (inst.preset || translate('Synth'))) });
+                    madeInstrument.set(item.trackOffset, track);
+                }
+            }
+            if (!track || (!item.midi && track.kind === 'bus')) track = addTrack();
+            if (state.editMode === 'shuffle' && !touched.has(track.id)) {
+                for (const c of track.clips) {
+                    if (c.startTime >= at - 1e-6) c.startTime += clipboard.length;
+                }
+                for (const mc of track.midiClips || []) {
+                    if (mc.startTime >= at - 1e-6) mc.startTime += clipboard.length;
+                }
+            }
+            touched.add(track.id);
+            if (item.midi) {
+                const mc = newMidiClip(track, at + item.rel, item.midi.length, item.midi.notes, item.midi.name, item.midi.cc);
+                mc.muted = item.midi.muted;
+                mc.color = item.midi.color;
+                state.selectedMidiClipId = mc.id;
+                state.selectedClipId = null;
+            }
+            else {
+                const nc = cloneClip(item.clip, { startTime: at + item.rel });
+                track.clips.push(nc);
+                state.selectedClipId = nc.id;
+                state.selectedMidiClipId = null;
+            }
+        }
+        updateTotalDuration();
+        renderAllTracks();
+        updateBottomPanel();
+        resyncPlayback();
+    }
+
+    /**
+     * Crossfade at the clip boundaries inside a selection: on each selected track, the clip ending in the range
+     * runs on to its end and the clip starting in it starts at its beginning (as far as their audio reaches past
+     * the edges), and they fade across the overlap. Without spare audio both sides fade at the boundary instead.
+     */
+    function crossfadeSelection(sel) {
+        const endOf = (c) => c.startTime + visibleDur(c);
+        // Find the pairs before any undo step: a range with no boundary to cross leaves the redo history alone
+        const pairs = [];
+        for (const id of sel.trackIds) {
+            const track = state.tracks.find(t => t.id === id);
+            if (!track || !track.clips.length) continue;
+            const left = track.clips.filter(c => !c.muted && c.startTime < sel.start && endOf(c) > sel.start - 1e-3 && endOf(c) <= sel.end + 1e-3)
+                .sort((a, b) => endOf(b) - endOf(a))[0];
+            const right = track.clips.filter(c => !c.muted && c.startTime >= sel.start - 1e-3 && c.startTime < sel.end && endOf(c) > sel.end)
+                .sort((a, b) => a.startTime - b.startTime)[0];
+            if (!left || !right || left === right) continue;
+            pairs.push({ track, left, right });
+        }
+        if (!pairs.length) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Select across the boundary between two clips to crossfade them'), 'notice-pop-yellow');
+            return;
+        }
+        pushUndo();
+        const made = [];
+        let dipped = false;
+        for (const { track, left, right } of pairs) {
+            // Extend each clip into the range as far as its source audio allows
+            const growL = Math.max(0, Math.min(sel.end - endOf(left), left.trimEnd || 0));
+            left.trimEnd = (left.trimEnd || 0) - growL;
+            const growR = Math.max(0, Math.min(right.startTime - sel.start, right.offset || 0));
+            right.offset = (right.offset || 0) - growR;
+            right.startTime -= growR;
+            const xs = right.startTime;
+            const xe = endOf(left);
+            if (xe - xs >= 0.005) {
+                left.fadeOut = xe - xs;
+                right.fadeIn = xe - xs;
+            }
+            else {
+                // No audio past the edges: fade each side at the boundary
+                const half = Math.max(0.005, (sel.end - sel.start) / 2);
+                left.fadeOut = Math.min(half, visibleDur(left));
+                right.fadeIn = Math.min(half, visibleDur(right));
+                dipped = true;
+            }
+            made.push(track.name);
+        }
+        updateTotalDuration();
+        renderAllTracks();
+        resyncPlayback();
+        if (typeof doNoticePopover === 'function') {
+            doNoticePopover(dipped
+                ? translate('No audio past the clip edges, so both sides fade at the boundary')
+                : `${translate('Crossfaded')}: ${made.join(', ')}`, dipped ? 'notice-pop-yellow' : 'notice-pop-green');
+        }
+    }
+
+    /** Comping: the part of a take inside the selection goes on top of the track, so that take plays there. */
+    function useTakeForSelection(clip, track) {
+        const sel = state.selection;
+        if (!sel) return;
+        const piece = clipPortion(clip, sel.start, sel.end);
+        if (!piece) return;
+        pushUndo();
+        piece.name = clip.name;
+        piece.meta = null;
+        track.clips.push(piece);
+        state.selectedClipId = piece.id;
+        renderAllTracks();
+        resyncPlayback();
+    }
+
+    /** Every take under a timeline time on a track, top first (what a comp chooses between). */
+    function takesAt(track, t) {
+        return track.clips.filter(c => t >= c.startTime && t < c.startTime + visibleDur(c)).reverse();
+    }
+
+    /** Timeline time under a pointer x over the lanes. */
+    function timelineTimeAtClientX(clientX) {
+        const rect = clipLanesEl.getBoundingClientRect();
+        return Math.max(0, (clientX - rect.left + clipLanesEl.scrollLeft) / state.zoom);
+    }
+
+    /** Clip menu entries for comping: this take for the selection, and every take stacked under the click. */
+    function compMenuItems(e, clip, track) {
+        const sel = state.selection;
+        const items = [];
+        const inSel = !!sel && sel.trackIds.includes(track.id)
+            && clip.startTime < sel.end && clip.startTime + visibleDur(clip) > sel.start;
+        if (inSel) items.push({ label: translate('Use this take for the selection'), action: () => useTakeForSelection(clip, track) });
+        const stack = clipLanesEl ? takesAt(track, timelineTimeAtClientX(e.clientX)) : [];
+        if (stack.length > 1) {
+            items.push({ heading: inSel ? translate('Use for the selection') : translate('Takes here (top plays)') });
+            stack.forEach((c, k) => items.push({
+                label: c.name + (c.muted ? ` (${translate('muted')})` : ''),
+                checked: k === 0,
+                action: () => inSel ? useTakeForSelection(c, track) : reorderClip(c, track, 1)
+            }));
+            items.push({ heading: '' });
+        }
+        return items;
+    }
+
+    /** Layering: move a clip to the top (1) or bottom (-1) of its track, which changes what is heard. */
+    function reorderClip(clip, track, dir) {
+        const idx = track.clips.indexOf(clip);
+        if (idx < 0) return;
+        pushUndo();
+        track.clips.splice(idx, 1);
+        if (dir > 0) track.clips.push(clip);
+        else track.clips.unshift(clip);
+        renderAllTracks();
+        resyncPlayback();
+    }
+
+    /** Spot: type the exact start time (in the leading scale's units: seconds, or bar.beat). */
+    function spotClip(clip) {
+        const beats = state.rulerMode === 'beats';
+        const current = beats ? formatBBT(clip.startTime).replace(/\|/g, '.') : clip.startTime.toFixed(3);
+        const val = prompt(beats ? translate('Start at bar.beat.tick (e.g. 5.1.000):') : translate('Start time in seconds:'), current);
+        if (val === null) return;
+        let t;
+        if (beats) {
+            const [bar, beat = '1', tick = '0'] = val.trim().split(/[.|:]/);
+            const perBar = beatsPerBar();
+            t = tempo().timeAtBeat((parseInt(bar) - 1) * perBar + (parseInt(beat) - 1) + (parseInt(tick) || 0) / TICKS_PER_BEAT);
+        }
+        else {
+            t = parseFloat(val);
+        }
+        if (!isFinite(t) || t < 0) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('That is not a valid time'), 'notice-pop-yellow');
+            return;
+        }
+        pushUndo();
+        clip.startTime = t;
+        updateTotalDuration();
+        renderAllTracks();
+        resyncPlayback();
+    }
+
+    /** Nudge the selected clip by one grid step. */
+    function nudgeSelected(dir) {
+        const found = findClipById(state.selectedClipId);
+        if (!found) return;
+        const step = state.editMode === 'slip' ? 0.01 : gridStep();
+        const next = Math.max(0, found.clip.startTime + dir * step);
+        if (next === found.clip.startTime) return; // already at the start: nothing to undo
+        pushUndo();
+        found.clip.startTime = next;
+        updateTotalDuration();
+        renderAllTracks();
+        resyncPlayback();
+    }
+
     // ===== CLIP CONTEXT MENU =====
 
+    /** What a MIDI clip plays, for export: notes that start inside it, cut at its end, and its pedal events inside it.
+     * A pedal still down at the end is released there, so the sustain ends with the clip. */
+    function midiClipExport(clip) {
+        const len = AudioDawInstruments.midiClipLength(clip);
+        const notes = clip.notes.filter(n => n.start < len).map(n => ({ ...n, dur: Math.min(n.dur, len - n.start) }));
+        const cc = (clip.cc || []).filter(e => e.t <= len);
+        let down = false;
+        for (const e of clip.cc || []) {
+            if (e.n === 64 && e.t <= len) down = e.v >= 64;
+        }
+        if (down) cc.push({ t: len, n: 64, v: 0 });
+        return { len, notes, cc };
+    }
+
     function showClipContextMenu(e, clip, track) {
+        const idx = track.clips.indexOf(clip);
+        const covered = track.clips.some((c, j) => j > idx && !c.muted
+            && c.startTime < clip.startTime + visibleDur(clip) && c.startTime + visibleDur(c) > clip.startTime);
         dawMenu(e, [
             { label: translate('Split at Playhead'), action: () => doSplitClip(clip, track) },
             { label: translate('Duplicate'), action: () => doDuplicateClip(clip, track) },
             { label: translate('Delete'), action: () => doDeleteClip(clip, track) },
             { label: clip.muted ? translate('Unmute Clip') : translate('Mute Clip'), action: () => {
+                pushUndo();
                 clip.muted = !clip.muted;
-                applyClipGain(clip);
                 renderAllTracks();
+                resyncPlayback(); // a muted clip stops covering the one below it
             }},
+            ...compMenuItems(e, clip, track),
+            { label: translate('Bring to front (play this take)'), disabled: !covered && idx === track.clips.length - 1, action: () => reorderClip(clip, track, 1) },
+            { label: translate('Send to back'), disabled: idx === 0, action: () => reorderClip(clip, track, -1) },
+            { label: translate('Spot to time…'), action: () => spotClip(clip) },
+            { label: translate('Select clip range'), action: () => setSelection({ start: clip.startTime, end: clip.startTime + visibleDur(clip), trackIds: [track.id] }) },
+            { label: translate('Copy'), action: () => { state.selectedClipId = clip.id; copySelection(); } },
             { label: translate('Separate Stems… (Demucs)'), action: () => openStemsForClip(clip, track) },
-            { label: translate('Conform to') + ` ${state.bpm} BPM…`, action: () => conformClipToBpm(clip, track) }
+            { label: translate('Conform to') + ` ${Math.round(bpmAt(clip.startTime) * 100) / 100} BPM…`, action: () => conformClipToBpm(clip, track) }
         ]);
     }
 
     // ===== CLIP OPERATIONS =====
 
-    async function doSplitClip(clip, track) {
-        // splitTime is relative to the clip's visible (trimmed) region
-        const splitTime = state.currentTime - clip.startTime;
+    /**
+     * Split a clip at the playhead without touching audio: both halves keep the shared source blob and differ
+     * only in their window (offset/trimEnd), so the split is instant, lossless, and undo is a plain snapshot.
+     */
+    function doSplitClip(clip, track, at = state.currentTime) {
+        const splitTime = at - clip.startTime;
         const visibleDur = clip.duration - clip.offset - clip.trimEnd;
-        if (splitTime <= 0 || splitTime >= visibleDur) {
+        if (splitTime <= 0.001 || splitTime >= visibleDur - 0.001) {
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Move playhead over clip to split', 'notice-pop-yellow');
+                doNoticePopover(translate('Move the playhead over the clip to split it'), 'notice-pop-yellow');
             }
-            return;
+            return null;
         }
-        try {
-            pushUndo();
-            const parts = await AudioLabCore.splitAudio(clip.blob, splitTime + clip.offset);
-            if (!parts) {
-                console.error('[AudioDaw] splitAudio returned null');
-                return;
-            }
+        const idx = track.clips.indexOf(clip);
+        if (idx === -1) return null;
+        pushUndo();
+        const pieces = splitClipAt(clip, splitTime);
+        track.clips.splice(idx, 1, ...pieces);
+        const oldEntry = track.clipElements.get(clip.id);
+        if (oldEntry?.ws) oldEntry.ws.destroy();
+        if (oldEntry?.el) oldEntry.el.remove();
+        track.clipElements.delete(clip.id);
+        state.selectedClipId = pieces[1].id;
+        updateTotalDuration();
+        renderAllTracks();
+        updateBottomPanel();
+        resyncPlayback();
+        return pieces;
+    }
 
-            const idx = track.clips.indexOf(clip);
-            if (idx === -1) {
-                console.error('[AudioDaw] clip not found in track during split');
-                return;
-            }
-
-            // Create two new clips replacing the original. Part A's blob still contains the
-            // trimmed head (offset carries over); part B's blob still contains the trimmed tail.
-            const clipA = AudioDawTrack.createClip(parts.before, {
-                name: clip.name + ' (A)',
-                startTime: clip.startTime,
-                color: clip.color
-            });
-            await AudioDawTrack.decodeClip(clipA);
-            clipA.offset = clip.offset;
-            clipA.gain = clip.gain;
-            blobStore.set(clipA.blobKey, { blob: parts.before, decodedBuffer: clipA.decodedBuffer });
-
-            const clipB = AudioDawTrack.createClip(parts.after, {
-                name: clip.name + ' (B)',
-                startTime: clip.startTime + splitTime,
-                color: clip.color
-            });
-            await AudioDawTrack.decodeClip(clipB);
-            clipB.trimEnd = clip.trimEnd;
-            clipB.gain = clip.gain;
-            blobStore.set(clipB.blobKey, { blob: parts.after, decodedBuffer: clipB.decodedBuffer });
-
-            // Replace original clip
-            track.clips.splice(idx, 1, clipA, clipB);
-
-            // Clean up old clip WaveSurfer
-            const oldEntry = track.clipElements.get(clip.id);
-            if (oldEntry?.ws) oldEntry.ws.destroy();
-            if (oldEntry?.el) oldEntry.el.remove();
-            track.clipElements.delete(clip.id);
-
-            state.selectedClipId = null;
-            updateTotalDuration();
-            renderAllTracks();
-            updateBottomPanel();
-            resyncPlayback();
-            if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Clip split successfully', 'notice-pop-green');
-            }
-        } catch (err) {
-            console.error('[AudioDaw] Split failed:', err);
-            if (typeof doNoticePopover === 'function') {
-                doNoticePopover(translate('Split failed:') + ' ' + err.message, 'notice-pop-red');
-            }
+    /** Two clips covering `clip` split `splitTime` seconds into its visible window (no undo, no render). */
+    function splitClipAt(clip, splitTime) {
+        const base = { color: clip.color, blobKey: clip.blobKey };
+        const a = AudioDawTrack.createClip(clip.blob, { ...base, name: clip.name, startTime: clip.startTime, meta: clip.meta });
+        const b = AudioDawTrack.createClip(clip.blob, { ...base, name: clip.name, startTime: clip.startTime + splitTime });
+        for (const c of [a, b]) {
+            c.decodedBuffer = clip.decodedBuffer;
+            c.duration = clip.duration;
+            c.gain = clip.gain;
+            c.muted = clip.muted;
         }
+        a.offset = clip.offset;
+        a.trimEnd = clip.duration - clip.offset - splitTime;
+        a.fadeIn = Math.min(clip.fadeIn || 0, splitTime);
+        b.offset = clip.offset + splitTime;
+        b.trimEnd = clip.trimEnd;
+        b.fadeOut = Math.min(clip.fadeOut || 0, clip.duration - b.offset - b.trimEnd);
+        return [a, b];
     }
 
     /** "Foo" -> "Foo (copy)" -> "Foo (copy 2)" instead of stacking " (copy)" forever. */
@@ -3223,6 +6641,13 @@ const AudioDaw = (() => {
                 return;
             }
             track.clips.splice(idx, 1);
+            if (state.editMode === 'shuffle') {
+                // Shuffle closes the gap: everything after the clip slides left by its length
+                const end = clip.startTime + visibleDur(clip);
+                for (const c of track.clips) {
+                    if (c.startTime >= end - 1e-6) c.startTime -= visibleDur(clip);
+                }
+            }
 
             // Clean up element (blob stays in blobStore — undo snapshots may reference it;
             // garbageCollectBlobs() reclaims it once nothing does)
@@ -3379,7 +6804,7 @@ const AudioDaw = (() => {
         bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="stems"]')?.appendChild(busy);
 
         try {
-            const base64 = await AudioLabCore.readAsBase64(clip.blob);
+            const base64 = await AudioLabCore.readAsBase64(await clipAudioBlob(clip));
             const result = await AudioLabAPI.callAPI('ProcessAudio', {
                 provider_id: 'demucs_fx',
                 args: {
@@ -3453,187 +6878,416 @@ const AudioDaw = (() => {
     }
 
     // ===== RECORDING =====
-    // DAW-local mic capture via AudioLabPlayer.createRecorder (WaveSurfer.Record).
-    // Deliberately NOT AudioLabCore.startRecording — that path is tuned for STT
-    // voice references (16kHz mono, echo cancellation, 30s cap).
+    // Takes are captured by AudioDawInput's worklet on the AudioContext clock (lossless PCM), one per armed
+    // track, and placed with latency compensation, so what was played in time with the playback lands in time
+    // with it. Count-in, pre-roll, punch in/out (over the loop range) and the metronome are transport settings.
+
+    /** Saved record settings (per browser): default input, voice processing, count-in, pre-roll, offset. */
+    function loadRecordSettings() {
+        const base = { deviceId: null, voiceMode: false, countInBars: 0, preRollBars: 1, offsetMs: 0, clickVolume: 0.8 };
+        try {
+            return { ...base, ...JSON.parse(localStorage.getItem('audiolab_daw_record') || '{}') };
+        }
+        catch (_) {
+            return base;
+        }
+    }
+
+    function saveRecordSettings() {
+        try { localStorage.setItem('audiolab_daw_record', JSON.stringify(recordSettings)); } catch (_) {}
+    }
 
     function updateRecordButton(active) {
         const btn = transportEl?.querySelector('.daw-btn-rec');
         if (btn) btn.classList.toggle('active', active);
     }
 
-    async function showMicSettingsMenu(e) {
-        const voiceItem = {
-            label: translate('Voice mode (echo + noise reduction)'),
-            checked: recordSettings.voiceMode,
-            action: () => { recordSettings.voiceMode = !recordSettings.voiceMode; }
-        };
-        // mediaDevices is absent on insecure (non-HTTPS, non-localhost) origins
-        if (!navigator.mediaDevices?.enumerateDevices) {
-            dawMenu(e, [
-                { label: translate('Microphone requires HTTPS (or localhost)'), disabled: true, action: () => {} },
-                voiceItem
-            ]);
-            return;
+    /** Latency between scheduling a sample and the performer hearing it (context buffer + output device). */
+    function outputLatency(ctx) {
+        // Plus the master limiter's look-ahead while it is on: the performer hears everything that much later
+        const prof = limiterProfiles.get(ctx.sampleRate);
+        const lim = mixer?.masterLimiter && mixer.ctx === ctx && prof ? prof.frames / ctx.sampleRate : 0;
+        return (ctx.baseLatency || 0) + (ctx.outputLatency || 0) + lim;
+    }
+
+    // The master limiter is a DynamicsCompressorNode, which looks ahead (everything through it comes out 6 ms late
+    // in Chromium) and adds the spec's automatic makeup gain (+0.5 dB at these settings) even below its threshold.
+    // Both are measured once per sample rate, so exports can trim the delay and a gain stage can undo the makeup:
+    // the limiter then only acts on peaks.
+    const limiterProfiles = new Map(); // sampleRate -> { frames, gain }
+
+    async function masterLimiterProfile(sampleRate) {
+        if (limiterProfiles.has(sampleRate)) return limiterProfiles.get(sampleRate);
+        const prof = { frames: 0, gain: 1 };
+        if (typeof AudioDawFx !== 'undefined') {
+            try {
+                // A step of 0.1, well under the threshold: the first sample out is the delay (the step comes out
+                // attenuated while the detector settles, so any level counts), the settled level is the makeup
+                const ctx = new OfflineAudioContext(1, Math.ceil(sampleRate * 0.2), sampleRate);
+                const src = ctx.createConstantSource();
+                src.offset.value = 0.1;
+                const lim = AudioDawFx.buildMasterLimiter(ctx);
+                src.connect(lim);
+                lim.connect(ctx.destination);
+                src.start(0);
+                const out = (await ctx.startRendering()).getChannelData(0);
+                let i = 0;
+                while (i < out.length && Math.abs(out[i]) < 1e-6) i++;
+                prof.frames = i < out.length ? i : 0;
+                const settled = out[Math.floor(sampleRate * 0.15)] / 0.1;
+                if (settled > 0.5 && settled < 2) prof.gain = settled;
+            }
+            catch (_) {
+                prof.frames = 0;
+                prof.gain = 1;
+            }
         }
-        let devices = [];
-        try {
-            devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput');
-        } catch (_) {}
-        // Until mic permission is granted, browsers hide device labels (and may
-        // collapse the list to one placeholder entry) — offer an explicit grant.
-        const labelsHidden = !devices.length || devices.every(d => !d.label);
-        let permState = 'prompt';
-        try {
-            permState = (await navigator.permissions.query({ name: 'microphone' })).state;
-        } catch (_) {} // permissions.query('microphone') is not universal (e.g. Firefox)
+        limiterProfiles.set(sampleRate, prof);
+        return prof;
+    }
+
+    /** Record settings menu (the caret beside Record). */
+    async function showMicSettingsMenu(e) {
         const items = [];
-        if (labelsHidden && permState === 'denied') {
-            items.push({ label: translate('Mic blocked. Allow it in browser site settings'), disabled: true, action: () => {} });
-        } else if (labelsHidden) {
-            // No permission yet: show nothing but the grant action — device names
-            // are meaningless placeholders until the browser unlocks them.
-            items.push({
-                label: translate('Allow mic access to list devices…'),
-                action: async () => {
-                    try {
-                        // One-shot grant: open the mic just to unlock labels, then release it
-                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                        stream.getTracks().forEach(t => t.stop());
-                        showMicSettingsMenu(e);
-                    } catch (err) {
-                        console.error('[AudioDaw] Mic permission request failed:', err);
-                        if (typeof doNoticePopover === 'function') {
-                            doNoticePopover(translate('Microphone access denied:') + ' ' + err.message, 'notice-pop-red');
+        const support = AudioDawInput.support();
+        if (!support.mic) {
+            items.push({ label: translate('Audio input needs HTTPS (or localhost)'), disabled: true });
+        }
+        else {
+            const devices = await AudioDawInput.listDevices();
+            const labelsHidden = !devices.length || devices.every(d => !d.label);
+            const perm = await AudioDawInput.permissionState();
+            items.push({ heading: translate('Default input for new tracks') });
+            if (labelsHidden && perm === 'denied') {
+                items.push({ label: translate('Microphone blocked. Allow it in the browser site settings'), disabled: true });
+            }
+            else if (labelsHidden) {
+                items.push({
+                    label: translate('Allow microphone access to list inputs…'),
+                    action: async () => {
+                        try {
+                            await AudioDawInput.requestAccess();
+                            showMicSettingsMenu(e);
+                        }
+                        catch (err) {
+                            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Microphone access denied:') + ' ' + err.message, 'notice-pop-red');
                         }
                     }
+                });
+            }
+            else {
+                items.push({ label: translate('System default input'), checked: !recordSettings.deviceId,
+                    action: () => { recordSettings.deviceId = null; saveRecordSettings(); } });
+                devices.forEach((d, i) => items.push({
+                    label: d.label || (translate('Input') + ` ${i + 1}`),
+                    checked: recordSettings.deviceId === d.deviceId,
+                    action: () => { recordSettings.deviceId = d.deviceId; saveRecordSettings(); }
+                }));
+            }
+            items.push({
+                label: translate('Voice processing (echo and noise reduction)'),
+                checked: recordSettings.voiceMode,
+                action: () => {
+                    recordSettings.voiceMode = !recordSettings.voiceMode;
+                    saveRecordSettings();
+                    resyncAllInputs();
                 }
             });
-        } else {
-            items.push({ label: translate('System default microphone'), checked: !recordSettings.deviceId,
-                action: () => { recordSettings.deviceId = null; } });
-            devices.forEach((d, i) => items.push({
-                label: d.label || (translate('Microphone') + ` ${i + 1}`),
-                checked: recordSettings.deviceId === d.deviceId,
-                action: () => { recordSettings.deviceId = d.deviceId; }
-            }));
         }
-        items.push(voiceItem);
+        items.push({ heading: translate('Count-in') });
+        for (const bars of [0, 1, 2]) {
+            items.push({
+                label: bars ? `${bars} ${bars === 1 ? translate('bar') : translate('bars')}` : translate('Off'),
+                checked: recordSettings.countInBars === bars,
+                action: () => { recordSettings.countInBars = bars; saveRecordSettings(); }
+            });
+        }
+        items.push({ heading: translate('Pre-roll before a punch-in') });
+        for (const bars of [0, 1, 2]) {
+            items.push({
+                label: bars ? `${bars} ${bars === 1 ? translate('bar') : translate('bars')}` : translate('Off'),
+                checked: recordSettings.preRollBars === bars,
+                action: () => { recordSettings.preRollBars = bars; saveRecordSettings(); }
+            });
+        }
+        items.push({ heading: translate('Latency compensation') });
+        const ctx = audioCtx && audioCtx.state !== 'closed' ? audioCtx : null;
+        const inLat = Math.max(0, ...[...trackInputs.values()].map(x => x.latency), 0);
+        const outLat = ctx ? outputLatency(ctx) : 0;
+        items.push({
+            label: translate('Measured') + `: ${translate('in')} ${Math.round(inLat * 1000)} ms + ${translate('out')} ${Math.round(outLat * 1000)} ms`,
+            disabled: true
+        });
+        items.push({
+            label: translate('Manual offset') + `: ${recordSettings.offsetMs} ms…`,
+            action: () => {
+                const val = prompt(translate('Extra recording offset in milliseconds. Positive moves takes earlier, negative later. Leave 0 unless takes land consistently late or early.'), String(recordSettings.offsetMs));
+                if (val === null) return;
+                const ms = parseFloat(val);
+                if (!isNaN(ms) && Math.abs(ms) <= 2000) {
+                    recordSettings.offsetMs = Math.round(ms);
+                    saveRecordSettings();
+                }
+            }
+        });
         dawMenu(e, items);
+    }
+
+
+    /** Count-in clicks ending at ctx time t0 (the downbeat recording starts on). Same grid as the metronome. */
+    function scheduleCountIn(ctx, t0, seconds, bpm = state.bpm) {
+        if (!mixer || seconds <= 0) return;
+        const unit = AudioDawTimeline.clickUnit(state.timeSignature);
+        const clickSec = 60 / bpm * unit;
+        const clicksPerBar = beatsPerBar() / unit;
+        const clicks = Math.round(seconds / clickSec);
+        for (let i = 0; i < clicks; i++) {
+            const when = t0 - (clicks - i) * clickSec;
+            if (when < ctx.currentTime) continue;
+            playback?.clicks.push(AudioDawInput.scheduleClick(ctx, mixer.clickBus, when, i % clicksPerBar === 0));
+        }
     }
 
     async function startRecordingFlow() {
         if (recording) return;
-        let track = state.tracks.find(t => t.armed);
-        if (!track) {
-            track = addTrack({ name: 'Recording' });
+        const support = AudioDawInput.support();
+        const audioPossible = support.mic && support.worklet;
+        if (!audioPossible) {
+            // Instrument tracks still record; armed audio tracks are skipped with a warning
+            const midiArmedAny = state.tracks.some(t => t.armed && t.kind === 'instrument');
+            const why = !support.mic
+                ? translate('Recording audio needs HTTPS (or localhost): browsers block audio input on plain HTTP. Instrument tracks still record.')
+                : translate('This browser cannot capture audio (no AudioWorklet).');
+            if (!midiArmedAny) {
+                if (typeof doNoticePopover === 'function') doNoticePopover(why, 'notice-pop-red');
+                return;
+            }
+            if (state.tracks.some(t => t.armed && t.kind !== 'instrument') && typeof doNoticePopover === 'function') {
+                doNoticePopover(why, 'notice-pop-yellow');
+            }
+        }
+        let armed = state.tracks.filter(t => t.armed);
+        if (!armed.length) {
+            pushUndo();
+            const track = addTrack({ name: nextTrackName(translate('Audio')) });
             track.armed = true;
+            track.input = { deviceId: recordSettings.deviceId || null, channels: 'mono' };
+            armed = [track];
+            state.selectedTrackId = track.id;
             renderAllTracks();
         }
+        // Every armed input opens before the transport moves: a refused or slow permission prompt must not
+        // leave playback running with nothing capturing. Instrument tracks record notes, not an input.
+        const midiArmed = armed.filter(t => t.kind === 'instrument');
+        const audioArmed = audioPossible ? armed.filter(t => t.kind !== 'instrument') : [];
+        const opened = await Promise.allSettled(audioArmed.map(t => syncTrackInput(t)));
+        opened.forEach((r, i) => { if (r.status === 'rejected') reportInputError(audioArmed[i], r.reason); });
+        const inputs = audioArmed.map(t => ({ track: t, entry: trackInputs.get(t.id) })).filter(x => x.entry);
+        if ((!inputs.length && !midiArmed.length) || recording) return;
 
-        // DAW-quality constraints; voice mode re-enables browser voice processing
-        const constraints = {
-            channelCount: { ideal: 2 },
-            sampleRate: { ideal: 48000 },
-            echoCancellation: recordSettings.voiceMode,
-            noiseSuppression: recordSettings.voiceMode,
-            autoGainControl: recordSettings.voiceMode
-        };
-        if (recordSettings.deviceId) constraints.deviceId = { exact: recordSettings.deviceId };
+        const ctx = getAudioContext();
+        if (ctx.state === 'suspended') { try { await ctx.resume(); } catch (_) {} }
+        const sr = ctx.sampleRate;
+        const punch = state.punchEnabled && state.loopEnd > state.loopStart ? { in: state.loopStart, out: state.loopEnd } : null;
+        // Count-in and post-roll run at the tempo where the take starts
+        const startTempo = bpmAt(punch ? punch.in : state.currentTime);
+        const barDur = (60 / startTempo) * beatsPerBar();
+        const rec = { takes: [], placeholders: [], punch, postRoll: punch ? barDur / 2 : 0, stopping: false, startP: 0, startCtx: 0 };
+        recording = rec;
 
-        // Placeholder clip hosting the live waveform; width grows with the playhead
-        const startP = state.currentTime;
-        const placeholderEl = createDiv(null, 'daw-clip daw-clip-recording');
-        placeholderEl.style.left = (startP * state.zoom) + 'px';
-        placeholderEl.style.width = '4px';
-        const waveEl = createDiv(null, 'daw-clip-waveform');
-        placeholderEl.appendChild(waveEl);
-        if (track.laneEl) track.laneEl.appendChild(placeholderEl);
-
-        const recorder = AudioLabPlayer.createRecorder(waveEl, {
-            height: track.height - 8,
-            continuousWaveform: true,
-            renderRecorded: false,
-            audioBitsPerSecond: 256000
-        });
-        if (!recorder) {
-            placeholderEl.remove();
-            if (typeof doNoticePopover === 'function') doNoticePopover('Recorder unavailable', 'notice-pop-red');
-            return;
+        if (state.isPlaying && playback) {
+            // Punch in on the fly: capture from right now (a loop pass, if armed, is dropped for the take)
+            if (playback.loop) resyncPlayback();
+            rec.startP = punch ? Math.max(punch.in, currentTimelineTime()) : currentTimelineTime();
+            rec.startCtx = playback.baseCtxTime + (rec.startP - playback.baseTimelineTime);
         }
-        recorder.on('end', (blob) => finalizeRecording(blob));
-
-        // Acquire the mic BEFORE touching the transport so a denied/slow permission
-        // prompt can't leave playback running with no capture.
-        try {
-            await recorder.startRecording(constraints);
-        } catch (err) {
-            recorder.destroy();
-            placeholderEl.remove();
-            console.error('[AudioDaw] Mic access failed:', err);
-            if (typeof doNoticePopover === 'function') {
-                doNoticePopover(translate('Microphone access failed:') + ' ' + err.message, 'notice-pop-red');
+        else {
+            rec.startP = punch ? punch.in : state.currentTime;
+            const preRoll = punch ? Math.min(rec.startP, recordSettings.preRollBars * barDur) : 0;
+            const countIn = recordSettings.countInBars > 0 ? recordSettings.countInBars * barDur : 0;
+            state.currentTime = rec.startP - preRoll;
+            const pb = await startPlayback({ delay: countIn });
+            if (!pb || recording !== rec) {
+                if (recording === rec) recording = null;
+                return;
             }
-            return;
+            rec.startCtx = pb.baseCtxTime + preRoll;
+            if (countIn > 0) scheduleCountIn(ctx, pb.baseCtxTime, countIn, startTempo);
         }
 
-        recording = { track, startP, recorder, placeholderEl };
+        const startFrame = Math.round(rec.startCtx * sr);
+        for (const { track, entry } of inputs) {
+            // Positive compensation trims the take's head (it lands earlier); a negative manual offset beyond the
+            // measured latency places the take later instead
+            const comp = entry.latency + outputLatency(ctx) + recordSettings.offsetMs / 1000;
+            const latency = Math.max(0, comp);
+            entry.capture.start(startFrame);
+            const take = { track, entry, latency, late: Math.max(0, -comp), stopFrame: undefined };
+            // A punch stops itself at the out point (shifted by the same compensation)
+            if (punch) {
+                take.stopFrame = Math.round((rec.startCtx + (punch.out - rec.startP) + comp) * sr);
+                entry.capture.stop(take.stopFrame);
+            }
+            rec.takes.push(take);
+            rec.placeholders.push(createRecordingPlaceholder(track, rec.startP));
+        }
+        beginMidiRecording(midiArmed, rec.startP, punch, rec.startCtx);
+        for (const track of midiArmed) rec.placeholders.push(createRecordingPlaceholder(track, rec.startP));
         state.isRecording = true;
         updateRecordButton(true);
-        if (!state.isPlaying) startPlayback(); // hear the other tracks while recording
+        kickMeters();
     }
 
     async function stopRecordingFlow() {
-        if (!recording) return;
         const rec = recording;
+        if (!rec || rec.stopping) return;
+        rec.stopping = true;
         state.isRecording = false;
         updateRecordButton(false);
-        try { await rec.recorder.stopRecording(); } catch (_) {} // 'end' event finalizes
+        const ctx = getAudioContext();
+        const sr = ctx.sampleRate;
+        const nowFrame = Math.round(ctx.currentTime * sr);
+        // Keep capturing for the latency the take will be shifted by, so the last notes played are kept
+        const midiMade = finishMidiRecording(); // before the transport stops: note-offs read its clock
+        // A stop that never settles (a suspended context) must not wedge the session: the take is dropped at the limit
+        const stopLimit = new Promise(r => setTimeout(() => r(null), 3000));
+        const results = await Promise.all(rec.takes.map(t => {
+            const want = nowFrame + Math.round(t.latency * sr);
+            // A punch never runs past its own out point, even when Stop comes during the post-roll
+            const stopping = t.entry.capture.stop(t.stopFrame !== undefined ? Math.min(t.stopFrame, want) : want).catch(() => null);
+            return Promise.race([stopping, stopLimit]);
+        }));
         stopPlayback();
-        // Safety net: if 'record-end' never fires, clear the session so playback
-        // doesn't stay stuck in record mode
-        setTimeout(() => {
-            if (recording === rec) {
-                console.warn('[AudioDaw] record-end never fired; aborting recording session');
-                abortRecording();
-            }
-        }, 2000);
-    }
-
-    /** 'record-end' handler: turn the captured blob into a real clip at the record start. */
-    async function finalizeRecording(blob) {
-        const rec = recording;
-        if (!rec) return;
-        recording = null;
-        try { rec.recorder.destroy(); } catch (_) {}
-        rec.placeholderEl.remove();
-        if (!blob || blob.size === 0) return;
+        if (recording === rec) recording = null;
+        releaseInputsIfHidden(); // the captured audio is already in hand
+        removeRecordingPlaceholders(rec);
+        const made = [];
+        rec.takes.forEach((take, i) => {
+            const res = results[i];
+            if (!res || !res.channels.length || res.firstFrame < 0) return;
+            const drop = Math.round(take.latency * res.sampleRate);
+            const len = res.channels[0].length - drop;
+            if (len < res.sampleRate * 0.05) return; // under 50 ms: nothing was really recorded
+            const buf = new AudioBuffer({ numberOfChannels: res.channels.length, length: len, sampleRate: res.sampleRate });
+            res.channels.forEach((c, ch) => buf.copyToChannel(c.subarray(drop, drop + len), ch));
+            // The worklet may have begun a few frames after the planned start (message latency): place the take
+            // where its first kept sample really falls
+            const start = rec.startP + (res.firstFrame / res.sampleRate - rec.startCtx) + take.late;
+            made.push({ track: take.track, blob: audioBufferToWav(buf, { bitDepth: 32 }), start, peak: maxAbs(res.channels) });
+        });
+        if (!made.length && !midiMade.length) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Nothing was recorded'), 'notice-pop-yellow');
+            return;
+        }
         pushUndo();
-        try {
-            await addClipToTrack(rec.track, blob, { name: 'Recording', startTime: rec.startP });
-            updateTotalDuration();
-            renderAllTracks();
-            updateBottomPanel();
-            resyncPlayback();
-            if (typeof doNoticePopover === 'function') doNoticePopover('Recording added', 'notice-pop-green');
-        } catch (err) {
-            console.error('[AudioDaw] Failed to add recording:', err);
-            if (typeof doNoticePopover === 'function') {
-                doNoticePopover(translate('Failed to add recording:') + ' ' + err.message, 'notice-pop-red');
-            }
+        for (const m of midiMade) {
+            m.track.takeCount = (m.track.takeCount || 0) + 1;
+            const clip = newMidiClip(m.track, m.start, m.length, m.notes, `${m.track.name} ${translate('take')} ${m.track.takeCount}`, m.cc);
+            state.selectedMidiClipId = clip.id;
+        }
+        for (const m of made) {
+            m.track.takeCount = (m.track.takeCount || 0) + 1;
+            const clip = await addClipToTrack(m.track, m.blob, {
+                name: `${m.track.name} ${translate('take')} ${m.track.takeCount}`,
+                startTime: Math.max(0, m.start)
+            });
+            state.selectedClipId = clip.id;
+            state.selectedTrackId = m.track.id;
+        }
+        updateTotalDuration();
+        renderAllTracks();
+        updateBottomPanel();
+        resyncPlayback();
+        const silent = made.filter(m => m.peak < 0.001).length;
+        const total = made.length + midiMade.length;
+        if (typeof doNoticePopover === 'function') {
+            doNoticePopover(made.length && silent === made.length && !midiMade.length
+                ? translate('Recorded, but the input was silent. Check the track input and the device level')
+                : `${translate('Recorded')} ${total} ${total === 1 ? translate('take') : translate('takes')}`,
+                made.length && silent === made.length && !midiMade.length ? 'notice-pop-yellow' : 'notice-pop-green');
         }
     }
 
-    /** Abort an in-flight recording without keeping audio (modal teardown). */
+    function maxAbs(channels) {
+        let peak = 0;
+        for (const c of channels) {
+            for (let i = 0; i < c.length; i += 16) {
+                const v = c[i] < 0 ? -c[i] : c[i];
+                if (v > peak) peak = v;
+            }
+        }
+        return peak;
+    }
+
+    /** Abort an in-flight recording without keeping audio (teardown, project switch). */
     function abortRecording() {
+        midiRecording = null;
         if (!recording) return;
         const rec = recording;
-        recording = null; // null first so the 'end' handler no-ops
-        try { rec.recorder.stopRecording(); } catch (_) {}
-        try { rec.recorder.destroy(); } catch (_) {}
-        rec.placeholderEl.remove();
+        recording = null;
+        for (const take of rec.takes) {
+            try { take.entry.capture.stop(); } catch (_) {}
+        }
+        removeRecordingPlaceholders(rec);
         if (state) state.isRecording = false;
         updateRecordButton(false);
+    }
+
+    /** A growing red clip on the lane with the take's live waveform, drawn from the input's level. */
+    function createRecordingPlaceholder(track, startP) {
+        const el = createDiv(null, 'daw-clip daw-clip-recording');
+        el.style.left = (startP * state.zoom) + 'px';
+        el.style.width = '2px';
+        const label = createSpan(null, 'daw-clip-label');
+        label.textContent = translate('Recording');
+        el.appendChild(label);
+        const strip = createDiv(null, 'daw-rec-strip');
+        el.appendChild(strip);
+        track.laneEl?.appendChild(el);
+        return { track, el, strip, tiles: [], lastX: 0, startP };
+    }
+
+    function updateRecordingPlaceholders() {
+        if (!recording) return;
+        const t = state.currentTime;
+        for (const ph of recording.placeholders) {
+            // A lane rebuilt mid-take (track list re-render) gets its placeholder back
+            if (ph.track.laneEl && ph.el.parentElement !== ph.track.laneEl) ph.track.laneEl.appendChild(ph.el);
+            ph.el.style.left = (ph.startP * state.zoom) + 'px';
+            if (t <= ph.startP) continue; // count-in or pre-roll: nothing captured yet
+            const x = (t - ph.startP) * state.zoom;
+            ph.el.style.width = Math.max(2, x) + 'px';
+            const entry = trackInputs.get(ph.track.id);
+            drawPlaceholderLevel(ph, x, entry ? entry.level : 0);
+        }
+    }
+
+    function drawPlaceholderLevel(ph, x, level) {
+        const TILE = 1024;
+        const h = Math.max(8, (ph.track.height || 100) - 8);
+        while (ph.tiles.length * TILE < x + 1) {
+            const c = document.createElement('canvas');
+            c.width = TILE;
+            c.height = h;
+            c.className = 'daw-rec-tile';
+            c.style.left = (ph.tiles.length * TILE) + 'px';
+            ph.strip.appendChild(c);
+            ph.tiles.push(c);
+        }
+        const amp = Math.max(1, levelToPct(level) * h * 0.48);
+        for (let px = Math.floor(ph.lastX); px <= Math.floor(x); px++) {
+            const tile = ph.tiles[Math.floor(px / TILE)];
+            if (!tile) continue;
+            const g = tile.getContext('2d');
+            g.fillStyle = 'rgba(255, 255, 255, 0.75)';
+            g.fillRect(px % TILE, h / 2 - amp, 1, amp * 2);
+        }
+        ph.lastX = x;
+    }
+
+    function removeRecordingPlaceholders(rec) {
+        for (const ph of rec.placeholders) ph.el.remove();
+        rec.placeholders = [];
     }
 
     // ===== UNDO / REDO =====
@@ -3647,24 +7301,50 @@ const AudioDaw = (() => {
         for (const track of state.tracks) {
             for (const clip of track.clips) referenced.add(clip.blobKey);
         }
+        // Drum pads and the clipboard hold their audio in the same store
+        for (const lane of state.beatPattern.lanes) referenced.add(lane.blobKey);
+        for (const item of clipboard?.items || []) {
+            if (item.clip) referenced.add(item.clip.blobKey);
+            if (item.instrument?.sampleKey) referenced.add(item.instrument.sampleKey);
+        }
+        for (const t of state.tracks) {
+            if (t.instrument?.sampleKey) referenced.add(t.instrument.sampleKey);
+        }
         for (const snap of [...state.undoStack, ...state.redoStack]) {
             for (const ts of snap.tracks) {
                 for (const cs of ts.clips) referenced.add(cs.blobKey);
             }
+            for (const lane of snap.beatPattern?.lanes || []) referenced.add(lane.blobKey);
+            for (const ts of snap.tracks) {
+                if (ts.instrument?.sampleKey) referenced.add(ts.instrument.sampleKey);
+            }
         }
         for (const key of [...blobStore.keys()]) {
-            if (!referenced.has(key)) blobStore.delete(key);
+            if (!referenced.has(key) && !pendingBlobKeys.has(key)) blobStore.delete(key);
         }
     }
 
-    function pushUndo() {
-        const snapshot = {
+    /** Everything undo restores, deep-copied so later edits never alias the snapshot. */
+    function takeSnapshot() {
+        return {
             tracks: state.tracks.map(t => AudioDawTrack.serializeTrack(t)),
             selectedTrackId: state.selectedTrackId,
             selectedClipId: state.selectedClipId,
             masterVolume: state.masterVolume,
-            bpm: state.bpm
+            bpm: state.bpm,
+            tempoMap: (state.tempoMap || []).map(c => ({ ...c })),
+            timeSignature: [...state.timeSignature],
+            markers: (state.markers || []).map(m => ({ ...m })),
+            beatPattern: {
+                steps: state.beatPattern.steps,
+                swing: state.beatPattern.swing,
+                lanes: state.beatPattern.lanes.map(l => ({ ...l, steps: [...l.steps] }))
+            }
         };
+    }
+
+    /** Push an undo step (the given snapshot, or the current state) and clear redo. */
+    function pushUndo(snapshot = takeSnapshot()) {
         state.undoStack.push(snapshot);
         if (state.undoStack.length > MAX_UNDO) state.undoStack.shift();
         state.redoStack = []; // clear redo on new action
@@ -3675,34 +7355,24 @@ const AudioDaw = (() => {
     async function doUndo() {
         if (state.undoStack.length === 0) return;
         // Save current state to redo
-        const currentSnapshot = {
-            tracks: state.tracks.map(t => AudioDawTrack.serializeTrack(t)),
-            selectedTrackId: state.selectedTrackId,
-            selectedClipId: state.selectedClipId,
-            masterVolume: state.masterVolume,
-            bpm: state.bpm
-        };
+        const currentSnapshot = takeSnapshot();
         state.redoStack.push(currentSnapshot);
 
         const snapshot = state.undoStack.pop();
         await restoreSnapshot(snapshot);
         garbageCollectBlobs();
+        scheduleAutosave(); // the crash-recovery copy follows undo too
     }
 
     async function doRedo() {
         if (state.redoStack.length === 0) return;
-        const currentSnapshot = {
-            tracks: state.tracks.map(t => AudioDawTrack.serializeTrack(t)),
-            selectedTrackId: state.selectedTrackId,
-            selectedClipId: state.selectedClipId,
-            masterVolume: state.masterVolume,
-            bpm: state.bpm
-        };
+        const currentSnapshot = takeSnapshot();
         state.undoStack.push(currentSnapshot);
 
         const snapshot = state.redoStack.pop();
         await restoreSnapshot(snapshot);
         garbageCollectBlobs();
+        scheduleAutosave();
     }
 
     async function restoreSnapshot(snapshot) {
@@ -3716,7 +7386,23 @@ const AudioDaw = (() => {
         state.selectedClipId = snapshot.selectedClipId;
         state.masterVolume = snapshot.masterVolume;
         state.bpm = snapshot.bpm;
-        if (bpmInputEl) bpmInputEl.value = state.bpm;
+        state.tempoMap = (snapshot.tempoMap || []).map(c => ({ ...c }));
+        if (snapshot.timeSignature) {
+            state.timeSignature = [...snapshot.timeSignature];
+            const sig = transportEl?.querySelector('.daw-transport-timesig');
+            if (sig) sig.value = state.timeSignature.join('/');
+        }
+        refreshTempoViews();
+        if (snapshot.markers) state.markers = snapshot.markers.map(m => ({ ...m }));
+        if (snapshot.beatPattern) {
+            state.beatPattern = {
+                steps: snapshot.beatPattern.steps,
+                swing: snapshot.beatPattern.swing,
+                lanes: snapshot.beatPattern.lanes.map(l => ({ ...l, steps: [...l.steps] }))
+            };
+            const beatsPane = bottomPanelEl?.querySelector('.daw-bottom-tab-content[data-tab="beats"]');
+            if (beatsPane) renderBeatsPanel(beatsPane);
+        }
 
         // Recreate tracks from snapshot
         state.tracks = [];
@@ -3733,6 +7419,12 @@ const AudioDaw = (() => {
             track.muted = ts.muted;
             track.soloed = ts.soloed;
             track.armed = ts.armed;
+            track.monitor = !!ts.monitor;
+            track.input = { deviceId: ts.input?.deviceId || null, channels: ts.input?.channels ?? 'mono' };
+            track.takeCount = ts.takeCount || 0;
+            track.kind = ts.kind || 'audio';
+            track.instrument = ts.instrument ? JSON.parse(JSON.stringify(ts.instrument)) : null;
+            track.midiClips = (ts.midiClips || []).map(c => ({ ...c, notes: c.notes.map(n => ({ ...n })), cc: (c.cc || []).map(e => ({ ...e })) }));
             track.fx = (ts.fx || []).filter(f => typeof AudioDawFx === 'undefined' || AudioDawFx.FX_DEFS[f.type])
                 .map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));
             track.automation = {
@@ -3741,6 +7433,8 @@ const AudioDaw = (() => {
             };
             track.automationVisible = !!ts.automationVisible;
             track.automationParam = ts.automationParam || 'volume';
+            track.automationMode = ts.automationMode || 'read';
+            track.sends = (ts.sends || []).map(sd => ({ ...sd }));
 
             for (const cs of ts.clips) {
                 const stored = blobStore.get(cs.blobKey);
@@ -3768,7 +7462,20 @@ const AudioDaw = (() => {
 
         updateTotalDuration();
         renderAllTracks();
+        // Restored tracks reuse their ids, so a cached chain would keep the pre-undo effect settings: rebuild them all
+        if (mixer) {
+            for (const id of [...mixer.chains.keys()]) dropChain(id);
+        }
+        updatePlaybackGains(); // the restored master and fader levels reach the live graph, even when stopped
         resyncPlayback();
+        // Inputs follow the restored arm/monitor state; tracks that no longer exist lose theirs
+        const live = new Set(state.tracks.map(t => t.id));
+        for (const id of [...trackInputs.keys()]) {
+            if (!live.has(id)) closeTrackInput(id);
+        }
+        for (const t of state.tracks) {
+            if (t.armed || t.monitor || trackInputs.has(t.id)) syncTrackInput(t).catch(err => reportInputError(t, err));
+        }
     }
 
     /**
@@ -3810,31 +7517,33 @@ const AudioDaw = (() => {
      */
     async function conformClipToBpm(clip, track) {
         const guess = clip.decodedBuffer ? detectBpm(clip.decodedBuffer) : null;
+        // The tempo where the clip starts (the session tempo unless a tempo change comes first)
+        const target = Math.round(bpmAt(clip.startTime) * 100) / 100;
         const src = prompt(
             translate('Source BPM of this clip? It will be stretched to the project tempo (pitch preserved).') +
-            `\n\n"${clip.name}" → ${state.bpm} BPM` +
+            `\n\n"${clip.name}" → ${target} BPM` +
             (guess ? `\n\n${translate('Detected:')} ~${guess} BPM` : ''),
-            guess || state.bpm);
+            guess || target);
         if (!src) return;
         const srcBpm = parseFloat(src);
         if (!srcBpm || srcBpm < 20 || srcBpm > 400) {
             if (typeof doNoticePopover === 'function') doNoticePopover('Enter a BPM between 20 and 400', 'notice-pop-yellow');
             return;
         }
-        const rate = state.bpm / srcBpm;
+        const rate = target / srcBpm;
         if (Math.abs(rate - 1) < 0.001) {
             if (typeof doNoticePopover === 'function') doNoticePopover('Clip is already at project tempo', 'notice-pop-green');
             return;
         }
-        const overlay = showDawLoadingOverlay(translate('Stretching') + ` ${srcBpm} → ${state.bpm} BPM...`);
+        const overlay = showDawLoadingOverlay(translate('Stretching') + ` ${srcBpm} → ${target} BPM...`);
         try {
-            const base64 = await AudioLabCore.readAsBase64(clip.blob);
+            const base64 = await AudioLabCore.readAsBase64(await clipAudioBlob(clip));
             const result = await AudioLabAPI.callAPI('AudioLabTimeStretch', { audio_data: base64, rate });
             if (!result.success || !result.audio_data) throw new Error(result.error || 'Stretch returned no audio');
             const blob = AudioLabCore.base64ToBlob(result.audio_data, 'audio/wav');
             pushUndo();
             const newClip = AudioDawTrack.createClip(blob, {
-                name: clip.name + ` @${state.bpm}bpm`,
+                name: clip.name + ` @${target}bpm`,
                 startTime: clip.startTime,
                 color: clip.color
             });
@@ -3887,7 +7596,7 @@ const AudioDaw = (() => {
     /** Render the pattern offline. Length = repeats x pattern + 1s tail, BPM-locked by construction. */
     async function renderBeatPatternBuffer(repeats = 1) {
         const p = state.beatPattern;
-        const stepDur = 60 / state.bpm / 4; // 16th notes
+        const stepDur = 60 / bpmAt(state.currentTime) / 4; // 16th notes, at the tempo where the pattern lands
         const patternDur = stepDur * p.steps;
         const sr = 44100;
         const ctx = new OfflineAudioContext(2, Math.ceil((patternDur * repeats + 1) * sr), sr);
@@ -3930,7 +7639,7 @@ const AudioDaw = (() => {
             src.buffer = buffer;
             src.loop = true;
             src.loopStart = 0;
-            src.loopEnd = (60 / state.bpm / 4) * state.beatPattern.steps;
+            src.loopEnd = (60 / bpmAt(state.currentTime) / 4) * state.beatPattern.steps;
             src.connect(ctx.destination);
             src.start();
             beatAudition = src;
@@ -3952,8 +7661,9 @@ const AudioDaw = (() => {
             const buffer = await renderBeatPatternBuffer(repeats);
             const blob = audioBufferToWav(buffer);
             pushUndo();
-            const track = addTrack({ name: `Beat ${state.bpm}bpm` });
-            await addClipToTrack(track, blob, { name: `beat-${state.bpm}bpm-x${repeats}`, startTime: snapTime(state.currentTime) });
+            const bpmHere = Math.round(bpmAt(state.currentTime) * 100) / 100;
+            const track = addTrack({ name: `Beat ${bpmHere}bpm` });
+            await addClipToTrack(track, blob, { name: `beat-${bpmHere}bpm-x${repeats}`, startTime: snapTime(state.currentTime) });
             updateTotalDuration();
             renderAllTracks();
             updateBottomPanel();
@@ -3972,10 +7682,11 @@ const AudioDaw = (() => {
 
     async function addBeatPadBlob(name, blob, container) {
         const blobKey = `beatpad-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        blobStore.set(blobKey, { blob, decodedBuffer: await AudioLabCore.decodeToBuffer(blob) });
+        const decodedBuffer = await AudioLabCore.decodeToBuffer(blob);
+        pushUndo();
+        blobStore.set(blobKey, { blob, decodedBuffer });
         state.beatPattern.lanes.push(newBeatLane(name, blobKey));
         renderBeatsPanel(container);
-        scheduleAutosave();
     }
 
     // ===== PIANO / KEYS =====
@@ -4137,7 +7848,7 @@ const AudioDaw = (() => {
                 + 'address the browser will not offer it. The keys above work either way.');
         }
         else if (keysState.midiAccess) {
-            const names = [...keysState.midiAccess.inputs.values()].map(i => i.name);
+            const names = AudioDawInstruments.midiInputNames();
             midiRow.textContent = names.length
                 ? translate('MIDI in:') + ' ' + names.join(', ')
                 : translate('MIDI is on, but no input is connected.');
@@ -4168,17 +7879,11 @@ const AudioDaw = (() => {
         return s;
     }
 
+    /** One MIDI connection for the whole DAW: notes reach the score while it records, else the instruments. */
     async function connectKeysMidi(panelContainer) {
         try {
-            keysState.midiAccess = await navigator.requestMIDIAccess();
-            for (const input of keysState.midiAccess.inputs.values()) {
-                input.onmidimessage = (ev) => {
-                    const [status, note, velocity] = ev.data;
-                    const cmd = status & 0xf0;
-                    if (cmd === 0x90 && velocity > 0) keysDown(note);
-                    else if (cmd === 0x80 || (cmd === 0x90 && velocity === 0)) keysUp(note);
-                };
-            }
+            await AudioDawInstruments.connectMidi();
+            keysState.midiAccess = true;
             renderBeatsPanel(panelContainer);
         }
         catch (err) {
@@ -4187,14 +7892,14 @@ const AudioDaw = (() => {
         }
     }
 
-    // Instrument browser: the drum machine ships today; the rest are planned
-    // slots (clicking one explains what's coming). New instruments plug in by
-    // flipping ready:true and rendering their UI in renderBeatsPanel.
+    // Instrument browser. A planned slot can be listed with ready:false (clicking
+    // it explains it is on the roadmap); it ships by flipping ready:true and
+    // rendering its UI in renderBeatsPanel.
     const DAW_INSTRUMENTS = [
         { id: 'drums', name: 'Drum Machine', desc: '16/32-step sample sequencer', ready: true },
-        { id: 'keys', name: 'Piano / Keys', desc: 'Play a phrase into the score', ready: true },
-        { id: 'bass', name: 'Bass', desc: 'Coming soon', ready: false },
-        { id: 'synth', name: 'Synth', desc: 'Coming soon', ready: false }
+        { id: 'keys', name: 'Keys to Score', desc: 'Play a phrase into the score', ready: true },
+        { id: 'synth', name: 'Synth', desc: 'Play and record an instrument track', ready: true },
+        { id: 'sampler', name: 'Sampler', desc: 'Any clip or generated sound, across the keys', ready: true }
     ];
     let activeInstrument = 'drums';
 
@@ -4229,6 +7934,10 @@ const AudioDaw = (() => {
 
         const instCard = createDiv(null, 'daw-fx-card daw-inst-card');
         panel.appendChild(instCard);
+        if (activeInstrument === 'synth' || activeInstrument === 'sampler') {
+            renderInstrumentCard(instCard, container, activeInstrument);
+            return;
+        }
         if (activeInstrument === 'keys') {
             if (typeof AudioDawScore === 'undefined') {
                 const missing = createDiv(null, 'daw-stems-desc');
@@ -4251,6 +7960,7 @@ const AudioDaw = (() => {
         }
         stepsSel.value = p.steps;
         stepsSel.addEventListener('change', () => {
+            pushUndo();
             const n = parseInt(stepsSel.value);
             p.steps = n;
             for (const lane of p.lanes) {
@@ -4267,7 +7977,12 @@ const AudioDaw = (() => {
         swing.min = '0'; swing.max = '0.6'; swing.step = '0.05';
         swing.value = p.swing || 0;
         swing.className = 'daw-beats-swing';
-        swing.addEventListener('input', () => { p.swing = parseFloat(swing.value); });
+        let swingGesture = false;
+        swing.addEventListener('input', () => {
+            if (!swingGesture) { swingGesture = true; pushUndo(); }
+            p.swing = parseFloat(swing.value);
+        });
+        swing.addEventListener('change', () => { swingGesture = false; });
         head.appendChild(swingLbl);
         head.appendChild(swing);
 
@@ -4324,13 +8039,19 @@ const AudioDaw = (() => {
             gainSl.value = lane.gain ?? 1;
             gainSl.className = 'daw-beats-lane-gain';
             gainSl.title = translate('Pad gain');
-            gainSl.addEventListener('input', () => { lane.gain = parseFloat(gainSl.value); });
+            let gainGesture = false;
+            gainSl.addEventListener('input', () => {
+                if (!gainGesture) { gainGesture = true; pushUndo(); }
+                lane.gain = parseFloat(gainSl.value);
+            });
+            gainSl.addEventListener('change', () => { gainGesture = false; });
             row.appendChild(gainSl);
             const del = document.createElement('button');
             del.className = 'daw-fx-mini-btn';
             del.innerHTML = '&#x2715;';
             del.title = translate('Remove lane');
             del.addEventListener('click', () => {
+                pushUndo();
                 p.lanes.splice(li, 1);
                 renderBeatsPanel(container);
             });
@@ -4340,9 +8061,9 @@ const AudioDaw = (() => {
                 const cell = document.createElement('button');
                 cell.className = 'daw-beats-step' + (lane.steps[i] ? ' on' : '') + (i % 4 === 0 ? ' beat-head' : '');
                 cell.addEventListener('click', () => {
+                    pushUndo();
                     lane.steps[i] = !lane.steps[i];
                     cell.classList.toggle('on', lane.steps[i]);
-                    scheduleAutosave();
                 });
                 stepsWrap.appendChild(cell);
             }
@@ -4407,12 +8128,19 @@ const AudioDaw = (() => {
         const clipBtn = document.createElement('button');
         clipBtn.className = 'basic-button btn-sm';
         clipBtn.textContent = translate('From Selected Clip');
-        clipBtn.addEventListener('click', () => {
+        clipBtn.addEventListener('click', async () => {
             const sel = findClipById(state.selectedClipId);
             if (!sel) {
-                if (typeof doNoticePopover === 'function') doNoticePopover('Select a clip first', 'notice-pop-yellow');
+                if (typeof doNoticePopover === 'function') doNoticePopover(translate('Select a clip first'), 'notice-pop-yellow');
                 return;
             }
+            // A trimmed or split clip shares its source blob, so the pad gets just the part that plays.
+            const trimmed = (sel.clip.offset || 0) > 1e-6 || (sel.clip.trimEnd || 0) > 1e-6;
+            if (trimmed) {
+                await addBeatPadBlob(sel.clip.name.slice(0, 18), await clipAudioBlob(sel.clip), container);
+                return;
+            }
+            pushUndo();
             state.beatPattern.lanes.push(newBeatLane(sel.clip.name.slice(0, 18), sel.clip.blobKey));
             renderBeatsPanel(container);
         });
@@ -4441,45 +8169,44 @@ const AudioDaw = (() => {
         renderPalette();
     }
 
+    /** Engine a palette request runs on: AudioGen for SFX, the first installed music engine for loops. */
     function paletteEngineFor(type) {
-        if (type === 'sfx') return { engineId: 'audiogen_sfx', usesPrompt: true, params: (dur, seed) => ({ text2audioduration: dur, seed }) };
-        // loops/music: ACE-Step with tempo/time-signature hints from the transport
-        return {
-            engineId: 'acestep_music',
-            // The palette prompt describes a loop, not lyrics — so it is the STYLE. Prompt stays empty, which
-            // ACE-Step reads as instrumental, which is what a palette loop should be.
-            params: (dur, seed, prompt) => ({
-                text2audioduration: dur, seed,
-                text2audiostyle: prompt || '',
-                text2audiobpm: state.bpm,
-                text2audiotimesignature: state.timeSignature.join('/')
-            })
-        };
+        return type === 'sfx' ? 'audiogen_sfx' : preferredMusicEngine();
     }
 
     async function paletteGenerate(prompt, type, duration, count) {
-        const eng = paletteEngineFor(type);
         try { await ensureEnginesList(); } catch (_) {}
-        const model = dawSwarmModelFor(eng.engineId);
+        const engineId = paletteEngineFor(type);
+        const model = engineId ? dawSwarmModelFor(engineId) : null;
         if (!model) {
             if (typeof doNoticePopover === 'function') {
                 doNoticePopover(translate('No installed engine for') + ' '
-                    + (type === 'sfx' ? 'SFX (AudioGen)' : 'music (ACE-Step)'), 'notice-pop-yellow');
+                    + (type === 'sfx' ? translate('sound effects (AudioGen)') : translate('music')), 'notice-pop-yellow');
             }
             return [];
         }
-        // Each candidate is a normal Swarm generation — saved to outputs + history
+        // Each candidate is a normal Swarm generation, saved to outputs + history. Loops are instrumental, so
+        // the description is the style and lyric engines get no lyrics.
+        const errors = [];
         const jobs = [];
         for (let i = 0; i < count; i++) {
             const seed = Math.floor(Math.random() * 1e9);
-            jobs.push(dawSwarmGenerate({ model, prompt: eng.usesPrompt ? prompt : '', params: eng.params(duration, seed, prompt) })
-                .then(({ blob, metadata }) => ({ blob, seed, metadata }))
-                .catch(err => { console.error('[AudioDaw] Palette generation failed:', err); return null; }));
+            const req = buildAudioGenRequest(engineId, { description: prompt, duration, seed, tempoHints: type !== 'sfx' });
+            jobs.push(dawSwarmGenerate({ model, prompt: req.prompt, params: req.params })
+                .then(async ({ blob, metadata }) => {
+                    let length = duration;
+                    try { length = (await AudioLabCore.decodeToBuffer(blob)).duration; } catch (_) {}
+                    return { blob, seed, metadata, length };
+                })
+                .catch(err => { console.error('[AudioDaw] Palette generation failed:', err); errors.push(err.message); return null; }));
         }
         const done = (await Promise.all(jobs)).filter(Boolean);
-        return done.map(({ blob, seed, metadata }) => ({
-            blob, url: URL.createObjectURL(blob), prompt, seed, type,
-            meta: buildClipScoreMeta(metadata, { style: prompt, model, engineId: eng.engineId, label: prompt.slice(0, 24) })
+        if (!done.length && errors.length && typeof doNoticePopover === 'function') {
+            doNoticePopover(translate('Generation failed:') + ' ' + errors[0], 'notice-pop-red');
+        }
+        return done.map(({ blob, seed, metadata, length }) => ({
+            blob, url: URL.createObjectURL(blob), prompt, seed, type, duration: length,
+            meta: buildClipScoreMeta(metadata, { style: prompt, model, engineId, label: prompt.slice(0, 24) })
         }));
     }
 
@@ -4535,9 +8262,6 @@ const AudioDaw = (() => {
             goBtn.textContent = translate('Generating…');
             try {
                 const results = await paletteGenerate(prompt, typeSel.value, parseInt(durSel.value), parseInt(countSel.value));
-                if (!results.length && typeof doNoticePopover === 'function') {
-                    doNoticePopover('Generation returned nothing. Check the engine is installed', 'notice-pop-red');
-                }
                 paletteResults.unshift(...results);
                 paletteResults = paletteResults.slice(0, 12);
                 renderPalette();
@@ -4598,7 +8322,7 @@ const AudioDaw = (() => {
             varBtn.title = translate('Generate a variation (same prompt, new seed)');
             varBtn.addEventListener('click', async () => {
                 varBtn.disabled = true;
-                const results = await paletteGenerate(res.prompt, res.type, Math.max(1, Math.round(res.blob.size / (44100 * 4 * 2))) || 4, 1);
+                const results = await paletteGenerate(res.prompt, res.type, Math.max(1, Math.round(res.duration || 4)), 1);
                 paletteResults.unshift(...results);
                 paletteResults = paletteResults.slice(0, 12);
                 renderPalette();
@@ -4619,7 +8343,8 @@ const AudioDaw = (() => {
 
     const AUTOSAVE_SLOT = '__autosave__';
     const AUTOSAVE_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
-    const SERVER_SAVE_LIMIT_BYTES = 40 * 1024 * 1024;
+    // One clip's audio travels in one request (base64 under core's request limit); the project as a whole has no limit
+    const SERVER_AUDIO_FILE_LIMIT_BYTES = 140 * 1024 * 1024;
     let autosaveTimer = null;
     let currentProjectName = null;
 
@@ -4630,11 +8355,16 @@ const AudioDaw = (() => {
             version: 3,
             projectName: currentProjectName || null,
             bpm: state.bpm,
+            tempoMap: (state.tempoMap || []).map(c => ({ ...c })),
             masterLimiterEnabled: state.masterLimiterEnabled,
             timeSignature: state.timeSignature,
             masterVolume: state.masterVolume,
             rulerMode: state.rulerMode,
             snapEnabled: state.snapEnabled,
+            editMode: state.editMode,
+            gridValue: state.gridValue,
+            markers: state.markers.map(m => ({ ...m })),
+            metronome: state.metronome,
             beatPattern: {
                 steps: state.beatPattern.steps,
                 swing: state.beatPattern.swing,
@@ -4661,6 +8391,10 @@ const AudioDaw = (() => {
                 if (stored) blobs.set(lane.blobKey, stored.blob);
             }
         }
+        for (const track of state.tracks) {
+            const key = track.instrument?.sampleKey;
+            if (key && !blobs.has(key) && blobStore.get(key)) blobs.set(key, blobStore.get(key).blob);
+        }
         return blobs;
     }
 
@@ -4668,17 +8402,26 @@ const AudioDaw = (() => {
     async function restoreProject(project, blobs) {
         abortRecording();
         stopPlayback();
+        closeAllInputs();
+        destroyMixer();
         for (const track of state.tracks) AudioDawTrack.destroyTrack(track);
         const keepZoom = state.zoom;
         state = getDefaultState();
         state.zoom = keepZoom;
         if (project.projectName) currentProjectName = project.projectName;
         state.bpm = project.bpm || 120;
+        state.tempoMap = (project.tempoMap || []).filter(c => c.t > 0 && c.bpm > 0).map(c => ({ ...c }));
         state.timeSignature = project.timeSignature || [4, 4];
         state.masterVolume = project.masterVolume ?? 1.0;
         state.rulerMode = project.rulerMode || 'time';
         state.snapEnabled = project.snapEnabled !== false;
+        state.editMode = ['slip', 'grid', 'shuffle'].includes(project.editMode) ? project.editMode : (state.snapEnabled ? 'grid' : 'slip');
+        state.gridValue = project.gridValue || 'auto';
+        state.markers = (project.markers || []).map(m => ({ id: m.id, time: m.time, name: m.name, color: m.color || null }));
         state.masterLimiterEnabled = project.masterLimiterEnabled !== false;
+        state.metronome = !!project.metronome;
+        // Clear before anything is stored: clearing after the pad loop below wiped every pad's audio.
+        blobStore.clear();
         if (project.beatPattern) {
             state.beatPattern = {
                 steps: project.beatPattern.steps || 16,
@@ -4691,15 +8434,35 @@ const AudioDaw = (() => {
                 }
             }
         }
-        blobStore.clear();
 
+        const restored = [];
+        const trackIdMap = new Map(); // saved track id -> the id this session gave it
         for (const ts of project.tracks || []) {
             const track = AudioDawTrack.createTrack({ name: ts.name, color: ts.color, height: ts.height });
+            trackIdMap.set(ts.id, track.id);
             track.volume = ts.volume ?? 0.8;
             track.pan = ts.pan || 0;
             track.muted = !!ts.muted;
             track.soloed = !!ts.soloed;
-            track.armed = !!ts.armed;
+            // Opening a project never opens a microphone: arm and monitor start off, the input choice is kept
+            track.armed = false;
+            track.monitor = false;
+            track.input = { deviceId: ts.input?.deviceId || null, channels: ts.input?.channels ?? 'mono' };
+            track.takeCount = ts.takeCount || 0;
+            track.kind = ts.kind || 'audio';
+            track.instrument = ts.instrument ? JSON.parse(JSON.stringify(ts.instrument)) : null;
+            track.midiClips = (ts.midiClips || []).map(c => ({ ...c, notes: c.notes.map(n => ({ ...n })), cc: (c.cc || []).map(e => ({ ...e })) }));
+            const sampleKey = track.instrument?.sampleKey;
+            if (sampleKey && blobs.has(sampleKey) && !blobStore.has(sampleKey)) {
+                // Kept even when this browser cannot decode it, so the next save still carries the file
+                let decodedBuffer = null;
+                try {
+                    decodedBuffer = await AudioLabCore.decodeToBuffer(blobs.get(sampleKey));
+                } catch (err) {
+                    console.warn('[AudioDaw] Sampler sample did not decode:', err);
+                }
+                blobStore.set(sampleKey, { blob: blobs.get(sampleKey), decodedBuffer });
+            }
             track.fx = (ts.fx || []).filter(f => typeof AudioDawFx === 'undefined' || AudioDawFx.FX_DEFS[f.type])
                 .map(f => ({ type: f.type, enabled: f.enabled, params: { ...f.params } }));
             track.automation = {
@@ -4708,6 +8471,8 @@ const AudioDaw = (() => {
             };
             track.automationVisible = !!ts.automationVisible;
             track.automationParam = ts.automationParam || 'volume';
+            track.automationMode = ts.automationMode || 'read';
+            track.sends = (ts.sends || []).map(sd => ({ ...sd }));
             for (const cs of ts.clips || []) {
                 const blob = blobs.get(cs.blobKey);
                 if (!blob) continue;
@@ -4732,20 +8497,29 @@ const AudioDaw = (() => {
                 track.clips.push(clip);
             }
             state.tracks.push(track);
+            restored.push(track);
+        }
+        // A send to a bus the project does not have is dropped
+        for (const t of restored) {
+            t.sends = (t.sends || []).filter(sd => trackIdMap.has(sd.busId)).map(sd => ({ ...sd, busId: trackIdMap.get(sd.busId) }));
         }
         if (state.tracks.length === 0) addTrack();
         state.selectedTrackId = state.tracks[0]?.id || null;
 
         buildTransport();
         if (timeline) {
-            timeline.setTempo(state.bpm, state.timeSignature);
+            timeline.setTempo(state.bpm, state.timeSignature, state.tempoMap || []);
             timeline.setMode(state.rulerMode);
+            timeline.setLoop(state.loopEnabled, state.loopStart, state.loopEnd);
+            timeline.setPunch(state.punchEnabled);
         }
+        setTool(state.tool);
         updateTotalDuration();
         renderAllTracks();
         updateBottomPanel();
         updateTimeDisplay();
         updatePlayheadPosition();
+        updateLoopShade();
     }
 
     function scheduleAutosave() {
@@ -4758,7 +8532,7 @@ const AudioDaw = (() => {
     function flushAutosave() {
         if (typeof AudioDawStore === 'undefined' || !state) return;
         if (autosaveTimer) { clearTimeout(autosaveTimer); autosaveTimer = null; }
-        if (!state.tracks.some(t => t.clips.length > 0)) return;
+        if (!sessionHasContent()) return;
         const project = serializeProject();
         const blobs = collectProjectBlobs();
         AudioDawStore.saveProject(AUTOSAVE_SLOT, project, blobs)
@@ -4782,7 +8556,7 @@ const AudioDaw = (() => {
     async function maybeShowStartScreen() {
         const body = document.getElementById('daw_container');
         if (!body || body.querySelector('.daw-resume-bar, .daw-start-screen')) return;
-        if (!state || state.tracks.some(t => t.clips.length > 0)) return;
+        if (!state || sessionHasContent()) return;
         let names = [];
         try {
             const result = await AudioLabAPI.callAPI('AudioLabListProjects');
@@ -4790,7 +8564,7 @@ const AudioDaw = (() => {
         } catch (_) {}
         if (!names.length) return;
         // Re-check after the await — the user may have started working meanwhile
-        if (!state || state.tracks.some(t => t.clips.length > 0)) return;
+        if (!state || sessionHasContent()) return;
         if (body.querySelector('.daw-resume-bar, .daw-start-screen')) return;
 
         const card = createDiv(null, 'daw-resume-bar daw-start-screen');
@@ -4860,45 +8634,97 @@ const AudioDaw = (() => {
         body.appendChild(bar);
     }
 
+    /**
+     * Server save: each clip's audio is its own file beside the project, uploaded only when the server lacks it (a
+     * blob key never changes its audio), then the arrangement JSON lists them under "audio".
+     */
     async function saveProjectToServer(name) {
+        let saved = false;
         const overlay = showDawLoadingOverlay(translate('Saving project...'));
+        const say = (text) => {
+            const el = overlay?.querySelector('.daw-loading-text');
+            if (el) el.textContent = text;
+        };
         try {
             const project = serializeProject();
             const blobs = collectProjectBlobs();
-            let total = 0;
-            for (const b of blobs.values()) total += b.size;
-            if (total > SERVER_SAVE_LIMIT_BYTES) {
-                throw new Error(`Project audio too large for server save (${Math.round(total / 1024 / 1024)}MB, max ${SERVER_SAVE_LIMIT_BYTES / 1024 / 1024}MB)`);
+            for (const blob of blobs.values()) {
+                if (blob.size > SERVER_AUDIO_FILE_LIMIT_BYTES) {
+                    throw new Error(`${translate('One clip is too long for a server save')} (${Math.round(blob.size / 1024 / 1024)} MB, max ${SERVER_AUDIO_FILE_LIMIT_BYTES / 1024 / 1024} MB). ${translate('Autosave and local saves still hold it')}`);
+                }
             }
-            const blobData = {};
+            const listed = await AudioLabAPI.callAPI('AudioLabListProjectAudio', { name });
+            if (!listed.success) throw new Error(listed.error || 'Could not list the project audio');
+            const have = listed.audio || {};
+            const audio = {};
+            const missing = [...blobs].filter(([key, blob]) => have[key] !== blob.size);
+            let done = 0;
             for (const [key, blob] of blobs) {
-                blobData[key] = { b64: await AudioLabCore.readAsBase64(blob), type: blob.type || 'audio/wav' };
+                audio[key] = { type: blob.type || 'audio/wav', size: blob.size };
+                if (have[key] === blob.size) continue;
+                say(`${translate('Uploading audio')} ${++done} / ${missing.length}`);
+                const up = await AudioLabAPI.callAPI('AudioLabSaveProjectAudio', {
+                    name, key, audio_b64: await AudioLabCore.readAsBase64(blob)
+                });
+                if (!up.success) throw new Error(up.error || 'Audio upload failed');
             }
-            project.blobs = blobData;
-            const result = await AudioLabAPI.callAPI('AudioLabSaveProject', {
+            project.audio = audio;
+            say(translate('Saving project...'));
+            let result = await AudioLabAPI.callAPI('AudioLabSaveProject', {
                 name, project_json: JSON.stringify(project)
             });
+            if (!result.success && result.error_code === 'audio_missing') {
+                // Another save pruned clips this one had listed as present: upload those again, then save once more
+                for (const key of result.missing || []) {
+                    const blob = blobs.get(key);
+                    if (!blob) throw new Error(`Missing audio ${key}`);
+                    say(`${translate('Uploading audio')} ${key}`);
+                    const up = await AudioLabAPI.callAPI('AudioLabSaveProjectAudio', {
+                        name, key, audio_b64: await AudioLabCore.readAsBase64(blob)
+                    });
+                    if (!up.success) throw new Error(up.error || 'Audio upload failed');
+                }
+                say(translate('Saving project...'));
+                result = await AudioLabAPI.callAPI('AudioLabSaveProject', {
+                    name, project_json: JSON.stringify(project)
+                });
+            }
             if (!result.success) throw new Error(result.error || 'Save failed');
             currentProjectName = name;
+            saved = true;
             if (typeof doNoticePopover === 'function') doNoticePopover(translate('Project saved:') + ` "${name}"`, 'notice-pop-green');
         } catch (err) {
             console.error('[AudioDaw] Save project failed:', err);
             if (typeof doNoticePopover === 'function') doNoticePopover(translate('Save failed:') + ' ' + err.message, 'notice-pop-red');
         }
         hideDawLoadingOverlay(overlay);
+        return saved;
     }
 
     async function openProjectFromServer(name) {
+        // Same guard as New Project: ask before replacing a session with content, and persist that session first
+        if (sessionHasContent() && !confirm(translate('Open another project? This session is saved to the autosave slot first, and the project you open replaces it on screen.'))) return;
+        flushAutosave();
         const overlay = showDawLoadingOverlay(translate('Loading project...'));
         try {
             const result = await AudioLabAPI.callAPI('AudioLabLoadProject', { name });
             if (!result.success) throw new Error(result.error || 'Load failed');
             const project = JSON.parse(result.project_json);
             const blobs = new Map();
+            // Projects saved before audio moved to its own files carry it inline
             for (const [key, info] of Object.entries(project.blobs || {})) {
                 blobs.set(key, AudioLabCore.base64ToBlob(info.b64, info.type || 'audio/wav'));
             }
+            const audioKeys = Object.keys(project.audio || {});
+            for (const [i, key] of audioKeys.entries()) {
+                const text = overlay?.querySelector('.daw-loading-text');
+                if (text) text.textContent = `${translate('Loading audio')} ${i + 1} / ${audioKeys.length}`;
+                const got = await AudioLabAPI.callAPI('AudioLabLoadProjectAudio', { name, key });
+                if (!got.success) throw new Error(got.error || `Missing audio ${key}`);
+                blobs.set(key, AudioLabCore.base64ToBlob(got.audio_b64, project.audio[key].type || 'audio/wav'));
+            }
             delete project.blobs;
+            delete project.audio;
             await restoreProject(project, blobs);
             currentProjectName = name;
             if (typeof doNoticePopover === 'function') doNoticePopover(translate('Project loaded:') + ` "${name}"`, 'notice-pop-green');
@@ -4919,11 +8745,19 @@ const AudioDaw = (() => {
         currentProjectName = null;
         addTrack();
         buildTransport();
+        if (timeline) {
+            timeline.setTempo(state.bpm, state.timeSignature, state.tempoMap || []);
+            timeline.setMode(state.rulerMode);
+            timeline.setLoop(false, 0, 0);
+            timeline.setPunch(false);
+        }
+        setTool(state.tool);
         updateTotalDuration();
         renderAllTracks();
         updateBottomPanel();
         updateTimeDisplay();
         updatePlayheadPosition();
+        updateLoopShade();
     }
 
     function showProjectMenu(e) {
@@ -4947,7 +8781,7 @@ const AudioDaw = (() => {
                 }
             }},
             { label: translate('New Project'), action: () => {
-                if (state.tracks.some(t => t.clips.length > 0) && !confirm(translate('Start a new empty project? Unsaved changes are kept only in the autosave slot.'))) {
+                if (sessionHasContent() && !confirm(translate('Start a new empty project? Unsaved changes are kept only in the autosave slot.'))) {
                     return;
                 }
                 flushAutosave();
@@ -4978,29 +8812,51 @@ const AudioDaw = (() => {
     // ===== EXPORT =====
 
     function showExportMenu(e) {
+        const hasSel = !!state.selection;
+        const hasLoop = state.loopEnd > state.loopStart;
+        const reopen = () => showExportMenu(e);
+        const pick = (key, value) => () => {
+            exportSettings[key] = value;
+            if (key !== 'range') saveExportSettings();
+            reopen();
+        };
         dawMenu(e, [
-            { label: translate('WAV (Lossless)'), action: () => doExportMixdown('wav') },
-            { label: translate('MP3 (192kbps)'), action: () => doExportMixdown('mp3') },
+            { heading: translate('Range') },
+            { label: translate('Whole song'), checked: exportSettings.range === 'song', action: pick('range', 'song') },
+            { label: translate('Selection'), checked: exportSettings.range === 'selection', disabled: !hasSel, action: pick('range', 'selection') },
+            { label: translate('Loop range'), checked: exportSettings.range === 'loop', disabled: !hasLoop, action: pick('range', 'loop') },
+            { heading: translate('Quality (WAV and stems)') },
+            { label: translate('16-bit'), checked: exportSettings.bitDepth === 16, action: pick('bitDepth', 16) },
+            { label: translate('24-bit'), checked: exportSettings.bitDepth === 24, action: pick('bitDepth', 24) },
+            { label: translate('32-bit float'), checked: exportSettings.bitDepth === 32, action: pick('bitDepth', 32) },
+            { label: '44.1 kHz', checked: exportSettings.sampleRate === 44100, action: pick('sampleRate', 44100) },
+            { label: '48 kHz', checked: exportSettings.sampleRate === 48000, action: pick('sampleRate', 48000) },
+            { heading: translate('Export') },
+            { label: translate('WAV'), action: () => doExportMixdown('wav') },
+            { label: translate('MP3 (192 kbps)'), action: () => doExportMixdown('mp3') },
             { label: translate('OGG Vorbis'), action: () => doExportMixdown('ogg') },
-            { label: translate('FLAC (Lossless)'), action: () => doExportMixdown('flac') },
-            { label: translate('AAC (192kbps)'), action: () => doExportMixdown('aac') },
+            { label: translate('FLAC (lossless)'), action: () => doExportMixdown('flac') },
+            { label: translate('AAC (192 kbps)'), action: () => doExportMixdown('aac') },
+            { label: translate('Stems: one WAV per track (ZIP)'), action: () => doExportStems() },
             { label: translate('Save WAV to Swarm Outputs'), action: saveMixdownToOutputs }
         ]);
     }
 
     async function doExportMixdown(format = 'wav') {
         if (state.tracks.length === 0) return;
+        const bounds = exportBounds();
         try {
             if (typeof doNoticePopover === 'function') {
-                doNoticePopover('Rendering mixdown...', 'notice-pop-blue');
+                doNoticePopover(translate('Rendering mixdown...'), 'notice-pop-blue');
             }
-            const wavBlob = await renderMixdownBlob();
+            const wavBlob = await renderMixdownBlob(bounds);
             if (!wavBlob) throw new Error('Nothing to export');
+            const name = `${exportBaseName()}-${bounds.label}`;
 
             if (format === 'wav') {
-                downloadBlob(wavBlob, `audiolab-mixdown-${Date.now()}.wav`);
+                downloadBlob(wavBlob, `${name}.wav`);
                 if (typeof doNoticePopover === 'function') {
-                    doNoticePopover('WAV exported', 'notice-pop-green');
+                    doNoticePopover(translate('WAV exported'), 'notice-pop-green');
                 }
             } else {
                 // Convert via backend API
@@ -5014,7 +8870,7 @@ const AudioDaw = (() => {
                 });
                 if (result.success && result.audio_data) {
                     const convertedBlob = AudioLabCore.base64ToBlob(result.audio_data, result.mime_type || 'audio/mpeg');
-                    downloadBlob(convertedBlob, `audiolab-mixdown-${Date.now()}.${format}`);
+                    downloadBlob(convertedBlob, `${name}.${format}`);
                     if (typeof doNoticePopover === 'function') {
                         doNoticePopover(`${format.toUpperCase()} ` + translate('exported'), 'notice-pop-green');
                     }
@@ -5039,14 +8895,14 @@ const AudioDaw = (() => {
     }
 
     /**
-     * Convert an AudioBuffer to a WAV Blob.
-     * Pure JS implementation — no dependency on Crunker for export.
+     * Convert an AudioBuffer to a WAV Blob. Pure JS, no dependency on Crunker for export.
+     * @param {Object} [opts] - { bitDepth: 16 (PCM, default), 24 (PCM) or 32 (IEEE float, lossless) }
      */
-    function audioBufferToWav(buffer) {
+    function audioBufferToWav(buffer, { bitDepth = 16 } = {}) {
         const numChannels = buffer.numberOfChannels;
         const sampleRate = buffer.sampleRate;
-        const format = 1; // PCM
-        const bitDepth = 16;
+        const isFloat = bitDepth === 32;
+        const format = isFloat ? 3 : 1; // 3 = IEEE float, 1 = PCM
         const bytesPerSample = bitDepth / 8;
         const blockAlign = numChannels * bytesPerSample;
         const numSamples = buffer.length;
@@ -5078,9 +8934,23 @@ const AudioDaw = (() => {
         let offset = 44;
         for (let i = 0; i < numSamples; i++) {
             for (let ch = 0; ch < numChannels; ch++) {
-                const sample = Math.max(-1, Math.min(1, channels[ch][i]));
-                view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
-                offset += 2;
+                const raw = channels[ch][i];
+                if (isFloat) {
+                    view.setFloat32(offset, raw, true);
+                }
+                else {
+                    const sample = Math.max(-1, Math.min(1, raw));
+                    if (bitDepth === 24) {
+                        const v = Math.round(sample < 0 ? sample * 0x800000 : sample * 0x7FFFFF);
+                        view.setUint8(offset, v & 0xFF);
+                        view.setUint8(offset + 1, (v >> 8) & 0xFF);
+                        view.setUint8(offset + 2, (v >> 16) & 0xFF);
+                    }
+                    else {
+                        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+                    }
+                }
+                offset += bytesPerSample;
             }
         }
 
@@ -5097,38 +8967,83 @@ const AudioDaw = (() => {
 
     function handleKeyboard(e) {
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
+        // A keyboard-focused button or link keeps Enter and Space for itself (mouse clicks never leave focus behind)
+        if ((e.key === 'Enter' || e.key === ' ') && e.target.closest?.('button, a, [role="button"], [role="tab"]')) return;
+        // The computer-keyboard instrument claims its keys first while it is enabled
+        if (typeof AudioDawInstruments !== 'undefined' && AudioDawInstruments.handleKeyDown && AudioDawInstruments.handleKeyDown(e)) return;
         const key = e.key.toLowerCase();
+        const mod = e.ctrlKey || e.metaKey;
+        const sel = state.selection;
 
         if (key === ' ') {
             e.preventDefault();
             if (recording) stopRecordingFlow();
             else togglePlayback();
         }
-        else if (key === 'r' && !e.ctrlKey && !e.metaKey) {
+        else if (key === 'r' && e.shiftKey && !mod) {
+            e.preventDefault();
+            const track = getSelectedTrack();
+            if (track) toggleArm(track);
+        }
+        else if (key === 'r' && !mod) {
             e.preventDefault();
             if (recording) stopRecordingFlow();
             else startRecordingFlow();
         }
-        else if (key === 'z' && (e.ctrlKey || e.metaKey) && e.shiftKey) { e.preventDefault(); doRedo(); }
-        else if (key === 'z' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doUndo(); }
-        else if (key === 's' && (e.ctrlKey || e.metaKey)) {
+        else if (key === 'z' && mod && e.shiftKey) { e.preventDefault(); doRedo(); }
+        else if (key === 'y' && mod) { e.preventDefault(); doRedo(); }
+        else if (key === 'z' && mod) { e.preventDefault(); doUndo(); }
+        else if (key === 's' && mod) {
             e.preventDefault();
             if (currentProjectName) saveProjectToServer(currentProjectName);
             else promptSaveAs();
         }
-        else if (key === 'd' && (e.ctrlKey || e.metaKey)) {
+        else if (key === 'd' && mod) {
             e.preventDefault();
-            const sel = findClipById(state.selectedClipId);
-            if (sel) doDuplicateClip(sel.clip, sel.track);
+            const found = findClipById(state.selectedClipId);
+            if (found) doDuplicateClip(found.clip, found.track);
+        }
+        else if (key === 'c' && mod) { e.preventDefault(); copySelection(); }
+        else if (key === 'x' && mod) { e.preventDefault(); cutSelection(); }
+        else if (key === 'v' && mod) { e.preventDefault(); pasteClipboard(); }
+        else if (key === 'a' && mod) {
+            e.preventDefault();
+            setSelection({ start: 0, end: Math.max(state.contentDuration, 0.1), trackIds: state.tracks.map(t => t.id) });
         }
         else if (key === 'delete' || key === 'backspace') {
-            if (state.selectedClipId) {
-                const track = state.tracks.find(t => t.clips.some(c => c.id === state.selectedClipId));
-                const clip = track?.clips.find(c => c.id === state.selectedClipId);
-                if (clip && track) doDeleteClip(clip, track);
+            if (sel) {
+                e.preventDefault();
+                deleteRange(sel);
+                clearSelection();
+            }
+            else if (state.selectedClipId) {
+                const found = findClipById(state.selectedClipId);
+                if (found) doDeleteClip(found.clip, found.track);
+            }
+            else if (state.selectedMidiClipId) {
+                const found = findMidiClip(state.selectedMidiClipId);
+                if (found) deleteMidiClip(found.clip, found.track);
             }
         }
-        else if (key === 'm') {
+        else if (key === 'escape') {
+            clearSelection();
+            document.querySelector('.daw-context-menu')?.remove();
+        }
+        else if (key === 'enter') {
+            e.preventDefault();
+            addMarker(state.currentTime);
+        }
+        else if (key === '[') { jumpMarker(-1); }
+        else if (key === ']') { jumpMarker(1); }
+        else if (key === ',') { nudgeSelected(-1); }
+        else if (key === '.') { nudgeSelected(1); }
+        else if (key === 'arrowleft' || key === 'arrowright') {
+            e.preventDefault();
+            const dir = key === 'arrowleft' ? -1 : 1;
+            const step = e.shiftKey ? transportStep() : gridStep();
+            seekTo(Math.max(0, state.currentTime + dir * step));
+        }
+        else if (key === 'm' && !mod) {
             const track = getSelectedTrack();
             if (track) {
                 track.muted = !track.muted;
@@ -5136,7 +9051,7 @@ const AudioDaw = (() => {
                 renderAllTracks();
             }
         }
-        else if (key === 's') {
+        else if (key === 's' && !mod) {
             const track = getSelectedTrack();
             if (track) {
                 track.soloed = !track.soloed;
@@ -5144,18 +9059,54 @@ const AudioDaw = (() => {
                 renderAllTracks();
             }
         }
-        else if (key === 'l') { toggleLoop(); }
-        else if (key === 't') {
-            const sel = findClipById(state.selectedClipId);
-            if (sel) doSplitClip(sel.clip, sel.track);
+        else if (key === 'i' && !mod) {
+            const track = getSelectedTrack();
+            if (track) toggleMonitor(track);
         }
-        else if (key === 'b') { switchBottomTab('beats'); }
-        else if (key === 'f') { switchBottomTab('fx'); }
+        else if (key === 'c' && !mod) { toggleMetronome(); }
+        else if (key === 'p' && !mod) { togglePunch(); }
+        else if (key === 'l' && !mod) {
+            // With a selection, L loops it
+            if (sel) {
+                state.loopStart = sel.start;
+                state.loopEnd = sel.end;
+                if (!state.loopEnabled) toggleLoop();
+                else {
+                    if (timeline) timeline.setLoop(true, state.loopStart, state.loopEnd);
+                    updateLoopShade();
+                    resyncPlayback();
+                }
+            }
+            else {
+                toggleLoop();
+            }
+        }
+        else if (key === 't' && !mod) {
+            if (sel) splitAtSelection(sel);
+            else {
+                const found = findClipById(state.selectedClipId);
+                if (found) doSplitClip(found.clip, found.track);
+            }
+        }
+        else if (key === 'v' && !mod) { setTool('smart'); }
+        else if (key === 'y' && !mod) { setTool('range'); }
+        else if (key === 'z' && !mod) { zoomToFit(); }
+        else if (key === 'b' && !mod) { switchBottomTab('beats'); }
+        else if (key === 'f' && !mod) {
+            // With a selection, F crossfades the clips meeting inside it; otherwise it opens the FX tab
+            if (sel) crossfadeSelection(sel);
+            else switchBottomTab('fx');
+        }
         else if (key === '+' || key === '=') { e.preventDefault(); setZoom(state.zoom * 1.25); }
         else if (key === '-') { e.preventDefault(); setZoom(state.zoom / 1.25); }
         else if (key === 'home') { e.preventDefault(); seekTo(0); }
-        else if (key === 'end') { e.preventDefault(); seekTo(state.totalDuration); }
+        else if (key === 'end') { e.preventDefault(); seekTo(state.contentDuration); }
         else if (key === '?') { e.preventDefault(); showShortcutHelp(); }
+    }
+
+    /** Key releases: the computer-keyboard instrument ends its notes here. */
+    function handleKeyboardUp(e) {
+        if (typeof AudioDawInstruments !== 'undefined' && AudioDawInstruments.handleKeyUp) AudioDawInstruments.handleKeyUp(e);
     }
 
     function showShortcutHelp() {
@@ -5164,16 +9115,26 @@ const AudioDaw = (() => {
         const overlay = createDiv(null, 'daw-shortcut-help');
         const rows = [
             ['Space', 'Play / Pause (stops recording)'],
-            ['R', 'Start / stop recording'],
-            ['L', 'Toggle loop'],
-            ['M / S', 'Mute / solo selected track'],
-            ['T', 'Split selected clip at playhead'],
-            ['Delete', 'Delete selected clip'],
-            ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'],
-            ['Ctrl+D', 'Duplicate selected clip'],
-            ['Ctrl+S', 'Save project'],
-            ['+ / -', 'Zoom in / out'],
+            ['R / Shift+R', 'Record / arm the selected track'],
+            ['I', 'Monitor the selected track\'s input'],
+            ['C / P', 'Metronome / punch recording'],
+            ['L', 'Loop (loops the selection when there is one)'],
             ['Home / End', 'Jump to start / end'],
+            ['Left / Right', 'Move the playhead one grid step (Shift: one bar)'],
+            ['Enter / [ / ]', 'Add a marker / previous / next marker'],
+            ['V / Y', 'Smart tool / range tool'],
+            ['Ctrl+A', 'Select everything'],
+            ['Ctrl+C / X / V', 'Copy / cut / paste at the playhead'],
+            ['Delete', 'Delete the selection or the selected clip'],
+            ['T', 'Split at the playhead (or at the selection edges)'],
+            ['F', 'Crossfade the clips meeting in the selection (no selection: FX tab)'],
+            [', / .', 'Nudge the selected clip by one grid step'],
+            ['Ctrl+D', 'Duplicate the selected clip'],
+            ['M / S', 'Mute / solo the selected track'],
+            ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'],
+            ['Ctrl+S', 'Save project'],
+            ['+ / - / Z', 'Zoom in / out / to fit'],
+            ['Esc', 'Clear the selection'],
             ['?', 'Toggle this help']
         ];
         // Key names stay as-is (they name physical keys); only the descriptions are translated.
@@ -5211,10 +9172,13 @@ const AudioDaw = (() => {
     }
 
     function resetState() {
+        stopAllLiveVoices();
         abortRecording();
         stopBeatAudition();
         stopPlayback();
         teardownPlaybackGraph();
+        closeAllInputs();
+        destroyMixer();
         // Destroy existing tracks
         if (state) {
             for (const track of state.tracks) {
@@ -5226,6 +9190,8 @@ const AudioDaw = (() => {
     }
 
     function destroyAll() {
+        stopAllLiveVoices();
+        AudioDawInstruments.setQwerty(false);
         abortRecording();
         stopBeatAudition();
         if (clipEditorPlayer) {
@@ -5237,6 +9203,10 @@ const AudioDaw = (() => {
         paletteResults = [];
         stopPlayback();
         teardownPlaybackGraph();
+        closeAllInputs();
+        AudioDawInput.releaseAll();
+        destroyMixer();
+        if (meterRaf) { cancelAnimationFrame(meterRaf); meterRaf = null; }
         if (state) {
             for (const track of state.tracks) {
                 AudioDawTrack.destroyTrack(track);
@@ -5252,59 +9222,62 @@ const AudioDaw = (() => {
     }
 
     // ===== TAB-MODE BOOT (once per page load) =====
-    // Hides the tab until it's needed, wires the tab-shown lifecycle (lazy init +
-    // mic release on switch-away), and reveals a dormant tab when a resumable
-    // autosave exists. No-ops on pages without the AudioLab tab.
+    // Wires the tab-shown lifecycle (lazy init + mic release on switch-away), keyboard, and autosave flush.
+    // No-ops on pages without the AudioLab tab.
     function bootTabMode() {
         const container = document.getElementById('daw_container');
         if (!container || !dawTabLink()) return;
-        hideDawTab();
+        // A mouse-clicked button drops focus, so Space and Enter go back to the transport shortcuts
+        container.addEventListener('click', (e) => {
+            if (e.detail > 0) e.target.closest?.('button')?.blur();
+        });
         // Keyboard: document-level, only while the DAW tab is the visible one
         document.addEventListener('keydown', (e) => {
             if (!initialized || !state || container.offsetParent === null) return;
             handleKeyboard(e);
         });
-        // Browser tabs die without warning — flush the autosave on page close too
+        // Key releases count even while hidden, so a note held across a tab switch still lets go
+        document.addEventListener('keyup', (e) => {
+            if (!initialized || !state) return;
+            handleKeyboardUp(e);
+        });
+        // A keyup that happens outside the window never arrives at all
+        window.addEventListener('blur', () => {
+            if (initialized && typeof AudioDawInstruments !== 'undefined') {
+                AudioDawInstruments.releaseAll();
+                stopAllLiveVoices();
+            }
+        });
+        // Browser tabs die without warning: flush the autosave on page close too
         window.addEventListener('beforeunload', () => flushAutosave());
         window.addEventListener('resize', sizeDawContainer);
         if (typeof $ !== 'undefined') {
             $('#toptablist').on('shown.bs.tab', (e) => {
                 if (e.target.id === 'maintab_audiolab') {
                     sizeDawContainer(); // pane just became measurable
-                    // Covers hash-nav landing directly on #audiolab too (no re-click
-                    // from inside the shown handler — just unhide + init)
+                    // Covers hash-nav landing directly on #audiolab too
                     if (!initialized) {
-                        dawTabLink()?.closest('.nav-item')?.classList.remove('daw-tab-hidden');
                         ensureInitialized();
                         maybeOfferResume().then(maybeShowStartScreen);
+                    } else if (state) {
+                        resyncAllInputs(); // armed and monitored tracks get their inputs back
                     }
-                } else if (recording) {
-                    // Never leave the microphone hot while the DAW is hidden
-                    stopRecordingFlow();
+                } else {
+                    // Held notes and the sustain pedal end here (before a take is kept, so they close cleanly)
+                    if (initialized && typeof AudioDawInstruments !== 'undefined') {
+                        AudioDawInstruments.releaseAll();
+                        stopAllLiveVoices(); // Web MIDI notes are not in the keyboard's held map, so they stop here too
+                        liveControl(64, 0);
+                    }
+                    if (recording) {
+                        // Never leave the microphone hot while the DAW is hidden; inputs close once the take is kept
+                        stopRecordingFlow();
+                    } else {
+                        releaseInputsIfHidden();
+                    }
                 }
             });
         }
-        // Dormant tab: a crash-recovery autosave only exists when a session ended
-        // WITHOUT a clean Close (clean closes delete the slot) — reveal the tab
-        // so the user can get back to their interrupted work.
-        if (typeof AudioDawStore !== 'undefined') {
-            AudioDawStore.getProjectMeta(AUTOSAVE_SLOT).then(meta => {
-                if (meta && Date.now() - meta.savedAt <= AUTOSAVE_MAX_AGE_MS) {
-                    dawTabLink()?.closest('.nav-item')?.classList.remove('daw-tab-hidden');
-                }
-            }).catch(() => {});
-        }
-        // Users with saved projects get the tab as their way back into the DAW —
-        // clicking it opens the start screen with their project list. (Delayed so
-        // the session is established before the API call.)
-        setTimeout(() => {
-            try {
-                AudioLabAPI.callAPI('AudioLabListProjects').then(result => {
-                    const names = (result?.projects || []).filter(n => n !== AUTOSAVE_SLOT);
-                    if (names.length) dawTabLink()?.closest('.nav-item')?.classList.remove('daw-tab-hidden');
-                }).catch(() => {});
-            } catch (_) {}
-        }, 1500);
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', bootTabMode);

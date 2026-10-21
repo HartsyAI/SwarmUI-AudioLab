@@ -22,14 +22,30 @@ const AudioDawFx = (() => {
         try { param.setTargetAtTime(value, when, PARAM_SMOOTH); } catch (_) { param.value = value; }
     }
 
-    /** Procedural reverb impulse response: decorrelated stereo noise with a power-law decay tail. */
+    /** Small seeded PRNG (mulberry32), so the same settings always build the same impulse response. */
+    function seededRandom(seed) {
+        let s = seed >>> 0;
+        return () => {
+            s = (s + 0x6D2B79F5) >>> 0;
+            let t = s;
+            t = Math.imul(t ^ (t >>> 15), t | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+    }
+
+    /**
+     * Procedural reverb impulse response: decorrelated stereo noise with a power-law decay tail.
+     * Seeded from the settings, so live playback and the offline export hear the identical room.
+     */
     function makeImpulseResponse(ctx, { seconds, decay }) {
         const len = Math.max(64, Math.round(seconds * ctx.sampleRate));
         const ir = ctx.createBuffer(2, len, ctx.sampleRate);
         for (let ch = 0; ch < 2; ch++) {
+            const rand = seededRandom(Math.round(seconds * 1000) * 7919 + Math.round(decay * 100) * 31 + ch + 1);
             const data = ir.getChannelData(ch);
             for (let i = 0; i < len; i++) {
-                data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+                data[i] = (rand() * 2 - 1) * Math.pow(1 - i / len, decay);
             }
         }
         return ir;
@@ -346,12 +362,15 @@ const AudioDawFx = (() => {
         setEffectEnabled(chain, index, fx, when);
     }
 
-    /** Retune all tempo-synced delays after a BPM change. */
-    function syncDelayTimes(chain, fxArray, bpm, when) {
+    /** Retune all tempo-synced delays to a BPM at `when` (fresh: drop retunes queued from then on first). */
+    function syncDelayTimes(chain, fxArray, bpm, when, fresh = false) {
         if (!chain) return;
         chain.effects.forEach((e, i) => {
             const fx = fxArray[i];
             if (e.type === 'delay' && fx?.params.sync) {
+                if (fresh) {
+                    try { e.inst.delay.delayTime.cancelScheduledValues(when); } catch (_) {}
+                }
                 setParam(e.inst.delay.delayTime, syncedDelayTime(fx.params.division, bpm), when);
             }
         });
