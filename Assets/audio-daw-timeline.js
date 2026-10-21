@@ -237,7 +237,7 @@ const AudioDawTimeline = (() => {
             if (t > t1) break;
             const x = X(t);
             if (b % clicksPerBar !== 0) {
-                if (60 / tm.bpmAt(t) * zoom < 6) continue;
+                if (60 / tm.bpmAt(t) * unit * zoom < 6) continue;
                 ctx.strokeStyle = lineColor;
                 ctx.beginPath();
                 ctx.moveTo(x, ROW_BARS - 4);
