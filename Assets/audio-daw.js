@@ -5710,10 +5710,7 @@ const AudioDaw = (() => {
                 renderAllTracks();
             }},
             { label: translate('Export as MIDI file'), action: () => {
-                // What the clip plays: notes that start inside it, cut at its end, and pedal events inside it
-                const len = AudioDawInstruments.midiClipLength(clip);
-                const notes = clip.notes.filter(n => n.start < len).map(n => ({ ...n, dur: Math.min(n.dur, len - n.start) }));
-                const cc = (clip.cc || []).filter(e => e.t <= len);
+                const { len, notes, cc } = midiClipExport(clip);
                 const tempos = (state.tempoMap || []).filter(c => c.t > clip.startTime && c.t < clip.startTime + len)
                     .map(c => ({ t: c.t - clip.startTime, bpm: c.bpm }));
                 downloadBlob(AudioDawInstruments.writeMidiFile(notes, bpmAt(clip.startTime), cc, tempos), `${(clip.name || 'clip').replace(/[\\/:*?"<>|]+/g, '_')}.mid`);
@@ -6115,10 +6112,26 @@ const AudioDaw = (() => {
                 mc.notes = mc.notes.filter(n => cs + n.start < sel.start || cs + n.start >= sel.end);
                 mc.cc = (mc.cc || []).filter(c => cs + c.t < sel.start || cs + c.t >= sel.end);
                 if (mc.notes.length !== noteCount || mc.cc.length !== ccCount) changed = true;
-                // A note sounding across the range start stops there, in every mode
+                // A note sounding across the range start stops there; the part past the range end stays as its own note
+                const tails = [];
                 for (const n of mc.notes) {
-                    if (cs + n.start < sel.start && cs + n.start + n.dur > sel.start) {
-                        n.dur = sel.start - (cs + n.start);
+                    const t = cs + n.start;
+                    if (t < sel.start && t + n.dur > sel.start) {
+                        if (t + n.dur > sel.end) tails.push({ ...n, start: sel.end - cs, dur: t + n.dur - sel.end });
+                        n.dur = sel.start - t;
+                        changed = true;
+                    }
+                }
+                mc.notes.push(...tails);
+                // A pedal still down at the range start is released there, so the notes it sustains stop there too
+                if (cs < sel.start && cs + AudioDawInstruments.midiClipLength(mc) > sel.start) {
+                    let down = false;
+                    for (const e of mc.cc) {
+                        if (e.n === 64 && cs + e.t < sel.start) down = e.v >= 64;
+                    }
+                    if (down) {
+                        mc.cc.push({ t: sel.start - cs, n: 64, v: 0 });
+                        mc.cc.sort((a, b) => a.t - b.t);
                         changed = true;
                     }
                 }
@@ -6488,6 +6501,20 @@ const AudioDaw = (() => {
     }
 
     // ===== CLIP CONTEXT MENU =====
+
+    /** What a MIDI clip plays, for export: notes that start inside it, cut at its end, and its pedal events inside it.
+     * A pedal still down at the end is released there, so the sustain ends with the clip. */
+    function midiClipExport(clip) {
+        const len = AudioDawInstruments.midiClipLength(clip);
+        const notes = clip.notes.filter(n => n.start < len).map(n => ({ ...n, dur: Math.min(n.dur, len - n.start) }));
+        const cc = (clip.cc || []).filter(e => e.t <= len);
+        let down = false;
+        for (const e of clip.cc || []) {
+            if (e.n === 64 && e.t <= len) down = e.v >= 64;
+        }
+        if (down) cc.push({ t: len, n: 64, v: 0 });
+        return { len, notes, cc };
+    }
 
     function showClipContextMenu(e, clip, track) {
         const idx = track.clips.indexOf(clip);
@@ -8676,7 +8703,7 @@ const AudioDaw = (() => {
 
     async function openProjectFromServer(name) {
         // Same guard as New Project: ask before replacing a session with content, and persist that session first
-        if (sessionHasContent() && !confirm(translate('Open another project? Unsaved changes in this session are kept only in the autosave slot.'))) return;
+        if (sessionHasContent() && !confirm(translate('Open another project? This session is saved to the autosave slot first, and the project you open replaces it on screen.'))) return;
         flushAutosave();
         const overlay = showDawLoadingOverlay(translate('Loading project...'));
         try {
@@ -9216,7 +9243,10 @@ const AudioDaw = (() => {
         });
         // A keyup that happens outside the window never arrives at all
         window.addEventListener('blur', () => {
-            if (initialized && typeof AudioDawInstruments !== 'undefined') AudioDawInstruments.releaseAll();
+            if (initialized && typeof AudioDawInstruments !== 'undefined') {
+                AudioDawInstruments.releaseAll();
+                stopAllLiveVoices();
+            }
         });
         // Browser tabs die without warning: flush the autosave on page close too
         window.addEventListener('beforeunload', () => flushAutosave());
@@ -9236,6 +9266,7 @@ const AudioDaw = (() => {
                     // Held notes and the sustain pedal end here (before a take is kept, so they close cleanly)
                     if (initialized && typeof AudioDawInstruments !== 'undefined') {
                         AudioDawInstruments.releaseAll();
+                        stopAllLiveVoices(); // Web MIDI notes are not in the keyboard's held map, so they stop here too
                         liveControl(64, 0);
                     }
                     if (recording) {
