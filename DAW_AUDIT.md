@@ -103,6 +103,11 @@ Round 7 is rows 37 and 38.
 | 71 | Codex round 12 | An aux bus stem's tail ignored the effects of the tracks that send to it | The stem sized its tail from the bus alone | 41308de |
 | 72 | Codex round 12 | A range delete left a sustained MIDI note running through the range outside shuffle | Note trimming ran only in shuffle | 41308de |
 | 73 | Codex round 12 | A 7/8 count-in counted quarter notes and missed its downbeat | The count-in walked whole quarter beats, as the metronome did before | 41308de |
+| 74 | Codex round 13 | A pedal held across a range start kept sounding through the cut | The range delete removed the pedal-up inside the range and never released the pedal at its start | 72130a9 |
+| 75 | Codex round 13 | A MIDI export dropped the sustain of a pedal still down at the clip end | The export kept only pedal events inside the clip and never released the pedal at its end | 72130a9 |
+| 76 | Codex round 13 | Web MIDI notes kept sounding after leaving the DAW | Leaving released only the keyboard's held notes, not the live voices | 72130a9 |
+| 77 | Round 13 review (own) | A note running past a range delete lost the part past the range end | Crossing notes were cut at the range start with nothing kept after the end | 72130a9 |
+| 78 | Round 13 review (own) | The 7/8 ruler's minor ticks used quarter spacing at low zoom, and the Open confirm overstated what the autosave slot keeps | Tick density used the beat rather than the click unit; the confirm text said the session stayed only in the autosave slot | 72130a9 |
 
 Rows 39 to 51 are the verified findings of this review. Rounds 8 and 9 of the Codex review are rows 45 and 52 to 60.
 
