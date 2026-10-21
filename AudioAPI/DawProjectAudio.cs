@@ -49,6 +49,12 @@ public static class DawProjectAudio
         return files;
     }
 
+    /// <summary>The keys among these that the folder holds no file for (a key that is not safe as a file name counts as missing).</summary>
+    public static List<string> MissingKeys(string audioDir, IEnumerable<string> keys)
+    {
+        return keys.Where(key => SafeKey(key) is null || !File.Exists(AudioPath(audioDir, key))).ToList();
+    }
+
     /// <summary>Writes one audio file via temp-then-rename, so a crash never leaves a half-written file under its key.</summary>
     public static async Task Write(string audioDir, string key, byte[] data)
     {

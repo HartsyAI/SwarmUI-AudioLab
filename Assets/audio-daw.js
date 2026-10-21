@@ -2610,24 +2610,33 @@ const AudioDaw = (() => {
         return tail;
     }
 
+    /** The tracks a bus stem renders: unmuted tracks with an unmuted send into the bus. */
+    function busStemSenders(bus) {
+        return state.tracks.filter(t => t.kind !== 'bus' && !t.muted && (t.sends || []).some(sd => sd.busId === bus.id && !sd.muted));
+    }
+
     async function renderMixdownBuffer({ start = 0, end = state.contentDuration, exact = false, trackIds = null } = {}) {
         const stems = !!trackIds;
         const tracks = stems ? state.tracks.filter(t => trackIds.includes(t.id)) : state.tracks;
         if (!tracks.length || end - start <= 0) return null;
         const sampleRate = exportSettings.sampleRate;
-        const hasTails = !exact && tracks.some(t => (t.fx || []).some(f =>
+        // A bus stem also renders the tracks that send to it, so their effects and instruments size its tail too
+        const stemBus = stems && tracks.length === 1 && tracks[0].kind === 'bus' ? tracks[0] : null;
+        const renderSet = stemBus ? busStemSenders(stemBus) : tracks.filter(t => t.kind !== 'bus');
+        const tailTracks = stemBus ? [stemBus, ...renderSet] : tracks;
+        const hasTails = !exact && tailTracks.some(t => (t.fx || []).some(f =>
             f.enabled && (f.type === 'reverb' || f.type === 'delay')));
         // Instrument voices ring past their last note-off: the release, or a one-shot sample playing out
         let instTail = 0;
         if (!exact) {
-            for (const t of tracks) {
+            for (const t of tailTracks) {
                 if (t.kind !== 'instrument' || !t.instrument || !t.midiClips?.length) continue;
                 let tail = (t.instrument.release ?? 0.2) + 0.05;
                 if (t.instrument.type === 'sampler' && t.instrument.oneShot) tail = Math.max(tail, instrumentSample(t)?.duration || 0);
                 instTail = Math.max(instTail, tail);
             }
         }
-        const renderLen = (end - start) + (exact ? 0 : Math.max(hasTails ? fxTailSeconds(tracks) : 0.1, instTail));
+        const renderLen = (end - start) + (exact ? 0 : Math.max(hasTails ? fxTailSeconds(tailTracks) : 0.1, instTail));
         const totalSamples = Math.max(1, Math.ceil(renderLen * sampleRate));
         // The limiter's look-ahead is rendered past the end and trimmed off the front, so the mix lines up with
         // the timeline (and with the stems, which skip the limiter)
@@ -2651,7 +2660,6 @@ const AudioDaw = (() => {
         const origin = { t0Ctx: 0, t0Timeline: start, windowEnd: start + renderLen };
         // Aux buses first, so sends have somewhere to go. A track's stem is dry (no sends) and a bus's stem is what
         // its senders feed it (their direct outputs left out), so the stems still sum to the mix.
-        const stemBus = stems && tracks.length === 1 && tracks[0].kind === 'bus' ? tracks[0] : null;
         const busChains = new Map();
         for (const bus of state.tracks.filter(t => t.kind === 'bus')) {
             if (stems ? bus !== stemBus : (bus.muted || !soloAudible(bus))) continue;
@@ -2664,9 +2672,6 @@ const AudioDaw = (() => {
             scheduleTempoDelays(chain, bus, origin);
             busChains.set(bus.id, chain);
         }
-        const renderSet = stemBus
-            ? state.tracks.filter(t => t.kind !== 'bus' && !t.muted && (t.sends || []).some(sd => sd.busId === stemBus.id && !sd.muted))
-            : tracks.filter(t => t.kind !== 'bus');
         for (const track of renderSet) {
             // A track silent by solo still renders when its sends reach a soloed bus
             const feedsSoloedBus = (track.sends || []).some(sd => !sd.muted && state.tracks.some(b => b.id === sd.busId && b.soloed));
@@ -6110,6 +6115,13 @@ const AudioDaw = (() => {
                 mc.notes = mc.notes.filter(n => cs + n.start < sel.start || cs + n.start >= sel.end);
                 mc.cc = (mc.cc || []).filter(c => cs + c.t < sel.start || cs + c.t >= sel.end);
                 if (mc.notes.length !== noteCount || mc.cc.length !== ccCount) changed = true;
+                // A note sounding across the range start stops there, in every mode
+                for (const n of mc.notes) {
+                    if (cs + n.start < sel.start && cs + n.start + n.dur > sel.start) {
+                        n.dur = sel.start - (cs + n.start);
+                        changed = true;
+                    }
+                }
                 if (state.editMode === 'shuffle') {
                     if (cs >= sel.end - 1e-6) {
                         mc.startTime -= len;
@@ -6127,12 +6139,6 @@ const AudioDaw = (() => {
                         if (cEnd > sel.start) {
                             mc.length = Math.max(0.05, (cEnd >= sel.end ? cEnd - len : sel.start) - cs);
                             changed = true;
-                        }
-                        for (const n of mc.notes) {
-                            if (cs + n.start < sel.start && cs + n.start + n.dur > sel.start) {
-                                n.dur = sel.start - (cs + n.start);
-                                changed = true;
-                            }
                         }
                         for (const n of mc.notes) {
                             if (cs + n.start >= sel.end) {
@@ -7001,16 +7007,17 @@ const AudioDaw = (() => {
     }
 
 
-    /** Count-in clicks ending at ctx time t0 (the downbeat recording starts on). */
+    /** Count-in clicks ending at ctx time t0 (the downbeat recording starts on). Same grid as the metronome. */
     function scheduleCountIn(ctx, t0, seconds, bpm = state.bpm) {
         if (!mixer || seconds <= 0) return;
-        const beat = 60 / bpm;
-        const perBar = beatsPerBar();
-        const beats = Math.round(seconds / beat);
-        for (let i = 0; i < beats; i++) {
-            const when = t0 - (beats - i) * beat;
+        const unit = AudioDawTimeline.clickUnit(state.timeSignature);
+        const clickSec = 60 / bpm * unit;
+        const clicksPerBar = beatsPerBar() / unit;
+        const clicks = Math.round(seconds / clickSec);
+        for (let i = 0; i < clicks; i++) {
+            const when = t0 - (clicks - i) * clickSec;
             if (when < ctx.currentTime) continue;
-            playback?.clicks.push(AudioDawInput.scheduleClick(ctx, mixer.clickBus, when, i % perBar === 0));
+            playback?.clicks.push(AudioDawInput.scheduleClick(ctx, mixer.clickBus, when, i % clicksPerBar === 0));
         }
     }
 
@@ -8636,9 +8643,25 @@ const AudioDaw = (() => {
             }
             project.audio = audio;
             say(translate('Saving project...'));
-            const result = await AudioLabAPI.callAPI('AudioLabSaveProject', {
+            let result = await AudioLabAPI.callAPI('AudioLabSaveProject', {
                 name, project_json: JSON.stringify(project)
             });
+            if (!result.success && result.error_code === 'audio_missing') {
+                // Another save pruned clips this one had listed as present: upload those again, then save once more
+                for (const key of result.missing || []) {
+                    const blob = blobs.get(key);
+                    if (!blob) throw new Error(`Missing audio ${key}`);
+                    say(`${translate('Uploading audio')} ${key}`);
+                    const up = await AudioLabAPI.callAPI('AudioLabSaveProjectAudio', {
+                        name, key, audio_b64: await AudioLabCore.readAsBase64(blob)
+                    });
+                    if (!up.success) throw new Error(up.error || 'Audio upload failed');
+                }
+                say(translate('Saving project...'));
+                result = await AudioLabAPI.callAPI('AudioLabSaveProject', {
+                    name, project_json: JSON.stringify(project)
+                });
+            }
             if (!result.success) throw new Error(result.error || 'Save failed');
             currentProjectName = name;
             saved = true;

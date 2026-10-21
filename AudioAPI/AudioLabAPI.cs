@@ -242,7 +242,8 @@ public static class AudioLabAPI
     }
 
     /// <summary>Save a DAW project's arrangement JSON under the user's account. Its clip audio is stored separately
-    /// (AudioLabSaveProjectAudio) and listed in the JSON's "audio" map; older projects carry it inline as "blobs".</summary>
+    /// (AudioLabSaveProjectAudio) and listed in the JSON's "audio" map; older projects carry it inline as "blobs".
+    /// A save whose listed audio is not all on the server is refused with "audio_missing" and the keys it lacks.</summary>
     public static async Task<JObject> AudioLabSaveProject(Session session, JObject input)
     {
         try
@@ -269,12 +270,35 @@ public static class AudioLabAPI
             // Parsed before anything is written, so a malformed body leaves the saved project as it was
             JObject parsed = JObject.Parse(json);
             await MigrateLegacyProjects(session.User);
-            await WriteProjectFile(ProjectPath(session.User, stem), json);
-            // Audio stored beside the project that this version no longer uses goes (projects with inline audio keep none)
-            if (parsed["audio"] is JObject audioRefs)
+            // The audio check, the JSON write and the prune run under the upload gate, so a concurrent save cannot
+            // prune audio this one has just checked, and a save never writes references to audio that is gone
+            string dir = ProjectAudioDir(session.User, name);
+            JObject audioRefs = parsed["audio"] as JObject;
+            SemaphoreSlim gate = ProjectAudioGates.GetOrAdd(dir, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync();
+            try
             {
-                HashSet<string> keep = [.. audioRefs.Properties().Select(p => p.Name)];
-                DawProjectAudio.Prune(DawProjectAudio.AudioDir(ProjectDir(session.User), stem), keep);
+                if (audioRefs is not null)
+                {
+                    List<string> missing = DawProjectAudio.MissingKeys(dir, audioRefs.Properties().Select(p => p.Name));
+                    if (missing.Count > 0)
+                    {
+                        JObject refused = AudioLab.CreateErrorResponse($"{missing.Count} clip(s) of this project are no longer on the server", "audio_missing");
+                        refused["missing"] = new JArray(missing);
+                        return refused;
+                    }
+                }
+                await WriteProjectFile(ProjectPath(session.User, stem), json);
+                // Audio stored beside the project that this version no longer uses goes (projects with inline audio keep none)
+                if (audioRefs is not null)
+                {
+                    HashSet<string> keep = [.. audioRefs.Properties().Select(p => p.Name)];
+                    DawProjectAudio.Prune(dir, keep);
+                }
+            }
+            finally
+            {
+                gate.Release();
             }
             return AudioLab.CreateSuccessResponse(new JObject() { ["name"] = name, ["size"] = json.Length });
         }

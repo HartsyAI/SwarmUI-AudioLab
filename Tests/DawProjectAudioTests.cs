@@ -131,6 +131,29 @@ public class DawProjectAudioTests : IDisposable
     }
 
     [Fact]
+    public async Task MissingKeysNamesOnlyTheAudioTheFolderLacks()
+    {
+        string dir = DawProjectAudio.AudioDir(Root, "song");
+        await DawProjectAudio.Write(dir, "a", [1]);
+        Assert.Empty(DawProjectAudio.MissingKeys(dir, ["a"]));
+        Assert.Equal(new[] { "b" }, DawProjectAudio.MissingKeys(dir, ["a", "b"]).ToArray());
+    }
+
+    [Fact]
+    public void MissingKeysCountsEveryKeyWhenTheFolderIsAbsent()
+    {
+        Assert.Equal(new[] { "a", "b" }, DawProjectAudio.MissingKeys(Path.Combine(Root, "nope.audio"), ["a", "b"]).ToArray());
+    }
+
+    [Fact]
+    public async Task MissingKeysTreatsAnUnsafeKeyAsMissing()
+    {
+        string dir = DawProjectAudio.AudioDir(Root, "song");
+        await DawProjectAudio.Write(dir, "a", [1]);
+        Assert.Equal(new[] { "../a" }, DawProjectAudio.MissingKeys(dir, ["../a"]).ToArray());
+    }
+
+    [Fact]
     public void TheAudioFolderSitsBesideTheProjectFile()
     {
         Assert.Equal(Path.Combine(Root, "song.audio"), DawProjectAudio.AudioDir(Root, "song"));
