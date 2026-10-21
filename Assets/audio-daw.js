@@ -2884,13 +2884,15 @@ const AudioDaw = (() => {
                 laneScrub(laneTimeAt(e));
                 const onMove = (me) => laneScrub(laneTimeAt(me));
                 const onUp = (ue) => {
-                    el.releasePointerCapture(ue.pointerId);
+                    try { el.releasePointerCapture(ue.pointerId); } catch (_) {}
                     el.removeEventListener('pointermove', onMove);
                     el.removeEventListener('pointerup', onUp);
-                    seekTo(laneTimeAt(ue));
+                    el.removeEventListener('pointercancel', onUp);
+                    if (ue.type !== 'pointercancel') seekTo(laneTimeAt(ue));
                 };
                 el.addEventListener('pointermove', onMove);
                 el.addEventListener('pointerup', onUp);
+                el.addEventListener('pointercancel', onUp);
             });
         };
         if (playheadEl) setupLaneScrub(playheadEl, () => true);
@@ -2947,7 +2949,8 @@ const AudioDaw = (() => {
                 try { clipLanesEl.releasePointerCapture(ue.pointerId); } catch (_) {}
                 clipLanesEl.removeEventListener('pointermove', onMove);
                 clipLanesEl.removeEventListener('pointerup', onUp);
-                if (dragging) return;
+                clipLanesEl.removeEventListener('pointercancel', onUp);
+                if (dragging || ue.type === 'pointercancel') return;
                 // A click: playhead here, selection cleared, the lane's track selected
                 clearSelection();
                 const id = lane0?.dataset.trackId;
@@ -2960,6 +2963,7 @@ const AudioDaw = (() => {
             };
             clipLanesEl.addEventListener('pointermove', onMove);
             clipLanesEl.addEventListener('pointerup', onUp);
+            clipLanesEl.addEventListener('pointercancel', onUp);
         });
     }
 
@@ -4679,14 +4683,16 @@ const AudioDaw = (() => {
 
     /**
      * Metronome: schedule clicks for beats inside the next ~200 ms of audio time. Beats count from timeline
-     * zero, accented on each bar's downbeat. With a loop armed the next pass is mapped onto its own start, so
-     * the first click after a wrap is on time; instants already scheduled are skipped.
+     * zero, accented on each bar's downbeat (a fractional bar clicks on its denominator unit, see
+     * AudioDawTimeline.clickUnit). With a loop armed the next pass is mapped onto its own start, so the first
+     * click after a wrap is on time; instants already scheduled are skipped.
      */
     function scheduleClicks() {
         if (!playback || !mixer || !state.metronome) return;
         const ctx = playback.ctx;
         const tm = tempo();
-        const perBar = beatsPerBar();
+        const unit = AudioDawTimeline.clickUnit(state.timeSignature);
+        const perBar = beatsPerBar() / unit;
         const now = ctx.currentTime;
         const horizon = now + 0.2;
         const passes = [{ baseCtx: playback.baseCtxTime, baseTl: playback.baseTimelineTime, end: playback.loop ? state.loopEnd : Infinity }];
@@ -4695,8 +4701,8 @@ const AudioDaw = (() => {
         for (const pass of passes) {
             const tlFrom = pass.baseTl + Math.max(0, now - pass.baseCtx);
             const tlTo = Math.min(pass.end, pass.baseTl + (horizon - pass.baseCtx));
-            for (let k = Math.ceil(tm.beatsAt(tlFrom) - 1e-6); ; k++) {
-                const bt = tm.timeAtBeat(k);
+            for (let k = Math.ceil(tm.beatsAt(tlFrom) / unit - 1e-6); ; k++) {
+                const bt = tm.timeAtBeat(k * unit);
                 if (bt > tlTo + 1e-9 || bt >= pass.end - 1e-6) break;
                 const when = pass.baseCtx + (bt - pass.baseTl);
                 if (when < now - 0.005) continue;
@@ -6056,7 +6062,9 @@ const AudioDaw = (() => {
 
     /** Remove [start, end) from the selected tracks. Shuffle mode closes the gap. */
     function deleteRange(sel, { snapshot = true } = {}) {
-        if (snapshot) pushUndo();
+        // Taken before any change and pushed only if one happens, so an empty range keeps the redo history
+        const before = snapshot ? takeSnapshot() : null;
+        let changed = false;
         const len = sel.end - sel.start;
         for (const id of sel.trackIds) {
             const track = state.tracks.find(t => t.id === id);
@@ -6069,6 +6077,7 @@ const AudioDaw = (() => {
                     kept.push(clip);
                     continue;
                 }
+                changed = true;
                 const left = clipPortion(clip, cs, sel.start);
                 const right = clipPortion(clip, sel.end, ce);
                 // One surviving piece keeps the clip's score metadata, as with split (copies never carry it)
@@ -6079,42 +6088,63 @@ const AudioDaw = (() => {
             }
             if (state.editMode === 'shuffle') {
                 for (const c of kept) {
-                    if (c.startTime >= sel.end - 1e-6) c.startTime -= len;
+                    if (c.startTime >= sel.end - 1e-6) {
+                        c.startTime -= len;
+                        changed = true;
+                    }
                 }
             }
             track.clips = kept;
             // Instrument clips: a clip wholly inside the range goes, as audio does; otherwise the notes starting
             // inside it go. Shuffle pulls later notes and clips in.
             if (track.midiClips) {
-                track.midiClips = track.midiClips.filter(mc => mc.startTime < sel.start - 1e-6
+                const keptMidi = track.midiClips.filter(mc => mc.startTime < sel.start - 1e-6
                     || mc.startTime + AudioDawInstruments.midiClipLength(mc) > sel.end + 1e-6);
+                if (keptMidi.length !== track.midiClips.length) changed = true;
+                track.midiClips = keptMidi;
             }
             for (const mc of track.midiClips || []) {
                 const cs = mc.startTime;
+                const noteCount = mc.notes.length;
+                const ccCount = (mc.cc || []).length;
                 mc.notes = mc.notes.filter(n => cs + n.start < sel.start || cs + n.start >= sel.end);
                 mc.cc = (mc.cc || []).filter(c => cs + c.t < sel.start || cs + c.t >= sel.end);
+                if (mc.notes.length !== noteCount || mc.cc.length !== ccCount) changed = true;
                 if (state.editMode === 'shuffle') {
-                    if (cs >= sel.end - 1e-6) mc.startTime -= len;
-                    else {
+                    if (cs >= sel.end - 1e-6) {
+                        mc.startTime -= len;
+                        changed = true;
+                    } else {
                         if (cs < sel.start) {
                             const cEnd = cs + AudioDawInstruments.midiClipLength(mc);
                             if (cEnd > sel.start) {
                                 mc.length = Math.max(0.05, (cEnd >= sel.end ? cEnd - len : sel.start) - cs);
+                                changed = true;
                             }
                         }
                         for (const n of mc.notes) {
-                            if (cs + n.start < sel.start && cs + n.start + n.dur > sel.start) n.dur = sel.start - (cs + n.start);
+                            if (cs + n.start < sel.start && cs + n.start + n.dur > sel.start) {
+                                n.dur = sel.start - (cs + n.start);
+                                changed = true;
+                            }
                         }
                         for (const n of mc.notes) {
-                            if (cs + n.start >= sel.end) n.start -= len;
+                            if (cs + n.start >= sel.end) {
+                                n.start -= len;
+                                changed = true;
+                            }
                         }
                         for (const c of mc.cc) {
-                            if (cs + c.t >= sel.end) c.t -= len;
+                            if (cs + c.t >= sel.end) {
+                                c.t -= len;
+                                changed = true;
+                            }
                         }
                     }
                 }
             }
         }
+        if (before && changed) pushUndo(before);
         if (findClipById(state.selectedClipId) === null) state.selectedClipId = null;
         if (state.selectedMidiClipId && !findMidiClip(state.selectedMidiClipId)) state.selectedMidiClipId = null;
         updateTotalDuration();
@@ -6435,9 +6465,11 @@ const AudioDaw = (() => {
     function nudgeSelected(dir) {
         const found = findClipById(state.selectedClipId);
         if (!found) return;
-        pushUndo();
         const step = state.editMode === 'slip' ? 0.01 : gridStep();
-        found.clip.startTime = Math.max(0, found.clip.startTime + dir * step);
+        const next = Math.max(0, found.clip.startTime + dir * step);
+        if (next === found.clip.startTime) return; // already at the start: nothing to undo
+        pushUndo();
+        found.clip.startTime = next;
         updateTotalDuration();
         renderAllTracks();
         resyncPlayback();
@@ -7271,8 +7303,8 @@ const AudioDaw = (() => {
         };
     }
 
-    function pushUndo() {
-        const snapshot = takeSnapshot();
+    /** Push an undo step (the given snapshot, or the current state) and clear redo. */
+    function pushUndo(snapshot = takeSnapshot()) {
         state.undoStack.push(snapshot);
         if (state.undoStack.length > MAX_UNDO) state.undoStack.shift();
         state.redoStack = []; // clear redo on new action

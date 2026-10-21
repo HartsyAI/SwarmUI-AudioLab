@@ -132,10 +132,13 @@ const AudioDawTimeline = (() => {
                 try { canvas.releasePointerCapture(ue.pointerId); } catch (_) {}
                 canvas.removeEventListener('pointermove', onMove);
                 canvas.removeEventListener('pointerup', onUp);
+                canvas.removeEventListener('pointercancel', onUp);
+                if (ue.type === 'pointercancel') return; // a cancelled touch has no position to seek to
                 fire(state, 'seek', timeAt(ue.clientX));
             };
             canvas.addEventListener('pointermove', onMove);
             canvas.addEventListener('pointerup', onUp);
+            canvas.addEventListener('pointercancel', onUp);
         });
         markerLayer.addEventListener('dblclick', (e) => {
             if (e.target !== markerLayer) return;
@@ -226,12 +229,14 @@ const AudioDawTimeline = (() => {
         let labelEvery = 1;
         while (secPerBar * zoom * labelEvery < 44) labelEvery *= 2;
         ctx.lineWidth = 1;
-        const firstBeat = Math.floor(tm.beatsAt(t0));
+        const unit = clickUnit(state.timeSig);
+        const clicksPerBar = perBar / unit;
+        const firstBeat = Math.floor(tm.beatsAt(t0) / unit);
         for (let b = firstBeat; ; b++) {
-            const t = tm.timeAtBeat(b);
+            const t = tm.timeAtBeat(b * unit);
             if (t > t1) break;
             const x = X(t);
-            if (b % perBar !== 0) {
+            if (b % clicksPerBar !== 0) {
                 if (60 / tm.bpmAt(t) * zoom < 6) continue;
                 ctx.strokeStyle = lineColor;
                 ctx.beginPath();
@@ -240,7 +245,7 @@ const AudioDawTimeline = (() => {
                 ctx.stroke();
                 continue;
             }
-            const bar = b / perBar;
+            const bar = b / clicksPerBar;
             ctx.strokeStyle = textColor;
             ctx.beginPath();
             ctx.moveTo(x, bar % labelEvery === 0 ? 2 : ROW_BARS - 7);
@@ -399,10 +404,12 @@ const AudioDawTimeline = (() => {
                     try { flag.releasePointerCapture(ue.pointerId); } catch (_) {}
                     flag.removeEventListener('pointermove', onMove);
                     flag.removeEventListener('pointerup', onUp);
+                    flag.removeEventListener('pointercancel', onUp);
                     if (moved) fire(state, 'tempoMove', c.id, t);
                 };
                 flag.addEventListener('pointermove', onMove);
                 flag.addEventListener('pointerup', onUp);
+                flag.addEventListener('pointercancel', onUp);
             });
             flag.addEventListener('dblclick', (e) => {
                 e.stopPropagation();
@@ -438,11 +445,13 @@ const AudioDawTimeline = (() => {
                 try { flag.releasePointerCapture(ue.pointerId); } catch (_) {}
                 flag.removeEventListener('pointermove', onMove);
                 flag.removeEventListener('pointerup', onUp);
+                flag.removeEventListener('pointercancel', onUp);
                 if (moved) fire(state, 'markerMove', marker.id, parseFloat(flag.dataset.time));
-                else fire(state, 'markerClick', marker.id);
+                else if (ue.type !== 'pointercancel') fire(state, 'markerClick', marker.id);
             };
             flag.addEventListener('pointermove', onMove);
             flag.addEventListener('pointerup', onUp);
+            flag.addEventListener('pointercancel', onUp);
         });
     }
 
@@ -467,9 +476,11 @@ const AudioDawTimeline = (() => {
                 try { handle.releasePointerCapture(ue.pointerId); } catch (_) {}
                 handle.removeEventListener('pointermove', onMove);
                 handle.removeEventListener('pointerup', onUp);
+                handle.removeEventListener('pointercancel', onUp);
             };
             handle.addEventListener('pointermove', onMove);
             handle.addEventListener('pointerup', onUp);
+            handle.addEventListener('pointercancel', onUp);
         });
     }
 
@@ -600,5 +611,17 @@ const AudioDawTimeline = (() => {
         };
     }
 
-    return { create, formatRulerTime, makeTempoMap, HEIGHT };
+    /**
+     * Quarter beats per click for a time signature. A bar holding a whole number of quarter beats clicks on each
+     * quarter. A fractional bar (7/8 is 3.5 quarters) clicks on its denominator unit, so every downbeat lands on a click.
+     * @param {number[]} timeSig - [numerator, denominator]
+     * @returns {number}
+     */
+    function clickUnit(timeSig) {
+        const num = timeSig[0] || 4;
+        const den = timeSig[1] || 4;
+        return Number.isInteger(num * 4 / den) ? 1 : 4 / den;
+    }
+
+    return { create, formatRulerTime, makeTempoMap, clickUnit, HEIGHT };
 })();

@@ -650,16 +650,18 @@ const AudioDawTrack = (() => {
             const onUp = (ue) => {
                 edgeDir = 0;
                 if (edgeRaf) { cancelAnimationFrame(edgeRaf); edgeRaf = null; }
-                clipEl.releasePointerCapture(ue.pointerId);
+                try { clipEl.releasePointerCapture(ue.pointerId); } catch (_) {}
                 clipEl.removeEventListener('pointermove', onMove);
                 clipEl.removeEventListener('pointerup', onUp);
+                clipEl.removeEventListener('pointercancel', onUp);
                 clipEl.classList.remove('dragging');
                 document.querySelectorAll('.daw-track-lane').forEach(l => l.classList.remove('daw-drop-target'));
                 if (callbacks.onClipDragOver) callbacks.onClipDragOver(-1, -1);
 
                 if (isDragging) {
                     // Dropped off the timeline: the clip was read, not moved, so it goes back where it was.
-                    if (outsideDrop && callbacks.onClipDropOutside
+                    // A cancelled touch has no drop position, so it is never a drop off the timeline
+                    if (outsideDrop && ue.type !== 'pointercancel' && callbacks.onClipDropOutside
                         && callbacks.onClipDropOutside(clip, track, ue.clientX, ue.clientY)) {
                         clip.startTime = dragStartTime;
                         applyClipLayout(clipEl, clip);
@@ -682,6 +684,7 @@ const AudioDawTrack = (() => {
 
             clipEl.addEventListener('pointermove', onMove);
             clipEl.addEventListener('pointerup', onUp);
+            clipEl.addEventListener('pointercancel', onUp);
         });
     }
 
@@ -729,13 +732,15 @@ const AudioDawTrack = (() => {
                 applyClipLayout(clipEl, clip);
             };
             const onUp = (ue) => {
-                handle.releasePointerCapture(ue.pointerId);
+                try { handle.releasePointerCapture(ue.pointerId); } catch (_) {}
                 handle.removeEventListener('pointermove', onMove);
                 handle.removeEventListener('pointerup', onUp);
+                handle.removeEventListener('pointercancel', onUp);
                 if (moved && callbacks.onClipTrimEnd) callbacks.onClipTrimEnd(clip, track);
             };
             handle.addEventListener('pointermove', onMove);
             handle.addEventListener('pointerup', onUp);
+            handle.addEventListener('pointercancel', onUp);
         });
     }
 
@@ -772,10 +777,12 @@ const AudioDawTrack = (() => {
                 try { handle.releasePointerCapture(ue.pointerId); } catch (_) {}
                 handle.removeEventListener('pointermove', onMove);
                 handle.removeEventListener('pointerup', onUp);
+                handle.removeEventListener('pointercancel', onUp);
                 if (moved && callbacks.onClipFadeEnd) callbacks.onClipFadeEnd(clip, track);
             };
             handle.addEventListener('pointermove', onMove);
             handle.addEventListener('pointerup', onUp);
+            handle.addEventListener('pointercancel', onUp);
         });
         handle.addEventListener('click', (e) => e.stopPropagation());
     }
@@ -807,10 +814,12 @@ const AudioDawTrack = (() => {
                 try { gainEl.releasePointerCapture(ue.pointerId); } catch (_) {}
                 gainEl.removeEventListener('pointermove', onMove);
                 gainEl.removeEventListener('pointerup', onUp);
+                gainEl.removeEventListener('pointercancel', onUp);
                 if (moved && callbacks.onClipGainEnd) callbacks.onClipGainEnd(clip, track);
             };
             gainEl.addEventListener('pointermove', onMove);
             gainEl.addEventListener('pointerup', onUp);
+            gainEl.addEventListener('pointercancel', onUp);
         });
         gainEl.addEventListener('click', (e) => e.stopPropagation());
         gainEl.addEventListener('dblclick', (e) => {
@@ -1017,9 +1026,10 @@ const AudioDawTrack = (() => {
                     dot.setAttribute('cy', autoToY(param, pt.v));
                 };
                 const onUp = (ue) => {
-                    dot.releasePointerCapture(ue.pointerId);
+                    try { dot.releasePointerCapture(ue.pointerId); } catch (_) {}
                     dot.removeEventListener('pointermove', onMove);
                     dot.removeEventListener('pointerup', onUp);
+                    dot.removeEventListener('pointercancel', onUp);
                     if (moved) {
                         sortPoints();
                         renderAutomationLane(track, currentZoom, callbacks);
@@ -1028,6 +1038,7 @@ const AudioDawTrack = (() => {
                 };
                 dot.addEventListener('pointermove', onMove);
                 dot.addEventListener('pointerup', onUp);
+                dot.addEventListener('pointercancel', onUp);
             });
             svg.appendChild(dot);
         });
