@@ -99,6 +99,10 @@ Round 7 is rows 37 and 38.
 | 67 | Codex round 11 | The recorder capacity check (checked, not a bug) | The check reserves a full quantum before the next write, and a 300-trial simulation dropped no samples | none |
 | 68 | Review body, 10:19 UTC | Open replaced an unsaved session without asking | openProjectFromServer loaded straight away and did not flush the autosave | 190599a |
 | 69 | Review body, 10:02 UTC | Dragging an automation segment rebuilt the lane on every move | Each move re-rendered the lane from inside the drag | 190599a |
+| 70 | Codex round 12 | A save could write a reference to clip audio that another save had pruned | The save listed audio as present, then wrote its JSON without checking under the upload gate | 41308de |
+| 71 | Codex round 12 | An aux bus stem's tail ignored the effects of the tracks that send to it | The stem sized its tail from the bus alone | 41308de |
+| 72 | Codex round 12 | A range delete left a sustained MIDI note running through the range outside shuffle | Note trimming ran only in shuffle | 41308de |
+| 73 | Codex round 12 | A 7/8 count-in counted quarter notes and missed its downbeat | The count-in walked whole quarter beats, as the metronome did before | 41308de |
 
 Rows 39 to 51 are the verified findings of this review. Rounds 8 and 9 of the Codex review are rows 45 and 52 to 60.
 
