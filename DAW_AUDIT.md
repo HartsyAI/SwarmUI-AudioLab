@@ -90,6 +90,10 @@ Round 7 is rows 37 and 38.
 | 58 | Codex round 9 | Exports cut effect tails at 5 s | The tail was a fixed five seconds | 52f0b14 |
 | 59 | Codex round 9 | A shuffle delete inside a MIDI clip left the clip too long | The clip length was never reduced | 52f0b14 |
 | 60 | Codex round 9 | Concurrent uploads could exceed the project quota | The quota check and the write were not serialized | 52f0b14 |
+| 61 | Codex round 10 | Odd-meter downbeats missed their click, and the bar ruler skipped every other 7/8 label | The click and ruler walked whole quarter beats, so the 3.5-beat downbeat never matched | 80a7493 |
+| 62 | Codex round 10 | A delete over empty space cleared the redo history | The undo snapshot was pushed before any change was found | 80a7493 |
+| 63 | Codex round 10 | A cancelled fade drag left the old fade scheduled | The drag listened for pointer up but not pointer cancel | 80a7493 |
+| 64 | Round 10 sweep | Ten more drags ignored a cancelled pointer, and a nudge at the start pushed an empty undo step | Each drag ended only on pointer up; the nudge pushed undo before checking the move | 80a7493 |
 
 Rows 39 to 51 are the verified findings of this review. Rounds 8 and 9 of the Codex review are rows 45 and 52 to 60.
 
