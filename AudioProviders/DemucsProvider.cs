@@ -19,6 +19,7 @@ public sealed class DemucsProvider : IAudioProviderSource
         .AddFeatureFlag("audiolab_audioproc")
         .AddFeatureFlag("demucs_fx_params")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

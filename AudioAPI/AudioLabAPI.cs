@@ -1244,12 +1244,11 @@ public static class AudioLabAPI
                         ["estimated_vram"] = modelDef.EstimatedVram,
                         // Name in Swarm's model registry, for generating via the core T2I pipeline.
                         ["swarm_model"] = provider.GetFullModelName(modelDef.Id),
-                        // Per-model: are this variant's weights on disk? Unavailable engines never are.
-                        // A validated artifact is the authoritative answer; WeightsPresent is the fallback for
-                        // families not yet file-backed, and it reports "installed" for any provider whose
-                        // location it cannot determine.
-                        ["installed"] = available && (AudioArtifactIndex.IsInstalled(provider.Id, modelDef.Id)
-                            || AudioEngineBridge.WeightsPresent(provider.Id, modelDef.Id))
+                        // Available: the catalogue has this variant and the engine can run it. Installed: its
+                        // artifact is on disk and admitted, which is what the selector lists. Kept apart, so a
+                        // catalogue row never waits on the disk and an uninstalled variant is still available.
+                        ["available"] = available,
+                        ["installed"] = InstalledOnDisk(provider, modelDef.Id, available)
                     });
                 }
 
@@ -1285,6 +1284,14 @@ public static class AudioLabAPI
             return AudioLab.CreateErrorResponse("Failed to list engines", "list_error", ex);
         }
     }
+
+    /// <summary>Whether a variant's artifact is on disk and admitted by <see cref="AudioArtifactIndex"/>.
+    ///
+    /// <para>A provider not yet file-backed never consults the index, so for it the weights check is the only evidence
+    /// and is used instead. An unavailable engine is not probed for weights at all.</para></summary>
+    internal static bool InstalledOnDisk(AudioProviderDefinition provider, string modelId, bool available)
+        => AudioArtifactIndex.IsInstalled(provider.Id, modelId)
+            || (available && !provider.FileBacked && AudioEngineBridge.WeightsPresent(provider.Id, modelId));
 
     /// <summary>Why this provider can't be installed in this build, or null when it can. Mirrors the
     /// <c>available</c> flag AudioLabListEngines sends, so the UI's disabled state and the server's refusal

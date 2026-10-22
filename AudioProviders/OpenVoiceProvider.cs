@@ -18,6 +18,7 @@ public sealed class OpenVoiceProvider : IAudioProviderSource
         .WithModelClass("openvoice_clone", "OpenVoice V2")
         .AddFeatureFlag("audiolab_clone")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

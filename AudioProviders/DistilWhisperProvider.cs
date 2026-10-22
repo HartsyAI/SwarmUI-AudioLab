@@ -18,6 +18,7 @@ public sealed class DistilWhisperProvider : IAudioProviderSource
         .WithModelClass("distilwhisper_stt", "Distil-Whisper STT")
         .AddFeatureFlag("audiolab_stt")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

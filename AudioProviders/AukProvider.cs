@@ -20,6 +20,7 @@ public sealed class AukProvider : IAudioProviderSource
         .AddFeatureFlag("auk_tts_params")
         .AddFeatureFlag("tts_voice_ref")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

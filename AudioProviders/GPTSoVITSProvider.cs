@@ -19,6 +19,7 @@ public sealed class GPTSoVITSProvider : IAudioProviderSource
         .AddFeatureFlag("audiolab_clone")
         .AddFeatureFlag("gptsovits_clone_params")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

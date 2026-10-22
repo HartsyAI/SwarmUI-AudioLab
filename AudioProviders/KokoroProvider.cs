@@ -26,6 +26,7 @@ public sealed class KokoroProvider : IAudioProviderSource
         // that the engine has no streaming Kokoro runner and ProcessStreamAsync throws for this provider.
         .AddFeatureFlag("tts_streaming")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

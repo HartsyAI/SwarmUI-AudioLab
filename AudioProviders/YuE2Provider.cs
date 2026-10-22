@@ -24,6 +24,7 @@ public sealed class YuE2Provider : IAudioProviderSource
         .AddFeatureFlag("audiolab_audiogen")
         .AddFeatureFlag("yue2_music_params")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("music")
         .Build();
 

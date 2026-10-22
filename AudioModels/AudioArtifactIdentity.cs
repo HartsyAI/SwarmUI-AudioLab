@@ -1,5 +1,6 @@
 using System.IO;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
+using Hartsy.Extensions.AudioLab.AudioServices;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Utils;
 
@@ -80,6 +81,23 @@ public static class AudioArtifactIdentity
         {
             Logs.Error($"[AudioLab] Could not write '{sidecarPath}': {ex.Message}");
         }
+    }
+
+    /// <summary>Stamps the primary file of a model installed from its upstream source. Weights fetched from upstream
+    /// carry no identity, so without this an install that fell back from its Hartsy card would never be admitted.
+    /// A Hartsy install needs no stamp: its card's sidecar already names the model.</summary>
+    public static void StampInstalled(AudioProviderDefinition provider, string modelId)
+    {
+        if (string.IsNullOrEmpty(modelId))
+        {
+            return;
+        }
+        AudioWeightsRegistry.DownloadSpec[] specs = AudioWeightsRegistry.SpecsFor(provider.Id, modelId);
+        if (specs.Length == 0)
+        {
+            return;
+        }
+        WriteSidecar(AudioWeights.FindPlacedFile(provider, specs[0]), provider.Id, modelId, AudioEngineBridge.EngineIdFor(provider.Id));
     }
 
     /// <summary>Who published the weights, taken from the source repo's owner rather than the provider name.

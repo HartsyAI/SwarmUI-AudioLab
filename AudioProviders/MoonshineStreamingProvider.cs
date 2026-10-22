@@ -21,6 +21,7 @@ public sealed class MoonshineStreamingProvider : IAudioProviderSource
         .WithModelClass("moonshinestreaming_stt", "Moonshine Streaming STT")
         .AddFeatureFlag("audiolab_stt")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

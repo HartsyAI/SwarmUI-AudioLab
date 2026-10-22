@@ -22,6 +22,7 @@ public sealed class Qwen3TTSProvider : IAudioProviderSource
         .AddFeatureFlag("qwen3tts_instruct_params")
         .AddFeatureFlag("tts_voice_ref")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

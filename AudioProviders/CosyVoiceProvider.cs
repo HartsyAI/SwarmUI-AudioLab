@@ -26,6 +26,7 @@ public sealed class CosyVoiceProvider : IAudioProviderSource
         // comment) -- real, not silent, but not blocking.
         .AddFeatureFlag("tts_streaming")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

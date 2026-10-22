@@ -19,6 +19,7 @@ public sealed class ControlFoleyProvider : IAudioProviderSource
         .AddFeatureFlag("audiolab_audiogen")
         .AddFeatureFlag("controlfoley_sfx_params")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("music")
         .Build();
 
