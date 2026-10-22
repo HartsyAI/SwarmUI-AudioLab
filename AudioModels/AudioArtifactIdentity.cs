@@ -100,6 +100,34 @@ public static class AudioArtifactIdentity
         WriteSidecar(AudioWeights.FindPlacedFile(provider, specs[0]), provider.Id, modelId, AudioEngineBridge.EngineIdFor(provider.Id));
     }
 
+    /// <summary>Stamps weights a provider placed before it became file-backed, so an existing install stays selectable
+    /// instead of vanishing until it is reinstalled. Only the provider's own spec file in its own folder counts, and a
+    /// file that already has a sidecar or is already admitted is left alone, so no identity is ever overwritten.</summary>
+    /// <returns>How many files were stamped; a caller rescans the Audio handler when any were.</returns>
+    public static int AdoptPlacedInstalls(IEnumerable<AudioProviderDefinition> fileBackedProviders)
+    {
+        int adopted = 0;
+        foreach (AudioProviderDefinition provider in fileBackedProviders)
+        {
+            foreach (AudioModelDefinition model in provider.Models)
+            {
+                if (AudioArtifactIndex.IsInstalled(provider.Id, model.Id))
+                {
+                    continue;
+                }
+                AudioWeightsRegistry.DownloadSpec[] specs = AudioWeightsRegistry.SpecsFor(provider.Id, model.Id);
+                string placed = specs.Length == 0 ? null : AudioWeights.FindPlacedFile(provider, specs[0]);
+                if (placed is null || File.Exists(Path.ChangeExtension(placed, ".swarm.json")))
+                {
+                    continue;
+                }
+                WriteSidecar(placed, provider.Id, model.Id, AudioEngineBridge.EngineIdFor(provider.Id));
+                adopted++;
+            }
+        }
+        return adopted;
+    }
+
     /// <summary>Who published the weights, taken from the source repo's owner rather than the provider name.
     ///
     /// <para>A provider is AudioLab's integration ("Whisper STT"); the author is whoever released the model

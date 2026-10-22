@@ -578,6 +578,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
             return;
         }
         AudioArtifactIndex.Rebuild();
+        // Weights installed before their provider became file-backed have no identity yet; stamp them once and rescan,
+        // or they vanish from the selector until reinstalled.
+        if (AudioArtifactIdentity.AdoptPlacedInstalls(fileBacked) > 0)
+        {
+            AudioModelTypeRegistration.Handler?.Refresh();
+            AudioArtifactIndex.Rebuild();
+        }
         foreach (AudioProviderDefinition provider in fileBacked)
         {
             Dictionary<string, T2IModel> projected = AudioModelFactory.ProjectScannedModels(provider);

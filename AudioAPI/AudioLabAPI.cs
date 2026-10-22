@@ -1289,7 +1289,7 @@ public static class AudioLabAPI
     ///
     /// <para>A provider not yet file-backed never consults the index, so for it the weights check is the only evidence
     /// and is used instead. An unavailable engine is not probed for weights at all.</para></summary>
-    internal static bool InstalledOnDisk(AudioProviderDefinition provider, string modelId, bool available)
+    public static bool InstalledOnDisk(AudioProviderDefinition provider, string modelId, bool available)
         => AudioArtifactIndex.IsInstalled(provider.Id, modelId)
             || (available && !provider.FileBacked && AudioEngineBridge.WeightsPresent(provider.Id, modelId));
 

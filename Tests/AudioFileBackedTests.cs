@@ -189,6 +189,46 @@ public class AudioFileBackedTests
         }
     }
 
+    [Fact]
+    public void AdoptPlacedInstalls_StampsAPreviouslyPlacedFileOnce_AndNeverOverwritesAnIdentity()
+    {
+        string root = Directory.CreateTempSubdirectory().FullName;
+        string previousRoot = AudioConfiguration.ModelRoot;
+        AudioProviderRegistry.Clear();
+        try
+        {
+            AudioConfiguration.ModelRoot = root;
+            AudioProviderDefinitions.RegisterAll();
+            (AudioProviderDefinition provider, AudioModelDefinition model, AudioWeightsRegistry.DownloadSpec spec) =
+                AudioProviderRegistry.All.Where(p => p.FileBacked)
+                    .SelectMany(p => p.Models.Select(m => (p, m, AudioWeightsRegistry.SpecsFor(p.Id, m.Id))))
+                    .Where(t => t.Item3.Length > 0)
+                    .Select(t => (t.p, t.m, t.Item3[0]))
+                    .First();
+            string folder = Path.Combine(root, AudioWeights.CategorySubfolder(provider.Category), provider.ModelPrefix);
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(folder, spec.FileName)));
+            string placed = Path.Combine(folder, spec.FileName);
+            File.WriteAllBytes(placed, [1]);
+            AudioArtifactIndex.Admit([]);
+
+            Assert.Equal(1, AudioArtifactIdentity.AdoptPlacedInstalls([provider]));
+            JObject identity = JObject.Parse(File.ReadAllText(Path.ChangeExtension(placed, ".swarm.json")));
+            Assert.Equal(provider.Id, identity["hartsy.provider_id"]?.ToString());
+            Assert.Equal(model.Id, identity["hartsy.model_id"]?.ToString());
+
+            File.WriteAllText(Path.ChangeExtension(placed, ".swarm.json"), "{\"hartsy.model_id\":\"kept\"}");
+            Assert.Equal(0, AudioArtifactIdentity.AdoptPlacedInstalls([provider]));
+            Assert.Contains("kept", File.ReadAllText(Path.ChangeExtension(placed, ".swarm.json")));
+        }
+        finally
+        {
+            AudioConfiguration.ModelRoot = previousRoot;
+            AudioArtifactIndex.Admit([]);
+            AudioProviderRegistry.Clear();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     /// <summary>A scanned primary file with its identity sidecar, as an install leaves it.</summary>
     private static T2IModel ScannedFile(string dir, string name, string providerId, string modelId, string component)
     {
