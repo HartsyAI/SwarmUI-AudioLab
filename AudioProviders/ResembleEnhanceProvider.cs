@@ -19,6 +19,7 @@ public sealed class ResembleEnhanceProvider : IAudioProviderSource
         .AddFeatureFlag("audiolab_audioproc")
         .AddFeatureFlag("resemble_enhance_fx_params")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 
@@ -26,7 +27,7 @@ public sealed class ResembleEnhanceProvider : IAudioProviderSource
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "denoise", Name = "Resemble Denoise", Description = "Removes background noise and keeps the original voice; much faster than Enhance, which resynthesizes the speech.", SourceUrl = "https://github.com/resemble-ai/resemble-enhance", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~2GB", EngineConfig = new() { ["mode"] = "denoise" } },
+        new() { Id = "denoise", Name = "Resemble Denoise", Description = "Removes background noise and keeps the original voice; much faster than Enhance, which resynthesizes the speech.", SourceUrl = "https://github.com/resemble-ai/resemble-enhance", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~2GB", EngineConfig = new() { ["mode"] = "denoise" }, BackedByArtifact = "resemble_enhance_fx/enhance" },
         new() { Id = "enhance", Name = "Resemble Enhance", Description = "Full enhancement: denoise plus super-resolution to 44.1kHz", SourceUrl = "https://github.com/resemble-ai/resemble-enhance", License = "MIT", EstimatedSize = "~500MB", EstimatedVram = "~2GB", EngineConfig = new() { ["mode"] = "enhance" } }
     ];
 

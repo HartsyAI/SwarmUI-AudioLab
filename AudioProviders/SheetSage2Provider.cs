@@ -25,6 +25,7 @@ public sealed class SheetSage2Provider : IAudioProviderSource
         .AddFeatureFlag("audiolab_stt")
         .AddFeatureFlag("sheetsage2_params")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("music")
         .Build();
 

@@ -19,11 +19,12 @@ public sealed class WhisperStreamingProvider : IAudioProviderSource
         .WithModelClass("whisperstreaming_stt", "Whisper Streaming")
         .AddFeatureFlag("audiolab_stt")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 
     private static AudioModelDefinition[] Models =>
     [
-        new() { Id = "base", Name = "Whisper Streaming (base)", Description = "Whisper base via the LocalAgreement-2 streaming stabilizer, 16 kHz", SourceUrl = "https://huggingface.co/openai/whisper-base", License = "MIT", EstimatedSize = "~150MB", EstimatedVram = "~1GB (or CPU)" }
+        new() { Id = "base", Name = "Whisper Streaming (base)", Description = "Whisper base via the LocalAgreement-2 streaming stabilizer, 16 kHz", SourceUrl = "https://huggingface.co/openai/whisper-base", License = "MIT", EstimatedSize = "~150MB", EstimatedVram = "~1GB (or CPU)", BackedByArtifact = "whisper_stt/base" }
     ];
 }

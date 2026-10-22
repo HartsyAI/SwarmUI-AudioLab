@@ -19,6 +19,7 @@ public sealed class NeuTTSProvider : IAudioProviderSource
         .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("tts_voice_ref")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

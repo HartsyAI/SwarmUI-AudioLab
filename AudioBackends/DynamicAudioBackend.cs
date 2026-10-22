@@ -41,28 +41,34 @@ public class DynamicAudioBackend : AbstractT2IBackend
         ModelsAPI.ExtraModelProviders["audiolab"] = GetAudioModels;
     }
 
-    /// <summary>Static method to provide audio models from all DynamicAudioBackend instances.</summary>
+    /// <summary>The subtypes this backend publishes: the Stable-Diffusion list the gen page reads, and the extension's
+    /// own Audio subtype, so audio models are discoverable as audio too.</summary>
+    private static readonly string[] PublishedSubtypes = ["Stable-Diffusion", AudioModelTypeRegistration.ModelType];
+
+    /// <summary>Static method to provide audio models from all DynamicAudioBackend instances, for the subtypes in
+    /// <see cref="PublishedSubtypes"/>. An empty subtype is the Stable-Diffusion list.</summary>
     private static Dictionary<string, JObject> GetAudioModels(string subtype)
     {
+        string published = string.IsNullOrEmpty(subtype) ? "Stable-Diffusion" : subtype;
+        if (!PublishedSubtypes.Contains(published))
+        {
+            return [];
+        }
         IEnumerable<DynamicAudioBackend> audioBackends = Program.Backends.RunningBackendsOfType<DynamicAudioBackend>()
             .Where(b => b.RemoteModels != null);
-        if (subtype is "Stable-Diffusion" || string.IsNullOrEmpty(subtype))
+        Dictionary<string, JObject> result = [];
+        foreach (DynamicAudioBackend backend in audioBackends)
         {
-            Dictionary<string, JObject> result = [];
-            foreach (DynamicAudioBackend backend in audioBackends)
+            if (backend.RemoteModels.TryGetValue(published, out Dictionary<string, JObject> models))
             {
-                if (backend.RemoteModels.TryGetValue("Stable-Diffusion", out Dictionary<string, JObject> models))
+                foreach (KeyValuePair<string, JObject> kvp in models)
                 {
-                    foreach (KeyValuePair<string, JObject> kvp in models)
-                    {
-                        result[kvp.Key] = kvp.Value;
-                    }
+                    result[kvp.Key] = kvp.Value;
                 }
             }
-            Logs.Verbose($"[AudioLab] Returned {result.Count} audio models for subtype: {subtype}");
-            return result;
         }
-        return [];
+        Logs.Verbose($"[AudioLab] Returned {result.Count} audio models for subtype: {published}");
+        return result;
     }
 
     #endregion
@@ -467,7 +473,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
 
             if (_providers.Count > 0)
             {
-                UpdateRemoteModels();
+                ReRegisterModelsAfterRefresh();
             }
             ReconcileWeights();
             Program.ModelRefreshEvent += ReRegisterModelsAfterRefresh;
@@ -572,6 +578,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
             return;
         }
         AudioArtifactIndex.Rebuild();
+        // Weights installed before their provider became file-backed have no identity yet; stamp them once and rescan,
+        // or they vanish from the selector until reinstalled.
+        if (AudioArtifactIdentity.AdoptPlacedInstalls(fileBacked) > 0)
+        {
+            AudioModelTypeRegistration.Handler?.Refresh();
+            AudioArtifactIndex.Rebuild();
+        }
         foreach (AudioProviderDefinition provider in fileBacked)
         {
             Dictionary<string, T2IModel> projected = AudioModelFactory.ProjectScannedModels(provider);
@@ -606,28 +619,27 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
     }
 
-    /// <summary>Publishes registered models to RemoteModels for ExtraModelProviders.
-    /// Mirrors DynamicAPIBackend.UpdateRemoteModels().</summary>
-    private void UpdateRemoteModels()
+    /// <summary>Publishes every registered model to RemoteModels, under each subtype in <see cref="PublishedSubtypes"/>.
+    /// Mirrors DynamicAPIBackend.UpdateRemoteModels().
+    ///
+    /// <para>Runs from every re-projection, not only install and uninstall: a refresh that admits a freshly
+    /// installed artifact has to reach the Audio subtype too, or the new model stays out of it until the next
+    /// install.</para></summary>
+    private void PublishRemoteModels()
     {
-        // Re-project first: publishing from the pre-projection snapshot would leave every file-backed model
-        // out of RemoteModels until the next install or uninstall happened to rebuild it.
-        ReRegisterModelsAfterRefresh();
         int published;
         lock (_modelsLock)
         {
-            if (!RegisteredAudioModels.Any())
+            foreach (string subtype in PublishedSubtypes)
             {
-                Logs.Warning("[AudioLab] No registered audio models to publish");
-                return;
+                Dictionary<string, JObject> remote = RemoteModels.GetOrCreate(subtype, () => []);
+                remote.Clear();
+                foreach (KeyValuePair<string, T2IModel> kvp in RegisteredAudioModels)
+                {
+                    remote[kvp.Key] = CreateModelMetadata(kvp.Value, kvp.Key);
+                }
             }
-            Dictionary<string, JObject> remoteSD = RemoteModels.GetOrCreate("Stable-Diffusion", () => []);
-            remoteSD.Clear();
-            foreach (KeyValuePair<string, T2IModel> kvp in RegisteredAudioModels)
-            {
-                remoteSD[kvp.Key] = CreateModelMetadata(kvp.Value, kvp.Key);
-            }
-            published = remoteSD.Count;
+            published = RegisteredAudioModels.Count;
         }
         Logs.Verbose($"[AudioLab] Published {published} audio models to RemoteModels");
     }
@@ -642,7 +654,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
         RefreshFileBackedModels();
         int added = 0;
-        // Also reached directly via Program.ModelRefreshEvent, not just from UpdateRemoteModels.
+        // Also reached directly via Program.ModelRefreshEvent, not just from install and uninstall.
         lock (_modelsLock)
         {
             foreach (KeyValuePair<string, T2IModel> kvp in RegisteredAudioModels)
@@ -658,6 +670,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
         {
             Logs.Verbose($"[AudioLab] Re-registered {added} audio models into MainSDModels after refresh");
         }
+        PublishRemoteModels();
         ReconcileWeights();
     }
 
@@ -1350,6 +1363,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
                         {
                             await AudioWeights.Report(onProgress, $"No auto-download is registered for {definition.Name} yet. Place its .safetensors in {AudioWeights.WeightsDirectory(definition)} to enable it.");
                         }
+                        else
+                        {
+                            AudioArtifactIdentity.StampInstalled(definition, installModel);
+                        }
                     }
                 }
             }
@@ -1389,7 +1406,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 _supportedFeatureSet.TryAdd(flag, 0);
             }
 
-            UpdateRemoteModels();
+            ReRegisterModelsAfterRefresh();
 
             lock (_modelsLock)
             {
@@ -1473,7 +1490,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
         }
 
         _providers.TryRemove(providerId, out _);
-        // Must come BEFORE UpdateRemoteModels: that call ends in ReconcileWeights, which would still see
+        // Must come BEFORE the re-projection: it ends in ReconcileWeights, which would still see
         // this provider installed and recurse straight back into UnregisterEngine.
         lock (_modelsLock)
         {
@@ -1482,7 +1499,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
         SaveInstalledEnginesConfig();
 
         RebuildFeatureFlags();
-        UpdateRemoteModels();
+        ReRegisterModelsAfterRefresh();
 
         // Delete on-disk weights AFTER removing from InstalledEngines, so the "still needed by another
         // installed provider" guard below correctly excludes this provider.

@@ -21,6 +21,7 @@ public sealed class IndexTtsProvider : IAudioProviderSource
         .AddFeatureFlag("audiolab_tts")
         .AddFeatureFlag("tts_voice_ref")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

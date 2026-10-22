@@ -22,6 +22,7 @@ public sealed class StyleTTS2Provider : IAudioProviderSource
         .AddFeatureFlag("tts_voice_ref")
         .AddFeatureFlag("styletts2_clone_params")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

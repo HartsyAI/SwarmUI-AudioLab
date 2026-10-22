@@ -21,6 +21,7 @@ public sealed class ChatterboxProvider : IAudioProviderSource
         .AddFeatureFlag("tts_sampling")
         // No tts_voice_ref: the engine's Chatterbox path has no PCM→mel voice-encoder front-end yet.
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("chatterbox")
         .Build();
 

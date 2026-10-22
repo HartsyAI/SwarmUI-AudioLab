@@ -1,5 +1,6 @@
 using System.IO;
 using Hartsy.Extensions.AudioLab.AudioProviderTypes;
+using Hartsy.Extensions.AudioLab.AudioServices;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Utils;
 
@@ -80,6 +81,51 @@ public static class AudioArtifactIdentity
         {
             Logs.Error($"[AudioLab] Could not write '{sidecarPath}': {ex.Message}");
         }
+    }
+
+    /// <summary>Stamps the primary file of a model installed from its upstream source. Weights fetched from upstream
+    /// carry no identity, so without this an install that fell back from its Hartsy card would never be admitted.
+    /// A Hartsy install needs no stamp: its card's sidecar already names the model.</summary>
+    public static void StampInstalled(AudioProviderDefinition provider, string modelId)
+    {
+        if (string.IsNullOrEmpty(modelId))
+        {
+            return;
+        }
+        AudioWeightsRegistry.DownloadSpec[] specs = AudioWeightsRegistry.SpecsFor(provider.Id, modelId);
+        if (specs.Length == 0)
+        {
+            return;
+        }
+        WriteSidecar(AudioWeights.FindPlacedFile(provider, specs[0]), provider.Id, modelId, AudioEngineBridge.EngineIdFor(provider.Id));
+    }
+
+    /// <summary>Stamps weights a provider placed before it became file-backed, so an existing install stays selectable
+    /// instead of vanishing until it is reinstalled. Only the provider's own spec file in its own folder counts, and a
+    /// file that already has a sidecar or is already admitted is left alone, so no identity is ever overwritten.</summary>
+    /// <returns>How many files were stamped; a caller rescans the Audio handler when any were.</returns>
+    public static int AdoptPlacedInstalls(IEnumerable<AudioProviderDefinition> fileBackedProviders)
+    {
+        int adopted = 0;
+        foreach (AudioProviderDefinition provider in fileBackedProviders)
+        {
+            foreach (AudioModelDefinition model in provider.Models)
+            {
+                if (AudioArtifactIndex.IsInstalled(provider.Id, model.Id))
+                {
+                    continue;
+                }
+                AudioWeightsRegistry.DownloadSpec[] specs = AudioWeightsRegistry.SpecsFor(provider.Id, model.Id);
+                string placed = specs.Length == 0 ? null : AudioWeights.FindPlacedFile(provider, specs[0]);
+                if (placed is null || File.Exists(Path.ChangeExtension(placed, ".swarm.json")))
+                {
+                    continue;
+                }
+                WriteSidecar(placed, provider.Id, model.Id, AudioEngineBridge.EngineIdFor(provider.Id));
+                adopted++;
+            }
+        }
+        return adopted;
     }
 
     /// <summary>Who published the weights, taken from the source repo's owner rather than the provider name.

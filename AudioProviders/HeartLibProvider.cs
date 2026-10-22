@@ -19,6 +19,7 @@ public sealed class HeartLibProvider : IAudioProviderSource
         .AddFeatureFlag("audiolab_audiogen")
         .AddFeatureFlag("heartlib_music_params")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("music")
         .Build();
 
@@ -40,12 +41,12 @@ public sealed class HeartLibProvider : IAudioProviderSource
         yield return Make(baseId, $"HeartMuLa 3B ({label})", repo, null,
             $"4B params, {blurb}. Full bf16 precision. ~12GB VRAM (lazy load) or ~16GB (full load).", "~12GB", "~12GB (lazy load)");
         yield return Make($"{baseId}-q8", $"HeartMuLa 3B ({label}) Q8 (faster, ½ VRAM)", repo, "q8_0",
-            $"4B params, {blurb}. Q8 quantized: ~1.4× faster + ~half the VRAM, near-lossless. Converted once to a local cache on first use.", "~12GB download / ~4.5GB cache", "~7GB");
+            $"4B params, {blurb}. Q8 quantized: ~1.4× faster + ~half the VRAM, near-lossless. Converted once to a local cache on first use.", "~12GB download / ~4.5GB cache", "~7GB", $"heartlib_music/{baseId}");
         yield return Make($"{baseId}-q4", $"HeartMuLa 3B ({label}) Q4 (smallest)", repo, "q4_k",
-            $"4B params, {blurb}. Q4 quantized: smallest + fastest, some quality loss. Converted once to a local cache on first use.", "~12GB download / ~2.5GB cache", "~4GB");
+            $"4B params, {blurb}. Q4 quantized: smallest + fastest, some quality loss. Converted once to a local cache on first use.", "~12GB download / ~2.5GB cache", "~4GB", $"heartlib_music/{baseId}");
     }
 
-    private static AudioModelDefinition Make(string id, string name, string repo, string quant, string description, string size, string vram)
+    private static AudioModelDefinition Make(string id, string name, string repo, string quant, string description, string size, string vram, string backedBy = null)
     {
         Dictionary<string, object> cfg = new() { ["model_name"] = repo };
         if (quant is not null) { cfg["quant"] = quant; }
@@ -59,6 +60,7 @@ public sealed class HeartLibProvider : IAudioProviderSource
             EstimatedSize = size,
             EstimatedVram = vram,
             EngineConfig = cfg,
+            BackedByArtifact = backedBy,
         };
     }
 

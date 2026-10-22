@@ -20,6 +20,7 @@ public sealed class DiaTTSProvider : IAudioProviderSource
         .AddFeatureFlag("dia_tts_params")
         .AddFeatureFlag("tts_sampling")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

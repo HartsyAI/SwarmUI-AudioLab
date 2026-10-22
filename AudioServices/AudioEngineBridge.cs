@@ -215,6 +215,11 @@ public static class AudioEngineBridge
     public static bool ProviderManagesOwnWeights(string providerId)
         => providerId is not null && _bindings.TryGetValue(providerId, out AudioEngineBinding binding) && binding.ManagesOwnWeights;
 
+    /// <summary>The Engine's family id for a provider, as an artifact's <c>hartsy.engine_id</c> records it, or ""
+    /// when the provider has no Engine binding.</summary>
+    public static string EngineIdFor(string providerId)
+        => providerId is not null && _bindings.TryGetValue(providerId, out AudioEngineBinding binding) ? binding.EngineId : "";
+
     /// <summary>Whether this provider has a real Engine-native streaming implementation
     /// (<c>IStreamingTtsRunner</c>, incremental audio as generation happens) rather than AudioLab's own
     /// text-chunk-and-regenerate-each-piece loop. Read off the provider's own <c>tts_streaming</c> feature flag —

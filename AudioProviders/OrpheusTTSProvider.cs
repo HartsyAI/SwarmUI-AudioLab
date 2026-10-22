@@ -21,6 +21,7 @@ public sealed class OrpheusTTSProvider : IAudioProviderSource
         .AddFeatureFlag("tts_sampling")
         .AddFeatureFlag("tts_streaming")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

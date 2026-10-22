@@ -26,6 +26,7 @@ public sealed class VibeVoiceProvider : IAudioProviderSource
         // truth this flag also drives.
         .AddFeatureFlag("tts_streaming")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

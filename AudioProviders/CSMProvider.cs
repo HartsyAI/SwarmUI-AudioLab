@@ -24,6 +24,7 @@ public sealed class CSMProvider : IAudioProviderSource
         // AudioEngineBridge.SupportsNativeStreaming, the single source of truth this flag also drives.
         .AddFeatureFlag("tts_streaming")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

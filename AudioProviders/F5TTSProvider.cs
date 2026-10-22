@@ -20,6 +20,7 @@ public sealed class F5TTSProvider : IAudioProviderSource
         .AddFeatureFlag("f5_tts_params")
         .AddFeatureFlag("tts_voice_ref")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

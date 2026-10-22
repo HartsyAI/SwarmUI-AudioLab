@@ -43,9 +43,10 @@ public sealed class AudioProviderDefinition
     public string ApiKeySettingsId { get; init; } = "";
 
     /// <summary>Whether this provider's models come from scanned artifacts on disk rather than being
-    /// registered from code. Flipped per family as its repack ships and the engine can prefetch it; until
-    /// then the provider keeps registering virtual entries so it does not vanish from the selector mid-migration.
-    /// Cloud/API providers stay false permanently — they have no local artifact by design.</summary>
+    /// registered from code, so the selector lists only what is installed. Set on every provider whose weights
+    /// have a Hartsy card (<c>HartsyRepacks</c>), which is the case the admission index can admit. Providers
+    /// without a card keep registering their whole catalogue. Cloud/API providers stay false permanently — they
+    /// have no local artifact by design.</summary>
     public bool FileBacked { get; init; } = false;
 
     /// <summary>Creates the full model name with the Audio Models prefix for SwarmUI routing.</summary>

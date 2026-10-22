@@ -103,11 +103,18 @@ public static class AudioArtifactIndex
         {
             return;
         }
+        Admit(handler.Models.Values);
+    }
+
+    /// <summary>Replaces the admitted set with the artifacts admitted from one scan of the Audio handler's files.
+    /// <c>internal</c> so a test can admit from files it wrote, without a running host.</summary>
+    internal static void Admit(IEnumerable<T2IModel> scannedFiles)
+    {
         Dictionary<string, AudioArtifact> admitted = [];
         int scanned = 0, unknownArch = 0, nonPrimary = 0;
         // Snapshot once: the registry rebuilds every provider definition on each access.
         IReadOnlyList<AudioProviderDefinition> providers = AudioProviderRegistry.All;
-        foreach (T2IModel model in handler.Models.Values)
+        foreach (T2IModel model in scannedFiles)
         {
             scanned++;
             IReadOnlyDictionary<string, string> meta = ReadIdentity(model);

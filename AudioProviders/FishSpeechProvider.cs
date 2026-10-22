@@ -20,6 +20,7 @@ public sealed class FishSpeechProvider : IAudioProviderSource
         .AddFeatureFlag("fishspeech_tts_params")
         // No tts_voice_ref: the engine does not port the Firefly encoder, so Fish Speech cannot clone a voice.
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("main")
         .Build();
 

@@ -19,6 +19,7 @@ public sealed class YuEProvider : IAudioProviderSource
         .AddFeatureFlag("audiolab_audiogen")
         .AddFeatureFlag("yue_music_params")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("music")
         .Build();
 

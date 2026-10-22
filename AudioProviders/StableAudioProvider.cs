@@ -20,6 +20,7 @@ public sealed class StableAudioProvider : IAudioProviderSource
         .AddFeatureFlag("audiolab_audiogen")
         .AddFeatureFlag("stableaudio_music_params")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("music")
         .Build();
 

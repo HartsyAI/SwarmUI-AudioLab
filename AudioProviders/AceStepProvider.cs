@@ -25,6 +25,7 @@ public sealed class AceStepProvider : IAudioProviderSource
         .AddFeatureFlag("acestep_task_params")
         .AddFeatureFlag("music_instrumental_param")
         .AddModels(Models)
+        .WithFileBackedModels()
         .WithEngineGroup("music")
         .Build();
 
