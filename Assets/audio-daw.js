@@ -6119,12 +6119,14 @@ const AudioDaw = (() => {
                     if (cs + e.t < sel.start) pedalAtStart = e.v >= 64;
                     if (cs + e.t < sel.end) pedalAtEnd = e.v;
                 }
-                // A note running past the range end keeps its part past the end as its own note, with a new id
+                // A note running past the range end keeps its part past the end as its own note, with a new id, up to the clip's end
+                const clipEnd = cs + AudioDawInstruments.midiClipLength(mc);
                 let nextId = Math.max(0, ...mc.notes.map(n => n.id || 0)) + 1;
                 const tails = [];
                 for (const n of mc.notes) {
                     const t = cs + n.start;
-                    if (t < sel.end && t + n.dur > sel.end + 1e-6) tails.push({ ...n, id: nextId++, start: sel.end - cs, dur: t + n.dur - sel.end });
+                    const noteEnd = Math.min(t + n.dur, clipEnd);
+                    if (t < sel.end && noteEnd > sel.end + 1e-6) tails.push({ ...n, id: nextId++, start: sel.end - cs, dur: noteEnd - sel.end });
                 }
                 mc.notes = mc.notes.filter(n => cs + n.start < sel.start || cs + n.start >= sel.end);
                 mc.cc = (mc.cc || []).filter(c => cs + c.t < sel.start || cs + c.t >= sel.end);
