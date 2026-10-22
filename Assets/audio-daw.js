@@ -6298,45 +6298,54 @@ const AudioDaw = (() => {
             if (typeof doNoticePopover === 'function') doNoticePopover(translate('Nothing to paste. Copy a clip or a selection first'), 'notice-pop-yellow');
             return;
         }
-        pushUndo();
-        const at = state.currentTime;
-        const base = Math.max(0, state.tracks.findIndex(t => t.id === state.selectedTrackId));
-        const touched = new Set();
-        const madeInstrument = new Map(); // trackOffset -> instrument track made for MIDI that landed on an audio track
-        for (const item of clipboard.items) {
-            let track = state.tracks[base + item.trackOffset];
-            if (item.midi && track?.kind !== 'instrument') {
-                // MIDI only plays on an instrument track: make one with the copied instrument
-                track = madeInstrument.get(item.trackOffset);
-                if (!track) {
-                    const inst = item.instrument ? JSON.parse(JSON.stringify(item.instrument)) : AudioDawInstruments.createInstrument('synth', 'Soft Keys');
-                    track = addTrack({ kind: 'instrument', instrument: inst, name: nextTrackName(inst.type === 'sampler' ? translate('Sampler') : (inst.preset || translate('Synth'))) });
-                    madeInstrument.set(item.trackOffset, track);
+        // Taken first and pushed only once something is written, so a paste that places nothing adds no empty undo step
+        const before = takeSnapshot();
+        let changed = false;
+        try {
+            const at = state.currentTime;
+            const base = Math.max(0, state.tracks.findIndex(t => t.id === state.selectedTrackId));
+            const touched = new Set();
+            const madeInstrument = new Map(); // trackOffset -> instrument track made for MIDI that landed on an audio track
+            for (const item of clipboard.items) {
+                let track = state.tracks[base + item.trackOffset];
+                if (item.midi && track?.kind !== 'instrument') {
+                    // MIDI only plays on an instrument track: make one with the copied instrument
+                    track = madeInstrument.get(item.trackOffset);
+                    if (!track) {
+                        const inst = item.instrument ? JSON.parse(JSON.stringify(item.instrument)) : AudioDawInstruments.createInstrument('synth', 'Soft Keys');
+                        track = addTrack({ kind: 'instrument', instrument: inst, name: nextTrackName(inst.type === 'sampler' ? translate('Sampler') : (inst.preset || translate('Synth'))) });
+                        madeInstrument.set(item.trackOffset, track);
+                    }
+                }
+                if (!track || (!item.midi && track.kind === 'bus')) track = addTrack();
+                changed = true; // from here on this item writes to the project
+                if (state.editMode === 'shuffle' && !touched.has(track.id)) {
+                    for (const c of track.clips) {
+                        if (c.startTime >= at - 1e-6) c.startTime += clipboard.length;
+                    }
+                    for (const mc of track.midiClips || []) {
+                        if (mc.startTime >= at - 1e-6) mc.startTime += clipboard.length;
+                    }
+                }
+                touched.add(track.id);
+                if (item.midi) {
+                    const mc = newMidiClip(track, at + item.rel, item.midi.length, item.midi.notes, item.midi.name, item.midi.cc);
+                    mc.muted = item.midi.muted;
+                    mc.color = item.midi.color;
+                    state.selectedMidiClipId = mc.id;
+                    state.selectedClipId = null;
+                }
+                else {
+                    const nc = cloneClip(item.clip, { startTime: at + item.rel });
+                    track.clips.push(nc);
+                    state.selectedClipId = nc.id;
+                    state.selectedMidiClipId = null;
                 }
             }
-            if (!track || (!item.midi && track.kind === 'bus')) track = addTrack();
-            if (state.editMode === 'shuffle' && !touched.has(track.id)) {
-                for (const c of track.clips) {
-                    if (c.startTime >= at - 1e-6) c.startTime += clipboard.length;
-                }
-                for (const mc of track.midiClips || []) {
-                    if (mc.startTime >= at - 1e-6) mc.startTime += clipboard.length;
-                }
-            }
-            touched.add(track.id);
-            if (item.midi) {
-                const mc = newMidiClip(track, at + item.rel, item.midi.length, item.midi.notes, item.midi.name, item.midi.cc);
-                mc.muted = item.midi.muted;
-                mc.color = item.midi.color;
-                state.selectedMidiClipId = mc.id;
-                state.selectedClipId = null;
-            }
-            else {
-                const nc = cloneClip(item.clip, { startTime: at + item.rel });
-                track.clips.push(nc);
-                state.selectedClipId = nc.id;
-                state.selectedMidiClipId = null;
-            }
+        }
+        finally {
+            // Also runs when a throw leaves part of the paste placed, so that part can still be undone
+            if (changed) pushUndo(before);
         }
         updateTotalDuration();
         renderAllTracks();
