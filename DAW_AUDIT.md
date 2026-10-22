@@ -108,6 +108,7 @@ Round 7 is rows 37 and 38.
 | 76 | Codex round 13 | Web MIDI notes kept sounding after leaving the DAW | Leaving released only the keyboard's held notes, not the live voices | 72130a9 |
 | 77 | Round 13 review (own) | A note running past a range delete lost the part past the range end | Crossing notes were cut at the range start with nothing kept after the end | 72130a9 |
 | 78 | Round 13 review (own) | The 7/8 ruler's minor ticks used quarter spacing at low zoom, and the Open confirm overstated what the autosave slot keeps | Tick density used the beat rather than the click unit; the confirm text said the session stayed only in the autosave slot | 72130a9 |
+| 79 | Follow-up (own) | Paste pushed its undo step before anything was placed, so a paste that threw left an empty undo step | pushUndo ran before the paste loop; the snapshot is now taken first and pushed only once a clip lands, in a finally | 81dfa32 |
 
 Rows 39 to 51 are the verified findings of this review. Rounds 8 and 9 of the Codex review are rows 45 and 52 to 60.
 
