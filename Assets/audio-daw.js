@@ -6109,31 +6109,49 @@ const AudioDaw = (() => {
                 const cs = mc.startTime;
                 const noteCount = mc.notes.length;
                 const ccCount = (mc.cc || []).length;
-                mc.notes = mc.notes.filter(n => cs + n.start < sel.start || cs + n.start >= sel.end);
-                mc.cc = (mc.cc || []).filter(c => cs + c.t < sel.start || cs + c.t >= sel.end);
-                if (mc.notes.length !== noteCount || mc.cc.length !== ccCount) changed = true;
-                // A note sounding across the range start stops there; the part past the range end stays as its own note
+                // The pedal state at the range start and at its end, read before the events inside the range are dropped
+                let pedalAtStart = false;
+                let pedalAtEnd = null;
+                for (const e of mc.cc || []) {
+                    if (e.n !== 64) {
+                        continue;
+                    }
+                    if (cs + e.t < sel.start) pedalAtStart = e.v >= 64;
+                    if (cs + e.t < sel.end) pedalAtEnd = e.v;
+                }
+                // A note running past the range end keeps its part past the end as its own note, with a new id
+                let nextId = Math.max(0, ...mc.notes.map(n => n.id || 0)) + 1;
                 const tails = [];
                 for (const n of mc.notes) {
                     const t = cs + n.start;
+                    if (t < sel.end && t + n.dur > sel.end + 1e-6) tails.push({ ...n, id: nextId++, start: sel.end - cs, dur: t + n.dur - sel.end });
+                }
+                mc.notes = mc.notes.filter(n => cs + n.start < sel.start || cs + n.start >= sel.end);
+                mc.cc = (mc.cc || []).filter(c => cs + c.t < sel.start || cs + c.t >= sel.end);
+                if (mc.notes.length !== noteCount || mc.cc.length !== ccCount) changed = true;
+                // A note sounding across the range start stops there
+                for (const n of mc.notes) {
+                    const t = cs + n.start;
                     if (t < sel.start && t + n.dur > sel.start) {
-                        if (t + n.dur > sel.end) tails.push({ ...n, start: sel.end - cs, dur: t + n.dur - sel.end });
                         n.dur = sel.start - t;
                         changed = true;
                     }
                 }
+                if (tails.length) changed = true;
                 mc.notes.push(...tails);
                 // A pedal still down at the range start is released there, so the notes it sustains stop there too
-                if (cs < sel.start && cs + AudioDawInstruments.midiClipLength(mc) > sel.start) {
-                    let down = false;
-                    for (const e of mc.cc) {
-                        if (e.n === 64 && cs + e.t < sel.start) down = e.v >= 64;
-                    }
-                    if (down) {
-                        mc.cc.push({ t: sel.start - cs, n: 64, v: 0 });
-                        mc.cc.sort((a, b) => a.t - b.t);
-                        changed = true;
-                    }
+                if (pedalAtStart && cs < sel.start && cs + AudioDawInstruments.midiClipLength(mc) > sel.start) {
+                    mc.cc.push({ t: sel.start - cs, n: 64, v: 0 });
+                    mc.cc.sort((a, b) => a.t - b.t);
+                    changed = true;
+                }
+                // A pedal still down where the range ends is pressed again there, so the notes after it keep their sustain
+                const endT = sel.end - cs;
+                const keptEvent = mc.cc.some(c => c.n === 64 && Math.abs(c.t - endT) < 1e-6);
+                if (pedalAtEnd !== null && pedalAtEnd >= 64 && !keptEvent && cs + AudioDawInstruments.midiClipLength(mc) > sel.end + 1e-6) {
+                    mc.cc.push({ t: endT, n: 64, v: pedalAtEnd });
+                    mc.cc.sort((a, b) => a.t - b.t);
+                    changed = true;
                 }
                 if (state.editMode === 'shuffle') {
                     if (cs >= sel.end - 1e-6) {
@@ -6154,13 +6172,13 @@ const AudioDaw = (() => {
                             changed = true;
                         }
                         for (const n of mc.notes) {
-                            if (cs + n.start >= sel.end) {
+                            if (cs + n.start >= sel.end - 1e-6) {
                                 n.start -= len;
                                 changed = true;
                             }
                         }
                         for (const c of mc.cc) {
-                            if (cs + c.t >= sel.end) {
+                            if (cs + c.t >= sel.end - 1e-6) {
                                 c.t -= len;
                                 changed = true;
                             }
@@ -6508,11 +6526,8 @@ const AudioDaw = (() => {
         const len = AudioDawInstruments.midiClipLength(clip);
         const notes = clip.notes.filter(n => n.start < len).map(n => ({ ...n, dur: Math.min(n.dur, len - n.start) }));
         const cc = (clip.cc || []).filter(e => e.t <= len);
-        let down = false;
-        for (const e of clip.cc || []) {
-            if (e.n === 64 && e.t <= len) down = e.v >= 64;
-        }
-        if (down) cc.push({ t: len, n: 64, v: 0 });
+        const pedal = cc.filter(e => e.n === 64).pop();
+        if (pedal && pedal.v >= 64) cc.push({ t: len, n: 64, v: 0 });
         return { len, notes, cc };
     }
 
@@ -9246,6 +9261,7 @@ const AudioDaw = (() => {
             if (initialized && typeof AudioDawInstruments !== 'undefined') {
                 AudioDawInstruments.releaseAll();
                 stopAllLiveVoices();
+                liveControl(64, 0); // the pedal and the voices it holds end here too, as on a tab switch
             }
         });
         // Browser tabs die without warning: flush the autosave on page close too
