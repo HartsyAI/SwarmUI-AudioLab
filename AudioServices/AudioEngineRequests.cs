@@ -109,9 +109,10 @@ public static class AudioEngineRequests
             InferSteps = steps > 0 ? (int)steps : null,
             // HeartMuLa sends "cfg_scale"; ACE-Step sends "guidance_scale"; the AudioCraft (MusicGen/AudioGen)
             // shared params send "cfg_coef" — one CFG knob per provider.
+            // A cfg_coef of 0 asks for the model default, and the engine refuses a guidance of 0.
             CfgScale = args.ContainsKey("cfg_scale") ? Double(args, "cfg_scale", 1.5)
                 : args.ContainsKey("guidance_scale") ? Double(args, "guidance_scale", 7.0)
-                : args.ContainsKey("cfg_coef") ? Double(args, "cfg_coef", 3.0) : null,
+                : Number(args, "cfg_coef") is double cfgCoef and > 0 ? cfgCoef : null,
             Temperature = args.ContainsKey("temperature") ? Double(args, "temperature", 1.0) : null,
             // YuE sends "topk"; the AudioCraft shared params send "top_k".
             TopK = args.ContainsKey("topk") ? (int)Double(args, "topk", 50)
@@ -126,7 +127,8 @@ public static class AudioEngineRequests
             VocalLanguage = AudioIo.Str(args, "vocal_language"),
             // ACE-Step base/sft CFG controls.
             InferMethod = AudioIo.Str(args, "infer_method"),
-            UseAdg = Flag(args, "use_adg", false),
+            // Null keeps the recipe's blend (APG).
+            GuidanceType = Flag(args, "use_adg", false) ? "adg" : null,
             CfgIntervalStart = Double(args, "cfg_interval_start", 0d),
             CfgIntervalEnd = Double(args, "cfg_interval_end", 1d),
             // ACE-Step 5 Hz LM planner controls.

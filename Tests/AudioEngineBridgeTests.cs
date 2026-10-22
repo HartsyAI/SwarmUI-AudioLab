@@ -160,6 +160,34 @@ public class AudioEngineBridgeTests
         Assert.Null(plain.EmotionAlpha);
     }
 
+    [Theory]
+    [InlineData("true", "adg")]
+    [InlineData("false", null)]
+    [InlineData(null, null)]
+    public void Music_MapsUseAdgToTheAdgBlend(string useAdg, string expected)
+    {
+        Dictionary<string, object> args = new() { ["prompt"] = "rain" };
+        if (useAdg is not null)
+        {
+            args["use_adg"] = useAdg;
+        }
+        Assert.Equal(expected, AudioEngineRequests.Music(args).GuidanceType);
+    }
+
+    [Theory]
+    [InlineData(3.0, 3.0)]
+    [InlineData(0.0, null)]
+    [InlineData(null, null)]
+    public void Music_MapsAZeroCfgCoefToTheModelDefault(double? cfgCoef, double? expected)
+    {
+        Dictionary<string, object> args = new() { ["prompt"] = "rain" };
+        if (cfgCoef is not null)
+        {
+            args["cfg_coef"] = cfgCoef.Value;
+        }
+        Assert.Equal(expected, AudioEngineRequests.Music(args).CfgScale);
+    }
+
     [Fact]
     public void TryFreeMemory_WithNoEngineBuilt_ReportsSuccess()
     {
