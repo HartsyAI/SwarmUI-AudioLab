@@ -1974,7 +1974,8 @@ public static class AudioLabParams
         ControlFoleyCFG = T2IParamTypes.Register<double>(new("ControlFoley CFG",
             "Classifier-free guidance strength.\nThe reference demo uses 4.5.",
             "4.5",
-            Min: 0.0, Max: 12.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
+            // The engine refuses 0; anything below 1 already runs unguided.
+            Min: 0.1, Max: 12.0, Step: 0.1, ViewType: ParamViewType.SLIDER,
             OrderPriority: -9, Group: AudioGenGroup, FeatureFlag: "controlfoley_sfx_params", IsAdvanced: true));
 
         ControlFoleyVideo = T2IParamTypes.Register<VideoFile>(new("ControlFoley Video",
