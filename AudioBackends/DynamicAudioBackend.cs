@@ -2185,6 +2185,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 args["voice"] = input.TryGet(AudioLabParams.OrpheusVoice, out string ov) ? ov : "tara";
                 break;
 
+            case "hurston_tts":
+                if (input.TryGet(AudioLabParams.HurstonDescription, out string hd) && !string.IsNullOrWhiteSpace(hd))
+                    args["instruction"] = hd;
+                break;
+
             case "csm_tts":
                 args["speaker_id"] = input.TryGet(AudioLabParams.Speaker, out string sp) ? sp : "0";
                 break;

@@ -71,6 +71,7 @@ public static class AudioEngineBridge
         ["bark_tts"] = new AudioEngineBinding("bark", AudioEngineService.Speech, true),
         ["dia_tts"] = new AudioEngineBinding("dia", AudioEngineService.Speech, true),
         ["orpheus_tts"] = new AudioEngineBinding("orpheus", AudioEngineService.Speech, true),
+        ["hurston_tts"] = new AudioEngineBinding("hurston-1", AudioEngineService.Speech, true),
         ["csm_tts"] = new AudioEngineBinding("csm", AudioEngineService.Speech, true),
         ["neutts_tts"] = new AudioEngineBinding("neutts", AudioEngineService.Speech, true),
         ["fishspeech_tts"] = new AudioEngineBinding("fishspeech", AudioEngineService.Speech, true),
@@ -135,6 +136,7 @@ public static class AudioEngineBridge
         ["sheetsage2_transcribe"] = "Comfy-Org/YuE2",
         ["csm_tts"] = "unsloth/csm-1b",
         ["orpheus_tts"] = "unsloth/orpheus-3b-0.1-ft",
+        ["hurston_tts"] = "Hartsy/hurston-1-safetensors",
         ["stableaudio_music"] = "FastVideo/stable-audio-open-small-Diffusers",
         ["vibevoice_tts"] = "microsoft/VibeVoice-1.5B",
     };

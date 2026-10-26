@@ -225,6 +225,13 @@ public static class AudioLabParams
 
     #endregion
 
+    #region TTS — Hurston-1 (flag: hurston_tts_params)
+
+    /// <summary>Voice description for Hurston-1. Feature flag: <c>hurston_tts_params</c>.</summary>
+    public static T2IRegisteredParam<string> HurstonDescription;
+
+    #endregion
+
     #region TTS — CSM (flag: csm_tts_params)
 
     /// <summary>Speaker ID for CSM multi-speaker TTS. Feature flag: <c>csm_tts_params</c>.</summary>
@@ -1016,6 +1023,16 @@ public static class AudioLabParams
                 "zac///Zac (Male)", "zoe///Zoe (Female)"
             ],
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "orpheus_tts_params"));
+
+        #endregion
+
+        #region TTS — Hurston-1
+        HurstonDescription = T2IParamTypes.Register<string>(new("Hurston Voice Description",
+            "Voice description for Hurston-1: Gender, age, accent, style, pace.\n"
+            + "Example: Female, adult, Nigerian English accent, clear conversational voice, natural pacing.\n"
+            + "Accents: American, Southern American, Nigerian, Nigerian (Yoruba), Nigerian (Igbo), West African, East African, East African (Swahili), Southern African.",
+            "Female, adult, American accent, clear conversational voice, natural pacing",
+            OrderPriority: -5, Group: TTSGroup, FeatureFlag: "hurston_tts_params"));
 
         #endregion
 

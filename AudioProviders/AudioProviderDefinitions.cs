@@ -13,6 +13,7 @@ public static class AudioProviderDefinitions
         BarkProvider.Instance,
         VibeVoiceProvider.Instance,
         OrpheusTTSProvider.Instance,
+        HurstonTTSProvider.Instance,
         KokoroProvider.Instance,
         DiaTTSProvider.Instance,
         F5TTSProvider.Instance,
