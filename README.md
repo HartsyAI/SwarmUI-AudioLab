@@ -204,6 +204,7 @@ whether the engine downloads on first use or exposes per model installs.
 | [MeloTTS](https://huggingface.co/myshell-ai/MeloTTS-English-v3) | 1 | ~1GB (or CPU) | MIT | on first use |
 | [NeuTTS Air](https://huggingface.co/neuphonic/neutts-air) | 1 | ~2GB (or CPU) | Apache 2.0 | on first use |
 | [Orpheus TTS](https://huggingface.co/canopylabs/orpheus-3b-0.1-ft) | 1 | ~16GB | Apache 2.0 | on first use |
+| [Hurston-1 TTS](https://huggingface.co/destined/hurston-1) | 1 | ~8GB | Apache 2.0 | on first use |
 | [Piper TTS](https://github.com/rhasspy/piper) | 1 | CPU only | MIT | on first use |
 | [Pocket TTS](https://github.com/kyutai-labs/pocket-tts) | 1 | CPU (no GPU needed) | CC-BY-4.0 | on first use |
 | [Qwen3 TTS](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base) | 5 | ~4GB, ~8GB | Apache 2.0 | on first use |

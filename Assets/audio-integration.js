@@ -14,6 +14,7 @@ const AudioLabConfig = {
         dia_tts: { category: 'audiolab_tts', providerFlag: 'dia_tts_params', extraFlags: ['tts_sampling'] },
         csm_tts: { category: 'audiolab_tts', providerFlag: 'csm_tts_params', extraFlags: ['tts_sampling', 'tts_streaming'] },
         orpheus_tts: { category: 'audiolab_tts', providerFlag: 'orpheus_tts_params', extraFlags: ['tts_sampling', 'tts_streaming'] },
+        hurston_tts: { category: 'audiolab_tts', providerFlag: 'hurston_tts_params', extraFlags: ['tts_streaming'] },
         vibevoice_tts: { category: 'audiolab_tts', providerFlag: 'vibevoice_tts_params', extraFlags: ['tts_voice_ref', 'tts_streaming'] },
         zonos_tts: { category: 'audiolab_tts', providerFlag: 'zonos_tts_params', extraFlags: ['tts_voice_ref'] },
         f5_tts: { category: 'audiolab_tts', providerFlag: 'f5_tts_params', extraFlags: ['tts_voice_ref'] },
