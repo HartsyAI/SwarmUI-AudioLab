@@ -170,7 +170,7 @@ public static class HartsyRepacks
         },
         ["hurston_tts"] = new(StringComparer.OrdinalIgnoreCase)
         {
-            ["default"] = "f8987685-ca30-4926-9d20-0fac8a306b9e", // Hurston-1
+            ["default"] = "f0bd9044-1f1b-49cb-a276-c8f7382ed71a", // Hurston-1
         },
         ["piper_tts"] = new(StringComparer.OrdinalIgnoreCase)
         {
