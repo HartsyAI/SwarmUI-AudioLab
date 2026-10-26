@@ -168,6 +168,10 @@ public static class HartsyRepacks
         {
             ["3b"] = "7ebbef68-6a4e-4b62-a49a-d92210d69016", // Orpheus 3B
         },
+        ["hurston_tts"] = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["default"] = "f8987685-ca30-4926-9d20-0fac8a306b9e", // Hurston-1
+        },
         ["piper_tts"] = new(StringComparer.OrdinalIgnoreCase)
         {
             // One voice (en_US lessac medium) as a bare .onnx with no stand-in path, so the installer cannot place

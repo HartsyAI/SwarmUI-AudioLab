@@ -18,10 +18,6 @@ public class AudioFileBackedTests
     /// engine fetches its voices itself and an identity-driven listing would hide every one of them.</summary>
     private const string UnplaceableProvider = "piper_tts";
 
-    /// <summary>The one file-backed provider with no hartsy.ai card yet: Hurston-1's repack is not uploaded, so its
-    /// card id does not exist. Remove this once the card is registered in <c>HartsyRepacks</c>.</summary>
-    private const string UncardedFileBackedProvider = "hurston_tts";
-
     [Fact]
     public void FileBacked_IsSetOnEveryCardedProvider_AndOnNoOther()
     {
@@ -34,7 +30,6 @@ public class AudioFileBackedTests
             HashSet<string> fileBacked = [.. AudioProviderRegistry.All
                 .Where(p => !p.IsApiProvider && p.FileBacked)
                 .Select(p => p.Id)];
-            fileBacked.Remove(UncardedFileBackedProvider);
             Assert.True(carded.SetEquals(fileBacked),
                 $"Carded but not file-backed: {string.Join(", ", carded.Except(fileBacked))}. " +
                 $"File-backed without a card: {string.Join(", ", fileBacked.Except(carded))}.");
