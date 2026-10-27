@@ -1231,6 +1231,13 @@ public class DynamicAudioBackend : AbstractT2IBackend
     /// multi-GB pipelines stayed resident until the process exited.</para></summary>
     public override async Task<bool> FreeMemory(bool systemRam)
     {
+        // Swarm's memory cleaner calls this between its own generations, but a speech request routed through AudioLab
+        // is not one of them. Freeing now would drop the weights under a take that is still running.
+        if (AudioEngineBridge.IdleRelease.ActiveCount > 0)
+        {
+            Logs.Info("[AudioLab] Not freeing audio memory: a request is still running.");
+            return false;
+        }
         AudioEngineBridge.FreeMemory();
         if (systemRam)
         {
