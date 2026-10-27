@@ -673,6 +673,12 @@ public static class AudioLabAPI
                 ["language"] = input["language"]?.ToString() ?? AudioConfiguration.DefaultLanguage,
                 ["volume"] = input["volume"]?.Value<double>() ?? 1.0
             };
+            // Hurston-1 steers its accent and voice through "instruction", which only the generate path filled in;
+            // the raw route dropped it, so every accent and character voice came out as the default voice.
+            if (provider.Id == "hurston_tts" && !string.IsNullOrWhiteSpace(input["voice"]?.ToString()))
+            {
+                args["instruction"] = input["voice"].ToString();
+            }
             JObject result = await AudioServerManager.Instance.ProcessAsync(provider, args, session?.User);
             if (result["success"]?.Value<bool>() != true)
             {
@@ -805,6 +811,11 @@ public static class AudioLabAPI
                 ["language"] = request.Language,
                 ["volume"] = request.Volume
             };
+            // Hurston-1 reads its accent and voice description from "instruction" (see AudioLabSpeakRaw).
+            if (ttsProvider.Id == "hurston_tts" && !string.IsNullOrWhiteSpace(request.Voice) && request.Voice != "default")
+            {
+                args["instruction"] = request.Voice;
+            }
             // Forward the zero-shot voice reference so cloning providers (F5, VibeVoice, …) can actually run
             // via the API — the TtsHandler reads args["reference_audio"] (base64 WAV) + args["ref_text"].
             if (input["reference_audio"] is JToken refAudio && refAudio.Type != JTokenType.Null)
