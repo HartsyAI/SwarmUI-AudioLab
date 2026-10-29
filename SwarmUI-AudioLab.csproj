@@ -100,7 +100,6 @@
     <PackageReference Update="LLamaSharp.Backend.Cpu" ExcludeAssets="runtime" />
     <PackageReference Update="LLamaSharp.Backend.Cuda12" ExcludeAssets="runtime" />
     <PackageReference Update="Newtonsoft.Json" ExcludeAssets="runtime" />
-    <PackageReference Update="SixLabors.ImageSharp" ExcludeAssets="runtime" />
-    <PackageReference Update="SixLabors.ImageSharp.Drawing" ExcludeAssets="runtime" />
+    <PackageReference Update="Magick.NET-Q16-AnyCPU" ExcludeAssets="runtime" />
   </ItemGroup>
 </Project>
