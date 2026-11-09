@@ -11,7 +11,7 @@ using Hartsy.Extensions.AudioLab.AudioProviderTypes;
 using HartsyInference.Audio.Cache;
 using HartsyInference.Audio.Streaming;
 using HartsyInference.Core.Exceptions;
-using HartsyInference.Core.MemoryManagement;
+using HartsyInference.Core.Memory.Vram;
 using HartsyInference.Engine;
 using HartsyInference.Engine.Dispatch;
 using HartsyInference.Engine.Requests;

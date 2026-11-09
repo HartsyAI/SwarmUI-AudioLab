@@ -5,7 +5,7 @@ using System.Text;
 using HartsyInference.Engine.Dispatch;
 using HartsyInference.Engine.Requests;
 using HartsyInference.Engine.Services;
-using HartsyInference.Tools;
+using HartsyInference.Engine.ToolCalling;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Utils;
 
@@ -19,7 +19,7 @@ namespace Hartsy.Extensions.AudioLab.AudioServices.Voice;
 ///
 /// <para><b>Tool calls have exactly one owner: LLMAssistant.</b> It dispatches tools through its own registry and
 /// reports both halves back over the wire (<c>native_tool_call</c> then <c>tool_result</c>); this class re-emits
-/// them as the exact <see cref="TextChunk"/> shapes <see cref="HartsyInference.Tools.ToolLoop"/> itself produces
+/// them as the exact <see cref="TextChunk"/> shapes <see cref="HartsyInference.Engine.ToolCalling.ToolLoop"/> itself produces
 /// (<see cref="TextChunkKind.NativeToolCall"/>, then a <see cref="TextChunkKind.ToolResult"/> chunk) so
 /// <c>VoiceAgentSession</c>'s own turn code records the exchange in its conversation and raises its own
 /// <c>ToolCall</c>/<c>ToolResult</c> events -- exactly as it would for a tool a local engine called. What keeps

@@ -4,7 +4,7 @@ using System.Text;
 using Hartsy.Extensions.AudioLab.AudioServices;
 using Hartsy.Extensions.AudioLab.AudioServices.Voice;
 using HartsyInference.Engine.Requests;
-using HartsyInference.Tools;
+using HartsyInference.Engine.ToolCalling;
 using HartsyInference.Voice;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Accounts;
