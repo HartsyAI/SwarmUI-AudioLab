@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Hartsy.Extensions.AudioLab.AudioServices.Voice;
 using HartsyInference.Engine.Audio.Wake;
-using HartsyInference.Tools;
+using HartsyInference.Engine.ToolCalling;
 using HartsyInference.Voice;
 using SwarmUI.Core;
 using SwarmUI.Utils;

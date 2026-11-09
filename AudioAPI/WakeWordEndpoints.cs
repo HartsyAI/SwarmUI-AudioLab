@@ -4,7 +4,7 @@ using System.Threading.Channels;
 using Hartsy.Extensions.AudioLab.AudioServices;
 using HartsyInference.Audio.Io;
 using HartsyInference.Core.Backends;
-using HartsyInference.Cpu;
+using HartsyInference.Core.Backends.Cpu;
 using HartsyInference.Engine.Audio.Wake;
 using HartsyInference.Engine.Audio.Wake.Speakers;
 using Newtonsoft.Json.Linq;
