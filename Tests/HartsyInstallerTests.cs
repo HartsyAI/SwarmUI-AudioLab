@@ -136,6 +136,33 @@ public class HartsyInstallerTests
     }
 
     [Fact]
+    public void SidecarTargets_SingleFileCard_PutsTheTopFolderFilesBesideTheMainFilesStandIn()
+    {
+        // The single-file YuE card: the merged checkpoint is the main file at the top of the card, with the variant's
+        // config and tokenizer beside it, and the stage-2 model and the vocoders in folders of their own.
+        CardFile stage2 = Companion("s2/yue-stage2_bf16.safetensors");
+        CardFile stage2Config = Companion("s2/config.json");
+        CardFile vocoder = Companion("vocoder/yue-vocoder-decoder-131000_fp32.safetensors");
+        CardFile config = Companion("config.json");
+        CardFile generationConfig = Companion("generation_config.json");
+        CardFile tokenizer = Companion("tokenizer.model");
+        CardManifest yue = Manifest("yue-en-cot_bf16.safetensors", stage2, stage2Config, vocoder, config, generationConfig, tokenizer);
+        Func<CardFile, IReadOnlyList<string>> declared = f =>
+            f == stage2 ? ["music/YuE/s2/model.safetensors"]
+            : f == vocoder ? ["music/YuE/xcodec_vocoder_src/decoder_131000.pth"]
+            : ["music/YuE/en-cot/model.safetensors"];
+        Assert.Equal(new[] { "music/YuE/en-cot/config.json" }, HartsyInstaller.SidecarTargets(yue, config, declared));
+        Assert.Equal(new[] { "music/YuE/en-cot/generation_config.json" }, HartsyInstaller.SidecarTargets(yue, generationConfig, declared));
+        Assert.Equal(new[] { "music/YuE/en-cot/tokenizer.model" }, HartsyInstaller.SidecarTargets(yue, tokenizer, declared));
+        // The stage-2 config goes beside stage 2 only: the variant's config is never copied beside the vocoders.
+        Assert.Equal(new[] { "music/YuE/s2/config.json" }, HartsyInstaller.SidecarTargets(yue, stage2Config, declared));
+        // A single merged checkpoint is a card the installer accepts as it stands.
+        Assert.True(yue.Main.IsWeights);
+        Assert.False(yue.Main.IsShardIndex);
+        Assert.Null(HartsyInstaller.Problem(yue));
+    }
+
+    [Fact]
     public void TranslateShardIndex_RenamesTheCardsShardsToTheUpstreamNames()
     {
         JObject index = JObject.Parse("""

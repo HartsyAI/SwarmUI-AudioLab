@@ -23,6 +23,13 @@ public static class AudioWeightsRegistry
         /// Used so an install prefers a small pre-converted repack but still succeeds off the canonical
         /// full-size source when the repack host is unreachable / not yet published.</summary>
         public DownloadSpec Fallback { get; init; }
+
+        /// <summary>Other names, within the same weights folder, under which this file's content may already be on
+        /// disk. Unlike <see cref="Fallback"/> these are never downloaded: they only make the file count as present.
+        /// A Hartsy card ships YuE's three shards merged into one <c>model.safetensors</c>, which makes each shard and
+        /// the shard index redundant; without this the install would fetch them from upstream beside the merged
+        /// file and report the variant incomplete until it had.</summary>
+        public IReadOnlyList<string> AlsoSatisfiedBy { get; init; } = [];
     }
 
     private const string HfAce = "https://huggingface.co/ACE-Step/";
@@ -126,17 +133,26 @@ public static class AudioWeightsRegistry
 
     /// <summary>YuE Stage-1 (7B, ~12.5GB): the m-a-p/YuE-s1-7B-anneal-{variant} folder — 3 sharded safetensors +
     /// index + config + tokenizer, downloaded into a per-variant subfolder — plus the shared X-Codec .pth. The
-    /// engine loads the folder (sharded) and converts the .pth to xcodec.safetensors on first load.</summary>
+    /// engine loads the folder (sharded) and converts the .pth to xcodec.safetensors on first load.
+    ///
+    /// <para>The Hartsy card carries the same weights as one merged <c>model.safetensors</c> instead, so the three
+    /// shards and the index are also satisfied by that file (<see cref="DownloadSpec.AlsoSatisfiedBy"/>).</para></summary>
     private static DownloadSpec[] YueVariant(string variant)
     {
         string repo = $"{HfYue}YuE-s1-7B-anneal-{variant}/resolve/main/";
         string[] files = ["model-00001-of-00003.safetensors", "model-00002-of-00003.safetensors",
             "model-00003-of-00003.safetensors", "model.safetensors.index.json", "config.json",
             "generation_config.json", "tokenizer.model"];
+        // The first four files are the sharded checkpoint and its index; a merged checkpoint replaces all of them.
+        const int shardedCheckpointFiles = 4;
+        string[] merged = [$"{variant}/model.safetensors"];
         DownloadSpec[] set = new DownloadSpec[files.Length + 1];
         for (int i = 0; i < files.Length; i++)
         {
-            set[i] = new(Url: repo + files[i], FileName: $"{variant}/{files[i]}", Sha256: "");
+            set[i] = new(Url: repo + files[i], FileName: $"{variant}/{files[i]}", Sha256: "")
+            {
+                AlsoSatisfiedBy = i < shardedCheckpointFiles ? merged : [],
+            };
         }
         set[^1] = YueXCodec;
         return set;

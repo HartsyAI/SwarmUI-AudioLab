@@ -2,10 +2,10 @@ namespace Hartsy.Extensions.AudioLab.AudioServices;
 
 /// <summary>The Hartsy card each local model installs from, keyed by provider id then model id.
 ///
-/// <para>Each card holds a converted repack of the upstream weights plus its companion files (shards, codecs,
-/// tokenizers, configs). Every converted file names, in its <c>hartsy.stands_in_for</c> metadata, the upstream path
-/// it replaces, so the engine finds it where its loaders already look. <see cref="HartsyInstaller"/> does the
-/// download.</para>
+/// <para>Each card holds a converted repack of the upstream weights plus its companion files (codecs, tokenizers,
+/// configs, and the other components of a multi-part model). A checkpoint is one merged <c>.safetensors</c> file, not
+/// shards. Every converted file names, in its <c>hartsy.stands_in_for</c> metadata, the upstream path it replaces, so
+/// the engine finds it where its loaders already look. <see cref="HartsyInstaller"/> does the download.</para>
 ///
 /// <para>Rows that share one download (a quantization made on-device from the base weights, or a streaming row
 /// riding on another family's checkpoint) name the card of the weights they load.</para></summary>
