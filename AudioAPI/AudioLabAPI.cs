@@ -776,6 +776,36 @@ public static class AudioLabAPI
         }
     }
 
+    /// <summary>Generation knobs that <see cref="ProcessTTS"/> forwards when the caller sends them: the scalar keys
+    /// <c>AudioEngineRequests.Speech</c> reads. <c>instruction</c> is left to the Hurston branch in ProcessTTS.
+    /// <c>references</c> and <c>history</c> are left out: they carry nested base64 clips, and this endpoint has no
+    /// size guard for them (ProcessAudio has one).</summary>
+    private static readonly string[] TtsKnobKeys =
+    [
+        "seed", "nfe_step", "cfg_scale", "temperature", "top_p", "top_k", "waveform_temp", "max_new_tokens",
+        "speed", "speaker_id", "normalize_loudness", "speaking_rate", "pitch_std", "exaggeration", "emotion",
+        "emotion_text", "emotion_alpha", "duration_seconds",
+    ];
+
+    /// <summary>Copies the generation knobs a ProcessTTS caller sent into the provider args. A key is forwarded only
+    /// when the caller sent a non-null value, so a request that names no knob reaches the provider as it did before.
+    /// A top-level <c>speed</c> wins over <c>options.speed</c>, and the option's 1.0 default is never forwarded.</summary>
+    internal static void ForwardTtsKnobs(JObject input, IDictionary<string, object> args)
+    {
+        foreach (string key in TtsKnobKeys)
+        {
+            if (input[key] is JToken value && value.Type != JTokenType.Null)
+            {
+                args[key] = value.ToObject<object>();
+            }
+        }
+        if (!args.ContainsKey("speed") && input["options"] is JObject options
+            && options["speed"] is JToken optionSpeed && optionSpeed.Type != JTokenType.Null)
+        {
+            args["speed"] = optionSpeed.ToObject<object>();
+        }
+    }
+
     public static async Task<JObject> ProcessTTS(Session session, JObject input)
     {
         try
@@ -822,6 +852,8 @@ public static class AudioLabAPI
                 args["reference_audio"] = refAudio.ToString();
             if (input["ref_text"] is JToken refText && refText.Type != JTokenType.Null)
                 args["ref_text"] = refText.ToString();
+            // Sampling and diffusion knobs (seed, cfg_scale, nfe_step, ...) reach the Engine only if they are forwarded here.
+            ForwardTtsKnobs(input, args);
 
             long ttsStart = Environment.TickCount64;
             JObject result = await AudioServerManager.Instance.ProcessAsync(ttsProvider, args, session?.User);
