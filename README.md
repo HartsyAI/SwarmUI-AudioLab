@@ -889,8 +889,8 @@ Known and planned, so you can tell missing from broken:
 
 - **More DAW.** Groups and VCAs, automation for parameters beyond volume and pan, and a time signature change inside
   the tempo map. [DAW_AUDIT.md](DAW_AUDIT.md) has the full list against a pro DAW.
-- **Score sections on the timeline.** The timeline has a Markers ruler, but the Score tab's sections are not placed
-  on it yet.
+- **Score sections on the timeline.** The timeline has its own Sections row, but the Score tab's sections are not linked
+  to it yet.
 - **Cloud API engines.** All 20 provider definitions exist but none are tested, so all are disabled. They get
   re-enabled per provider as each is verified.
 - **RealtimeSTT** needs a C# engine implementation.
