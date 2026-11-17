@@ -636,6 +636,7 @@ const AudioDawTrack = (() => {
                 dragTargetLane = null;
                 for (const lane of lanes) {
                     const rect = lane.getBoundingClientRect();
+                    if (rect.height === 0) continue; // folded away by a collapsed group: it sits on the next lane's top edge
                     if (me.clientY >= rect.top && me.clientY <= rect.bottom) {
                         dragTargetLane = lane;
                         break;

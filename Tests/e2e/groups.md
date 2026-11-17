@@ -30,6 +30,8 @@ measure each tone with a windowed Goertzel over a few seconds. Baseline: all fou
 | 19 | Open a project saved without a `groups` field or any `groupId` | Loads normally with no groups |
 | 20 | Crash resume (reload, Resume) | Groups come back |
 | 21 | Open the Mixer tab with a group present; narrow the pane to about 900 px | No errors; the group row fits without overflow |
+| 22 | With the group muted (or soloed), move a track into it from its menu, then out again; press Play after each | The track goes silent (or the only audible one) as soon as it joins and is back to normal as soon as it leaves, without touching M, S or a fader |
+| 23 | Fold a group, then drag a clip from the track below it up to the row just under the group bar | The clip lands on the visible track under the pointer, never on a folded member |
 
 Pass criteria: every row behaves as stated, and the console shows no errors.
 
@@ -40,7 +42,9 @@ Rows 1-21 passed. The audible rows were measured on exported WAVs and the stems 
 220 and 330 Hz at 0, 440 and 550 Hz at 0.227; group soloed: the inverse; group fader at 0.508: group tones at 0.115, others
 unchanged; stems at 0.115 for members and 0.226 for non-members; with the group muted its two stems are absent from the ZIP).
 Row 1 was confirmed as a real bug on `main` first (3 automation lanes in the lanes for 1 header spacer) and fixed here.
-Not exercised: dragging a clip across lanes with a group present (that path keys on `.daw-track-lane`, which the group
-bar does not carry), recording while a group is soloed or muted, the light theme, and a project saved with a group folded
+Not exercised: recording while a group is soloed or muted, the light theme, and a project saved with a group folded
 and reopened while its tracks have automation visible.
 Header drag-reorder was left out on purpose: reordering is by the track menu and the group menu.
+
+2026-11-17, review pass, same build. Rows 22 and 23 added after two bugs found in review (group membership changes left the live
+gains stale; the cross-track clip drag could pick a folded lane) and passed once fixed (row 22 checked on the track and solo gain nodes, not on an exported WAV; row 23 with synthetic pointer events).

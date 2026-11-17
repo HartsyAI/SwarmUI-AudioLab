@@ -3436,6 +3436,7 @@ const AudioDaw = (() => {
         const next = AudioDawGroups.assign(state.tracks, groups, ids, groupId);
         state.tracks.splice(0, state.tracks.length, ...next.tracks);
         state.groups = next.groups;
+        updatePlaybackGains(); // a track takes on its new group's mute, solo and fader (and sheds the old one's)
         renderAllTracks();
         updateBottomPanel();
     }
