@@ -1089,7 +1089,14 @@ const AudioDaw = (() => {
         dawMenu(e, [
             { label: translate('Jump to start'), action: () => seekTo(s.start) },
             { label: translate('Rename…'), action: () => renameSection(id) },
-            { label: translate('Color…'), action: () => dawColorPopover(e, AudioDawSections.PALETTE, s.color, (color) => { pushUndo(); s.color = color; refreshSections(); }) },
+            { label: translate('Color…'), action: () => dawColorPopover(e, AudioDawSections.PALETTE, s.color, (color) => {
+                // Looked up again: the popover stays open while undo can replace the list this `s` came from
+                const cur = state.sections.find(x => x.id === id);
+                if (!cur) return;
+                pushUndo();
+                cur.color = color;
+                refreshSections();
+            }) },
             { label: translate('Select section'), action: () => selectSection(s) },
             { label: translate('Loop section'), action: () => setLoopRange(s.start, s.end) },
             { label: translate('Delete section'), action: () => deleteSection(id) }
