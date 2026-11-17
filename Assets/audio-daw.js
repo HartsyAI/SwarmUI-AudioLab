@@ -52,10 +52,10 @@ const AudioDaw = (() => {
     let clipEditorPlayer = null;
     let recordSettings = loadRecordSettings();
     // Playhead follow (a viewer preference, kept across projects): 'off' | 'page' | 'smooth'. followHold pauses it after
-    // the user scrolls by hand, until the next play or seek. lanePointers counts pointers held down on the lanes.
+    // the user scrolls by hand, until the next play or seek. The key is declared here, ahead of loadFollowMode's first call.
+    const FOLLOW_STORAGE_KEY = 'audiolab_daw_follow';
     let followMode = loadFollowMode();
     let followHold = false;
-    let lanePointers = 0;
 
     function getDefaultState() {
         return {
@@ -832,7 +832,7 @@ const AudioDaw = (() => {
         document.getElementById('daw_main')?.style.setProperty('--daw-ruler-h', timeline.getHeight() + 'px');
         timeline.setSnapper(snapTime);
         timeline.on('seek', (time) => {
-            seekTo(snapTime(time));
+            seekTo(snapTime(time), { reveal: false });
         });
         // Live scrub: while paused just move the display; while playing, commit
         // throttled seeks so the audio follows the drag without per-frame rebuilds.
@@ -841,7 +841,7 @@ const AudioDaw = (() => {
             const t = snapTime(time);
             if (state.isPlaying) {
                 const now = performance.now();
-                if (now - lastScrubSeek > 120) { lastScrubSeek = now; seekTo(t); }
+                if (now - lastScrubSeek > 120) { lastScrubSeek = now; seekTo(t, { reveal: false }); }
             } else {
                 state.currentTime = t;
                 updatePlayheadPosition();
@@ -2882,7 +2882,7 @@ const AudioDaw = (() => {
         const laneScrub = (t) => {
             if (state.isPlaying) {
                 const now = performance.now();
-                if (now - lastLaneScrub > 120) { lastLaneScrub = now; seekTo(t); }
+                if (now - lastLaneScrub > 120) { lastLaneScrub = now; seekTo(t, { reveal: false }); }
             } else {
                 state.currentTime = t;
                 updatePlayheadPosition();
@@ -2901,7 +2901,7 @@ const AudioDaw = (() => {
                     el.removeEventListener('pointermove', onMove);
                     el.removeEventListener('pointerup', onUp);
                     el.removeEventListener('pointercancel', onUp);
-                    if (ue.type !== 'pointercancel') seekTo(laneTimeAt(ue));
+                    if (ue.type !== 'pointercancel') seekTo(laneTimeAt(ue), { reveal: false });
                 };
                 el.addEventListener('pointermove', onMove);
                 el.addEventListener('pointerup', onUp);
@@ -2976,7 +2976,7 @@ const AudioDaw = (() => {
                     updateTrackSelection();
                     updateBottomPanel();
                 }
-                seekTo(snapTime(t0));
+                seekTo(snapTime(t0), { reveal: false });
             };
             clipLanesEl.addEventListener('pointermove', onMove);
             clipLanesEl.addEventListener('pointerup', onUp);
@@ -4813,11 +4813,17 @@ const AudioDaw = (() => {
         updatePlaybackGains();
     }
 
-    function seekTo(time) {
+    /**
+     * Move the playhead. A seek hands the view back to follow, and scrolls the playhead into view unless the seek came
+     * from a pointer (a click or scrub already points at a visible spot, and scrolling would move it under the pointer).
+     * @param {number} time - seconds
+     * @param {{reveal?: boolean}} [opts] - reveal: false keeps the view where it is
+     */
+    function seekTo(time, { reveal = true } = {}) {
         state.currentTime = Math.max(0, Math.min(time, state.totalDuration));
         updatePlayheadPosition();
-        followHold = false; // an explicit seek hands the view back to follow
-        revealPlayhead();
+        followHold = false;
+        if (reveal) revealPlayhead();
         updateTimeDisplay();
         if (!state.isPlaying && mixer) {
             for (const track of state.tracks) {
@@ -4996,7 +5002,6 @@ const AudioDaw = (() => {
     // The scroll rules live in AudioDawView (pure); this is the wiring: preference, toolbar button, the per-frame
     // hook, and the user inputs that pause it so it never fights a hand on the scroll wheel or scrollbar.
 
-    const FOLLOW_STORAGE_KEY = 'audiolab_daw_follow';
     const FOLLOW_LABELS = { off: 'Off', page: 'Page', smooth: 'Smooth' };
     // The mode the button returns to when switched back on
     let followLastOn = followMode === 'off' ? 'page' : followMode;
@@ -5075,7 +5080,7 @@ const AudioDaw = (() => {
     function setupFollowGuards() {
         if (!clipLanesEl) return;
         const hold = () => { followHold = true; };
-        clipLanesEl.addEventListener('wheel', (e) => { if (e.deltaX !== 0 || e.shiftKey) hold(); }, { passive: true });
+        clipLanesEl.addEventListener('wheel', (e) => { if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.shiftKey) hold(); }, { passive: true });
         let touchX = 0;
         let touchY = 0;
         clipLanesEl.addEventListener('touchstart', (e) => {

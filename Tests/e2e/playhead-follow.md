@@ -37,3 +37,5 @@ Row 12 passed with a synthetic input stream (`getUserMedia` replaced by an oscil
 recording from 118 s of a 120 s project grew the timeline (12700 to 13057 px) and the view followed it.
 Not run: the light theme (the FOLLOW button adds no CSS and reuses `.daw-btn-text`).
 The pane was hidden for part of the run, so frame timing was coarse; positions, not timings, were asserted.
+
+Review pass: the stored mode was ignored on reload (the storage key was read before its declaration, so row 13 only held for Page); fixed and rechecked with Smooth stored. Clicking or scrubbing the ruler or lanes within 24 px of an edge scrolled the view under the pointer; pointer seeks no longer reveal (keyboard and marker jumps still do, rechecked with End). A vertical wheel with a little sideways noise no longer pauses follow.
