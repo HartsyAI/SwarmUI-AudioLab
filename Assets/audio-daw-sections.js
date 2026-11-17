@@ -25,6 +25,11 @@ const AudioDawSections = (() => {
 
     let seq = 0;
 
+    /** A default section name like "Section 3" (the word is translated when the page has `translate`). */
+    function defaultName(n, base = 'Section') {
+        return `${typeof translate === 'function' ? translate(base) : base} ${n}`;
+    }
+
     /** A new unique id. */
     function newId() {
         return `section-${Date.now().toString(36)}-${++seq}`;
@@ -90,7 +95,7 @@ const AudioDawSections = (() => {
         }
         return normalize(cleaned).map((s, i) => ({
             ...s,
-            name: s.name.trim() || `Section ${i + 1}`,
+            name: s.name.trim() || defaultName(i + 1),
             color: s.color || colorFor(i)
         }));
     }
@@ -166,7 +171,7 @@ const AudioDawSections = (() => {
     function uniqueName(list, base = 'Section') {
         const used = new Set((list || []).map(s => s.name));
         for (let i = (list || []).length + 1; ; i++) {
-            const name = `${base} ${i}`;
+            const name = defaultName(i, base);
             if (!used.has(name)) return name;
         }
     }
@@ -199,7 +204,7 @@ const AudioDawSections = (() => {
             if (!(end - start >= MIN_LENGTH)) continue;
             out.push({
                 id: newId(), start, end,
-                name: (ms[i].name || '').trim() || `Section ${out.length + 1}`,
+                name: (ms[i].name || '').trim() || defaultName(out.length + 1),
                 color: ms[i].color || colorFor(out.length)
             });
         }

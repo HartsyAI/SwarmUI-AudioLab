@@ -984,7 +984,14 @@ const AudioDaw = (() => {
                     setSelection({ start: m.time, end: next ? next.time : Math.max(state.contentDuration, m.time + 1), trackIds: state.tracks.map(t => t.id) });
                 }
             },
-            { label: translate('Color…'), action: () => dawColorPopover(e, AudioDawSections.PALETTE, m.color, (color) => { pushUndo(); m.color = color; refreshMarkers(); }) },
+            { label: translate('Color…'), action: () => dawColorPopover(e, AudioDawSections.PALETTE, m.color, (color) => {
+                // Looked up again: the popover stays open while undo can replace the list this `m` came from
+                const cur = state.markers.find(x => x.id === id);
+                if (!cur) return;
+                pushUndo();
+                cur.color = color;
+                refreshMarkers();
+            }) },
             { label: translate('Delete marker'), action: () => { pushUndo(); state.markers = state.markers.filter(x => x.id !== id); refreshMarkers(); } }
         ]);
     }
