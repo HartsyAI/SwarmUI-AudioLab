@@ -181,7 +181,12 @@ const AudioDawMixer = (() => {
         cap.style.background = track.color;
         strip.appendChild(cap);
         const name = createDiv(null, 'daw-strip-name');
-        name.textContent = track.kind === 'bus' ? `${translate('AUX')} ${track.name}` : track.name;
+        if (track.icon && typeof AudioDawIcons !== 'undefined') {
+            const icon = createSpan(null, 'daw-track-icon');
+            AudioDawIcons.fill(icon, track.icon);
+            name.appendChild(icon);
+        }
+        name.appendChild(document.createTextNode(track.kind === 'bus' ? `${translate('AUX')} ${track.name}` : track.name));
         name.title = track.name;
         strip.appendChild(name);
         if (track.kind === 'bus') strip.classList.add('bus');

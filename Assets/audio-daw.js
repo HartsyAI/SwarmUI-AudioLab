@@ -1090,6 +1090,35 @@ const AudioDaw = (() => {
         refreshSections();
     }
 
+    /**
+     * Rename clips after the section each one starts in ("Drop 1 - supersaw": section, then track). With a section id
+     * only that section's clips change. Clips that start outside every section keep their names.
+     */
+    function nameClipsAfterSections(onlyId = null) {
+        const edits = [];
+        for (const track of state.tracks) {
+            if (track.kind === 'bus') continue;
+            for (const clip of [...track.clips, ...(track.midiClips || [])]) {
+                const section = AudioDawSections.at(state.sections, clip.startTime);
+                if (!section || (onlyId && section.id !== onlyId)) continue;
+                const name = AudioDawSections.clipNameFor(section, track.name);
+                if (clip.name !== name) edits.push([track, clip, name]);
+            }
+        }
+        if (!edits.length) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('No clips to rename: each clip must start inside a section'), 'notice-pop-yellow');
+            return;
+        }
+        pushUndo();
+        for (const [track, clip, name] of edits) {
+            clip.name = name;
+            const label = track.clipElements.get(clip.id)?.el.querySelector('.daw-clip-label');
+            if (label) label.textContent = name;
+        }
+        renderAllTracks();
+        updateBottomPanel();
+    }
+
     function selectSection(s) {
         setSelection({ start: s.start, end: s.end, trackIds: state.tracks.map(t => t.id) });
     }
@@ -1110,6 +1139,7 @@ const AudioDaw = (() => {
             }) },
             { label: translate('Select section'), action: () => selectSection(s) },
             { label: translate('Loop section'), action: () => setLoopRange(s.start, s.end) },
+            { label: translate('Name its clips after it'), action: () => nameClipsAfterSections(id) },
             { label: translate('Delete section'), action: () => deleteSection(id) }
         ]);
     }
@@ -1119,6 +1149,7 @@ const AudioDaw = (() => {
         dawMenu(e, [
             { label: translate('Add a section here'), action: () => addSection(snapTime(time)) },
             { label: translate('Create sections from markers'), action: () => sectionsFromMarkers(), disabled: state.markers.length === 0 },
+            { label: translate('Name clips after their sections'), action: () => nameClipsAfterSections(), disabled: state.sections.length === 0 },
             { label: translate('Clear all sections'), action: () => { pushUndo(); state.sections = []; refreshSections(); }, disabled: state.sections.length === 0 }
         ]);
     }
@@ -3509,6 +3540,13 @@ const AudioDaw = (() => {
                 renderAllTracks();
             }) },
             { label: g.collapsed ? translate('Show tracks') : translate('Fold tracks away'), action: () => toggleGroupCollapsed(id) },
+            { label: translate('Draw its clips in the group color'), checked: g.tint !== false, action: () => {
+                const cur = groupById(id);
+                if (!cur) return;
+                pushUndo();
+                cur.tint = cur.tint === false;
+                renderAllTracks();
+            } },
             { label: translate('Select the tracks in this group'), action: () => {
                 const ids = AudioDawGroups.membersOf(g, state.tracks).map(t => t.id);
                 setSelection({ start: 0, end: Math.max(state.contentDuration, 0.1), trackIds: ids });
@@ -3558,6 +3596,7 @@ const AudioDaw = (() => {
             },
             onRename: () => {},
             onRecolor: (track, e) => showTrackColorMenu(track, e),
+            onIcon: (track, e) => showTrackIconMenu(track, e),
             onAutomationToggle: (track) => {
                 track.automationVisible = !track.automationVisible;
                 renderAllTracks();
@@ -3660,6 +3699,7 @@ const AudioDaw = (() => {
             const lane = AudioDawTrack.buildClipLane(track, state.zoom, clipCallbacks);
             clipLanesEl.appendChild(lane);
             styleGroupMember(row, header, lane);
+            track.displayColor = row.group && row.group.tint !== false ? row.group.color : null; // clips draw in the group color
             if (track.kind === 'bus') {
                 const hint = createDiv(null, 'daw-bus-lane-hint');
                 const senders = busSenders(track);
@@ -5675,10 +5715,79 @@ const AudioDaw = (() => {
     /** Small swatch-grid popover to recolor a track (updates header, clips, mixer). */
     function showTrackColorMenu(track, e) {
         dawColorPopover(e, AudioDawTrack.COLORS, track.color, (color) => {
-            track.color = color;
+            // Looked up again: the popover stays open while undo can replace the track this came from
+            const cur = state.tracks.find(t => t.id === track.id);
+            if (!cur || cur.color === color) return;
+            pushUndo();
+            cur.color = color;
             renderAllTracks();
             updateBottomPanel();
         });
+    }
+
+    /** Set (or clear, with null) a track's icon; one undo step. */
+    function setTrackIcon(trackId, icon) {
+        const cur = state.tracks.find(t => t.id === trackId);
+        const next = AudioDawIcons.sanitize(icon);
+        if (!cur || (cur.icon || null) === next) return;
+        pushUndo();
+        cur.icon = next;
+        renderAllTracks();
+        updateBottomPanel();
+    }
+
+    /** The icon picker: presets, an image upload (cropped and scaled small, saved inside the project), and clear. */
+    function showTrackIconMenu(track, e) {
+        document.querySelector('.daw-context-menu')?.remove();
+        const menu = createDiv(null, 'daw-context-menu daw-color-menu daw-icon-menu');
+        menu.style.position = 'fixed';
+        menu.style.zIndex = '99999';
+        const grid = createDiv(null, 'daw-icon-grid');
+        for (const emoji of AudioDawIcons.PRESETS) {
+            const b = document.createElement('button');
+            b.className = 'daw-icon-btn' + (track.icon === emoji ? ' selected' : '');
+            b.textContent = emoji;
+            b.addEventListener('click', () => {
+                menu.remove();
+                setTrackIcon(track.id, emoji);
+            });
+            grid.appendChild(b);
+        }
+        menu.appendChild(grid);
+        const actions = createDiv(null, 'daw-icon-actions');
+        const upload = document.createElement('button');
+        upload.className = 'daw-context-item';
+        upload.textContent = translate('Upload an image…');
+        upload.addEventListener('click', () => {
+            menu.remove();
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/png,image/jpeg,image/webp,image/gif';
+            input.addEventListener('change', async () => {
+                const file = input.files?.[0];
+                if (!file) return;
+                try {
+                    setTrackIcon(track.id, await AudioDawIcons.fromImageFile(file));
+                }
+                catch (err) {
+                    if (typeof doNoticePopover === 'function') doNoticePopover(translate('Could not use that image:') + ' ' + err.message, 'notice-pop-red');
+                }
+            });
+            input.click();
+        });
+        actions.appendChild(upload);
+        if (track.icon) {
+            const clear = document.createElement('button');
+            clear.className = 'daw-context-item';
+            clear.textContent = translate('Remove the icon');
+            clear.addEventListener('click', () => {
+                menu.remove();
+                setTrackIcon(track.id, null);
+            });
+            actions.appendChild(clear);
+        }
+        menu.appendChild(actions);
+        showFloatingPopover(menu, e);
     }
 
     /**
@@ -5708,6 +5817,11 @@ const AudioDaw = (() => {
             grid.appendChild(b);
         }
         menu.appendChild(grid);
+        showFloatingPopover(menu, e);
+    }
+
+    /** Show a built popover at the pointer, kept on screen; it closes on a click outside it. */
+    function showFloatingPopover(menu, e) {
         document.body.appendChild(menu);
         const w = menu.offsetWidth, h = menu.offsetHeight;
         menu.style.left = Math.max(8, Math.min(e.clientX, window.innerWidth - w - 8)) + 'px';
@@ -5875,7 +5989,7 @@ const AudioDaw = (() => {
 
     /** Right-click on a track header. */
     function showTrackMenu(track, e) {
-        const heights = [[translate('Small'), 64], [translate('Medium'), 100], [translate('Large'), 160]];
+        const heights = [[translate('Tiny'), 30], [translate('Compact'), 44], [translate('Small'), 64], [translate('Medium'), 100], [translate('Large'), 160]];
         dawMenu(e, [
             {
                 label: translate('Rename…'),
@@ -5890,6 +6004,7 @@ const AudioDaw = (() => {
             },
             { label: translate('Duplicate track'), action: () => duplicateTrack(track) },
             { label: translate('Color…'), action: () => showTrackColorMenu(track, e) },
+            { label: translate('Icon…'), action: () => showTrackIconMenu(track, e) },
             ...groupMenuItems(track),
             ...(track.kind === 'bus' ? [] : [{ label: track.kind === 'instrument' ? translate('Instrument…') : translate('Input…'),
                 action: () => track.kind === 'instrument' ? showInstrumentMenu(track, e) : showTrackInputMenu(track, e) }]),
@@ -5915,6 +6030,8 @@ const AudioDaw = (() => {
 
     /** Waveforms are drawn at the lane height, so a height change re-creates the track's clip views. */
     function setTrackHeight(track, h) {
+        if (track.height === h) return;
+        pushUndo();
         track.height = h;
         for (const [, entry] of track.clipElements) {
             if (entry.ws) entry.ws.destroy();
@@ -5933,6 +6050,7 @@ const AudioDaw = (() => {
         copy.pan = ts.pan;
         copy.muted = ts.muted;
         copy.groupId = ts.groupId || null; // the copy lands in the same group, right below the original
+        copy.icon = ts.icon || null;
         copy.input = { ...ts.input };
         copy.fx = ts.fx;
         copy.automation = ts.automation;
@@ -8066,6 +8184,7 @@ const AudioDaw = (() => {
             track.muted = ts.muted;
             track.soloed = ts.soloed;
             track.groupId = ts.groupId || null;
+            track.icon = AudioDawIcons.sanitize(ts.icon);
             track.armed = ts.armed;
             track.monitor = !!ts.monitor;
             track.input = { deviceId: ts.input?.deviceId || null, channels: ts.input?.channels ?? 'mono' };
@@ -9097,6 +9216,7 @@ const AudioDaw = (() => {
             track.muted = !!ts.muted;
             track.soloed = !!ts.soloed;
             track.groupId = ts.groupId || null;
+            track.icon = AudioDawIcons.sanitize(ts.icon);
             // Opening a project never opens a microphone: arm and monitor start off, the input choice is kept
             track.armed = false;
             track.monitor = false;

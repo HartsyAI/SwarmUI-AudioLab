@@ -2963,6 +2963,51 @@ input[type="range"].daw-group-volume { width: 54px; flex: none; }
     visibility: hidden !important;
 }
 
+/* Track icons: an emoji or a small cropped image, in the header, the mixer strip and the picker */
+.daw-track-icon {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.95rem;
+    line-height: 1;
+    border-radius: 4px;
+    overflow: hidden;
+    cursor: pointer;
+}
+.daw-track-icon img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.daw-track-icon.empty { display: none; }
+.daw-strip-name .daw-track-icon { width: 16px; height: 16px; font-size: 0.8rem; margin-right: 0.25rem; vertical-align: middle; cursor: default; }
+.daw-icon-menu { padding: 0.4rem; }
+.daw-icon-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+.daw-icon-btn {
+    border: 1px solid transparent;
+    background: transparent;
+    border-radius: 4px;
+    font-size: 1.05rem;
+    line-height: 1;
+    padding: 0.25rem;
+    cursor: pointer;
+}
+.daw-icon-btn:hover { background: var(--background-soft); }
+.daw-icon-btn.selected { border-color: var(--emphasis); }
+.daw-icon-actions { display: flex; flex-direction: column; margin-top: 0.3rem; padding-top: 0.2rem; border-top: 1px solid var(--shadow); }
+
+/* Compact tracks (Tiny and Compact heights): a one-row header with icon, name, solo and mute; a plain lane */
+.daw-track-header.compact { flex-direction: row; align-items: center; justify-content: flex-start; gap: 0.3rem; padding: 0 0.4rem; }
+.daw-track-header.compact .daw-track-name-row { flex: 1; min-width: 0; }
+.daw-track-header.compact .daw-track-name { max-width: none; font-size: 0.78rem; }
+.daw-track-header.compact .daw-track-remove,
+.daw-track-header.compact .daw-track-io,
+.daw-track-header.compact .daw-track-meter-pair { display: none; }
+.daw-track-header.compact .daw-track-controls { flex: none; }
+.daw-track-header.compact .daw-track-controls > :not([data-role="mute"]):not([data-role="solo"]) { display: none; }
+.daw-track-header.compact .daw-track-btn { width: 20px; height: 20px; line-height: 18px; font-size: 0.65rem; }
+.daw-track-lane.compact .daw-clip-gain,
+.daw-track-lane.compact .daw-clip-fade-handle { display: none; }
+
 /* Tempo ruler row */
 .daw-ruler-name-tempo { background: var(--background-soft); }
 .daw-ruler-tempo { position: absolute; left: 0; z-index: 4; }

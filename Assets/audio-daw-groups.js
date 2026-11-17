@@ -7,7 +7,7 @@
  * gain, and keeps the persistence and menus itself. It can be exercised from a browser console:
  * `AudioDawGroups.layoutRows(tracks, groups)`.
  *
- * Group shape: { id, name, color, collapsed, muted, soloed, volume }
+ * Group shape: { id, name, color, collapsed, tint (its clips draw in the group color), muted, soloed, volume }
  * A track joins a group with `track.groupId`. Members are kept contiguous in the track list, in the group's place.
  * Groups do not nest.
  */
@@ -41,6 +41,7 @@ const AudioDawGroups = (() => {
             name: (name && name.trim()) || uniqueName(groups),
             color: color || DEFAULT_COLOR,
             collapsed: false,
+            tint: true,
             muted: false,
             soloed: false,
             volume: 1
@@ -215,7 +216,7 @@ const AudioDawGroups = (() => {
     /** Plain copies carrying exactly the persisted fields. */
     function serialize(groups) {
         return (groups || []).map(g => ({
-            id: g.id, name: g.name, color: g.color || null, collapsed: !!g.collapsed,
+            id: g.id, name: g.name, color: g.color || null, collapsed: !!g.collapsed, tint: g.tint !== false,
             muted: !!g.muted, soloed: !!g.soloed, volume: Number.isFinite(g.volume) ? g.volume : 1
         }));
     }
@@ -235,6 +236,7 @@ const AudioDawGroups = (() => {
                 name: typeof r.name === 'string' && r.name.trim() ? r.name : uniqueName(out),
                 color: typeof r.color === 'string' && r.color ? r.color : DEFAULT_COLOR,
                 collapsed: !!r.collapsed,
+                tint: r.tint !== false,
                 muted: !!r.muted,
                 soloed: !!r.soloed,
                 volume: Number.isFinite(Number(r.volume)) ? Math.max(0, Number(r.volume)) : 1
