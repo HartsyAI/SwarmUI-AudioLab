@@ -1003,10 +1003,11 @@ const AudioDaw = (() => {
             clipLanesEl.appendChild(layer);
         }
         layer.innerHTML = '';
-        // The bands span every lane, not just the viewport: height follows the last lane
+        // The bands span every lane, so the height follows the last lane. The CSS min-height fills the viewport when the
+        // lanes are shorter; the viewport height is not stored here, or a later shrink would leave a stale scroll range
         const lanes = clipLanesEl.querySelectorAll('.daw-track-lane, .daw-automation-lane');
         const last = lanes[lanes.length - 1];
-        layer.style.height = Math.max(clipLanesEl.clientHeight, last ? last.offsetTop + last.offsetHeight : 0) + 'px';
+        layer.style.height = (last ? last.offsetTop + last.offsetHeight : 0) + 'px';
         for (const s of state.sections) {
             const band = createDiv(null, 'daw-section-band');
             band.style.left = (s.start * state.zoom) + 'px';
