@@ -1000,9 +1000,12 @@ const AudioDaw = (() => {
     // Named, colored spans of the song (Intro, Verse, Drop...). The rules live in AudioDawSections (pure); the ruler
     // row is AudioDawTimeline's. This is the wiring: state, undo, the lane bands, menus and the keys.
 
-    /** Push sections to the ruler row and draw a faint band for each through the lanes. */
-    function refreshSections() {
-        if (timeline) timeline.setSections(state.sections);
+    /**
+     * Push sections to the ruler row and draw a faint band for each through the lanes.
+     * @param {{ruler?: boolean}} [opts] - ruler: false when the ruler row was just rebuilt anyway (a zoom change)
+     */
+    function refreshSections({ ruler = true } = {}) {
+        if (ruler && timeline) timeline.setSections(state.sections);
         if (!clipLanesEl) return;
         let layer = clipLanesEl.querySelector('.daw-section-bands');
         if (!layer) {
@@ -5297,7 +5300,7 @@ const AudioDaw = (() => {
         updateLaneGrid();
         updateLoopShade();
         refreshMarkers();
-        refreshSections();
+        refreshSections({ ruler: false }); // timeline.setZoom above already rebuilt the ruler row
         renderSelection();
         if (keepScroll !== null) clipLanesEl.scrollLeft = Math.max(0, keepScroll);
         // Keep the transport slider in sync (keyboard +/- also zooms)

@@ -93,7 +93,6 @@ const AudioDawTimeline = (() => {
             markers: [],              // [{id, time, name, color}]
             sections: [],             // [{id, start, end, name, color}]
             sectionConstraint: null,  // fn(id, start, end, mode) -> {start, end}: where a dragged section may go
-            renderedZoom: null,       // the zoom the DOM layers were last built for
             playheadTime: 0,
             mode: opts.mode || 'time', // which row the grid follows; both rows always draw
             bpm: opts.bpm || 120,
@@ -213,10 +212,10 @@ const AudioDawTimeline = (() => {
 
     /**
      * Size the spacer to the arrangement, park the canvas over the viewport, and redraw everything.
-     * The DOM layers (markers, tempo, sections) are rebuilt only when the zoom changed or `force` is set: while
+     * The DOM layers (markers, tempo, sections) are rebuilt only when `rebuildLayers` is set: while
      * recording the duration grows every frame, and rebuilding every flag each frame is wasted work.
      */
-    function layout(state, force = true) {
+    function layout(state, rebuildLayers = true) {
         const width = Math.max(state.totalDuration * state.zoom, state.container.clientWidth);
         state.spacer.style.width = width + 'px';
         state.spacer.style.height = HEIGHT + 'px';
@@ -229,8 +228,7 @@ const AudioDawTimeline = (() => {
         state.canvas.style.width = viewW + 'px';
         state.canvas.style.left = state.scrollLeft + 'px';
         updateLoopHandles(state);
-        if (force || state.renderedZoom !== state.zoom) {
-            state.renderedZoom = state.zoom;
+        if (rebuildLayers) {
             renderMarkers(state);
             renderTempo(state);
             renderSections(state);
