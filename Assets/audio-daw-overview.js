@@ -96,13 +96,18 @@ const AudioDawOverview = (() => {
         return { rows: row, blocks };
     }
 
-    /** Height of each track row and the gap between rows, for `rows` rows in `height` pixels below the section band. */
+    /**
+     * Height of each track row, the gap between rows and the distance from one row's top to the next (`pitch`), for
+     * `rows` rows in `height` pixels below the section band. With more rows than pixels the rows are 1 px tall and
+     * share pixels (pitch under 1), so every track still lands inside the strip.
+     */
     function rowGeometry(rows, height) {
         const avail = Math.max(1, height - BAND_H - 2);
-        if (rows <= 0) return { rowH: 0, gap: 0 };
+        if (rows <= 0) return { rowH: 0, gap: 0, pitch: 0 };
         const gap = rows > 1 && avail / rows >= 4 ? 1 : 0;
         const rowH = Math.max(1, Math.min(8, Math.floor((avail - gap * (rows - 1)) / rows)));
-        return { rowH, gap };
+        const pitch = rows * (rowH + gap) - gap > avail ? avail / rows : rowH + gap;
+        return { rowH, gap, pitch };
     }
 
     /**
@@ -165,12 +170,12 @@ const AudioDawOverview = (() => {
             }
             // Clip blocks: a row per track under the band
             const { rows, blocks } = buildRows(st.data.tracks, st.data.midiLength);
-            const { rowH, gap } = rowGeometry(rows, h);
+            const { rowH, pitch } = rowGeometry(rows, h);
             for (const b of blocks) {
                 ctx.globalAlpha = b.muted ? 0.35 : 0.9;
                 ctx.fillStyle = b.color;
                 const x = timeToX(b.start, spanSeconds, w);
-                ctx.fillRect(x, BAND_H + 2 + b.row * (rowH + gap), Math.max(1, timeToX(b.end, spanSeconds, w) - x), rowH);
+                ctx.fillRect(x, BAND_H + 2 + Math.floor(b.row * pitch), Math.max(1, timeToX(b.end, spanSeconds, w) - x), rowH);
             }
             ctx.globalAlpha = 1;
             // Markers: ticks under the section band
