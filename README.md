@@ -317,6 +317,12 @@ rewind, play, stop, forward and end; LOOP, CLICK and PUNCH; a main counter in ba
 (click to swap); the selection's Start, End and Length; the smart and range tools; the Slip, Grid and Shuffle edit
 modes with a grid value; BPM and meter; zoom with Fit; and the Project, Import and Export menus.
 
+FOLLOW keeps the playhead on screen during playback and recording. Right-click it to choose **Page** (the view jumps
+a page when the playhead leaves it), **Smooth** (the playhead holds about a third of the way in while the view glides)
+or **Off**; `G` toggles it. Scrolling sideways by hand, or dragging the horizontal scrollbar, pauses it until the next
+play or seek, and a drag in the lanes suspends it while you hold. Jumps (Home, End, markers, arrow keys) always scroll
+the playhead into view. The mode is a viewer preference and is not saved in projects.
+
 Three rulers sit above the lanes: Bars|Beats, Min:Secs and Markers. Each track header shows the track number, record
 arm (R), input monitor (I), solo (S), mute (M) and automation (A), pan, volume, the input it records from, its inserts
 count, its level in dB and a meter. Right-click a header to rename, duplicate, recolor, resize or delete the track.
@@ -576,6 +582,7 @@ Press `?` in the DAW for this list.
 | I | Monitor the selected track's input |
 | C / P | Metronome / punch recording |
 | L | Loop (loops the selection when there is one) |
+| G | Follow the playhead while playing, on or off |
 | Home / End | Jump to start / end |
 | Left / Right | Move the playhead one grid step (Shift: one bar) |
 | Enter / [ / ] | Add a marker / previous / next marker |

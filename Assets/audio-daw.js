@@ -51,6 +51,11 @@ const AudioDaw = (() => {
     // Clip-editor waveform preview player (destroyed on each panel re-render)
     let clipEditorPlayer = null;
     let recordSettings = loadRecordSettings();
+    // Playhead follow (a viewer preference, kept across projects): 'off' | 'page' | 'smooth'. followHold pauses it after
+    // the user scrolls by hand, until the next play or seek. lanePointers counts pointers held down on the lanes.
+    let followMode = loadFollowMode();
+    let followHold = false;
+    let lanePointers = 0;
 
     function getDefaultState() {
         return {
@@ -437,6 +442,9 @@ const AudioDaw = (() => {
         mkText(modeGroup, translate('LOOP'), translate('Loop playback over the loop range (L)'), toggleLoop, 'daw-btn-loop', state.loopEnabled);
         mkText(modeGroup, translate('CLICK'), translate('Metronome while playing and recording (C). Count-in is in the record menu'), toggleMetronome, 'daw-btn-click', state.metronome);
         mkText(modeGroup, translate('PUNCH'), translate('Punch recording: Record replaces only the loop range, after a pre-roll (P)'), togglePunch, 'daw-btn-punch', state.punchEnabled);
+        const followBtn = mkText(modeGroup, translate('FOLLOW'), '', toggleFollow, 'daw-btn-follow', followMode !== 'off');
+        followBtn.addEventListener('contextmenu', (e) => { e.preventDefault(); showFollowMenu(e); });
+        updateFollowButton();
 
         // ── Counters: main + sub position, selection start / end / length ──
         const lcd = createDiv(null, 'daw-lcd');
@@ -2902,6 +2910,7 @@ const AudioDaw = (() => {
         };
         if (playheadEl) setupLaneScrub(playheadEl, () => true);
         setupLaneSelection();
+        setupFollowGuards();
     }
 
     // ===== RANGE SELECTION =====
@@ -2934,6 +2943,9 @@ const AudioDaw = (() => {
         };
         clipLanesEl.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
+            // A press on the scrollbar is not a click on empty lane space: it must not seek or start a selection
+            if (e.target === clipLanesEl && AudioDawView.scrollbarHit(e.clientX, e.clientY,
+                clipLanesEl.getBoundingClientRect(), clipLanesEl.clientWidth, clipLanesEl.clientHeight)) return;
             const onEmpty = e.target === clipLanesEl || e.target.classList.contains('daw-track-lane');
             const overClip = !!e.target.closest('.daw-clip:not(.daw-clip-recording)');
             if (!onEmpty && !(state.tool === 'range' && overClip)) return;
@@ -4590,6 +4602,7 @@ const AudioDaw = (() => {
     async function startPlayback({ delay = 0 } = {}) {
         if (state.isPlaying) return playback;
         state.isPlaying = true;
+        followHold = false;
         updatePlayButton(true);
 
         const ctx = getAudioContext();
@@ -4803,6 +4816,8 @@ const AudioDaw = (() => {
     function seekTo(time) {
         state.currentTime = Math.max(0, Math.min(time, state.totalDuration));
         updatePlayheadPosition();
+        followHold = false; // an explicit seek hands the view back to follow
+        revealPlayhead();
         updateTimeDisplay();
         if (!state.isPlaying && mixer) {
             for (const track of state.tracks) {
@@ -4837,6 +4852,7 @@ const AudioDaw = (() => {
             }
         }
         updatePlayheadPosition();
+        followPlayhead();
         updateTimeDisplay();
         // Follow the transport on the staff, when the selected clip is the one the open score produced.
         if (typeof AudioDawScore !== 'undefined') AudioDawScore.syncTime(state.currentTime);
@@ -4974,6 +4990,115 @@ const AudioDaw = (() => {
             shade.style.left = (state.loopStart * state.zoom) + 'px';
             shade.style.width = ((state.loopEnd - state.loopStart) * state.zoom) + 'px';
         }
+    }
+
+    // ===== PLAYHEAD FOLLOW =====
+    // The scroll rules live in AudioDawView (pure); this is the wiring: preference, toolbar button, the per-frame
+    // hook, and the user inputs that pause it so it never fights a hand on the scroll wheel or scrollbar.
+
+    const FOLLOW_STORAGE_KEY = 'audiolab_daw_follow';
+    const FOLLOW_LABELS = { off: 'Off', page: 'Page', smooth: 'Smooth' };
+    // The mode the button returns to when switched back on
+    let followLastOn = followMode === 'off' ? 'page' : followMode;
+    // A pointer is held down on the lanes (a drag in progress); cleared by pointer up or cancel, or by a move with no button
+    let lanePointerDown = false;
+
+    function loadFollowMode() {
+        try {
+            return AudioDawView.normalizeMode(localStorage.getItem(FOLLOW_STORAGE_KEY), 'page');
+        }
+        catch (_) {
+            return 'page';
+        }
+    }
+
+    function setFollowMode(mode) {
+        followMode = AudioDawView.normalizeMode(mode, followMode);
+        if (followMode !== 'off') followLastOn = followMode;
+        followHold = false;
+        try { localStorage.setItem(FOLLOW_STORAGE_KEY, followMode); } catch (_) {}
+        updateFollowButton();
+    }
+
+    function toggleFollow() {
+        setFollowMode(followMode === 'off' ? followLastOn : 'off');
+    }
+
+    function updateFollowButton() {
+        const btn = transportEl?.querySelector('.daw-btn-follow');
+        if (!btn) return;
+        btn.classList.toggle('active', followMode !== 'off');
+        btn.title = translate('Follow the playhead while playing') + `: ${translate(FOLLOW_LABELS[followMode])} (G). `
+            + translate('Right-click for Page, Smooth or Off');
+    }
+
+    function showFollowMenu(e) {
+        dawMenu(e, [
+            { heading: translate('Follow the playhead') },
+            ...AudioDawView.FOLLOW_MODES.map(mode => ({
+                label: translate(FOLLOW_LABELS[mode]),
+                checked: followMode === mode,
+                action: () => setFollowMode(mode)
+            }))
+        ]);
+    }
+
+    /** Per-frame while playing: scroll the lanes so the playhead stays in view, unless the user is steering. */
+    function followPlayhead() {
+        if (followMode === 'off' || followHold || lanePointerDown || !clipLanesEl) return;
+        const target = AudioDawView.followTarget({
+            scrollLeft: clipLanesEl.scrollLeft,
+            viewW: clipLanesEl.clientWidth,
+            playheadX: state.currentTime * state.zoom,
+            mode: followMode,
+            scrollWidth: clipLanesEl.scrollWidth
+        });
+        if (target !== null) clipLanesEl.scrollLeft = target;
+    }
+
+    /** After an explicit seek (Home, End, markers, arrows): show the playhead, whatever the follow mode. */
+    function revealPlayhead() {
+        if (!clipLanesEl) return;
+        const target = AudioDawView.revealTarget({
+            scrollLeft: clipLanesEl.scrollLeft,
+            viewW: clipLanesEl.clientWidth,
+            x: state.currentTime * state.zoom,
+            scrollWidth: clipLanesEl.scrollWidth
+        });
+        if (target !== null) clipLanesEl.scrollLeft = target;
+    }
+
+    /**
+     * Hand scrolling sideways (wheel, touch, the horizontal scrollbar) pauses follow; scrolling up and down through
+     * the tracks does not. A held pointer suspends it for the drag. Bound once.
+     */
+    function setupFollowGuards() {
+        if (!clipLanesEl) return;
+        const hold = () => { followHold = true; };
+        clipLanesEl.addEventListener('wheel', (e) => { if (e.deltaX !== 0 || e.shiftKey) hold(); }, { passive: true });
+        let touchX = 0;
+        let touchY = 0;
+        clipLanesEl.addEventListener('touchstart', (e) => {
+            touchX = e.touches[0]?.clientX ?? 0;
+            touchY = e.touches[0]?.clientY ?? 0;
+        }, { passive: true });
+        clipLanesEl.addEventListener('touchmove', (e) => {
+            const t = e.touches[0];
+            if (t && Math.abs(t.clientX - touchX) > Math.abs(t.clientY - touchY)) hold();
+        }, { passive: true });
+        clipLanesEl.addEventListener('pointerdown', (e) => {
+            const bar = e.target === clipLanesEl
+                ? AudioDawView.scrollbarHit(e.clientX, e.clientY, clipLanesEl.getBoundingClientRect(),
+                    clipLanesEl.clientWidth, clipLanesEl.clientHeight)
+                : null;
+            // Browsers do not reliably send a pointer up after a scrollbar drag, so a scrollbar never counts as a held pointer
+            if (bar === 'h') hold();
+            else if (!bar) lanePointerDown = true;
+        }, true);
+        const release = () => { lanePointerDown = false; };
+        window.addEventListener('pointerup', release, true);
+        window.addEventListener('pointercancel', release, true);
+        window.addEventListener('pointermove', (e) => { if (e.buttons === 0) lanePointerDown = false; }, true);
     }
 
     // ===== ZOOM =====
@@ -9091,6 +9216,7 @@ const AudioDaw = (() => {
         }
         else if (key === 'c' && !mod) { toggleMetronome(); }
         else if (key === 'p' && !mod) { togglePunch(); }
+        else if (key === 'g' && !mod) { toggleFollow(); }
         else if (key === 'l' && !mod) {
             // With a selection, L loops it
             if (sel) {
@@ -9145,6 +9271,7 @@ const AudioDaw = (() => {
             ['I', 'Monitor the selected track\'s input'],
             ['C / P', 'Metronome / punch recording'],
             ['L', 'Loop (loops the selection when there is one)'],
+            ['G', 'Follow the playhead while playing, on or off (right-click FOLLOW for page or smooth)'],
             ['Home / End', 'Jump to start / end'],
             ['Left / Right', 'Move the playhead one grid step (Shift: one bar)'],
             ['Enter / [ / ]', 'Add a marker / previous / next marker'],
