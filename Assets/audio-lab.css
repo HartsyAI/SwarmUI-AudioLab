@@ -2997,6 +2997,7 @@ input[type="range"].daw-group-volume { width: 54px; flex: none; }
 
 /* Compact tracks (Tiny and Compact heights): a one-row header with icon, name, solo and mute; a plain lane */
 .daw-track-header.compact { flex-direction: row; align-items: center; justify-content: flex-start; gap: 0.3rem; padding: 0 0.4rem; }
+.daw-track-header.compact.in-group { padding-left: calc(0.4rem + 7px); }
 .daw-track-header.compact .daw-track-name-row { flex: 1; min-width: 0; }
 .daw-track-header.compact .daw-track-name { max-width: none; font-size: 0.78rem; }
 .daw-track-header.compact .daw-track-remove,
