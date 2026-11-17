@@ -2892,6 +2892,77 @@ input[type="range"].daw-proll-vel::-moz-range-thumb {
     border-left: 1px solid color-mix(in srgb, var(--section-color) 45%, transparent);
 }
 
+/* Track groups: a row in the headers and a bar in the lanes, same height so the two columns stay aligned */
+.daw-group-header {
+    --group-color: var(--emphasis);
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    box-sizing: border-box;
+    padding: 0 0.4rem;
+    border-bottom: 1px solid var(--shadow);
+    border-left: 3px solid var(--group-color);
+    background: color-mix(in srgb, var(--group-color) 16%, var(--background-soft));
+    user-select: none;
+}
+.daw-group-caret {
+    border: none;
+    background: transparent;
+    color: var(--text);
+    padding: 0 0.15rem;
+    cursor: pointer;
+    font-size: 0.8rem;
+    line-height: 1;
+}
+.daw-group-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--text);
+}
+.daw-group-count {
+    font-size: 0.65rem;
+    color: var(--text-soft);
+    padding: 0 0.25rem;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+/* The attribute selector matches the specificity of the track fader rule this has to beat */
+input[type="range"].daw-group-volume { width: 54px; flex: none; }
+.daw-group-header .daw-track-btn { flex: none; }
+.daw-group-lane {
+    --group-color: var(--emphasis);
+    position: relative;
+    box-sizing: border-box;
+    border-bottom: 1px solid var(--shadow);
+    background: color-mix(in srgb, var(--group-color) 14%, var(--background-soft));
+    pointer-events: none;
+}
+.daw-group-span {
+    position: absolute;
+    top: 8px;
+    height: 14px;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--group-color) 80%, var(--background));
+}
+.daw-group-span.muted { opacity: 0.35; }
+.daw-track-header.in-group { box-shadow: inset 7px 0 0 var(--group-color); padding-left: calc(0.5rem + 7px); }
+.daw-track-header.group-muted, .daw-track-lane.group-muted { opacity: 0.55; }
+/* A collapsed group folds its tracks to nothing; the elements stay (with their width) so waveforms keep their size */
+.daw-group-hidden {
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border-width: 0 !important;
+    overflow: hidden !important;
+    visibility: hidden !important;
+}
+
 /* Tempo ruler row */
 .daw-ruler-name-tempo { background: var(--background-soft); }
 .daw-ruler-tempo { position: absolute; left: 0; z-index: 4; }

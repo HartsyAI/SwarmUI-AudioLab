@@ -143,14 +143,14 @@ Score tab. Now:
 | Clips | Fade handles, crossfades, clip gain | Numeric fades in the Clip Editor | On-clip fade handles with shapes, draggable clip gain, crossfades across a selection (F), short seams between layered takes |
 | Takes | Playlists and comping | None | Layered takes, newest on top; bring to front or send to back; a take comped into a selected range |
 | Signal flow | Inserts pre-fader | FX after the fader | Inserts pre-fader |
-| Routing | Sends, aux buses, groups, VCAs | None | Sends (level, pre or post, mute) to aux buses with their own inserts; stems include bus returns |
+| Routing | Sends, aux buses, groups, VCAs | None | Sends (level, pre or post, mute) to aux buses with their own inserts; stems include bus returns; track groups with a shared mute, solo and fader |
 | Automation | Read, Touch, Latch, Write, Off | Volume and pan breakpoints, drawn by hand | Read, Touch, Latch, Write and Off for volume and pan, written from the faders during playback |
 | Export | Bounce a range, stems, 24-bit, 32-bit float | Full mixdown, 16-bit | Song, selection or loop; 16, 24 or 32-bit float at 44.1 or 48 kHz; stems as one ZIP |
 | MIDI | Instrument tracks, piano roll | None | Instrument tracks, MIDI clips, piano roll with a velocity lane, sustain pedal (CC 64), `.mid` import and export |
 
 ## Remaining gaps
 
-- Groups and VCAs.
+- VCAs, nested groups, and dragging tracks to reorder (a track moves up or down from its menu).
 - Automation of parameters beyond volume and pan (send levels, effect parameters).
 - One time signature per session: the tempo map changes BPM, not the meter.
 - Playlists: each track has one lane of clips, and takes are layered and comped in place.

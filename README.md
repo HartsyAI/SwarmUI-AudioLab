@@ -325,7 +325,8 @@ the playhead into view. The mode is a viewer preference and is not saved in proj
 
 Five rows sit above the lanes: Bars|Beats, Min:Secs, Tempo, Markers and Sections. Each track header shows the track number, record
 arm (R), input monitor (I), solo (S), mute (M) and automation (A), pan, volume, the input it records from, its inserts
-count, its level in dB and a meter. Right-click a header to rename, duplicate, recolor, resize or delete the track.
+count, its level in dB and a meter. Right-click a header to rename, duplicate, recolor, group, move, resize or delete the
+track.
 
 ### Recording
 
@@ -360,6 +361,16 @@ first time.
 - **Markers.** Enter, or the + on the Markers ruler, adds one at the playhead. Drag to move, click to jump,
   double-click to rename, and `[` and `]` step to the previous and next. Right-click one to recolor it. Markers save
   with the project.
+- **Track groups.** Right-click a track and choose **New group with this track**, or **Group the selected tracks** after a
+  range selection. A group is a row above its tracks, with a colored bar across the lanes that shows where its tracks have
+  clips. The caret folds the tracks away (everything stays in place, so folding changes nothing you hear), and the
+  group's own **M**, **S** and fader apply to every track in it: muting a group silences its tracks, soloing it hears the
+  group and silences the rest, and its fader scales each track's own fader, in playback, mixdown and stems alike. Move a
+  track to another group or out of its group from its menu, step it up or down (within its group, or past the next
+  group), or move a whole group from the group's menu. Right-click a group to rename it, recolor it, select all its
+  tracks, move it, or ungroup (the tracks stay). A group with no tracks left disappears. Groups do not nest. Mixer
+  strips show each track's own mute and solo, not its group's. Groups and their folded state save with the project;
+  folding is not an undo step.
 - **Sections.** Named, colored spans of the song (Intro, Verse, Drop...) on the Sections row, with a faint band of the
   same color running down through the lanes. Double-click empty space in the row, or press the + beside it, to add one
   (four bars long, shortened to fit before the next section). Drag one to move it, drag an edge to resize it, click to
@@ -887,7 +898,7 @@ No telemetry, no analytics, no update pings, no ads.
 
 Known and planned, so you can tell missing from broken:
 
-- **More DAW.** Groups and VCAs, automation for parameters beyond volume and pan, and a time signature change inside
+- **More DAW.** VCAs, dragging tracks to reorder them, automation for parameters beyond volume and pan, and a time signature change inside
   the tempo map. [DAW_AUDIT.md](DAW_AUDIT.md) has the full list against a pro DAW.
 - **Score sections on the timeline.** The timeline has its own Sections row, but the Score tab's sections are not linked
   to it yet.

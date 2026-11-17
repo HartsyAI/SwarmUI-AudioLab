@@ -78,6 +78,7 @@ const AudioDaw = (() => {
             rulerMode: 'time', // 'time' | 'beats'
             markers: [],      // [{id, time, name, color}] sorted by time
             sections: [],     // [{id, start, end, name, color}] arrangement spans, never overlapping (AudioDawSections)
+            groups: [],       // [{id, name, color, collapsed, muted, soloed, volume}] track groups (AudioDawGroups); a track joins with groupId
             snapEnabled: true,  // mirrors editMode !== 'slip' (older projects stored only this)
             editMode: 'grid',   // 'slip' | 'grid' | 'shuffle'
             gridValue: 'auto',  // a GRID_VALUES id
@@ -1015,7 +1016,7 @@ const AudioDaw = (() => {
         layer.innerHTML = '';
         // The bands span every lane, so the height follows the last lane. The CSS min-height fills the viewport when the
         // lanes are shorter; the viewport height is not stored here, or a later shrink would leave a stale scroll range
-        const lanes = clipLanesEl.querySelectorAll('.daw-track-lane, .daw-automation-lane');
+        const lanes = clipLanesEl.querySelectorAll('.daw-track-lane, .daw-automation-lane, .daw-group-lane');
         const last = lanes[lanes.length - 1];
         layer.style.height = (last ? last.offsetTop + last.offsetHeight : 0) + 'px';
         for (const s of state.sections) {
@@ -1264,6 +1265,7 @@ const AudioDaw = (() => {
             /** A/B rides the mixer's own solo, so the comparison is the one the ears already trust. */
             soloOnly: (trackId) => {
                 for (const t of state.tracks) t.soloed = !!trackId && t.id === trackId;
+                for (const g of state.groups) g.soloed = false; // a soloed group would keep the comparison from isolating one track
                 updatePlaybackGains();
                 renderAllTracks();
                 updateBottomPanel();
@@ -2780,7 +2782,7 @@ const AudioDaw = (() => {
 
     /** The tracks a bus stem renders: unmuted tracks with an unmuted send into the bus. */
     function busStemSenders(bus) {
-        return state.tracks.filter(t => t.kind !== 'bus' && !t.muted && (t.sends || []).some(sd => sd.busId === bus.id && !sd.muted));
+        return state.tracks.filter(t => t.kind !== 'bus' && !trackMuted(t) && (t.sends || []).some(sd => sd.busId === bus.id && !sd.muted));
     }
 
     async function renderMixdownBuffer({ start = 0, end = state.contentDuration, exact = false, trackIds = null } = {}) {
@@ -2830,10 +2832,10 @@ const AudioDaw = (() => {
         // its senders feed it (their direct outputs left out), so the stems still sum to the mix.
         const busChains = new Map();
         for (const bus of state.tracks.filter(t => t.kind === 'bus')) {
-            if (stems ? bus !== stemBus : (bus.muted || !soloAudible(bus))) continue;
+            if (stems ? bus !== stemBus : (trackMuted(bus) || !soloAudible(bus))) continue;
             const chain = buildTrackChain(offlineCtx, bus, masterGain);
             if (stems) {
-                chain.trackGain.gain.value = bus.volume;
+                chain.trackGain.gain.value = trackLevel(bus);
                 chain.soloGain.gain.value = 1;
             }
             scheduleTrackAutomation(chain, bus, { ...origin, fresh: true });
@@ -2842,12 +2844,12 @@ const AudioDaw = (() => {
         }
         for (const track of renderSet) {
             // A track silent by solo still renders when its sends reach a soloed bus
-            const feedsSoloedBus = (track.sends || []).some(sd => !sd.muted && state.tracks.some(b => b.id === sd.busId && b.soloed));
-            if (track.muted || (soloActive && !track.soloed && !feedsSoloedBus)) continue; // no point rendering silence
+            const feedsSoloedBus = (track.sends || []).some(sd => !sd.muted && state.tracks.some(b => b.id === sd.busId && trackSoloed(b)));
+            if (trackMuted(track) || (soloActive && !trackSoloed(track) && !feedsSoloedBus)) continue; // no point rendering silence
             const chain = buildTrackChain(offlineCtx, track, stemBus ? null : masterGain);
             if (stems) {
                 // another track's solo must not silence its stem
-                chain.trackGain.gain.value = track.volume;
+                chain.trackGain.gain.value = trackLevel(track);
                 chain.soloGain.gain.value = 1;
             }
             if (!stems || stemBus) {
@@ -2953,8 +2955,8 @@ const AudioDaw = (() => {
     async function doExportStems() {
         const bounds = exportBounds();
         // Every track with content, plus each aux bus something sends to (its return is a stem of its own)
-        const fed = (bus) => state.tracks.some(t => !t.muted && (t.sends || []).some(sd => sd.busId === bus.id && !sd.muted));
-        const tracks = state.tracks.filter(t => !t.muted && (t.clips.length || t.midiClips?.length || (t.kind === 'bus' && fed(t))));
+        const fed = (bus) => state.tracks.some(t => !trackMuted(t) && (t.sends || []).some(sd => sd.busId === bus.id && !sd.muted));
+        const tracks = state.tracks.filter(t => !trackMuted(t) && (t.clips.length || t.midiClips?.length || (t.kind === 'bus' && fed(t))));
         if (!tracks.length || bounds.end - bounds.start <= 0) {
             if (typeof doNoticePopover === 'function') doNoticePopover(translate('Nothing to export'), 'notice-pop-yellow');
             return;
@@ -3080,6 +3082,7 @@ const AudioDaw = (() => {
     function laneAtY(clientY) {
         for (const lane of clipLanesEl.querySelectorAll('.daw-track-lane')) {
             const r = lane.getBoundingClientRect();
+            if (r.height === 0) continue; // a lane folded away by a collapsed group
             if (clientY >= r.top && clientY <= r.bottom) return lane;
         }
         return null;
@@ -3248,6 +3251,272 @@ const AudioDaw = (() => {
         if (state.selectedTrackId === trackId) {
             state.selectedTrackId = state.tracks[0]?.id || null;
         }
+        normalizeGroups(); // a group left with no tracks goes with it
+    }
+
+    // ===== TRACK GROUPS =====
+    // A group is a named, colored set of tracks that collapses to one row; its mute, solo and volume apply to every
+    // member. The rules live in AudioDawGroups (pure). This is the wiring: the group row, menus, and undo.
+
+    /** Height of a group's header and of its summary bar in the lanes. */
+    const GROUP_ROW_HEIGHT = 30;
+
+    /** Keep members together and drop empty groups, in place (state.tracks keeps its identity). */
+    function normalizeGroups() {
+        const next = AudioDawGroups.normalize(state.tracks, state.groups);
+        state.tracks.splice(0, state.tracks.length, ...next.tracks);
+        state.groups = next.groups;
+    }
+
+    function groupById(id) {
+        return state.groups.find(g => g.id === id) || null;
+    }
+
+    /** Mark a member row's elements: its group's color, indent, folded away when collapsed, dimmed when the group is muted. */
+    function styleGroupMember(row, ...els) {
+        if (!row.group) return;
+        for (const el of els) {
+            el.classList.add('in-group');
+            el.style.setProperty('--group-color', row.group.color);
+            el.classList.toggle('daw-group-hidden', row.hidden);
+            el.classList.toggle('group-muted', !!row.group.muted);
+        }
+    }
+
+    /** The group's row in the header column: fold caret, name, track count, mute, solo and a volume fader. */
+    function buildGroupHeader(group, memberCount) {
+        const el = createDiv(null, 'daw-group-header');
+        el.dataset.groupId = group.id;
+        el.style.height = GROUP_ROW_HEIGHT + 'px';
+        el.style.setProperty('--group-color', group.color);
+        el.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            showGroupMenu(group.id, e);
+        });
+
+        const caret = document.createElement('button');
+        caret.className = 'daw-group-caret';
+        caret.textContent = group.collapsed ? '▸' : '▾';
+        caret.title = group.collapsed ? translate('Show the tracks in this group') : translate('Fold the tracks in this group away');
+        caret.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleGroupCollapsed(group.id);
+        });
+        el.appendChild(caret);
+
+        const name = createSpan(null, 'daw-group-name');
+        name.textContent = group.name;
+        name.title = translate('Double-click to rename. Right-click for group options');
+        name.addEventListener('dblclick', () => renameGroup(group.id));
+        el.appendChild(name);
+
+        const count = createSpan(null, 'daw-group-count');
+        count.textContent = String(memberCount);
+        el.appendChild(count);
+
+        const mkBtn = (role, label, title, activeClass, active, onClick) => {
+            const b = document.createElement('button');
+            b.className = 'daw-track-btn' + (active ? ' ' + activeClass : '');
+            b.dataset.role = role;
+            b.textContent = label;
+            b.title = title;
+            b.addEventListener('click', (e) => {
+                e.stopPropagation();
+                onClick();
+            });
+            el.appendChild(b);
+        };
+        mkBtn('group-solo', translate('S'), translate('Solo the whole group'), 'active-solo', group.soloed, () => {
+            group.soloed = !group.soloed;
+            updatePlaybackGains();
+            syncGroupState();
+            updateBottomPanel();
+        });
+        mkBtn('group-mute', translate('M'), translate('Mute the whole group'), 'active-mute', group.muted, () => {
+            group.muted = !group.muted;
+            updatePlaybackGains();
+            syncGroupState();
+            updateBottomPanel();
+        });
+
+        const vol = document.createElement('input');
+        vol.type = 'range';
+        vol.className = 'daw-track-volume daw-group-volume';
+        vol.min = '0';
+        vol.max = '1';
+        vol.step = '0.005';
+        vol.value = AudioDawMixer.gainToFaderPos(group.volume);
+        vol.title = translate('Group volume: scales every track in the group (double-click for unity)');
+        vol.addEventListener('input', () => {
+            group.volume = AudioDawMixer.faderPosToGain(parseFloat(vol.value));
+            updatePlaybackGains();
+        });
+        vol.addEventListener('dblclick', () => {
+            group.volume = 1;
+            vol.value = AudioDawMixer.gainToFaderPos(1);
+            updatePlaybackGains();
+        });
+        el.appendChild(vol);
+        return el;
+    }
+
+    /** The group's bar in the lanes: its color, with a block for each clip of its members. */
+    function buildGroupLane(group, members) {
+        const lane = createDiv(null, 'daw-group-lane');
+        lane.dataset.groupId = group.id;
+        lane.style.height = GROUP_ROW_HEIGHT + 'px';
+        lane.style.setProperty('--group-color', group.color);
+        fillGroupLane(lane, members);
+        return lane;
+    }
+
+    function fillGroupLane(lane, members) {
+        lane.innerHTML = '';
+        for (const span of AudioDawGroups.summarySpans(members, AudioDawInstruments.midiClipLength)) {
+            const block = createDiv(null, 'daw-group-span' + (span.muted ? ' muted' : ''));
+            block.style.left = (span.start * state.zoom) + 'px';
+            block.style.width = Math.max(2, (span.end - span.start) * state.zoom) + 'px';
+            lane.appendChild(block);
+        }
+    }
+
+    /** Redraw every group bar (after a zoom, or a clip moved, trimmed or was added). */
+    function refreshGroupLanes() {
+        if (!clipLanesEl) return;
+        for (const lane of clipLanesEl.querySelectorAll('.daw-group-lane')) {
+            const g = groupById(lane.dataset.groupId);
+            if (g) fillGroupLane(lane, AudioDawGroups.membersOf(g, state.tracks));
+        }
+    }
+
+    /** Reflect group mute and solo on the group row and on the members, without a full re-render. */
+    function syncGroupState() {
+        if (!trackHeadersEl) return;
+        for (const g of state.groups) {
+            const head = trackHeadersEl.querySelector(`.daw-group-header[data-group-id="${g.id}"]`);
+            head?.querySelector('[data-role="group-mute"]')?.classList.toggle('active-mute', g.muted);
+            head?.querySelector('[data-role="group-solo"]')?.classList.toggle('active-solo', g.soloed);
+        }
+        for (const t of state.tracks) {
+            const muted = !!AudioDawGroups.groupOf(t, state.groups)?.muted;
+            for (const el of [t.headerEl, t.laneEl]) el?.classList.toggle('group-muted', muted);
+        }
+    }
+
+    function toggleGroupCollapsed(id) {
+        const g = groupById(id);
+        if (!g) return;
+        g.collapsed = !g.collapsed;
+        scheduleAutosave(); // a view choice: saved, but not an undo step
+        renderAllTracks();
+    }
+
+    function renameGroup(id) {
+        const g = groupById(id);
+        if (!g) return;
+        const name = prompt(translate('Group name:'), g.name);
+        if (!name || !name.trim() || name.trim() === g.name) return;
+        pushUndo();
+        g.name = name.trim();
+        renderAllTracks();
+    }
+
+    /** Put these tracks in a new group (taking them out of any other). */
+    function groupTracks(ids) {
+        const valid = state.tracks.filter(t => ids.includes(t.id)).map(t => t.id);
+        if (!valid.length) return;
+        pushUndo();
+        const group = AudioDawGroups.create({ color: AudioDawTrack.COLORS[state.groups.length % AudioDawTrack.COLORS.length] }, state.groups);
+        applyGroupAssignment(valid, group.id, [...state.groups, group]);
+    }
+
+    /** Move tracks into an existing group, or out of their group with a null id. Callers push the undo step first. */
+    function applyGroupAssignment(ids, groupId, groups = state.groups) {
+        const next = AudioDawGroups.assign(state.tracks, groups, ids, groupId);
+        state.tracks.splice(0, state.tracks.length, ...next.tracks);
+        state.groups = next.groups;
+        updatePlaybackGains(); // a track takes on its new group's mute, solo and fader (and sheds the old one's)
+        renderAllTracks();
+        updateBottomPanel();
+    }
+
+    function moveTracksToGroup(ids, groupId) {
+        pushUndo();
+        applyGroupAssignment(ids, groupId);
+    }
+
+    /** Take every track out of the group and remove it. */
+    function ungroup(id) {
+        const g = groupById(id);
+        if (!g) return;
+        pushUndo();
+        applyGroupAssignment(AudioDawGroups.membersOf(g, state.tracks).map(t => t.id), null);
+    }
+
+    /** Reorder: step a track (dir -1 or +1) within its group, or past the next group or track. */
+    function moveTrackBy(track, dir) {
+        const next = AudioDawGroups.moveTrack(state.tracks, track.id, dir);
+        if (!next) return;
+        pushUndo();
+        state.tracks.splice(0, state.tracks.length, ...next);
+        renderAllTracks();
+        updateBottomPanel();
+    }
+
+    function moveGroupBy(id, dir) {
+        const next = AudioDawGroups.moveGroup(state.tracks, id, dir);
+        if (!next) return;
+        pushUndo();
+        state.tracks.splice(0, state.tracks.length, ...next);
+        renderAllTracks();
+        updateBottomPanel();
+    }
+
+    /** The group items of a track's right-click menu. */
+    function groupMenuItems(track) {
+        const picked = state.selection?.trackIds?.includes(track.id) ? state.selection.trackIds : [track.id];
+        const items = [{ heading: translate('Group') }];
+        if (picked.length > 1) {
+            items.push({ label: translate('Group the selected tracks'), action: () => groupTracks(picked) });
+        }
+        else if (!track.groupId) {
+            items.push({ label: translate('New group with this track'), action: () => groupTracks([track.id]) });
+        }
+        for (const g of state.groups) {
+            if (g.id === track.groupId) continue;
+            items.push({ label: translate('Move to group') + ': ' + g.name, action: () => moveTracksToGroup(picked, g.id) });
+        }
+        if (track.groupId) {
+            items.push({ label: translate('Remove from group'), action: () => moveTracksToGroup(picked, null) });
+        }
+        items.push({ label: translate('Move up'), disabled: !AudioDawGroups.moveTrack(state.tracks, track.id, -1), action: () => moveTrackBy(track, -1) });
+        items.push({ label: translate('Move down'), disabled: !AudioDawGroups.moveTrack(state.tracks, track.id, 1), action: () => moveTrackBy(track, 1) });
+        return items;
+    }
+
+    function showGroupMenu(id, e) {
+        const g = groupById(id);
+        if (!g) return;
+        dawMenu(e, [
+            { label: translate('Rename…'), action: () => renameGroup(id) },
+            { label: translate('Color…'), action: () => dawColorPopover(e, AudioDawTrack.COLORS, g.color, (color) => {
+                // Looked up again: the popover stays open while undo can replace the list this `g` came from
+                const cur = groupById(id);
+                if (!cur) return;
+                pushUndo();
+                cur.color = color;
+                renderAllTracks();
+            }) },
+            { label: g.collapsed ? translate('Show tracks') : translate('Fold tracks away'), action: () => toggleGroupCollapsed(id) },
+            { label: translate('Select the tracks in this group'), action: () => {
+                const ids = AudioDawGroups.membersOf(g, state.tracks).map(t => t.id);
+                setSelection({ start: 0, end: Math.max(state.contentDuration, 0.1), trackIds: ids });
+            } },
+            { label: translate('Move group up'), disabled: !AudioDawGroups.moveGroup(state.tracks, id, -1), action: () => moveGroupBy(id, -1) },
+            { label: translate('Move group down'), disabled: !AudioDawGroups.moveGroup(state.tracks, id, 1), action: () => moveGroupBy(id, 1) },
+            { label: translate('Ungroup'), action: () => ungroup(id) }
+        ]);
     }
 
     // ===== RENDERING =====
@@ -3255,11 +3524,11 @@ const AudioDaw = (() => {
     function renderAllTracks() {
         if (!trackHeadersEl || !clipLanesEl) return;
 
+        normalizeGroups(); // members sit together, empty groups go
         // Clear existing (except playhead)
         trackHeadersEl.innerHTML = '';
-        // Remove all track lanes but keep playhead
-        const existingLanes = clipLanesEl.querySelectorAll('.daw-track-lane');
-        existingLanes.forEach(el => el.remove());
+        // Remove every row the last render added to the lanes (tracks, their automation lanes, group bars), keeping the playhead
+        clipLanesEl.querySelectorAll('.daw-track-lane, .daw-automation-lane, .daw-group-lane').forEach(el => el.remove());
 
         const trackCallbacks = {
             // Rebuild the mixer tab on M/S so its buttons stay in sync with the headers
@@ -3378,12 +3647,19 @@ const AudioDaw = (() => {
             }
         };
 
-        for (const [index, track] of state.tracks.entries()) {
+        for (const row of AudioDawGroups.layoutRows(state.tracks, state.groups)) {
+            if (row.kind === 'group') {
+                trackHeadersEl.appendChild(buildGroupHeader(row.group, row.members.length));
+                clipLanesEl.appendChild(buildGroupLane(row.group, row.members));
+                continue;
+            }
+            const { track, index } = row;
             const header = AudioDawTrack.buildTrackHeader(track, trackCallbacks, index);
             trackHeadersEl.appendChild(header);
 
             const lane = AudioDawTrack.buildClipLane(track, state.zoom, clipCallbacks);
             clipLanesEl.appendChild(lane);
+            styleGroupMember(row, header, lane);
             if (track.kind === 'bus') {
                 const hint = createDiv(null, 'daw-bus-lane-hint');
                 const senders = busSenders(track);
@@ -3415,7 +3691,8 @@ const AudioDaw = (() => {
 
             if (track.automationVisible) {
                 const autoCallbacks = automationLaneCallbacks();
-                clipLanesEl.appendChild(AudioDawTrack.buildAutomationLane(track, state.zoom, autoCallbacks));
+                const autoLane = AudioDawTrack.buildAutomationLane(track, state.zoom, autoCallbacks);
+                clipLanesEl.appendChild(autoLane);
                 // Matching header spacer keeps headers aligned; hosts the param picker and the automation mode
                 const spacer = createDiv(null, 'daw-automation-head');
                 const sel = document.createElement('select');
@@ -3446,6 +3723,7 @@ const AudioDaw = (() => {
                 modeSel.addEventListener('change', () => setAutomationMode(track, modeSel.value));
                 spacer.appendChild(modeSel);
                 trackHeadersEl.appendChild(spacer);
+                styleGroupMember(row, autoLane, spacer);
             }
         }
 
@@ -3519,7 +3797,7 @@ const AudioDaw = (() => {
         // Set min-width of clip lanes to match total duration
         const minWidth = Math.max(state.totalDuration * state.zoom + 200, clipLanesEl?.clientWidth || 0);
         if (clipLanesEl) {
-            clipLanesEl.querySelectorAll('.daw-track-lane, .daw-automation-lane').forEach(lane => {
+            clipLanesEl.querySelectorAll('.daw-track-lane, .daw-automation-lane, .daw-group-lane').forEach(lane => {
                 lane.style.minWidth = minWidth + 'px';
             });
         }
@@ -3538,6 +3816,7 @@ const AudioDaw = (() => {
         state.totalDuration = Math.max(10, content) + 5;
         if (timeline) timeline.setDuration(state.totalDuration);
         updateClipLanesWidth();
+        refreshGroupLanes();
         updateTimeDisplay();
     }
 
@@ -3550,26 +3829,41 @@ const AudioDaw = (() => {
         return audioCtx;
     }
 
+    /** Whether a track is silent by its own mute or its group's. */
+    function trackMuted(track) {
+        return AudioDawGroups.effectiveMuted(track, state.groups);
+    }
+
+    /** Whether a track counts as soloed: soloed itself, or in a soloed group. */
+    function trackSoloed(track) {
+        return AudioDawGroups.effectiveSoloed(track, state.groups);
+    }
+
+    /** The track's gain: its fader, times its group's fader. A mute is applied by the caller. */
+    function trackLevel(track) {
+        return track.volume * AudioDawGroups.groupGain(track, state.groups);
+    }
+
     function hasSoloTracks() {
-        return state.tracks.some(t => t.soloed);
+        return state.tracks.some(trackSoloed);
     }
 
     /** A bus stays audible under solo while a soloed track sends to it (or it is soloed itself). */
     function busFedBySolo(bus) {
-        return state.tracks.some(t => t.soloed && t.kind !== 'bus' && (t.sends || []).some(sd => sd.busId === bus.id && !sd.muted));
+        return state.tracks.some(t => trackSoloed(t) && t.kind !== 'bus' && (t.sends || []).some(sd => sd.busId === bus.id && !sd.muted));
     }
 
     /** Whether a track's direct output is heard under solo: soloed itself, or a bus that a soloed track feeds. */
     function soloAudible(track) {
-        return !hasSoloTracks() || !!track.soloed || (track.kind === 'bus' && busFedBySolo(track));
+        return !hasSoloTracks() || trackSoloed(track) || (track.kind === 'bus' && busFedBySolo(track));
     }
 
     /** One send's gain: its level, silent with its source (a pre-fader send skips the fader, never the mute). Under
      *  solo a send still speaks when its aux bus is soloed, so soloing a return hears what feeds it. */
     function sendGain(track, send, { ignoreSolo = false } = {}) {
-        if (send.muted || track.muted) return 0;
+        if (send.muted || trackMuted(track)) return 0;
         const bus = state.tracks.find(t => t.id === send.busId);
-        if (!ignoreSolo && hasSoloTracks() && !track.soloed && !bus?.soloed) return 0;
+        if (!ignoreSolo && hasSoloTracks() && !trackSoloed(track) && !(bus && trackSoloed(bus))) return 0;
         return send.level;
     }
 
@@ -3595,7 +3889,7 @@ const AudioDaw = (() => {
     function buildTrackChain(ctx, track, masterGain) {
         const input = ctx.createGain();
         const trackGain = ctx.createGain();
-        trackGain.gain.value = track.muted ? 0 : track.volume;
+        trackGain.gain.value = trackMuted(track) ? 0 : trackLevel(track);
         const fxChain = (typeof AudioDawFx !== 'undefined')
             ? AudioDawFx.buildFxChain(ctx, track.fx, { bpm: bpmAt(state.currentTime) }) : null;
         if (fxChain) {
@@ -4673,7 +4967,7 @@ const AudioDaw = (() => {
         for (const track of state.tracks) {
             const chain = mixer.chains.get(track.id);
             if (!chain) continue;
-            chain.trackGain.gain.setTargetAtTime(track.muted ? 0 : track.volume, now, 0.015);
+            chain.trackGain.gain.setTargetAtTime(trackMuted(track) ? 0 : trackLevel(track), now, 0.015);
             chain.soloGain.gain.setTargetAtTime(soloAudible(track) ? 1 : 0, now, 0.015);
             for (const send of track.sends || []) {
                 chain.sendGains?.get(send.busId)?.gain.setTargetAtTime(sendGain(track, send), now, 0.015);
@@ -5301,6 +5595,7 @@ const AudioDaw = (() => {
         updateLoopShade();
         refreshMarkers();
         refreshSections({ ruler: false }); // timeline.setZoom above already rebuilt the ruler row
+        refreshGroupLanes();
         renderSelection();
         if (keepScroll !== null) clipLanesEl.scrollLeft = Math.max(0, keepScroll);
         // Keep the transport slider in sync (keyboard +/- also zooms)
@@ -5595,6 +5890,7 @@ const AudioDaw = (() => {
             },
             { label: translate('Duplicate track'), action: () => duplicateTrack(track) },
             { label: translate('Color…'), action: () => showTrackColorMenu(track, e) },
+            ...groupMenuItems(track),
             ...(track.kind === 'bus' ? [] : [{ label: track.kind === 'instrument' ? translate('Instrument…') : translate('Input…'),
                 action: () => track.kind === 'instrument' ? showInstrumentMenu(track, e) : showTrackInputMenu(track, e) }]),
             ...sendMenuItems(track),
@@ -5636,6 +5932,7 @@ const AudioDaw = (() => {
         copy.volume = ts.volume;
         copy.pan = ts.pan;
         copy.muted = ts.muted;
+        copy.groupId = ts.groupId || null; // the copy lands in the same group, right below the original
         copy.input = { ...ts.input };
         copy.fx = ts.fx;
         copy.automation = ts.automation;
@@ -7680,6 +7977,7 @@ const AudioDaw = (() => {
             timeSignature: [...state.timeSignature],
             markers: (state.markers || []).map(m => ({ ...m })),
             sections: AudioDawSections.serialize(state.sections),
+            groups: AudioDawGroups.serialize(state.groups),
             beatPattern: {
                 steps: state.beatPattern.steps,
                 swing: state.beatPattern.swing,
@@ -7740,6 +8038,9 @@ const AudioDaw = (() => {
         refreshTempoViews();
         if (snapshot.markers) state.markers = snapshot.markers.map(m => ({ ...m }));
         state.sections = AudioDawSections.restore(snapshot.sections);
+        // Collapsing a group is a view choice, not an edit: undo keeps the folders as they are now
+        const collapsedNow = new Map(state.groups.map(g => [g.id, g.collapsed]));
+        state.groups = AudioDawGroups.restore(snapshot.groups).map(g => ({ ...g, collapsed: collapsedNow.has(g.id) ? collapsedNow.get(g.id) : g.collapsed }));
         if (snapshot.beatPattern) {
             state.beatPattern = {
                 steps: snapshot.beatPattern.steps,
@@ -7764,6 +8065,7 @@ const AudioDaw = (() => {
             track.pan = ts.pan;
             track.muted = ts.muted;
             track.soloed = ts.soloed;
+            track.groupId = ts.groupId || null;
             track.armed = ts.armed;
             track.monitor = !!ts.monitor;
             track.input = { deviceId: ts.input?.deviceId || null, channels: ts.input?.channels ?? 'mono' };
@@ -8711,6 +9013,7 @@ const AudioDaw = (() => {
             gridValue: state.gridValue,
             markers: state.markers.map(m => ({ ...m })),
             sections: AudioDawSections.serialize(state.sections),
+            groups: AudioDawGroups.serialize(state.groups),
             metronome: state.metronome,
             beatPattern: {
                 steps: state.beatPattern.steps,
@@ -8766,6 +9069,7 @@ const AudioDaw = (() => {
         state.gridValue = project.gridValue || 'auto';
         state.markers = (project.markers || []).map(m => ({ id: m.id, time: m.time, name: m.name, color: m.color || null }));
         state.sections = AudioDawSections.restore(project.sections); // a project saved before sections has none
+        state.groups = AudioDawGroups.restore(project.groups); // nor groups
         state.masterLimiterEnabled = project.masterLimiterEnabled !== false;
         state.metronome = !!project.metronome;
         // Clear before anything is stored: clearing after the pad loop below wiped every pad's audio.
@@ -8792,6 +9096,7 @@ const AudioDaw = (() => {
             track.pan = ts.pan || 0;
             track.muted = !!ts.muted;
             track.soloed = !!ts.soloed;
+            track.groupId = ts.groupId || null;
             // Opening a project never opens a microphone: arm and monitor start off, the input choice is kept
             track.armed = false;
             track.monitor = false;
