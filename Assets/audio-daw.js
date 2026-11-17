@@ -1111,9 +1111,16 @@ const AudioDaw = (() => {
         }
         pushUndo();
         for (const [track, clip, name] of edits) {
+            const was = clip.name;
             clip.name = name;
             const label = track.clipElements.get(clip.id)?.el.querySelector('.daw-clip-label');
             if (label) label.textContent = name;
+            // A stem track is named "Vocals: <source clip>" and the Score tab finds it by that name, so it follows the rename
+            for (const stemTrack of state.tracks) {
+                for (const stem of Object.keys(STEM_COLORS)) {
+                    if (stemTrack.name === `${capStem(stem)}: ${was}`) stemTrack.name = `${capStem(stem)}: ${name}`;
+                }
+            }
         }
         renderAllTracks();
         updateBottomPanel();
