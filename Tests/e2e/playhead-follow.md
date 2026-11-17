@@ -33,5 +33,7 @@ Pass criteria: every row behaves as stated, and the console shows no errors.
 Rows 1-11, 13, 14 (layout), 15 and 16 (follow is not part of project or undo state) passed. Row 6 initially failed:
 grabbing the scrollbar seeked the playhead (an existing behavior of the lane click handler), which also resumed
 follow. Fixed by ignoring scrollbar presses in the lane selection handler; row 6 then passed.
-Not run: row 12 (recording needs a microphone or synthetic input stream) and the light theme.
+Row 12 passed with a synthetic input stream (`getUserMedia` replaced by an oscillator's `MediaStreamDestination`):
+recording from 118 s of a 120 s project grew the timeline (12700 to 13057 px) and the view followed it.
+Not run: the light theme (the FOLLOW button adds no CSS and reuses `.daw-btn-text`).
 The pane was hidden for part of the run, so frame timing was coarse; positions, not timings, were asserted.
