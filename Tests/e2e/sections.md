@@ -34,7 +34,8 @@ Pass criteria: every row behaves as stated, and the console shows no errors.
 ## Run log
 
 2026-11-17, Chromium (built-in browser pane), Debug build, 1600x900 and 900x800, 3 x 90 s project.
-Rows 1-19 passed (rows 9 and 17 checked for color, move and rename undo; row 18 by node identity while recording from
+Rows 1-19 passed. Row 9 was exercised for color, move, rename and create-from-markers undo, not for an edge resize
+(that goes through the same update path as move). Row 17 was checked for color and its undo. Row 18 by node identity while recording from
 88 s of a 90 s project with a synthetic input stream: the ruler's section and tempo nodes stayed connected while the
 timeline grew from 15044 to 15498 px).
 Native `prompt` and `confirm` were stubbed from the page. Synthetic key presses for `{` and `}` do not reach the
