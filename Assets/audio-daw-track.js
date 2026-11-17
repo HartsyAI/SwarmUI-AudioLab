@@ -92,6 +92,7 @@ const AudioDawTrack = (() => {
             pan: 0.0,
             muted: false,
             soloed: false,
+            groupId: null,                           // the AudioDawGroups group this track belongs to, or null
             armed: false,                            // R: records on the transport's Record
             monitor: false,                          // I: hear the live input through this track
             input: { deviceId: null, channels: 'mono' }, // device (null = system default); 'mono', 'stereo' or a 1-based channel
@@ -1096,6 +1097,7 @@ const AudioDawTrack = (() => {
             pan: track.pan,
             muted: track.muted,
             soloed: track.soloed,
+            groupId: track.groupId || null,
             armed: track.armed,
             monitor: !!track.monitor,
             input: { deviceId: track.input?.deviceId || null, channels: track.input?.channels ?? 'mono' },
