@@ -21,6 +21,7 @@ const AudioDawTrack = (() => {
     /** Tracks shorter than this draw a one-row header and a plain lane (name, icon, mute and solo only). */
     const COMPACT_BELOW = 56;
 
+    /** Whether a track draws the one-row compact header and plain lane. */
     function isCompact(track) {
         return track.height < COMPACT_BELOW;
     }
@@ -894,11 +895,6 @@ const AudioDawTrack = (() => {
         q('mute')?.classList.toggle('active-mute', track.muted);
         q('solo')?.classList.toggle('active-solo', track.soloed);
         q('arm')?.classList.toggle('active-arm', !!track.armed);
-        const iconEl = q('icon');
-        if (iconEl && typeof AudioDawIcons !== 'undefined') {
-            AudioDawIcons.fill(iconEl, track.icon);
-            iconEl.classList.toggle('empty', !track.icon);
-        }
         q('monitor')?.classList.toggle('active-monitor', !!track.monitor);
         track.headerEl.classList.toggle('armed', !!track.armed);
         const volSlider = q('volume');
