@@ -261,6 +261,38 @@ public static class HartsyRepacks
         "whisper_stt/turbo",
     };
 
+    /// <summary>A file a model still fetches from an upstream host the first time it runs, because its Hartsy card does not carry it.</summary>
+    /// <param name="Host">The host it comes from, for example <c>huggingface.co</c>.</param>
+    /// <param name="Repo">The repository on that host.</param>
+    /// <param name="Path">The file in the repository.</param>
+    public sealed record UpstreamFile(string Host, string Repo, string Path)
+    {
+        /// <summary>The file's page on its host.</summary>
+        public string Url => $"https://{Host}/{Repo}/blob/main/{Path}";
+    }
+
+    /// <summary>Files the engine still fetches from upstream for a model that has a card, keyed "provider/model". The install dialog
+    /// lists them so a model is never described as coming wholly from Hartsy when it does not. Each entry was read off the card's live
+    /// file list and the engine's loader; delete it when the file moves onto the card.</summary>
+    internal static readonly Dictionary<string, UpstreamFile[]> UpstreamExtras = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["kyutaistt_stt/2.6b-en"] = [new("huggingface.co", "kyutai/stt-2.6b-en", "tokenizer_en_audio_4000.model")],
+        ["minimax_music3/base"] = [new("huggingface.co", "MiniMaxAI/MiniMax-Music3", "tokenizer/tokenizer.json")],
+        ["minimax_music3/q8"] = [new("huggingface.co", "MiniMaxAI/MiniMax-Music3", "tokenizer/tokenizer.json")],
+        ["minimax_music3/q4"] = [new("huggingface.co", "MiniMaxAI/MiniMax-Music3", "tokenizer/tokenizer.json")],
+        // The shared X-Codec decoder. AudioLab's registry fetches it, falling back to the original m-a-p checkpoint.
+        ["yue_music/en-cot"] = [new("huggingface.co", "HartsyAI/YuE-xcodec-mini-safetensors", "xcodec.safetensors")],
+        ["yue_music/en-icl"] = [new("huggingface.co", "HartsyAI/YuE-xcodec-mini-safetensors", "xcodec.safetensors")],
+        ["yue_music/zh-cot"] = [new("huggingface.co", "HartsyAI/YuE-xcodec-mini-safetensors", "xcodec.safetensors")],
+        ["yue_music/zh-icl"] = [new("huggingface.co", "HartsyAI/YuE-xcodec-mini-safetensors", "xcodec.safetensors")],
+        // The card carries the model and BigVGAN, not the CLIP image encoder.
+        ["controlfoley_sfx/large-44k"] = [new("huggingface.co", "apple/DFN5B-CLIP-ViT-H-14-384", "open_clip_pytorch_model.bin")],
+    };
+
+    /// <summary>The files a model fetches from upstream beside its card, or none.</summary>
+    public static IReadOnlyList<UpstreamFile> UpstreamExtrasFor(string providerId, string modelId)
+        => providerId is not null && modelId is not null && UpstreamExtras.TryGetValue($"{providerId}/{modelId}", out UpstreamFile[] files) ? files : [];
+
     /// <summary>Providers whose rows ride on another family's card, mapped to that family, so the card's files are
     /// stored once in its folder.</summary>
     private static readonly Dictionary<string, string> _folderOwners = new(StringComparer.OrdinalIgnoreCase)

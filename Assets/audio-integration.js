@@ -681,9 +681,11 @@ function audioLabShowInstallModal(engine) {
     const firstModel = models.length > 0 ? models[0] : {};
     // Per-model install only applies where the extension actually downloads discrete checkpoints.
     const perModel = !engine.self_managed && models.length > 0;
+    // What the install really does: a model with a Hartsy card downloads from Hartsy, every file checked against the SHA-256 Hartsy
+    // publishes; whatever the card lacks, and any model with no card yet, comes from the upstream source shown on its row.
     const runtimeNoteHtml = engine.self_managed
-        ? `<p style="color:var(--text-soft);margin-top:0.5em">⚙ ${translate('Runs on the HartsyInference C# engine. These models download automatically on first use, no install needed.')}</p>`
-        : `<p style="color:var(--text-soft);margin-top:0.5em">⚙ ${translate('Runs on the HartsyInference C# engine. Each model you install downloads its weights to disk.')}</p>`;
+        ? `<p style="color:var(--text-soft);margin-top:0.5em">⚙ ${translate('Runs on the HartsyInference C# engine. Each model downloads from Hartsy (hartsy.ai) when it has a card, with every file checked against its published SHA-256. Files several models share are downloaded once. Files the card does not carry, and models with no card yet, come from the upstream source shown on the row. This happens when you install, or otherwise the first time you use the model.')}</p>`
+        : `<p style="color:var(--text-soft);margin-top:0.5em">⚙ ${translate('Runs on the HartsyInference C# engine. Each model you install downloads from Hartsy (hartsy.ai) when it has a card, with every file checked against its published SHA-256. Files several models share are downloaded once. Files the card does not carry, and models with no card yet, come from the upstream source shown on the row.')}</p>`;
 
     let modelsListHtml = '';
     if (models.length > 0) {
@@ -693,17 +695,15 @@ function audioLabShowInstallModal(engine) {
             const sourceLink = modelUrl
                 ? `<a href="${escapeHtml(modelUrl)}" target="_blank" rel="noopener" style="font-size:0.85em">${escapeHtml(m.name)}</a>`
                 : escapeHtml(m.name);
-            const details = [];
-            if (m.estimated_size) details.push(m.estimated_size);
-            if (m.estimated_vram) details.push(m.estimated_vram + ' VRAM');
-            if (m.license) details.push(m.license);
+            // The size and hash come from the Hartsy card's live manifest (audioLabLoadDownloadDetails fills them in); the typed
+            // estimated_size is never shown. Until the answer arrives the cell says what it is waiting for.
             const actionCells = perModel
                 ? `<td class="audiolab-model-status" data-model-status></td>
                    <td class="audiolab-model-action" style="text-align:right" data-model-action></td>`
                 : '';
             return `<tr data-model-id="${escapeHtml(m.id)}">
-                <td style="padding:3px 8px 3px 0">${sourceLink}</td>
-                <td style="padding:3px 8px 3px 0;color:var(--text-soft);font-size:0.85em">${escapeHtml(details.join(' | '))}</td>
+                <td style="padding:3px 8px 3px 0;vertical-align:top">${sourceLink}</td>
+                <td style="padding:3px 8px 3px 0;color:var(--text-soft);font-size:0.85em" data-model-details>${escapeHtml(translate('Checking Hartsy for the files...'))}</td>
                 ${actionCells}
             </tr>`;
         }).join('');
@@ -769,6 +769,91 @@ function audioLabShowInstallModal(engine) {
     }
 
     $(modal).modal('show');
+    audioLabLoadDownloadDetails(engine, modal);
+}
+
+/** Formats a byte count for people: decimal units, two decimals from a gigabyte up. */
+function audioLabFormatBytes(bytes) {
+    if (bytes === null || bytes === undefined) return translate('size not published');
+    if (bytes >= 1e9) return (bytes / 1e9).toFixed(2) + ' GB';
+    if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + ' MB';
+    if (bytes >= 1e4) return Math.round(bytes / 1e3) + ' KB';
+    if (bytes >= 1e3) return (bytes / 1e3).toFixed(1) + ' KB';
+    return bytes + ' B';
+}
+
+/** Builds the details cell for one model from the server's download description: where it comes from, what it downloads with each
+ * file's exact size and SHA-256, a link to its Hartsy page, and anything still fetched from upstream. Never shows a typed size. */
+function audioLabDownloadDetailsHtml(engine, model, info) {
+    const link = (url, text) => `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(text)}</a>`;
+    const lines = [];
+    const upstreamHost = info.upstream ? info.upstream.host : '';
+    const upstreamLink = info.upstream ? link(info.upstream.url, upstreamHost) : escapeHtml(translate('its upstream source'));
+    if (info.source === 'hartsy') {
+        const page = link(info.hartsy_url, translate('View on Hartsy'));
+        if (info.read_error) {
+            lines.push(`${escapeHtml(translate('From Hartsy (hartsy.ai)'))} &middot; ${page}`);
+            lines.push(`<b>${escapeHtml(translate('Hartsy could not be reached, so the size and hash are unavailable.'))}</b>`);
+        }
+        else if (info.install_problem) {
+            lines.push(`${escapeHtml(translate('Hartsy has a card for this model but cannot serve it yet:'))} ${escapeHtml(info.install_problem)} &middot; ${page}`);
+            lines.push(`${escapeHtml(translate('It installs from'))} ${upstreamLink}.`);
+        }
+        else {
+            const files = info.files || [];
+            const main = files.length > 0 ? files[0] : null;
+            lines.push(`${escapeHtml(translate('From Hartsy (hartsy.ai)'))} &middot; ${page}`);
+            const sizeText = `${audioLabFormatBytes(info.total_bytes)} &middot; ${files.length} ${escapeHtml(files.length === 1 ? translate('file') : translate('files'))}`;
+            const hashText = main && main.sha256 ? ` &middot; ${escapeHtml(translate('main file SHA-256'))} <code title="${escapeHtml(main.sha256)}">${escapeHtml(main.sha256.slice(0, 12))}…</code>` : '';
+            lines.push(sizeText + hashText);
+            const fileRows = files.map(f => `<tr>
+                <td style="padding:1px 8px 1px 0;word-break:break-all">${escapeHtml(f.path)}</td>
+                <td style="padding:1px 8px 1px 0;white-space:nowrap">${escapeHtml(audioLabFormatBytes(f.bytes))}</td>
+                <td style="padding:1px 0;font-family:monospace;word-break:break-all">${escapeHtml(f.sha256 || '')}</td></tr>`).join('');
+            lines.push(`<details><summary>${escapeHtml(translate('Files, sizes and SHA-256'))}</summary><table style="font-size:0.9em;margin-top:0.3em">${fileRows}</table></details>`);
+        }
+    }
+    else {
+        lines.push(`${escapeHtml(translate('Not on Hartsy yet. Downloads from'))} ${upstreamLink}${info.pending_upload ? ' &middot; ' + escapeHtml(translate('a Hartsy card is being prepared')) : ''}`);
+        lines.push(escapeHtml(translate('Size and hash are not published for this source.')));
+    }
+    const shared = (info.shares_card_with || []).map(id => (engine.models || []).find(x => x.id === id)).filter(x => x).map(x => x.name);
+    if (shared.length > 0) {
+        lines.push(`${escapeHtml(translate('Same download as'))} ${escapeHtml(shared.join(', '))}.`);
+    }
+    const extras = info.upstream_extras || [];
+    if (extras.length > 0) {
+        const items = extras.map(f => link(f.url, `${f.host}/${f.repo}: ${f.path}`)).join(', ');
+        lines.push(`${escapeHtml(translate('Also fetched from upstream the first time it runs:'))} ${items}`);
+    }
+    const meta = [];
+    if (model.estimated_vram) meta.push(`${translate('est. VRAM')} ${model.estimated_vram}`);
+    if (model.license) meta.push(model.license);
+    if (meta.length > 0) lines.push(escapeHtml(meta.join(' | ')));
+    return lines.map(l => `<div>${l}</div>`).join('');
+}
+
+/** Asks the server what each model of the engine downloads (read from Hartsy's live card manifests) and fills in each row. */
+function audioLabLoadDownloadDetails(engine, modal) {
+    const cells = {};
+    for (const m of engine.models || []) {
+        const row = modal.querySelector(`tr[data-model-id="${cssEscape(m.id)}"]`);
+        cells[m.id] = row ? row.querySelector('[data-model-details]') : null;
+    }
+    genericRequest('AudioLabModelDownloads', { provider_id: engine.id }, data => {
+        for (const m of engine.models || []) {
+            const cell = cells[m.id];
+            if (!cell) continue;
+            const info = data.success && data.models ? data.models[m.id] : null;
+            cell.innerHTML = info
+                ? audioLabDownloadDetailsHtml(engine, m, info)
+                : escapeHtml(translate('Download details are unavailable right now.'));
+        }
+    }, 0, err => {
+        for (const m of engine.models || []) {
+            if (cells[m.id]) cells[m.id].innerText = translate('Download details are unavailable right now.');
+        }
+    });
 }
 
 /** CSS.escape shim (some older embedded browsers lack it) for building attribute selectors from model ids. */

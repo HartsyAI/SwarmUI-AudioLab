@@ -299,7 +299,9 @@ public static class AudioWeights
                 }
             }, cancel: cts, verifyHash: spec.HasHash ? spec.Sha256 : null, headers: headers is null ? null : new(headers));
             File.Move(tmpPath, targetPath);
-            await Report(onProgress, $"{spec.FileName} download complete.");
+            // DownloadFile throws on a hash mismatch, so reaching here means the bytes match the published SHA-256.
+            string verified = spec.HasHash ? $"; SHA-256 verified ({spec.Sha256[..Math.Min(12, spec.Sha256.Length)]}...)" : "";
+            await Report(onProgress, $"{spec.FileName} download complete{verified}.");
             Logs.Info($"[AudioLab] Audio checkpoint '{spec.FileName}' downloaded to {targetPath}");
         }
         catch (Exception ex)

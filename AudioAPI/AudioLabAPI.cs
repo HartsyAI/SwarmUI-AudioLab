@@ -59,6 +59,7 @@ public static class AudioLabAPI
             API.RegisterAPICall(ConvertAudioFormat, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(AudioLabTimeStretch, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(AudioLabListEngines, false, AudioLabPermissions.PermCheckStatus);
+            API.RegisterAPICall(AudioLabModelDownloads, false, AudioLabPermissions.PermCheckStatus);
             API.RegisterAPICall(AudioLabInstallEngine, true, AudioLabPermissions.PermManageBackends);
             API.RegisterAPICall(AudioLabInstallAllModels, true, AudioLabPermissions.PermManageBackends);
             API.RegisterAPICall(AudioLabUninstallEngine, true, AudioLabPermissions.PermManageBackends);
@@ -1325,6 +1326,39 @@ public static class AudioLabAPI
         catch (Exception ex)
         {
             return AudioLab.CreateErrorResponse("Failed to list engines", "list_error", ex);
+        }
+    }
+
+    /// <summary>Describes, for each model of one engine, what installing it downloads and from where: the Hartsy card's files with the
+    /// exact size and SHA-256 Hartsy stores for each, its page on Hartsy, and any file still fetched from upstream. Read from the cards'
+    /// live manifests (cached for a few minutes) when an install dialog opens, not by <see cref="AudioLabListEngines"/>, which the page
+    /// polls. When Hartsy cannot be reached a model's entry says so and carries no size.</summary>
+    /// <param name="input"><c>provider_id</c>: the engine whose dialog is open.</param>
+    public static async Task<JObject> AudioLabModelDownloads(Session session, JObject input)
+    {
+        try
+        {
+            string providerId = input?.Value<string>("provider_id");
+            AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId);
+            if (provider is null || provider.IsApiProvider)
+            {
+                return AudioLab.CreateErrorResponse($"No downloadable engine '{providerId}'.", "unknown_engine");
+            }
+            string[] cards = [.. provider.Models.Select(m => HartsyRepacks.CardFor(provider.Id, m.Id)).Where(c => c is not null).Distinct(StringComparer.Ordinal)];
+            HartsyCardInfo[] infos = await Task.WhenAll(cards.Select(c => HartsyCardInfo.GetAsync(c, CancellationToken.None)));
+            Dictionary<string, HartsyCardInfo> byCard = cards.Zip(infos).ToDictionary(p => p.First, p => p.Second, StringComparer.Ordinal);
+            JObject models = [];
+            foreach (AudioModelDefinition model in provider.Models)
+            {
+                string card = HartsyRepacks.CardFor(provider.Id, model.Id);
+                models[model.Id] = HartsyDownloadInfo.Build(model, provider.Id, card is null ? null : byCard[card],
+                    HartsyDownloadInfo.SharedWith(provider, model), HartsyRepacks.PendingUpload.Contains($"{provider.Id}/{model.Id}"));
+            }
+            return new JObject { ["success"] = true, ["provider_id"] = provider.Id, ["models"] = models };
+        }
+        catch (Exception ex)
+        {
+            return AudioLab.CreateErrorResponse("Failed to read download details", "download_info_error", ex);
         }
     }
 
