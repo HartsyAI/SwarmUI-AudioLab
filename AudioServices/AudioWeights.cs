@@ -149,8 +149,9 @@ public static class AudioWeights
         }
     }
 
-    /// <summary>Where a spec, or anything in its fallback chain, is on disk under any spelling of the provider's
-    /// folder, or null.</summary>
+    /// <summary>Where a spec, anything in its fallback chain, or any name that also satisfies it
+    /// (<see cref="AudioWeightsRegistry.DownloadSpec.AlsoSatisfiedBy"/>) is on disk under any spelling of the
+    /// provider's folder, or null.</summary>
     public static string FindPlacedFile(AudioProviderDefinition provider, AudioWeightsRegistry.DownloadSpec spec)
     {
         for (AudioWeightsRegistry.DownloadSpec s = spec; s is not null; s = s.Fallback)
@@ -159,6 +160,14 @@ public static class AudioWeights
             if (found is not null)
             {
                 return found;
+            }
+            foreach (string alternative in s.AlsoSatisfiedBy)
+            {
+                found = FindPlacedFile(provider, alternative);
+                if (found is not null)
+                {
+                    return found;
+                }
             }
         }
         return null;

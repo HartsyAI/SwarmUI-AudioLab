@@ -2,10 +2,10 @@ namespace Hartsy.Extensions.AudioLab.AudioServices;
 
 /// <summary>The Hartsy card each local model installs from, keyed by provider id then model id.
 ///
-/// <para>Each card holds a converted repack of the upstream weights plus its companion files (shards, codecs,
-/// tokenizers, configs). Every converted file names, in its <c>hartsy.stands_in_for</c> metadata, the upstream path
-/// it replaces, so the engine finds it where its loaders already look. <see cref="HartsyInstaller"/> does the
-/// download.</para>
+/// <para>Each card holds a converted repack of the upstream weights plus its companion files (codecs, tokenizers,
+/// configs, and the other components of a multi-part model). A checkpoint is one merged <c>.safetensors</c> file, not
+/// shards. Every converted file names, in its <c>hartsy.stands_in_for</c> metadata, the upstream path it replaces, so
+/// the engine finds it where its loaders already look. <see cref="HartsyInstaller"/> does the download.</para>
 ///
 /// <para>Rows that share one download (a quantization made on-device from the base weights, or a streaming row
 /// riding on another family's checkpoint) name the card of the weights they load.</para></summary>
@@ -96,15 +96,15 @@ public static class HartsyRepacks
         ["heartlib_music"] = new(StringComparer.OrdinalIgnoreCase)
         {
             // Q8 and Q4 are converted on-device from the base weights, so they install the base card.
-            ["3b-base"] = "275e03bb-1e73-425e-8481-c53c82ca5384", // HeartMuLa 3B
-            ["3b-base-q4"] = "275e03bb-1e73-425e-8481-c53c82ca5384",
-            ["3b-base-q8"] = "275e03bb-1e73-425e-8481-c53c82ca5384",
-            ["3b-hny"] = "cc752ffd-7d73-4611-b047-cac510f4e1b7", // HeartMuLa 3B Happy New Year
-            ["3b-hny-q4"] = "cc752ffd-7d73-4611-b047-cac510f4e1b7",
-            ["3b-hny-q8"] = "cc752ffd-7d73-4611-b047-cac510f4e1b7",
-            ["3b-rl"] = "3f51bcef-5b5b-4319-8ed6-78eeb9aa2f00", // HeartMuLa 3B RL
-            ["3b-rl-q4"] = "3f51bcef-5b5b-4319-8ed6-78eeb9aa2f00",
-            ["3b-rl-q8"] = "3f51bcef-5b5b-4319-8ed6-78eeb9aa2f00",
+            ["3b-base"] = "88862c68-5ca1-42d1-b9c3-a1909194808d", // HeartMuLa 3B
+            ["3b-base-q4"] = "88862c68-5ca1-42d1-b9c3-a1909194808d",
+            ["3b-base-q8"] = "88862c68-5ca1-42d1-b9c3-a1909194808d",
+            ["3b-hny"] = "5a1759fe-bc59-46d2-b0a9-e2a74cf8c727", // HeartMuLa 3B Happy New Year
+            ["3b-hny-q4"] = "5a1759fe-bc59-46d2-b0a9-e2a74cf8c727",
+            ["3b-hny-q8"] = "5a1759fe-bc59-46d2-b0a9-e2a74cf8c727",
+            ["3b-rl"] = "99a9db73-567c-4f1c-9ac3-bc42ab45158a", // HeartMuLa 3B RL
+            ["3b-rl-q4"] = "99a9db73-567c-4f1c-9ac3-bc42ab45158a",
+            ["3b-rl-q8"] = "99a9db73-567c-4f1c-9ac3-bc42ab45158a",
         },
         ["indextts2_tts"] = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -122,7 +122,7 @@ public static class HartsyRepacks
         ["kyutaistt_stt"] = new(StringComparer.OrdinalIgnoreCase)
         {
             ["1b-en-fr"] = "3809b06f-980f-4b99-a717-372c52192946", // Kyutai STT 1B English/French
-            ["2.6b-en"] = "0d6d85d0-82c9-4f02-9adc-d463a735479a", // Kyutai STT 2.6B English
+            ["2.6b-en"] = "c1efb8b1-4e4a-4abd-98ab-29c4971f2c3b", // Kyutai STT 2.6B English
         },
         ["kyutaitts_tts"] = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -135,9 +135,9 @@ public static class HartsyRepacks
         ["minimax_music3"] = new(StringComparer.OrdinalIgnoreCase)
         {
             // Q8 and Q4 are converted on-device from the base weights, so they install the base card.
-            ["base"] = "c97879c7-648d-4b1c-8ab0-1e1ca159ded1", // MiniMax Music 3
-            ["q4"] = "c97879c7-648d-4b1c-8ab0-1e1ca159ded1",
-            ["q8"] = "c97879c7-648d-4b1c-8ab0-1e1ca159ded1",
+            ["base"] = "151d4c57-aabb-4d3b-b176-796fdcd8f7cc", // MiniMax Music 3
+            ["q4"] = "151d4c57-aabb-4d3b-b176-796fdcd8f7cc",
+            ["q8"] = "151d4c57-aabb-4d3b-b176-796fdcd8f7cc",
         },
         ["moonshine_stt"] = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -214,7 +214,7 @@ public static class HartsyRepacks
         },
         ["vibevoice_tts"] = new(StringComparer.OrdinalIgnoreCase)
         {
-            ["1.5b"] = "c65f409f-a1a8-4ced-9a13-43f093e40e0e", // VibeVoice 1.5B
+            ["1.5b"] = "e7389f65-680e-48ef-9480-481767c4cc5f", // VibeVoice 1.5B
         },
         ["whisper_stt"] = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -235,10 +235,10 @@ public static class HartsyRepacks
         },
         ["yue_music"] = new(StringComparer.OrdinalIgnoreCase)
         {
-            ["en-cot"] = "3b0241fa-65fb-4d03-945a-3a67fa4004c5", // YuE 7B English CoT
-            ["en-icl"] = "d35a6e57-e680-4e2e-9090-f32102d206d8", // YuE 7B English ICL
-            ["zh-cot"] = "b939b731-6294-42b7-bf11-d8035bea2ffe", // YuE 7B Chinese CoT
-            ["zh-icl"] = "c1936296-e2dc-4a6c-ac76-0a4965875adb", // YuE 7B Chinese ICL
+            ["en-cot"] = "f0d7fb0f-4a74-4446-9c00-fc04b1baa03c", // YuE 7B English CoT
+            ["en-icl"] = "8cccc506-7992-4c1d-93c9-7fedade7466c", // YuE 7B English ICL
+            ["zh-cot"] = "051700f2-31c6-4d52-8f56-d1959ffa976f", // YuE 7B Chinese CoT
+            ["zh-icl"] = "19d74985-ec35-424c-8d5c-d12d8e735942", // YuE 7B Chinese ICL
         },
         ["zipvoice_tts"] = new(StringComparer.OrdinalIgnoreCase)
         {
