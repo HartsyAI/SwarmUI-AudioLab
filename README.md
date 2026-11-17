@@ -334,8 +334,9 @@ the header and on the track's Mixer strip, and it undoes like any other edit.
 
 **Heights and compact tracks.** The track menu offers Tiny (30 px), Compact (44 px), Small, Medium and Large. Tiny and
 Compact draw a one-row header (icon, name, solo and mute) and a plain lane without fade handles or the clip gain
-readout, so a long project fits on screen. Arm, input, effects and the meter come back at Small and above; an armed
-compact track still tints red. A track's height, color and icon changes are undo steps.
+readout, so a long project fits on screen. Arm, monitor, pan, volume, effects, automation and the meter come back at
+Small and above (the track menu still has Record arm, Monitor and the input choice under **Input…**, and Shift+R arms the
+selected track); an armed compact track still tints red. A track's height, color and icon changes are undo steps.
 
 ### Recording
 
