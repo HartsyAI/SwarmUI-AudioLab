@@ -323,7 +323,7 @@ or **Off**; `G` toggles it. Scrolling sideways by hand, or dragging the horizont
 play or seek, and a drag in the lanes suspends it while you hold. Jumps (Home, End, markers, arrow keys) always scroll
 the playhead into view. The mode is a viewer preference and is not saved in projects.
 
-Three rulers sit above the lanes: Bars|Beats, Min:Secs and Markers. Each track header shows the track number, record
+Five rows sit above the lanes: Bars|Beats, Min:Secs, Tempo, Markers and Sections. Each track header shows the track number, record
 arm (R), input monitor (I), solo (S), mute (M) and automation (A), pan, volume, the input it records from, its inserts
 count, its level in dB and a meter. Right-click a header to rename, duplicate, recolor, resize or delete the track.
 
@@ -358,7 +358,16 @@ first time.
   Shuffle closes the gap when you delete and pushes later clips along when you paste. `,` and `.` nudge the selected
   clip by one grid step.
 - **Markers.** Enter, or the + on the Markers ruler, adds one at the playhead. Drag to move, click to jump,
-  double-click to rename, and `[` and `]` step to the previous and next. Markers save with the project.
+  double-click to rename, and `[` and `]` step to the previous and next. Right-click one to recolor it. Markers save
+  with the project.
+- **Sections.** Named, colored spans of the song (Intro, Verse, Drop...) on the Sections row, with a faint band of the
+  same color running down through the lanes. Double-click empty space in the row, or press the + beside it, to add one
+  (four bars long, shortened to fit before the next section). Drag one to move it, drag an edge to resize it, click to
+  jump to its start, double-click to rename. Sections never overlap: a drag stops at the neighbor. Right-click a
+  section to recolor it, select it across every track, loop it, or delete it. Right-click empty space in the row to
+  **Create sections from markers** (each marker opens a section that runs to the next marker, the last to the end of
+  the content) or clear them all. `{` and `}` jump to the previous and next section. Sections save with the project and
+  undo like any other edit.
 - **Clips.** Drag the small handles at a clip's top corners for fade in and fade out (the curve is drawn on the
   clip), drag its gain readout up or down for clip gain, and use the clip menu to split, duplicate, mute, or spot it
   to an exact time.
@@ -586,6 +595,7 @@ Press `?` in the DAW for this list.
 | Home / End | Jump to start / end |
 | Left / Right | Move the playhead one grid step (Shift: one bar) |
 | Enter / [ / ] | Add a marker / previous / next marker |
+| { / } | Jump to the previous / next section |
 | V / Y | Smart tool / range tool |
 | Ctrl+A | Select everything |
 | Ctrl+C / X / V | Copy / cut / paste at the playhead |
@@ -879,8 +889,8 @@ Known and planned, so you can tell missing from broken:
 
 - **More DAW.** Groups and VCAs, automation for parameters beyond volume and pan, and a time signature change inside
   the tempo map. [DAW_AUDIT.md](DAW_AUDIT.md) has the full list against a pro DAW.
-- **Score sections on the timeline.** The timeline has a Markers ruler, but the Score tab's sections are not placed
-  on it yet.
+- **Score sections on the timeline.** The timeline has its own Sections row, but the Score tab's sections are not linked
+  to it yet.
 - **Cloud API engines.** All 20 provider definitions exist but none are tested, so all are disabled. They get
   re-enabled per provider as each is verified.
 - **RealtimeSTT** needs a C# engine implementation.

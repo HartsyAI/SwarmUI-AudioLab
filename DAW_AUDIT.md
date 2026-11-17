@@ -134,7 +134,7 @@ Score tab. Now:
 | Area | Pro Tools | Before | Now |
 |------|-----------|--------|-----|
 | Track header | Number, R / I / S / M, view selector, automation mode, inserts, I/O, volume and pan readouts | Name, M, S, volume, R, pan, automation toggle, meter | Number, R / I / S / M / A, pan, volume, input chooser, inserts count, dB readout, meter, right-click menu |
-| Rulers | Bars and Beats, Min:Secs, Tempo, Chords, Markers | One ruler | Bars and Beats, Min:Secs, Tempo (a tempo map), Markers, drawn only for the visible slice |
+| Rulers | Bars and Beats, Min:Secs, Tempo, Chords, Markers | One ruler | Bars and Beats, Min:Secs, Tempo (a tempo map), Markers, Sections (named colored spans, with bands through the lanes), drawn only for the visible slice |
 | Markers | Yes | None | Add, move, rename, jump, previous and next |
 | Counters | Main and Sub, selection Start / End / Length | Time and bars.beats | Main and sub (click to swap), Start / End / Length |
 | Edit modes and tools | Shuffle, Spot, Slip, Grid; smart tool and more | Snap toggle | Slip, Grid, Shuffle; smart and range tools; spot to time |
