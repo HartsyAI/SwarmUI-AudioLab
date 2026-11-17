@@ -805,6 +805,7 @@ same turns are saved in the output's `speech_turns` metadata, and the "Drama 3 H
 | `CombineVideoAudio` | POST | `audio_process` | `video_data`, `audio_data`, `mode` |
 | `ExtractAudioFromVideo` | POST | `audio_process` | `video_data` |
 | `AudioLabListEngines` | POST | `audio_check_status` | none |
+| `AudioLabModelDownloads` | POST | `audio_check_status` | `provider_id` |
 | `GetAllProvidersStatus` | POST | `audio_check_status` | none |
 | `GetInstallationStatus` | POST | `audio_check_status` | none |
 | `AudioLabInstallEngine` | WebSocket | `audio_manage_backends` | `provider_id`, `model_id` (optional) |

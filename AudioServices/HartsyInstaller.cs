@@ -127,7 +127,8 @@ public static class HartsyInstaller
             // named for it there, never the card's files beside them.
             string folder = Path.Combine(AudioWeights.WeightsDirectory(AudioProviderRegistry.GetById(HartsyRepacks.FolderOwner(provider.Id)) ?? provider), HartsyFolder);
             InstallRun run = new(folder, headers, onProgress, cancel, ReadOwnedFiles(root, provider.Id, modelId), []);
-            await AudioWeights.Report(onProgress, $"Downloading {manifest.Title} from Hartsy...");
+            HartsyCardInfo cardInfo = HartsyCardInfo.FromManifest(manifest);
+            await AudioWeights.Report(onProgress, $"Downloading {cardInfo.Title} from Hartsy: {cardInfo.Files.Count} file(s), {HartsyCardInfo.FormatBytes(cardInfo.TotalBytes)}. {cardInfo.PageUrl}");
             Dictionary<string, string> weightPaths = new(StringComparer.Ordinal);
             // Weights first and the main file last, so a main file on disk means its weights are too.
             foreach (CardFile file in manifest.Companions.Where(f => f.IsWeights).Append(manifest.Main))
@@ -302,6 +303,14 @@ public static class HartsyInstaller
         {
             return (null, false, $"Hartsy's manifest for card {card} is not readable: {ex.Message}");
         }
+    }
+
+    /// <summary>Reads a card's manifest without a key, to show what an install would download. Returns the refusal
+    /// reason instead of a manifest when Hartsy cannot be reached or does not have the card.</summary>
+    internal static async Task<(CardManifest Manifest, string Refusal)> ReadManifestAsync(string card, CancellationToken cancel)
+    {
+        (CardManifest manifest, _, string refusal) = await FetchManifestAsync(card, null, cancel).ConfigureAwait(false);
+        return (manifest, refusal);
     }
 
     private static async Task<(HttpStatusCode Status, string Body)> GetAsync(string url, string apiKey, CancellationToken cancel)
