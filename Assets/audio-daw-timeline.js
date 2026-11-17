@@ -8,11 +8,28 @@
 const AudioDawTimeline = (() => {
     'use strict';
 
-    const ROW_BARS = 18;
-    const ROW_TIME = 16;
-    const ROW_TEMPO = 18;
-    const ROW_MARKERS = 18;
-    const HEIGHT = ROW_BARS + ROW_TIME + ROW_TEMPO + ROW_MARKERS;
+    /**
+     * The ruler rows, top to bottom. Every offset below is derived from this list, so a row can be added or resized
+     * here alone. 'bars' and 'time' are drawn on the canvas and scrub; the rest are DOM layers with their own events.
+     */
+    const ROWS = [
+        { key: 'bars', height: 18, label: 'Bars|Beats' },
+        { key: 'time', height: 16, label: 'Min:Secs' },
+        { key: 'tempo', height: 18, label: 'Tempo' },
+        { key: 'markers', height: 18, label: 'Markers' },
+        { key: 'sections', height: 18, label: 'Sections' }
+    ];
+    const ROW_TOP = {};
+    let rowsHeight = 0;
+    for (const row of ROWS) {
+        ROW_TOP[row.key] = rowsHeight;
+        rowsHeight += row.height;
+    }
+    const ROW_BARS = ROWS[0].height;
+    const ROW_TIME = ROWS[1].height;
+    const HEIGHT = rowsHeight;
+    /** Rows from here down are DOM layers on a soft background; above them the canvas scrubs. */
+    const SCRUB_HEIGHT = ROW_TOP.tempo;
 
     /**
      * A tempo map: the session tempo from zero plus later changes [{t (seconds), bpm}]. Beats are counted from
@@ -74,6 +91,9 @@ const AudioDawTimeline = (() => {
             loopEnd: 0,
             selection: null,          // {start, end}
             markers: [],              // [{id, time, name, color}]
+            sections: [],             // [{id, start, end, name, color}]
+            sectionConstraint: null,  // fn(id, start, end, mode) -> {start, end}: where a dragged section may go
+            renderedZoom: null,       // the zoom the DOM layers were last built for
             playheadTime: 0,
             mode: opts.mode || 'time', // which row the grid follows; both rows always draw
             bpm: opts.bpm || 120,
@@ -102,17 +122,20 @@ const AudioDawTimeline = (() => {
         container.appendChild(playheadMarker);
         state.playheadMarker = playheadMarker;
 
-        const tempoLayer = createDiv(null, 'daw-ruler-tempo');
-        tempoLayer.style.top = (ROW_BARS + ROW_TIME) + 'px';
-        tempoLayer.style.height = ROW_TEMPO + 'px';
-        container.appendChild(tempoLayer);
+        /** A DOM layer covering one ruler row. */
+        const makeLayer = (key, cls) => {
+            const layer = createDiv(null, cls);
+            layer.style.top = ROW_TOP[key] + 'px';
+            layer.style.height = rowHeight(key) + 'px';
+            container.appendChild(layer);
+            return layer;
+        };
+        const tempoLayer = makeLayer('tempo', 'daw-ruler-tempo');
         state.tempoLayer = tempoLayer;
-
-        const markerLayer = createDiv(null, 'daw-ruler-markers');
-        markerLayer.style.top = (ROW_BARS + ROW_TIME + ROW_TEMPO) + 'px';
-        markerLayer.style.height = ROW_MARKERS + 'px';
-        container.appendChild(markerLayer);
+        const markerLayer = makeLayer('markers', 'daw-ruler-markers');
         state.markerLayer = markerLayer;
+        const sectionLayer = makeLayer('sections', 'daw-ruler-sections');
+        state.sectionLayer = sectionLayer;
 
         // Scrub on the Bars and Min:Secs rows; the tempo and marker rows add and edit their events instead.
         const timeAt = (clientX) => {
@@ -123,7 +146,7 @@ const AudioDawTimeline = (() => {
         canvas.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
             const rect = container.getBoundingClientRect();
-            if (e.clientY - rect.top >= ROW_BARS + ROW_TIME) return; // tempo and marker rows: their own layers
+            if (e.clientY - rect.top >= SCRUB_HEIGHT) return; // tempo, marker and section rows: their own layers
             e.preventDefault();
             canvas.setPointerCapture(e.pointerId);
             fire(state, 'scrub', timeAt(e.clientX));
@@ -154,6 +177,18 @@ const AudioDawTimeline = (() => {
             fire(state, 'tempoAdd', t);
         });
         tempoLayer.title = translate('Tempo: double-click to add a change, drag one to move it, double-click it to set its BPM, right-click for options');
+        sectionLayer.addEventListener('dblclick', (e) => {
+            if (e.target !== sectionLayer) return;
+            let t = timeAt(e.clientX);
+            if (state.snapper) t = state.snapper(t);
+            fire(state, 'sectionAdd', t);
+        });
+        sectionLayer.addEventListener('contextmenu', (e) => {
+            if (e.target !== sectionLayer) return;
+            e.preventDefault();
+            fire(state, 'sectionsContext', timeAt(e.clientX), e);
+        });
+        sectionLayer.title = translate('Sections: double-click to add, drag to move, drag an edge to resize, click to jump, right-click for options');
 
         // Loop/punch region handles
         const loopStartHandle = createDiv(null, 'daw-loop-handle daw-loop-start');
@@ -171,8 +206,17 @@ const AudioDawTimeline = (() => {
         return buildAPI(state);
     }
 
-    /** Size the spacer to the arrangement, park the canvas over the viewport, and redraw everything. */
-    function layout(state) {
+    /** Height in pixels of one ruler row. */
+    function rowHeight(key) {
+        return ROWS.find(r => r.key === key).height;
+    }
+
+    /**
+     * Size the spacer to the arrangement, park the canvas over the viewport, and redraw everything.
+     * The DOM layers (markers, tempo, sections) are rebuilt only when the zoom changed or `force` is set: while
+     * recording the duration grows every frame, and rebuilding every flag each frame is wasted work.
+     */
+    function layout(state, force = true) {
         const width = Math.max(state.totalDuration * state.zoom, state.container.clientWidth);
         state.spacer.style.width = width + 'px';
         state.spacer.style.height = HEIGHT + 'px';
@@ -185,8 +229,15 @@ const AudioDawTimeline = (() => {
         state.canvas.style.width = viewW + 'px';
         state.canvas.style.left = state.scrollLeft + 'px';
         updateLoopHandles(state);
-        renderMarkers(state);
-        renderTempo(state);
+        if (force || state.renderedZoom !== state.zoom) {
+            state.renderedZoom = state.zoom;
+            renderMarkers(state);
+            renderTempo(state);
+            renderSections(state);
+        }
+        else {
+            for (const layer of [state.markerLayer, state.tempoLayer, state.sectionLayer]) layer.style.width = width + 'px';
+        }
         draw(state);
         positionPlayhead(state);
     }
@@ -213,7 +264,7 @@ const AudioDawTimeline = (() => {
         ctx.fillStyle = bgColor;
         ctx.fillRect(0, 0, viewW, ROW_BARS + ROW_TIME);
         ctx.fillStyle = softBg;
-        ctx.fillRect(0, ROW_BARS + ROW_TIME, viewW, ROW_TEMPO + ROW_MARKERS);
+        ctx.fillRect(0, SCRUB_HEIGHT, viewW, HEIGHT - SCRUB_HEIGHT);
         const X = (t) => Math.round(t * zoom - x0) + 0.5;
 
         ctx.font = '10px var(--font-monospace, monospace)';
@@ -300,7 +351,7 @@ const AudioDawTimeline = (() => {
 
         // Row separators
         ctx.strokeStyle = lineColor;
-        for (const y of [ROW_BARS, ROW_BARS + ROW_TIME, ROW_BARS + ROW_TIME + ROW_TEMPO, HEIGHT]) {
+        for (const y of [...ROWS.slice(1).map(r => ROW_TOP[r.key]), HEIGHT]) {
             ctx.beginPath();
             ctx.moveTo(0, y - 0.5);
             ctx.lineTo(viewW, y - 0.5);
@@ -424,6 +475,98 @@ const AudioDawTimeline = (() => {
         }
     }
 
+    /** Sections row: a colored block per section, with drag handles on both edges. */
+    function renderSections(state) {
+        const layer = state.sectionLayer;
+        layer.style.width = Math.max(state.totalDuration * state.zoom, state.container.clientWidth) + 'px';
+        layer.innerHTML = '';
+        for (const s of state.sections) {
+            const el = createDiv(null, 'daw-section');
+            el.style.left = (s.start * state.zoom) + 'px';
+            el.style.width = Math.max(2, (s.end - s.start) * state.zoom) + 'px';
+            if (s.color) el.style.setProperty('--section-color', s.color);
+            const label = createSpan(null, 'daw-section-name');
+            label.textContent = s.name;
+            el.appendChild(label);
+            el.title = `${s.name} (${formatRulerTime(s.start)} - ${formatRulerTime(s.end)}). ${translate('Click to jump, drag to move, drag an edge to resize, double-click to rename, right-click for options')}`;
+            const left = createDiv(null, 'daw-section-handle daw-section-handle-left');
+            const right = createDiv(null, 'daw-section-handle daw-section-handle-right');
+            el.appendChild(left);
+            el.appendChild(right);
+            setupSectionDrag(state, el, left, right, s);
+            el.addEventListener('dblclick', (e) => {
+                e.stopPropagation();
+                fire(state, 'sectionRename', s.id);
+            });
+            el.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                fire(state, 'sectionContext', s.id, e);
+            });
+            layer.appendChild(el);
+        }
+    }
+
+    /**
+     * Drag a section by its body (move) or one of its edge handles (resize). The host's constraint keeps it off its
+     * neighbors; the block follows the pointer through that constraint, and the final span is fired on release.
+     * A press that never moves is a click.
+     */
+    function setupSectionDrag(state, el, leftHandle, rightHandle, section) {
+        const begin = (target, mode) => target.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            target.setPointerCapture(e.pointerId);
+            const startX = e.clientX;
+            let moved = false;
+            let span = { start: section.start, end: section.end };
+            const onMove = (me) => {
+                if (!moved && Math.abs(me.clientX - startX) < 3) return;
+                moved = true;
+                const dt = (me.clientX - startX) / state.zoom;
+                let start = section.start;
+                let end = section.end;
+                if (mode === 'move') {
+                    start = Math.max(0, section.start + dt);
+                    if (state.snapper) start = Math.max(0, state.snapper(start));
+                    end = start + (section.end - section.start);
+                }
+                else if (mode === 'start') {
+                    start = Math.max(0, section.start + dt);
+                    if (state.snapper) start = Math.max(0, state.snapper(start));
+                }
+                else {
+                    end = Math.max(0, section.end + dt);
+                    if (state.snapper) end = Math.max(0, state.snapper(end));
+                }
+                span = state.sectionConstraint ? state.sectionConstraint(section.id, start, end, mode) : { start, end };
+                el.style.left = (span.start * state.zoom) + 'px';
+                el.style.width = Math.max(2, (span.end - span.start) * state.zoom) + 'px';
+            };
+            const onUp = (ue) => {
+                try { target.releasePointerCapture(ue.pointerId); } catch (_) {}
+                target.removeEventListener('pointermove', onMove);
+                target.removeEventListener('pointerup', onUp);
+                target.removeEventListener('pointercancel', onUp);
+                if (ue.type === 'pointercancel') {
+                    // A cancelled drag changes nothing: put the block back where it was
+                    el.style.left = (section.start * state.zoom) + 'px';
+                    el.style.width = Math.max(2, (section.end - section.start) * state.zoom) + 'px';
+                    return;
+                }
+                if (moved) fire(state, mode === 'move' ? 'sectionMove' : 'sectionResize', section.id, span.start, span.end);
+                else if (mode === 'move') fire(state, 'sectionClick', section.id);
+            };
+            target.addEventListener('pointermove', onMove);
+            target.addEventListener('pointerup', onUp);
+            target.addEventListener('pointercancel', onUp);
+        });
+        begin(el, 'move');
+        begin(leftHandle, 'start');
+        begin(rightHandle, 'end');
+    }
+
     function setupMarkerDrag(state, flag, marker) {
         flag.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
@@ -517,7 +660,7 @@ const AudioDawTimeline = (() => {
             /** Update total timeline duration and redraw. */
             setDuration(duration) {
                 state.totalDuration = Math.max(duration, 1);
-                layout(state);
+                layout(state, false);
             },
 
             /** Follow the lanes' horizontal scroll (the canvas only covers what is visible). */
@@ -562,8 +705,23 @@ const AudioDawTimeline = (() => {
                 renderMarkers(state);
             },
 
+            /** Replace the section list ([{id, start, end, name, color}]). */
+            setSections(sections) {
+                state.sections = (sections || []).slice().sort((a, b) => a.start - b.start);
+                renderSections(state);
+            },
+
+            /**
+             * Provide fn(id, start, end, mode) -> {start, end}, called while a section is dragged (mode 'move',
+             * 'start' or 'end') to keep it where it may go. Without one a drag is unconstrained.
+             */
+            setSectionConstraint(fn) { state.sectionConstraint = fn; },
+
             /** Get current zoom level. */
             getZoom() { return state.zoom; },
+
+            /** The ruler rows, top to bottom: [{key, label, top, height}]. */
+            getRows() { return ROWS.map(r => ({ key: r.key, label: r.label, top: ROW_TOP[r.key], height: r.height })); },
 
             /** Set the session tempo, time signature and (optionally) the later tempo changes [{id, t, bpm}]. */
             setTempo(bpm, timeSig, changes) {
@@ -587,7 +745,9 @@ const AudioDawTimeline = (() => {
             setSnapper(fn) { state.snapper = fn; },
 
             /** Subscribe: 'seek', 'scrub', 'loopChange', 'markerAdd', 'markerMove', 'markerClick',
-             *  'markerRename', 'markerContext', 'tempoAdd', 'tempoMove', 'tempoEdit', 'tempoContext'. */
+             *  'markerRename', 'markerContext', 'tempoAdd', 'tempoMove', 'tempoEdit', 'tempoContext',
+             *  'sectionAdd'(time), 'sectionMove'(id, start, end), 'sectionResize'(id, start, end), 'sectionClick'(id),
+             *  'sectionRename'(id), 'sectionContext'(id, event), 'sectionsContext'(time, event: right-click on empty row). */
             on(event, callback) {
                 if (!state.callbacks[event]) state.callbacks[event] = [];
                 state.callbacks[event].push(callback);
@@ -623,5 +783,5 @@ const AudioDawTimeline = (() => {
         return Number.isInteger(num * 4 / den) ? 1 : 4 / den;
     }
 
-    return { create, formatRulerTime, makeTempoMap, clickUnit, HEIGHT };
+    return { create, formatRulerTime, makeTempoMap, clickUnit, ROWS, HEIGHT };
 })();

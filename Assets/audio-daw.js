@@ -77,6 +77,7 @@ const AudioDaw = (() => {
             selection: null,     // {start, end, trackIds} time range across tracks
             rulerMode: 'time', // 'time' | 'beats'
             markers: [],      // [{id, time, name, color}] sorted by time
+            sections: [],     // [{id, start, end, name, color}] arrangement spans, never overlapping (AudioDawSections)
             snapEnabled: true,  // mirrors editMode !== 'slip' (older projects stored only this)
             editMode: 'grid',   // 'slip' | 'grid' | 'shuffle'
             gridValue: 'auto',  // a GRID_VALUES id
@@ -869,6 +870,18 @@ const AudioDaw = (() => {
         timeline.on('markerRename', (id) => renameMarker(id));
         timeline.on('markerContext', (id, e) => showMarkerMenu(id, e));
         timeline.setMarkers(state.markers);
+        timeline.setSectionConstraint((id, start, end, mode) => AudioDawSections.constrain(state.sections, id, start, end, mode));
+        timeline.on('sectionAdd', (time) => addSection(time));
+        timeline.on('sectionMove', (id, start, end) => updateSectionSpan(id, start, end));
+        timeline.on('sectionResize', (id, start, end) => updateSectionSpan(id, start, end));
+        timeline.on('sectionClick', (id) => {
+            const s = state.sections.find(x => x.id === id);
+            if (s) seekTo(s.start);
+        });
+        timeline.on('sectionRename', (id) => renameSection(id));
+        timeline.on('sectionContext', (id, e) => showSectionMenu(id, e));
+        timeline.on('sectionsContext', (time, e) => showSectionsRowMenu(time, e));
+        timeline.setSections(state.sections);
         timeline.setPunch(state.punchEnabled);
         timeline.setLoop(state.loopEnabled, state.loopStart, state.loopEnd);
         renderRulerCorner();
@@ -879,11 +892,18 @@ const AudioDaw = (() => {
         const corner = document.querySelector('#daw_main .daw-ruler-corner');
         if (!corner) return;
         corner.innerHTML = '';
-        for (const [name, cls] of [[translate('Bars|Beats'), 'bars'], [translate('Min:Secs'), 'time'], [translate('Tempo'), 'tempo'], [translate('Markers'), 'markers']]) {
-            const row = createDiv(null, 'daw-ruler-name daw-ruler-name-' + cls);
-            row.textContent = name;
+        for (const r of timeline.getRows()) {
+            const row = createDiv(null, 'daw-ruler-name daw-ruler-name-' + r.key);
+            row.style.height = r.height + 'px';
+            row.textContent = translate(r.label);
             corner.appendChild(row);
         }
+        const addSectionBtn = document.createElement('button');
+        addSectionBtn.className = 'daw-marker-add';
+        addSectionBtn.textContent = '+';
+        addSectionBtn.title = translate('Add a section at the playhead');
+        addSectionBtn.addEventListener('click', () => addSection(state.currentTime));
+        corner.querySelector('.daw-ruler-name-sections')?.appendChild(addSectionBtn);
         const add = document.createElement('button');
         add.className = 'daw-marker-add';
         add.textContent = '+';
@@ -964,8 +984,130 @@ const AudioDaw = (() => {
                     setSelection({ start: m.time, end: next ? next.time : Math.max(state.contentDuration, m.time + 1), trackIds: state.tracks.map(t => t.id) });
                 }
             },
+            { label: translate('Color…'), action: () => dawColorPopover(e, AudioDawSections.PALETTE, m.color, (color) => { pushUndo(); m.color = color; refreshMarkers(); }) },
             { label: translate('Delete marker'), action: () => { pushUndo(); state.markers = state.markers.filter(x => x.id !== id); refreshMarkers(); } }
         ]);
+    }
+
+    // ===== SECTIONS =====
+    // Named, colored spans of the song (Intro, Verse, Drop...). The rules live in AudioDawSections (pure); the ruler
+    // row is AudioDawTimeline's. This is the wiring: state, undo, the lane bands, menus and the keys.
+
+    /** Push sections to the ruler row and draw a faint band for each through the lanes. */
+    function refreshSections() {
+        if (timeline) timeline.setSections(state.sections);
+        if (!clipLanesEl) return;
+        let layer = clipLanesEl.querySelector('.daw-section-bands');
+        if (!layer) {
+            layer = createDiv(null, 'daw-section-bands');
+            clipLanesEl.appendChild(layer);
+        }
+        layer.innerHTML = '';
+        // The bands span every lane, not just the viewport: height follows the last lane
+        const lanes = clipLanesEl.querySelectorAll('.daw-track-lane, .daw-automation-lane');
+        const last = lanes[lanes.length - 1];
+        layer.style.height = Math.max(clipLanesEl.clientHeight, last ? last.offsetTop + last.offsetHeight : 0) + 'px';
+        for (const s of state.sections) {
+            const band = createDiv(null, 'daw-section-band');
+            band.style.left = (s.start * state.zoom) + 'px';
+            band.style.width = ((s.end - s.start) * state.zoom) + 'px';
+            if (s.color) band.style.setProperty('--section-color', s.color);
+            layer.appendChild(band);
+        }
+    }
+
+    /** Four bars from t at the tempo there: what a new section covers when it is not dragged out. */
+    function defaultSectionLength(t) {
+        const tm = tempo();
+        return tm.timeAtBeat(tm.beatsAt(t) + 4 * beatsPerBar()) - t;
+    }
+
+    /** Add a section starting at t. Returns it, or null when t is inside a section or there is no room. */
+    function addSection(t, length = null) {
+        const room = AudioDawSections.fit(state.sections, Math.max(0, t), length ?? defaultSectionLength(t));
+        if (!room) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('There is no room for a section here'), 'notice-pop-yellow');
+            return null;
+        }
+        pushUndo();
+        const made = AudioDawSections.add(state.sections, room);
+        state.sections = made.list;
+        refreshSections();
+        return made.section;
+    }
+
+    /** A drag released: put a section at its new span (the host constraint already kept it off its neighbors). */
+    function updateSectionSpan(id, start, end) {
+        const s = state.sections.find(x => x.id === id);
+        if (!s || (Math.abs(s.start - start) < 1e-6 && Math.abs(s.end - end) < 1e-6)) return;
+        pushUndo();
+        state.sections = AudioDawSections.normalize(state.sections.map(x => x.id === id ? { ...x, start, end } : x));
+        refreshSections();
+    }
+
+    function renameSection(id) {
+        const s = state.sections.find(x => x.id === id);
+        if (!s) return;
+        const name = prompt(translate('Section name:'), s.name);
+        if (!name || !name.trim() || name.trim() === s.name) return;
+        pushUndo();
+        s.name = name.trim();
+        refreshSections();
+    }
+
+    function deleteSection(id) {
+        if (!state.sections.some(x => x.id === id)) return;
+        pushUndo();
+        state.sections = state.sections.filter(x => x.id !== id);
+        refreshSections();
+    }
+
+    /** Replace every section with one per marker (each runs to the next marker, the last to the end of the content). */
+    function sectionsFromMarkers() {
+        if (state.markers.length === 0) {
+            if (typeof doNoticePopover === 'function') doNoticePopover(translate('Add markers first: each one starts a section'), 'notice-pop-yellow');
+            return;
+        }
+        const lastMarker = Math.max(...state.markers.map(m => m.time));
+        const end = state.contentDuration > lastMarker + AudioDawSections.MIN_LENGTH ? state.contentDuration : lastMarker + defaultSectionLength(lastMarker);
+        const made = AudioDawSections.fromMarkers(state.markers, end);
+        if (made.length === 0) return;
+        if (state.sections.length && !confirm(translate('Replace the existing sections with ones made from the markers?'))) return;
+        pushUndo();
+        state.sections = made;
+        refreshSections();
+    }
+
+    function selectSection(s) {
+        setSelection({ start: s.start, end: s.end, trackIds: state.tracks.map(t => t.id) });
+    }
+
+    function showSectionMenu(id, e) {
+        const s = state.sections.find(x => x.id === id);
+        if (!s) return;
+        dawMenu(e, [
+            { label: translate('Jump to start'), action: () => seekTo(s.start) },
+            { label: translate('Rename…'), action: () => renameSection(id) },
+            { label: translate('Color…'), action: () => dawColorPopover(e, AudioDawSections.PALETTE, s.color, (color) => { pushUndo(); s.color = color; refreshSections(); }) },
+            { label: translate('Select section'), action: () => selectSection(s) },
+            { label: translate('Loop section'), action: () => setLoopRange(s.start, s.end) },
+            { label: translate('Delete section'), action: () => deleteSection(id) }
+        ]);
+    }
+
+    /** Right-click on empty space in the Sections row. */
+    function showSectionsRowMenu(time, e) {
+        dawMenu(e, [
+            { label: translate('Add a section here'), action: () => addSection(snapTime(time)) },
+            { label: translate('Create sections from markers'), action: () => sectionsFromMarkers(), disabled: state.markers.length === 0 },
+            { label: translate('Clear all sections'), action: () => { pushUndo(); state.sections = []; refreshSections(); }, disabled: state.sections.length === 0 }
+        ]);
+    }
+
+    /** Jump to the start of the previous (-1) or next (+1) section from the playhead. */
+    function jumpSection(dir) {
+        const s = AudioDawSections.neighbor(state.sections, state.currentTime, dir);
+        if (s) seekTo(s.start);
     }
 
     /** Jump to the previous (-1) or next (+1) marker from the playhead. */
@@ -3318,6 +3460,7 @@ const AudioDaw = (() => {
         updateClipLanesWidth();
         renderSelection();
         refreshMarkers();
+        refreshSections();
         renderEmptyState();
     }
 
@@ -4593,6 +4736,18 @@ const AudioDaw = (() => {
         resyncPlayback();
     }
 
+    /** Set the loop region and make sure the loop is on (a selection, a section, or any other span). */
+    function setLoopRange(start, end) {
+        state.loopStart = start;
+        state.loopEnd = end;
+        if (!state.loopEnabled) toggleLoop();
+        else {
+            if (timeline) timeline.setLoop(true, state.loopStart, state.loopEnd);
+            updateLoopShade();
+            resyncPlayback();
+        }
+    }
+
     /**
      * Start the transport at state.currentTime.
      * @param {Object} [opts] - { delay: seconds before the timeline starts moving (count-in), from: timeline
@@ -5127,6 +5282,7 @@ const AudioDaw = (() => {
         updateLaneGrid();
         updateLoopShade();
         refreshMarkers();
+        refreshSections();
         renderSelection();
         if (keepScroll !== null) clipLanesEl.scrollLeft = Math.max(0, keepScroll);
         // Keep the transport slider in sync (keyboard +/- also zooms)
@@ -5205,22 +5361,36 @@ const AudioDaw = (() => {
 
     /** Small swatch-grid popover to recolor a track (updates header, clips, mixer). */
     function showTrackColorMenu(track, e) {
+        dawColorPopover(e, AudioDawTrack.COLORS, track.color, (color) => {
+            track.color = color;
+            renderAllTracks();
+            updateBottomPanel();
+        });
+    }
+
+    /**
+     * A swatch grid at the pointer. Calls onPick(color) for the swatch chosen; closes on a pick or a click elsewhere.
+     * Shared by track, marker and section colors.
+     * @param {MouseEvent} e - the event that opened it (positions the popover)
+     * @param {string[]} palette - the colors to offer
+     * @param {string|null} current - the color to mark as selected
+     * @param {function(string)} onPick
+     */
+    function dawColorPopover(e, palette, current, onPick) {
         const existing = document.querySelector('.daw-context-menu');
         if (existing) existing.remove();
         const menu = createDiv(null, 'daw-context-menu daw-color-menu');
         menu.style.position = 'fixed';
         menu.style.zIndex = '99999';
         const grid = createDiv(null, 'daw-color-grid');
-        for (const color of AudioDawTrack.COLORS) {
+        for (const color of palette) {
             const b = document.createElement('button');
-            b.className = 'daw-color-swatch-btn' + (track.color === color ? ' selected' : '');
+            b.className = 'daw-color-swatch-btn' + (current === color ? ' selected' : '');
             b.style.background = color;
             b.title = color;
             b.addEventListener('click', () => {
                 menu.remove();
-                track.color = color;
-                renderAllTracks();
-                updateBottomPanel();
+                onPick(color);
             });
             grid.appendChild(b);
         }
@@ -7491,6 +7661,7 @@ const AudioDaw = (() => {
             tempoMap: (state.tempoMap || []).map(c => ({ ...c })),
             timeSignature: [...state.timeSignature],
             markers: (state.markers || []).map(m => ({ ...m })),
+            sections: AudioDawSections.serialize(state.sections),
             beatPattern: {
                 steps: state.beatPattern.steps,
                 swing: state.beatPattern.swing,
@@ -7550,6 +7721,7 @@ const AudioDaw = (() => {
         }
         refreshTempoViews();
         if (snapshot.markers) state.markers = snapshot.markers.map(m => ({ ...m }));
+        state.sections = AudioDawSections.restore(snapshot.sections);
         if (snapshot.beatPattern) {
             state.beatPattern = {
                 steps: snapshot.beatPattern.steps,
@@ -8520,6 +8692,7 @@ const AudioDaw = (() => {
             editMode: state.editMode,
             gridValue: state.gridValue,
             markers: state.markers.map(m => ({ ...m })),
+            sections: AudioDawSections.serialize(state.sections),
             metronome: state.metronome,
             beatPattern: {
                 steps: state.beatPattern.steps,
@@ -8574,6 +8747,7 @@ const AudioDaw = (() => {
         state.editMode = ['slip', 'grid', 'shuffle'].includes(project.editMode) ? project.editMode : (state.snapEnabled ? 'grid' : 'slip');
         state.gridValue = project.gridValue || 'auto';
         state.markers = (project.markers || []).map(m => ({ id: m.id, time: m.time, name: m.name, color: m.color || null }));
+        state.sections = AudioDawSections.restore(project.sections); // a project saved before sections has none
         state.masterLimiterEnabled = project.masterLimiterEnabled !== false;
         state.metronome = !!project.metronome;
         // Clear before anything is stored: clearing after the pad loop below wiped every pad's audio.
@@ -9224,20 +9398,11 @@ const AudioDaw = (() => {
         else if (key === 'g' && !mod) { toggleFollow(); }
         else if (key === 'l' && !mod) {
             // With a selection, L loops it
-            if (sel) {
-                state.loopStart = sel.start;
-                state.loopEnd = sel.end;
-                if (!state.loopEnabled) toggleLoop();
-                else {
-                    if (timeline) timeline.setLoop(true, state.loopStart, state.loopEnd);
-                    updateLoopShade();
-                    resyncPlayback();
-                }
-            }
-            else {
-                toggleLoop();
-            }
+            if (sel) setLoopRange(sel.start, sel.end);
+            else toggleLoop();
         }
+        else if (key === '{') { jumpSection(-1); }
+        else if (key === '}') { jumpSection(1); }
         else if (key === 't' && !mod) {
             if (sel) splitAtSelection(sel);
             else {
@@ -9280,6 +9445,7 @@ const AudioDaw = (() => {
             ['Home / End', 'Jump to start / end'],
             ['Left / Right', 'Move the playhead one grid step (Shift: one bar)'],
             ['Enter / [ / ]', 'Add a marker / previous / next marker'],
+            ['{ / }', 'Jump to the previous / next section'],
             ['V / Y', 'Smart tool / range tool'],
             ['Ctrl+A', 'Select everything'],
             ['Ctrl+C / X / V', 'Copy / cut / paste at the playhead'],

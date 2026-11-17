@@ -2526,9 +2526,9 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
     border-bottom: 1px solid var(--shadow);
     white-space: nowrap;
 }
-.daw-ruler-name-bars { height: 18px; }
-.daw-ruler-name-time { height: 16px; }
-.daw-ruler-name-markers { height: 18px; border-bottom: none; background: var(--background-soft); }
+/* Row heights are set inline from the timeline's row table; only the look is here */
+.daw-ruler-name-markers { background: var(--background-soft); }
+.daw-ruler-name-sections { border-bottom: none; background: var(--background-soft); }
 .daw-marker-add {
     border: none;
     background: transparent;
@@ -2855,8 +2855,45 @@ input[type="range"].daw-proll-vel::-moz-range-thumb {
     background: var(--emphasis);
 }
 
+/* Sections ruler row: colored spans with edge handles, and a faint band through the lanes */
+.daw-ruler-sections { position: absolute; left: 0; z-index: 4; }
+.daw-section {
+    --section-color: var(--emphasis);
+    position: absolute;
+    top: 1px;
+    height: 16px;
+    box-sizing: border-box;
+    padding: 0 0.4rem;
+    background: var(--section-color);
+    color: #101418;
+    font-size: 0.65rem;
+    font-weight: 600;
+    line-height: 16px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border-radius: 3px;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #000 28%, transparent);
+    cursor: grab;
+    user-select: none;
+}
+.daw-section:hover { filter: brightness(1.1); }
+.daw-section-name { pointer-events: none; }
+.daw-section-handle { position: absolute; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.daw-section-handle-left { left: 0; }
+.daw-section-handle-right { right: 0; }
+.daw-section-bands { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1; }
+.daw-section-band {
+    --section-color: var(--emphasis);
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: color-mix(in srgb, var(--section-color) 7%, transparent);
+    border-left: 1px solid color-mix(in srgb, var(--section-color) 45%, transparent);
+}
+
 /* Tempo ruler row */
-.daw-ruler-name-tempo { height: 18px; background: var(--background-soft); }
+.daw-ruler-name-tempo { background: var(--background-soft); }
 .daw-ruler-tempo { position: absolute; left: 0; z-index: 4; }
 .daw-tempo-flag {
     position: absolute;
