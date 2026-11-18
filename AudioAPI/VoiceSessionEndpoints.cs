@@ -45,6 +45,10 @@ public static class VoiceSessionEndpoints
     /// delegate rather than a plain <see cref="Action{T}"/>).</summary>
     internal delegate void PushInboundDelegate(ReadOnlySpan<float> samples);
 
+    /// <summary>Hands a typed message (the inbound <c>{ "text": ... }</c> frame) to the session. Must not block: the receive
+    /// loop calls it between audio frames. Extracted so <c>VoiceSessionEndpointsReceiveTests</c> can record what arrives.</summary>
+    internal delegate void SubmitTextDelegate(string text);
+
     public static void Register()
     {
         API.RegisterAPICall(AudioLabVoiceSession, false, AudioLabPermissions.PermProcessAudio);
@@ -240,7 +244,8 @@ public static class VoiceSessionEndpoints
     }
 
     /// <summary>Reads client frames until the socket closes or a JSON <c>{"end":true}</c> arrives: binary frames
-    /// are mono PCM16 at <c>start.inputRate</c>, resampled to 16 kHz and pushed into the session; any other text
+    /// are mono PCM16 at <c>start.inputRate</c>, resampled to 16 kHz and pushed into the session; a <c>{"text":"..."}</c>
+    /// frame is a typed message and goes to <paramref name="submitText"/> (ignored when none is given); any other text
     /// frame is ignored rather than ending the call, so a forward-compatible addition cannot kill an old client.
     ///
     /// <para>Each assembled message is capped by type (<see cref="MaxInboundAudioMessageBytes"/> for binary,
@@ -250,7 +255,8 @@ public static class VoiceSessionEndpoints
     /// memory without bound through a single never-ending message. A message that would exceed its cap closes
     /// the socket with <see cref="WebSocketCloseStatus.MessageTooBig"/> and ends the call, the same clean-ending
     /// path a normal client-initiated <c>end</c> takes.</para></summary>
-    internal static async Task ReceiveInboundAsync(WebSocket ws, PushInboundDelegate pushInbound, VoiceInboundResampler inbound, CancellationToken cancel)
+    internal static async Task ReceiveInboundAsync(WebSocket ws, PushInboundDelegate pushInbound, VoiceInboundResampler inbound, CancellationToken cancel,
+        SubmitTextDelegate submitText = null)
     {
         byte[] receiveBuffer = new byte[16 * 1024];
         byte[] messageBuffer = new byte[MaxInboundAudioMessageBytes]; // sized to the larger of the two caps; reused every message.
@@ -299,6 +305,10 @@ public static class VoiceSessionEndpoints
             if (message["end"] is not null)
             {
                 return;
+            }
+            if (message["text"] is JToken { Type: JTokenType.String } typed && submitText is not null)
+            {
+                submitText(typed.ToString());
             }
         }
     }

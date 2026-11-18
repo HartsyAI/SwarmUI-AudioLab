@@ -774,6 +774,9 @@ What the call view shows:
   microphone only while you hold the key; the header shows "Hold H to talk" and "Talking". The key only counts while a
   call is live and this tab is showing, it is ignored in text fields and with Ctrl, Cmd or Alt, and while it is held
   the DAW's own shortcuts do not see it. Mute wins over a held key, and both reset when a call ends.
+- **Typed messages**: a text box under the transcript sends a message into the live call. It is answered and spoken like
+  something you said, shows up as a "You" bubble, and interrupts a reply that is being spoken (when barge-in is on).
+  It needs a call past warm-up; the box is off otherwise. The wire frame is `{ "text": "..." }`, at most 2000 characters.
 - **Copy**, **Clear** and **Export** (Markdown, text or JSON, with the raw latency numbers) for the transcript.
 - Call settings fold away while a call is live. If you scroll up in a long conversation the view stays where it is
   and **Jump to latest** brings you back.

@@ -290,6 +290,12 @@ const AudioVoiceState = (() => {
         return c.replace(/^Numpad/, 'Num ').replace(/^Arrow/, '');
     }
 
+    /** Whether a typed message can be sent: the call is past warm-up and its socket is open. */
+    function canType(state, socketOpen) {
+        const key = describeState(state).key;
+        return !!socketOpen && (key === 'listening' || key === 'thinking' || key === 'toolrunning' || key === 'speaking');
+    }
+
     /** Whether the microphone should be heard right now: not muted, and with push-to-talk on only while the key is held. */
     function micOpen({ muted, pushToTalk, talking }) {
         return !muted && (!pushToTalk || !!talking);
@@ -445,7 +451,7 @@ const AudioVoiceState = (() => {
 
     return {
         DEFAULT_SETTINGS, MAX_PRESETS, normalizeSettings, cleanPresetName, createPresetStore, parsePresetStore, serializePresetStore,
-        findPreset, savePreset, renamePreset, deletePreset, groupVoices, startBlocker, pickOption, isUsablePttKey, keyLabel, micOpen, micLabel,
+        findPreset, savePreset, renamePreset, deletePreset, groupVoices, startBlocker, pickOption, isUsablePttKey, keyLabel, micOpen, micLabel, canType,
         describeState, clock, createTranscript, addTranscript, textOf, addTool, addMetrics, takePendingMetrics, formatMs, latencyOf,
         createNotices, pushNotice, dismissNotice, expireNotices, explainError, smoothLevel, timeOfDay, toText, toMarkdown, toJson,
         NOTICE_LIFETIME_MS

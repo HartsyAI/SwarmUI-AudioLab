@@ -2496,6 +2496,8 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
 .voice-agent-model-status-bad { color: var(--red); }
 .voice-agent-prompt-details > summary { cursor: pointer; font-size: 0.78rem; color: var(--text-soft); margin-bottom: 0.25rem; }
 .voice-agent-tool:disabled { opacity: 0.5; cursor: default; }
+.voice-agent-type { display: flex; gap: 0.4rem; align-items: center; flex: 0 0 auto; }
+.voice-agent-type .voice-agent-type-input { flex: 1 1 auto; min-width: 0; }
 .voice-agent-mic-badge { font-size: 0.7rem; padding: 0.05rem 0.5rem; border-radius: 1rem; border: 1px solid var(--shadow); color: var(--text-soft); white-space: nowrap; }
 .voice-agent-mic-badge[hidden] { display: none; }
 .voice-agent-mic-badge-muted { color: var(--red); border-color: var(--red); }

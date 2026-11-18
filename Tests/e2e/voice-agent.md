@@ -53,6 +53,11 @@ Start, then drive the server side with `voiceFake.state(...)`, `say(...)`, `pcm(
 | 43 | Hold H while the DAW tab is visible | The key does not reach the DAW's shortcuts (no keydown on the document's bubble phase) |
 | 44 | Click the key button, press Escape; click it again, press Shift; then press K | Escape cancels, Shift is ignored (still waiting), K rebinds; the choice survives a reload and a preset load |
 | 45 | Stop the call | Mute and badge hide, the orb returns to normal, mute and talk state reset; the key does nothing while idle |
+| 46 | Idle, then a call still connecting or warming up | The type box and Send are disabled |
+| 47 | Call reaches Listening | The box is enabled; Send stays off while it is blank or whitespace |
+| 48 | Type a message and press Enter (or click Send) | One `{ text }` frame, trimmed, on the socket; the box clears and keeps focus; Enter on an empty box sends nothing |
+| 49 | The server echoes the typed turn as a user transcript | A "You" bubble appears once (no local duplicate); the box stays enabled while the agent thinks, uses a tool or speaks |
+| 50 | The socket drops | The box and Send disable with the rest of the call controls |
 
 ## Run log
 Filled in per run below.
