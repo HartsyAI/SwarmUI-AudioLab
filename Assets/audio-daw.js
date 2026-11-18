@@ -30,6 +30,7 @@ const AudioDaw = (() => {
     let bottomPanelEl = null;
     let timeDisplayEl = null;
     let bpmInputEl = null;
+    let lyricsUi = null; // the lyric strip and the Lyrics tab (AudioDawLyricsUi)
 
     // Runtime
     let timeline = null;
@@ -244,6 +245,7 @@ const AudioDaw = (() => {
 
         buildTransport();
         initTimeline();
+        initLyrics();
         buildBottomPanel();
         updateLaneGrid();
         // The bottom tab strip is static markup (Audio Lab.html) carrying class="translate";
@@ -1137,6 +1139,75 @@ const AudioDaw = (() => {
         if (m) seekTo(m.time);
     }
 
+    // ===== LYRICS =====
+    // A clip's lyrics live in clip.meta.lyrics (AudioDawLyrics): word times are in the clip's source seconds, so moving,
+    // trimming and splitting a clip never rewrite them. The strip and the Lyrics tab are AudioDawLyricsUi; this is the wiring.
+
+    /** Copy `from`'s lyrics onto `to` (a piece cut from the same audio), leaving any other meta alone. */
+    function carryLyrics(from, to) {
+        if (!from?.meta?.lyrics) return;
+        to.meta = { ...(to.meta || {}), lyrics: AudioDawLyrics.copy(from.meta.lyrics) };
+    }
+
+    /** The vocal stem the Stems tab made from a clip: the clip that records it as its source, else the "Vocals: <name>" track. */
+    function findVocalStemOf(clipId) {
+        const source = findClipById(clipId);
+        if (!source) return null;
+        for (const track of state.tracks) {
+            const linked = track.clips.find(c => c.meta?.stemOf?.clipId === clipId && /^vocals?$/i.test(c.meta.stemOf.stem || '') && c.blob);
+            if (linked) return { clip: linked, track };
+        }
+        const want = `Vocals: ${source.clip.name}`;
+        for (const track of state.tracks) {
+            if (track.name !== want) continue;
+            const clip = track.clips.find(c => Math.abs((c.startTime || 0) - (source.clip.startTime || 0)) < 0.05) || track.clips[0];
+            if (clip?.blob) return { clip, track };
+        }
+        return null;
+    }
+
+    function initLyrics() {
+        const container = document.getElementById('daw_container');
+        const main = document.getElementById('daw_main');
+        if (!container || !main || typeof AudioDawLyricsUi === 'undefined') return;
+        lyricsUi?.destroy();
+        lyricsUi = AudioDawLyricsUi.create(container, main, {
+            getClips: () => state.tracks.flatMap(t => t.clips),
+            getSelectedClip: () => findClipById(state.selectedClipId),
+            findClip: (id) => findClipById(id),
+            seek: (seconds) => seekTo(seconds),
+            notify: (text, kind) => {
+                if (typeof doNoticePopover === 'function') doNoticePopover(text, kind);
+            },
+            // Anything the server says it can run: a speech model the engine serves in-process is not an "installed" Audio Backend engine
+            listSttEngines: () => (generateEngines || []).filter(e => e.category === 'STT' && e.available && !NON_SPEECH_STT.has(e.id)),
+            /** One undo step, then the clip's lyrics become `lyrics` (null removes them). */
+            commit: (clipId, lyrics, label) => {
+                const found = findClipById(clipId);
+                if (!found) return;
+                pushUndo();
+                const meta = { ...(found.clip.meta || {}) };
+                if (lyrics) meta.lyrics = AudioDawLyrics.copy(lyrics);
+                else delete meta.lyrics;
+                found.clip.meta = Object.keys(meta).length ? meta : null;
+                scheduleAutosave();
+                lyricsUi?.refresh();
+            },
+            /** Send the clip's audio (its vocal stem when it has one) to the lyric aligner. */
+            align: async ({ clipId, lyrics, sttProvider, sttModel, alignProvider, alignModel }) => {
+                const found = findClipById(clipId);
+                if (!found) throw new Error('The clip is gone');
+                const stem = findVocalStemOf(clipId);
+                const source = stem && (stem.clip.offset || 0) <= 1e-6 ? stem.clip : found.clip;
+                const b64 = await AudioLabCore.readAsBase64(await clipAudioBlob(source));
+                return await AudioLabAPI.alignLyrics(b64, {
+                    lyrics, sttProviderId: sttProvider, sttModel, alignProviderId: alignProvider, alignModel
+                });
+            }
+        });
+        ensureEnginesList().then(() => lyricsUi?.updatePanel()).catch(() => {});
+    }
+
     // ===== BOTTOM PANEL =====
     // The tab strip + panes are static markup (Audio Lab.html); Bootstrap handles
     // switching. JS only fills the panes.
@@ -1155,6 +1226,7 @@ const AudioDaw = (() => {
         renderGeneratePanel(pane('generate'));
         if (typeof AudioDawScore !== 'undefined') AudioDawScore.render(pane('score'), scoreCallbacks());
         if (typeof AudioVoice !== 'undefined') AudioVoice.render(pane('voice'));
+        lyricsUi?.renderPanel(pane('lyrics'));
         updateBottomPanel();
     }
 
@@ -1275,18 +1347,7 @@ const AudioDaw = (() => {
             /** Mono 24 kHz for the transcriber: one encoder, so the DAW's export and the model hear the same bytes. */
             encodeWav: (buffer) => audioBufferToWav(buffer),
             /** The Vocals track the Stems tab made from this clip — a cleaner melody to transcribe than the mix. */
-            findVocalStem: (clipId) => {
-                const source = findClipById(clipId);
-                if (!source) return null;
-                const want = `Vocals: ${source.clip.name}`;
-                for (const track of state.tracks) {
-                    if (track.name !== want) continue;
-                    const clip = track.clips.find(c => Math.abs((c.startTime || 0) - (source.clip.startTime || 0)) < 0.05)
-                        || track.clips[0];
-                    if (clip?.blob) return { clip, track };
-                }
-                return null;
-            },
+            findVocalStem: (clipId) => findVocalStemOf(clipId),
             /** Point the project's grid at what a score says. The transport controls display state, so both move. */
             setTransport: ({ bpm, timeSignature }) => {
                 pushUndo();
@@ -1586,6 +1647,7 @@ const AudioDaw = (() => {
 
         // Selection only — the Score pane itself is built once, so an in-progress edit is never wiped.
         if (typeof AudioDawScore !== 'undefined') AudioDawScore.onSelection(findClipById(state.selectedClipId));
+        lyricsUi?.updatePanel();
     }
 
     /** Piano roll for the selected MIDI clip. Also re-run when its tab is shown, since a hidden pane drops the scroll to the notes. */
@@ -2668,16 +2730,18 @@ const AudioDaw = (() => {
                 const target = sel && sel.kind !== 'bus' ? sel : null;
                 const track = target || addTrack({ name: eng.name });
                 const label = promptText.slice(0, 28) || eng.name;
+                // The typed lyrics stay with the clip (untimed until the Lyrics tab times them) instead of being discarded
+                const scoreMeta = buildClipScoreMeta(metadata, {
+                    style: isMusicCat ? promptText : '',
+                    lyrics: lyricsText,
+                    model: modelDef.swarm_model,
+                    engineId: eng.id,
+                    label
+                });
                 const clip = await addClipToTrack(track, blob, {
                     name: label,
                     startTime: snapTime(state.currentTime),
-                    meta: buildClipScoreMeta(metadata, {
-                        style: isMusicCat ? promptText : '',
-                        lyrics: lyricsText,
-                        model: modelDef.swarm_model,
-                        engineId: eng.id,
-                        label
-                    })
+                    meta: lyricsText ? { ...(scoreMeta || {}), lyrics: AudioDawLyrics.create({ text: lyricsText, source: 'generated', model: modelDef.swarm_model }) } : scoreMeta
                 });
                 state.selectedTrackId = track.id;
                 state.selectedClipId = clip.id;
@@ -3758,6 +3822,7 @@ const AudioDaw = (() => {
         refreshMarkers();
         refreshSections();
         renderEmptyState();
+        lyricsUi?.refresh(); // clips moved, trimmed, split, muted or removed
     }
 
     /** An empty session says how to start instead of showing blank lanes. */
@@ -5337,6 +5402,7 @@ const AudioDaw = (() => {
         const x = state.currentTime * state.zoom;
         playheadEl.style.transform = `translateX(${x}px)`;
         if (timeline) timeline.setPlayheadTime(state.currentTime);
+        lyricsUi?.syncTime(state.currentTime); // every frame while playing, and on every seek or scrub when stopped
     }
 
     function updatePlayButton(playing) {
@@ -6658,6 +6724,7 @@ const AudioDaw = (() => {
         nc.fadeIn = c.fadeIn;
         nc.fadeOut = c.fadeOut;
         nc.muted = c.muted;
+        carryLyrics(c, nc); // same audio, so the same words
         return Object.assign(nc, overrides);
     }
 
@@ -7055,6 +7122,7 @@ const AudioDaw = (() => {
         pushUndo();
         piece.name = clip.name;
         piece.meta = null;
+        carryLyrics(clip, piece);
         track.clips.push(piece);
         state.selectedClipId = piece.id;
         renderAllTracks();
@@ -7219,6 +7287,7 @@ const AudioDaw = (() => {
         const base = { color: clip.color, blobKey: clip.blobKey };
         const a = AudioDawTrack.createClip(clip.blob, { ...base, name: clip.name, startTime: clip.startTime, meta: clip.meta });
         const b = AudioDawTrack.createClip(clip.blob, { ...base, name: clip.name, startTime: clip.startTime + splitTime });
+        carryLyrics(clip, b); // the lyrics are in source time, so both halves keep them and each shows its own part
         for (const c of [a, b]) {
             c.decodedBuffer = clip.decodedBuffer;
             c.duration = clip.duration;
@@ -7257,6 +7326,7 @@ const AudioDaw = (() => {
             newClip.gain = clip.gain;
             newClip.fadeIn = clip.fadeIn;
             newClip.fadeOut = clip.fadeOut;
+            carryLyrics(clip, newClip);
             track.clips.push(newClip);
             state.selectedClipId = newClip.id;
             updateTotalDuration();
@@ -7489,10 +7559,16 @@ const AudioDaw = (() => {
                     name: `${capStem(b.name)}: ${clip.name}`,
                     color: STEM_COLORS[b.name] || undefined
                 });
-                await addClipToTrack(newTrack, b.blob, {
+                const stemClip = await addClipToTrack(newTrack, b.blob, {
                     name: b.name,
-                    startTime: clip.startTime
+                    startTime: clip.startTime,
+                    meta: { stemOf: { clipId: clip.id, stem: b.name } }
                 });
+                // The stem is the part of the source that was audible, so its lyrics are the source's, re-based to start at 0:
+                // the muted original no longer shows them on the strip.
+                if (clip.meta?.lyrics && /^vocals?$/i.test(b.name)) {
+                    stemClip.meta.lyrics = AudioDawLyrics.rebase(clip.meta.lyrics, -(clip.offset || 0));
+                }
             }
 
             // Mute the original clip so the new stem tracks are heard instead
@@ -9860,6 +9936,7 @@ const AudioDaw = (() => {
             }
         }
         if (timeline) { timeline.destroy(); timeline = null; }
+        if (lyricsUi) { lyricsUi.destroy(); lyricsUi = null; }
         if (audioCtx && audioCtx.state !== 'closed') {
             try { audioCtx.close(); } catch (_) {}
         }

@@ -453,6 +453,24 @@ loaded by name. There is a master limiter on the output.
 
 ![Effect chains](Assets/readme/daw-fx.png)
 
+### Lyrics
+
+A clip carries its lyrics, and the **lyric strip** between the transport and the arrangement shows the line being sung with
+each word filled in as it is sung, and the line after it. Click a word to jump to it. The strip appears once a clip has timed
+words, and **Show the lyric strip** on the Lyrics tab hides it.
+
+The **Lyrics** tab edits the selected clip's lyrics. Section tags like `[Verse 1]` are for you and are not sung. **Time the
+words** times the typed lyrics against the clip (or, with none typed, listens to the clip and writes them from what it hears);
+**Transcribe instead** always listens; **Estimate timing** spreads the lines over the clip with no speech model; **Clear timing**
+keeps the text. The two model pickers are separate, so the model that hears the words and the model that times them can be
+different models; Whisper is the default for both, and a clip with a vocal stem from the Stems tab is timed from the stem.
+The nudge buttons move every word, each word's start and end can be edited, and **Import LRC**, **Export LRC** (with word
+times) and **Export SRT** read and write lyric files. The Generate tab keeps the lyrics you typed on the clip it creates.
+
+Word times are stored in the clip's source audio, so moving, trimming or splitting a clip never rewrites them: each piece shows
+the words inside its own window. Lyrics save with the project, undo like any other edit, and follow the vocal when the Stems
+tab is used. Timing typed lyrics fits one 30 s window: split a longer clip into sections first, or let it transcribe.
+
 ### Stems
 
 Demucs source separation with presets for the common jobs: Full Split, Karaoke (vocals plus a combined
