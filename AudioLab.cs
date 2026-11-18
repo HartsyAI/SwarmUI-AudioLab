@@ -75,6 +75,7 @@ public class AudioLab : Extension
             ScriptFiles.Add("Assets/audio-daw-view.js");
             ScriptFiles.Add("Assets/audio-daw-sections.js");
             ScriptFiles.Add("Assets/audio-daw-groups.js");
+            ScriptFiles.Add("Assets/audio-daw-lyrics.js");
             ScriptFiles.Add("Assets/audio-daw-overview.js");
             ScriptFiles.Add("Assets/audio-daw-icons.js");
             ScriptFiles.Add("Assets/audio-daw-timeline.js");
@@ -85,6 +86,7 @@ public class AudioLab : Extension
             ScriptFiles.Add("Assets/audio-daw-input.js");
             ScriptFiles.Add("Assets/audio-daw-instruments.js");
             ScriptFiles.Add("Assets/audio-daw-score.js");
+            ScriptFiles.Add("Assets/audio-daw-lyrics-ui.js");
             ScriptFiles.Add("Assets/audio-voice.js");
             ScriptFiles.Add("Assets/audio-daw.js");
             ScriptFiles.Add("Assets/audio-editor.js");

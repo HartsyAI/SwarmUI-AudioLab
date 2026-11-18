@@ -151,6 +151,7 @@ Score tab. Now:
 ## Remaining gaps
 
 - VCAs, nested groups, and dragging tracks to reorder (a track moves up or down from its menu).
+- Lyrics: timing typed lyrics fits one 30 s window (a longer clip is split into sections first, or transcribed); no per-line drag editing on the lanes.
 - Automation of parameters beyond volume and pan (send levels, effect parameters).
 - One time signature per session: the tempo map changes BPM, not the meter.
 - Playlists: each track has one lane of clips, and takes are layered and comped in place.
