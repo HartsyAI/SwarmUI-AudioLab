@@ -812,14 +812,19 @@ curl -s -H "Content-Type: application/json" -X POST http://localhost:7801/API/Pr
 #### Word timing
 
 `ProcessSTT` with `"word_timestamps": true` adds `words: [{word, start, end}]` (seconds from the start of the audio) when the
-chosen model can time words, and `duration`. Whisper and Distil-Whisper can; other speech models return an empty list. With
-`"align_text": "..."` the model times that known text (lyrics, a script) instead of transcribing; it fits one 30 s window.
+chosen model can time words, and `duration` (the audio's length in seconds). Without the flag `words` is `[]`. Whisper,
+Distil-Whisper and Whisper Streaming can; other speech models (and the cloud providers) return an empty list. With
+`"align_text": "..."` (which implies `word_timestamps`) the model times that known text (lyrics, a script) instead of transcribing;
+it fits one 30 s window, so a longer clip is refused with an error saying so. The text is capped at 20,000 characters.
 
 `AudioLabAlignLyrics` times a vocal clip and keeps the two model choices separate, so either can be swapped for another model:
 
 - With `lyrics`, only the aligner runs (`align_provider_id`, `align_model`; Whisper by default).
 - Without them, the transcriber runs (`stt_provider_id`, `stt_model`; it defaults to the aligner). If it times the words itself, those
-  are returned (`source: "stt"`); if not, its text is handed to the aligner (`source: "stt+aligned"`). Given lyrics, `source` is `"aligned"`.
+  are returned (`source: "stt"`); if not, its text is handed to the aligner (`source: "stt+aligned"`, which also needs a clip of 30 s or
+  less). Given lyrics, `source` is `"aligned"`. An aligner that cannot time words fails with `error_code: "no_word_timing"`.
+- `audio_data` is capped at 64 MB of base64, like `ProcessAudio`. The response carries `text` (the lyrics given, or the transcript),
+  not `transcription` as `ProcessSTT` does.
 
 ```bash
 curl -s -H "Content-Type: application/json" -X POST http://localhost:7801/API/AudioLabAlignLyrics \

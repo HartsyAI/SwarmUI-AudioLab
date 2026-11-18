@@ -53,7 +53,7 @@ const AudioLabAPI = (() => {
      * @param {string} [options.model] - model variant id (e.g. Whisper "turbo"); server default when omitted
      * @param {string} [options.task] - Whisper: "transcribe" or "translate"
      * @param {boolean} [options.wordTimestamps] - add `words: [{word, start, end}]` (seconds) when the model can time words
-     * @param {string} [options.alignText] - with wordTimestamps, time this known text instead of transcribing
+     * @param {string} [options.alignText] - time this known text instead of transcribing (implies wordTimestamps; one 30 s window)
      */
     async function processSTT(audioData, options = {}) {
         const payload = { audio_data: audioData };
