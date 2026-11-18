@@ -1102,7 +1102,7 @@ const AudioDaw = (() => {
                 const section = AudioDawSections.at(state.sections, clip.startTime);
                 if (!section || (onlyId && section.id !== onlyId)) continue;
                 const name = AudioDawSections.clipNameFor(section, track.name);
-                if (clip.name !== name) edits.push([track, clip, name]);
+                if (clip.name !== name) edits.push([track, clip, section]);
             }
         }
         if (!edits.length) {
@@ -1110,17 +1110,26 @@ const AudioDaw = (() => {
             return;
         }
         pushUndo();
-        for (const [track, clip, name] of edits) {
+        const renamedTracks = new Set();
+        for (const [track, clip, section] of edits) {
             const was = clip.name;
+            const name = AudioDawSections.clipNameFor(section, track.name);
             clip.name = name;
             const label = track.clipElements.get(clip.id)?.el.querySelector('.daw-clip-label');
             if (label) label.textContent = name;
             // A stem track is named "Vocals: <source clip>" and the Score tab finds it by that name, so it follows the rename
             for (const stemTrack of state.tracks) {
                 for (const stem of Object.keys(STEM_COLORS)) {
-                    if (stemTrack.name === `${capStem(stem)}: ${was}`) stemTrack.name = `${capStem(stem)}: ${name}`;
+                    if (stemTrack.name === `${capStem(stem)}: ${was}`) {
+                        stemTrack.name = `${capStem(stem)}: ${name}`;
+                        renamedTracks.add(stemTrack);
+                    }
                 }
             }
+        }
+        // A renamed stem track's own clips are named from its new name, not the one they were counted with
+        for (const [track, clip, section] of edits) {
+            if (renamedTracks.has(track)) clip.name = AudioDawSections.clipNameFor(section, track.name);
         }
         renderAllTracks();
         updateBottomPanel();
@@ -6017,6 +6026,13 @@ const AudioDaw = (() => {
                 action: () => track.kind === 'instrument' ? showInstrumentMenu(track, e) : showTrackInputMenu(track, e) }]),
             ...sendMenuItems(track),
             ...automationModeItems(track),
+            // A compact header has no A button, so the lane's switch lives here too
+            ...(AudioDawTrack.isCompact(track) ? [{ label: translate('Show the automation lane'), checked: !!track.automationVisible, action: () => {
+                const cur = state.tracks.find(t => t.id === track.id);
+                if (!cur) return;
+                cur.automationVisible = !cur.automationVisible;
+                renderAllTracks();
+            } }] : []),
             { heading: translate('Height') },
             ...heights.map(([label, h]) => ({ label, checked: track.height === h, action: () => setTrackHeight(track, h) })),
             { heading: '' },

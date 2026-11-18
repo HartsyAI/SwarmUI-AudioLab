@@ -14,12 +14,14 @@ from the page when driving by tool. To drive the image upload without a file dia
 | 5 | Open the Mixer tab | The strip name carries the same icon (emoji or image) |
 | 6 | Track menu > Tiny, then Compact | Header and lane are 30 and 44 px, aligned; the header shows number, icon, name, S and M only, with no overflow; the lane has no fade handles or gain readout |
 | 7 | Set Small or Medium again | The full header returns |
+| 7b | On a compact track, menu > Show the automation lane (twice) | The lane shows and hides although the header has no A button |
 | 8 | Ctrl+Z after a height change, and after a color change | Height and color are restored (neither was undoable before) |
 | 9 | Group two tracks; look at their clips | The members' clips draw in the group color; a track outside the group keeps its own |
 | 10 | Group menu > Draw its clips in the group color (switch off) | Members' clips return to their track colors |
 | 11 | Add a section over the clips, rename it "Drop 1", then Sections row menu > Name clips after their sections | Each clip becomes "Drop 1 - Track N"; with no clip inside a section the menu says so |
 | 12 | Section menu > Name its clips after it | Only that section's clips change |
 | 13 | Ctrl+Z, Ctrl+Shift+Z after the naming | Names revert and return |
+| 13b | Split a clip into stems (track "Vocals: <clip>"), then name clips after sections | The stem track becomes "Vocals: <section> - <track>" and its own clip "<section> - Vocals: <section> - <track>" (the new track name) |
 | 14 | Save, New Project, Open | Icons (emoji and image), heights and the tint switch come back; compact tracks are compact |
 | 15 | Open a project whose icons are an svg data URL, an HTML string, or a number | Loads with no icons and no errors |
 | 16 | Narrow the pane to about 900 px | No overflow in compact headers; no console errors |
