@@ -211,5 +211,10 @@ const AudioDawSections = (() => {
         return out;
     }
 
-    return { MIN_LENGTH, PALETTE, newId, colorFor, sorted, isValid, normalize, serialize, restore, at, neighbor, constrain, fit, uniqueName, add, fromMarkers };
+    /** The name a clip takes from the section it starts in: "Drop 1 - supersaw" (section name, then track name). */
+    function clipNameFor(section, trackName) {
+        return `${section.name} - ${trackName}`;
+    }
+
+    return { MIN_LENGTH, PALETTE, clipNameFor, newId, colorFor, sorted, isValid, normalize, serialize, restore, at, neighbor, constrain, fit, uniqueName, add, fromMarkers };
 })();

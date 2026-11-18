@@ -331,8 +331,18 @@ project).
 
 Five rows sit above the lanes: Bars|Beats, Min:Secs, Tempo, Markers and Sections. Each track header shows the track number, record
 arm (R), input monitor (I), solo (S), mute (M) and automation (A), pan, volume, the input it records from, its inserts
-count, its level in dB and a meter. Right-click a header to rename, duplicate, recolor, group, move, resize or delete the
-track.
+count, its level in dB and a meter. Right-click a header to rename, duplicate, recolor, give it an icon, group, move,
+resize or delete the track.
+
+**Icons.** **Icon…** in a track's menu (or a click on its icon) picks an emoji or uploads an image. An image is
+cropped square and scaled to 48 px, and it is stored inside the project, so it travels with the save. The icon shows in
+the header and on the track's Mixer strip, and it undoes like any other edit.
+
+**Heights and compact tracks.** The track menu offers Tiny (30 px), Compact (44 px), Small, Medium and Large. Tiny and
+Compact draw a one-row header (icon, name, solo and mute) and a plain lane without fade handles or the clip gain
+readout, so a long project fits on screen. Arm, monitor, pan, volume, effects, automation and the meter come back at
+Small and above (the track menu still has Record arm, Monitor and the input choice under **Input…**, plus **Show the
+automation lane**, and Shift+R arms the selected track); an armed compact track still tints red. A track's height, color and icon changes are undo steps.
 
 ### Recording
 
@@ -377,6 +387,10 @@ first time.
   tracks, move it, or ungroup (the tracks stay). A group with no tracks left disappears. Groups do not nest. Mixer
   strips show each track's own mute and solo, not its group's. Groups and their folded state save with the project;
   folding is not an undo step.
+- **Clip colors and names.** The clips of a track in a group draw in the group's color, like a folder in other DAWs
+  (the group menu has a switch for it; a clip you colored yourself keeps its color). The Sections row's menu has
+  **Name clips after their sections**, and a section's menu has **Name its clips after it**: each clip that starts inside
+  a section becomes "Section name - Track name", which makes a long arrangement readable. Both are undo steps.
 - **Sections.** Named, colored spans of the song (Intro, Verse, Drop...) on the Sections row, with a faint band of the
   same color running down through the lanes. Double-click empty space in the row, or press the + beside it, to add one
   (four bars long, shortened to fit before the next section). Drag one to move it, drag an edge to resize it, click to
