@@ -71,6 +71,11 @@ const AudioVoice = (() => {
     let previewSource = null;
     let previewToken = 0; // a newer preview (or a stop) makes an older one's fetch result stale
 
+    // Microphone gating: muted by the Mute button; with push-to-talk on, open only while the key is held
+    let muted = false;
+    let talking = false;
+    let rebindingKey = false; // the push-to-talk key button is waiting for a key press
+
     function render(container) {
         if (!container || rendered) {
             return;
@@ -81,6 +86,15 @@ const AudioVoice = (() => {
         applySettings(store.last);
         loadOptions();
         setState(callState);
+        // Capture phase, so the push-to-talk key is taken before the DAW's own shortcuts see it (only while it applies)
+        document.addEventListener('keydown', onPttKeyDown, true);
+        document.addEventListener('keyup', onPttKeyUp, true);
+        window.addEventListener('blur', releaseTalk); // a key released outside the window never reports it
+        document.addEventListener('click', (e) => {
+            if (e.target !== els.pttKeyBtn) {
+                cancelRebind(); // a click anywhere else ends the wait for a key
+            }
+        }, true);
     }
 
     // ===== Saved settings =====
@@ -111,7 +125,9 @@ const AudioVoice = (() => {
             systemPrompt: els.systemPrompt.value,
             bargeIn: els.bargeIn.checked,
             sttModel: els.stt.value,
-            ttsEngine: els.engine.value
+            ttsEngine: els.engine.value,
+            pushToTalk: els.ptt.checked,
+            pttKey: els.pttKeyBtn.dataset.code
         });
     }
 
@@ -133,6 +149,10 @@ const AudioVoice = (() => {
         els.systemPrompt.value = settings.systemPrompt;
         els.promptDetails.open = !!settings.systemPrompt;
         els.bargeIn.checked = settings.bargeIn;
+        els.ptt.checked = settings.pushToTalk;
+        setPttKey(settings.pttKey);
+        talking = false;
+        applyMicGate(); // a preset loaded mid-call changes push-to-talk now
         showEngineNote();
         refreshControls();
     }
@@ -188,14 +208,19 @@ const AudioVoice = (() => {
         const stateRow = createDiv(null, 'voice-agent-state-row');
         els.state = createSpan(null, 'voice-agent-state voice-agent-state-idle', translate('Idle'));
         els.timer = createSpan(null, 'voice-agent-timer', '');
+        els.micBadge = createSpan(null, 'voice-agent-mic-badge', '');
+        els.micBadge.hidden = true;
         stateRow.appendChild(els.state);
         stateRow.appendChild(els.timer);
+        stateRow.appendChild(els.micBadge);
         status.appendChild(stateRow);
         els.hint = createDiv(null, 'voice-agent-hint');
         status.appendChild(els.hint);
         head.appendChild(status);
         const buttons = createDiv(null, 'voice-agent-buttons');
         els.startBtn = btn(buttons, translate('Start'), 'basic-button voice-agent-start', onStartClick);
+        els.muteBtn = btn(buttons, translate('Mute'), 'basic-button voice-agent-mute', onMuteClick);
+        els.muteBtn.title = translate('Silence your microphone without ending the call');
         els.stopBtn = btn(buttons, translate('Stop'), 'basic-button voice-agent-stop', onStopClick);
         els.reconnectBtn = btn(buttons, translate('Reconnect'), 'basic-button voice-agent-reconnect', onStartClick);
         head.appendChild(buttons);
@@ -287,6 +312,22 @@ const AudioVoice = (() => {
         bargeWrap.appendChild(els.bargeIn);
         bargeWrap.appendChild(createSpan(null, 'voice-agent-field-label', translate('Allow barge-in')));
         setup.appendChild(bargeWrap);
+
+        // Push-to-talk: the microphone is open only while this key is held. The key button rebinds on the next key press.
+        els.ptt = document.createElement('input');
+        els.ptt.type = 'checkbox';
+        els.ptt.className = 'voice-agent-checkbox';
+        els.ptt.addEventListener('change', () => {
+            talking = false;
+            applyMicGate();
+            onSettingsChanged();
+        });
+        const pttWrap = createDiv(null, 'voice-agent-field voice-agent-field-inline');
+        pttWrap.appendChild(els.ptt);
+        pttWrap.appendChild(createSpan(null, 'voice-agent-field-label', translate('Push-to-talk')));
+        els.pttKeyBtn = btn(pttWrap, '', 'basic-button voice-agent-tool', onPttKeyBtnClick);
+        els.pttKeyBtn.title = translate('Click, then press the key to hold while you talk');
+        setup.appendChild(pttWrap);
         els.settings.appendChild(setup);
         els.modelStatus = createDiv(null, 'voice-agent-model-status');
         els.settings.appendChild(els.modelStatus);
@@ -629,6 +670,7 @@ const AudioVoice = (() => {
         els.reconnectBtn.title = els.startBtn.title;
         els.reconnectBtn.hidden = live || !canReconnect;
         els.stopBtn.hidden = !live;
+        els.muteBtn.hidden = !live;
         els.copyBtn.disabled = els.clearBtn.disabled = transcript.entries.length === 0;
         els.exportSel.disabled = transcript.entries.length === 0;
     }
@@ -679,6 +721,9 @@ const AudioVoice = (() => {
             teardownAudio();
             return false;
         }
+        muted = false; // a new call starts with the microphone open (or held shut by push-to-talk)
+        talking = false;
+        applyMicGate();
         micSource = audioCtx.createMediaStreamSource(micStream);
         analyserNode = audioCtx.createAnalyser();
         analyserNode.fftSize = 512;
@@ -787,6 +832,8 @@ const AudioVoice = (() => {
             outAnalyser = null;
         }
         analyserNode = null;
+        muted = false;
+        talking = false;
         micLevel = outLevel = 0;
         els.orb.style.setProperty('--mic', '0');
         els.orb.style.setProperty('--out', '0');
@@ -941,6 +988,110 @@ const AudioVoice = (() => {
         nextPlayTime = 0;
     }
 
+    // ===== Microphone gating: mute and push-to-talk =====
+
+    /** Whether the call is live and its tab is the visible one, so the push-to-talk key means something. */
+    function pttApplies() {
+        return els.ptt.checked && AudioVoiceState.describeState(callState).live && !!micStream && els.orb.offsetParent !== null;
+    }
+
+    /** The microphone follows `micOpen`: a closed one is a disabled track, which sends silence, so the server's voice detector keeps a steady stream and hears no speech. */
+    function applyMicGate() {
+        const gate = { muted, pushToTalk: els.ptt.checked, talking, pttKey: els.pttKeyBtn.dataset.code };
+        const live = AudioVoiceState.describeState(callState).live;
+        const open = AudioVoiceState.micOpen(gate);
+        if (micStream) {
+            for (const track of micStream.getAudioTracks()) {
+                track.enabled = open;
+            }
+        }
+        const label = AudioVoiceState.micLabel(gate);
+        els.micBadge.hidden = !live || !label.text;
+        els.micBadge.textContent = label.tone === 'ptt' ? `${translate('Hold')} ${AudioVoiceState.keyLabel(gate.pttKey)} ${translate('to talk')}` : translate(label.text);
+        els.micBadge.className = `voice-agent-mic-badge voice-agent-mic-badge-${label.tone}`;
+        els.orb.classList.toggle('voice-agent-orb-closed', live && !open);
+        els.muteBtn.textContent = translate(muted ? 'Unmute' : 'Mute');
+        els.muteBtn.setAttribute('aria-pressed', muted ? 'true' : 'false');
+        els.muteBtn.classList.toggle('voice-agent-mute-on', muted);
+    }
+
+    function onMuteClick() {
+        muted = !muted;
+        if (muted) {
+            talking = false;
+        }
+        applyMicGate();
+    }
+
+    /** Let go of the talk key (also when the window loses focus, where the key-up would never arrive). */
+    function releaseTalk() {
+        if (talking) {
+            talking = false;
+            applyMicGate();
+        }
+    }
+
+    function setPttKey(code) {
+        const key = AudioVoiceState.isUsablePttKey(code) ? code : AudioVoiceState.DEFAULT_SETTINGS.pttKey;
+        els.pttKeyBtn.dataset.code = key;
+        els.pttKeyBtn.textContent = rebindingKey ? translate('Press a key…') : AudioVoiceState.keyLabel(key);
+    }
+
+    function onPttKeyBtnClick() {
+        rebindingKey = !rebindingKey;
+        setPttKey(els.pttKeyBtn.dataset.code);
+    }
+
+    /** Typing in a field must never open the microphone. */
+    function isTypingTarget(target) {
+        return !!target && (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable);
+    }
+
+    /** Stop waiting for a new push-to-talk key. */
+    function cancelRebind() {
+        if (rebindingKey) {
+            rebindingKey = false;
+            setPttKey(els.pttKeyBtn.dataset.code);
+        }
+    }
+
+    function onPttKeyDown(e) {
+        if (rebindingKey && (isTypingTarget(e.target) || els.orb.offsetParent === null)) {
+            cancelRebind(); // the user went elsewhere (a text field, another tab): never swallow their keys
+        }
+        if (rebindingKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.code !== 'Escape' && AudioVoiceState.isUsablePttKey(e.code)) {
+                rebindingKey = false;
+                setPttKey(e.code);
+                onSettingsChanged();
+            }
+            else if (e.code === 'Escape') {
+                rebindingKey = false;
+                setPttKey(els.pttKeyBtn.dataset.code);
+            }
+            return;
+        }
+        if (e.code !== els.pttKeyBtn.dataset.code || e.ctrlKey || e.metaKey || e.altKey || isTypingTarget(e.target) || !pttApplies()) {
+            return;
+        }
+        e.preventDefault();
+        e.stopPropagation(); // the DAW's shortcuts must not also fire for this key
+        if (!e.repeat && !talking) {
+            talking = true;
+            applyMicGate();
+        }
+    }
+
+    function onPttKeyUp(e) {
+        if (talking && e.code === els.pttKeyBtn.dataset.code) {
+            e.preventDefault();
+            e.stopPropagation();
+            releaseTalk();
+        }
+    }
+
     // ===== Level meter and orb =====
 
     /** The loudest sample of an analyser's window, 0 to 1. */
@@ -983,6 +1134,7 @@ const AudioVoice = (() => {
             els.timer.innerText = '';
         }
         refreshControls();
+        applyMicGate(); // setState replaced the orb's classes
     }
 
     function clearTranscript() {

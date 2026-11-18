@@ -45,6 +45,14 @@ Start, then drive the server side with `voiceFake.state(...)`, `say(...)`, `pcm(
 | 35 | Choose a recognizer, then reload | The recognizer and engine come back; a preset made before this change (no recognizer or engine) loads with the defaults |
 | 36 | Start a call with Moonshine tiny and Piper chosen | `voiceFake.setup` holds `sttModel: 'moonshine:tiny'`, `ttsEngine: 'piper'` and a Piper voice; with the defaults chosen it holds the default tokens |
 | 37 | Options route fails (old page against a new server) | The pickers stay empty, the call still starts and the setup frame omits `sttModel` and `ttsEngine` (server defaults) |
+| 38 | Idle | No Mute button, no mic badge; the push-to-talk checkbox is off and its key button shows H |
+| 39 | During a call press Mute | Button reads Unmute (aria-pressed true), a red "Muted" badge, the orb dims; frames still go to the socket but are silent; Unmute restores sound and the badge goes |
+| 40 | Turn on Push-to-talk during a call | Badge "Hold H to talk", orb dim, frames silent; holding H gives "Talking" and real frames; key-up closes it; auto-repeat does not retrigger |
+| 41 | Press H in the system prompt or preset name field; press Ctrl+H | The microphone stays closed; Ctrl+H is left alone |
+| 42 | Hold H, then the window loses focus; hold H, then Mute | Blur releases the key (silent); Mute wins over the held key |
+| 43 | Hold H while the DAW tab is visible | The key does not reach the DAW's shortcuts (no keydown on the document's bubble phase) |
+| 44 | Click the key button, press Escape; click it again, press Shift; then press K | Escape cancels, Shift is ignored (still waiting), K rebinds; the choice survives a reload and a preset load |
+| 45 | Stop the call | Mute and badge hide, the orb returns to normal, mute and talk state reset; the key does nothing while idle |
 
 ## Run log
 Filled in per run below.
@@ -68,3 +76,7 @@ Found and fixed: the idle hint stayed on "Loading the language models…" after 
 ### 2026-11-18, PR 3 (recognizer and speech engine choice): dev server on 7801, built-in browser
 Rows 33 to 36 passed with LLMAssistant stubbed and the real options route: 7 recognizers and Kokoro/Piper listed with the defaults selected, Piper's 37 voices grouped by locale with en_US-lessac-medium selected, a pre-PR-3 saved state and a preset naming an engine and recognizer the server does not list both fall back to the defaults, and the setup frame (stubbed socket) carried `sttModel: 'moonshine:tiny'`, `ttsEngine: 'piper'`, `voice: 'en_US-amy-low'`. Against the real route, a setup frame with an unlisted `sttModel` (a path), an unlisted `ttsEngine`, or a Kokoro voice with Piper was refused with a readable error.
 Not run: row 37, a Piper voice preview (it downloads a voice), and any real call: Whisper, Moonshine, Distil-Whisper and Piper through the voice package are unverified live on this machine (xunit covers the catalog, the allow-list and the policy only).
+
+### 2026-11-18, PR 4 (mute and push-to-talk): dev server on 7801, built-in browser, fake socket and a 330 Hz oscillator as the microphone
+Rows 38 to 45 passed except row 43 (checked as: the held key is prevented and a document bubble-phase listener never sees it; the DAW's own listener is such a listener). Frames were read from the fake socket: open peak 32767, muted or key-up peak 0, frames kept flowing while muted.
+Not covered: a real call, a real keyboard (synthetic events were dispatched), light theme. Typed messages are not part of this PR: they need an engine method (`VoiceAgentSession` has no typed user turn) and that engine session could not be started from the remote session.

@@ -769,6 +769,11 @@ What the call view shows:
 - Notices as chips you can dismiss: repeats count up (×2), informational ones leave after a few seconds, errors stay
   until dismissed. A blocked or missing microphone, or a dropped connection, says what happened and what to do next;
   after a dropped call, **Reconnect** starts a fresh one.
+- **Mute** silences your microphone without ending the call: the server keeps receiving (silent) audio, so it hears no
+  speech, and the orb dims. **Push-to-talk** (a call setting, with a rebindable key, **H** by default) opens the
+  microphone only while you hold the key; the header shows "Hold H to talk" and "Talking". The key only counts while a
+  call is live and this tab is showing, it is ignored in text fields and with Ctrl, Cmd or Alt, and while it is held
+  the DAW's own shortcuts do not see it. Mute wins over a held key, and both reset when a call ends.
 - **Copy**, **Clear** and **Export** (Markdown, text or JSON, with the raw latency numbers) for the transcript.
 - Call settings fold away while a call is live. If you scroll up in a long conversation the view stays where it is
   and **Jump to latest** brings you back.
