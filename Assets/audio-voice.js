@@ -90,6 +90,11 @@ const AudioVoice = (() => {
         document.addEventListener('keydown', onPttKeyDown, true);
         document.addEventListener('keyup', onPttKeyUp, true);
         window.addEventListener('blur', releaseTalk); // a key released outside the window never reports it
+        document.addEventListener('click', (e) => {
+            if (e.target !== els.pttKeyBtn) {
+                cancelRebind(); // a click anywhere else ends the wait for a key
+            }
+        }, true);
     }
 
     // ===== Saved settings =====
@@ -146,6 +151,8 @@ const AudioVoice = (() => {
         els.bargeIn.checked = settings.bargeIn;
         els.ptt.checked = settings.pushToTalk;
         setPttKey(settings.pttKey);
+        talking = false;
+        applyMicGate(); // a preset loaded mid-call changes push-to-talk now
         showEngineNote();
         refreshControls();
     }
@@ -1040,7 +1047,18 @@ const AudioVoice = (() => {
         return !!target && (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable);
     }
 
+    /** Stop waiting for a new push-to-talk key. */
+    function cancelRebind() {
+        if (rebindingKey) {
+            rebindingKey = false;
+            setPttKey(els.pttKeyBtn.dataset.code);
+        }
+    }
+
     function onPttKeyDown(e) {
+        if (rebindingKey && (isTypingTarget(e.target) || els.orb.offsetParent === null)) {
+            cancelRebind(); // the user went elsewhere (a text field, another tab): never swallow their keys
+        }
         if (rebindingKey) {
             e.preventDefault();
             e.stopPropagation();
