@@ -113,7 +113,12 @@ const AudioVoice = (() => {
 
     /** Put settings into the fields. A model, assistant or voice the lists do not have is kept as an extra option so it is not lost. */
     function applySettings(settings) {
-        setSelect(els.model, settings.model, settings.model);
+        // Once the model list is known, a model it does not offer (an old preset) is not selectable: it would start a call that cannot answer.
+        const unavailable = llm.status === 'ready' && settings.model && !llm.models.some(m => m.id === settings.model);
+        setSelect(els.model, unavailable ? '' : settings.model, settings.model);
+        if (unavailable) {
+            pushNotice(`${translate('Saved model')} "${settings.model}" ${translate('is not available; using')} "${els.model.value}".`, 'info');
+        }
         setSelect(els.assistantId, settings.assistantId, settings.assistantId);
         setSelect(els.voice, settings.voice, settings.voice);
         els.systemPrompt.value = settings.systemPrompt;
@@ -362,7 +367,7 @@ const AudioVoice = (() => {
         els.modelRefresh.disabled = true;
         genericRequest('LLMAssistantGetModels', {}, data => {
             els.modelRefresh.disabled = false;
-            const wanted = els.model.value;
+            const wanted = els.model.value || store.last.model; // the list may have been empty a moment ago, which cleared the field
             llm.models = (data.models || []).filter(m => m && m.id);
             llm.warnings = Array.isArray(data.warnings) ? data.warnings : [];
             els.model.textContent = '';
@@ -481,6 +486,9 @@ const AudioVoice = (() => {
 
     /** Speak a short line in the chosen voice through the server's raw speech route (Kokoro), so the voice can be judged before a call. */
     function onPreviewClick() {
+        if (AudioVoiceState.describeState(callState).live) {
+            return; // it would play into the open microphone
+        }
         stopPreview();
         const token = ++previewToken;
         els.previewBtn.disabled = true;
@@ -498,7 +506,11 @@ const AudioVoice = (() => {
                     throw new Error(response.statusText);
                 }
                 const pcm = new Int16Array(await response.arrayBuffer());
-                if (token !== previewToken || pcm.length === 0) {
+                if (token !== previewToken) {
+                    return;
+                }
+                if (pcm.length === 0) {
+                    finish();
                     return;
                 }
                 await ctx.resume();

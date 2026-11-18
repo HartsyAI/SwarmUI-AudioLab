@@ -388,7 +388,7 @@ const AudioVoiceState = (() => {
             case 'loading':
                 return 'Loading the language models…';
             case 'missing':
-                return 'LLMAssistant is not installed, and the agent needs it to think. Install the LLMAssistant extension, then press Refresh.';
+                return 'LLMAssistant is not installed, and the agent needs it to think. Install the LLMAssistant extension, then reload the page.';
             case 'empty':
                 return 'LLMAssistant has no language model. Start your provider (for example Ollama) or add a model in LLM Assistant, then press Refresh.';
             case 'error':
