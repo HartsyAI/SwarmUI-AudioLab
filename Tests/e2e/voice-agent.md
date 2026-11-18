@@ -44,3 +44,4 @@ until the first state event; Copy now uses core's `copyText` (it also works over
 does not exist); the Export select ignored the theme; the transcript got too little height in the short panel (tools moved
 into the header row).
 Not covered here: a real call (needs Whisper small.en, Kokoro and an LLMAssistant model).
+Review round (PR 99): late frames after Stop no longer revive the live layout; a server `Ended`/`Idle` state now releases the mic and socket; a failed Start after a dropped call keeps Reconnect; double-clicking Start opens one socket; informational chips expire after the call ends; text after a tool call starts a new bubble (order stays true in copy and export); one error chip, not two, on a failed connect. Re-checked in the browser with the fake socket; Node checks of `AudioVoiceState` extended.

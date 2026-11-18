@@ -2411,7 +2411,7 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
 .daw-keys-gap { visibility: hidden; }
 
 /* ===== Voice Agent tab ===== */
-.voice-agent-root { display: flex; flex-direction: column; gap: 0.45rem; padding: 0.6rem; height: 100%; min-height: 0; box-sizing: border-box; }
+.voice-agent-root { display: flex; flex-direction: column; gap: 0.45rem; padding: 0.6rem; height: 100%; min-height: 0; box-sizing: border-box; overflow-y: auto; }
 .voice-agent-head { display: flex; align-items: center; gap: 0.8rem; flex: 0 0 auto; }
 .voice-agent-status { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
 .voice-agent-state-row { display: flex; align-items: center; gap: 0.6rem; }

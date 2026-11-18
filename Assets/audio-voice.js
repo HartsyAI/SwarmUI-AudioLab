@@ -58,6 +58,7 @@ const AudioVoice = (() => {
     let micLevel = 0;
     let outLevel = 0;
     let canReconnect = false;
+    let starting = false; // a Start or Reconnect attempt is waiting on the microphone or the worklet
 
     function render(container) {
         if (!container || rendered) {
@@ -250,13 +251,28 @@ const AudioVoice = (() => {
 
     // ===== Call lifecycle =====
 
+    /** Start (or reconnect) a call; one attempt at a time, since the mic and the worklet load are asynchronous. */
     async function onStartClick() {
-        if (callState !== 'idle' && callState !== 'ended') {
+        if (starting || (callState !== 'idle' && callState !== 'ended')) {
             return;
         }
-        canReconnect = false;
+        starting = true;
+        const hadReconnect = canReconnect;
         els.startBtn.disabled = true;
         els.reconnectBtn.disabled = true;
+        try {
+            if (!await openCall()) {
+                canReconnect = hadReconnect; // a failed attempt leaves the tab as it was, Reconnect included
+            }
+        }
+        finally {
+            starting = false;
+            refreshControls();
+        }
+    }
+
+    /** Open the microphone and the audio graph, then the socket. Returns false (after telling the user why) if it could not start. */
+    async function openCall() {
         try {
             micStream = await navigator.mediaDevices.getUserMedia({
                 audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
@@ -264,23 +280,19 @@ const AudioVoice = (() => {
         }
         catch (e) {
             reportError('mic', e);
-            els.startBtn.disabled = false;
-            els.reconnectBtn.disabled = false;
-            return;
-        }
-        audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === 'suspended') {
-            await audioCtx.resume();
+            return false;
         }
         try {
+            audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') {
+                await audioCtx.resume();
+            }
             await audioCtx.audioWorklet.addModule(WORKLET_URL);
         }
         catch (e) {
             reportError('worklet', e);
             teardownAudio();
-            els.startBtn.disabled = false;
-            els.reconnectBtn.disabled = false;
-            return;
+            return false;
         }
         micSource = audioCtx.createMediaStreamSource(micStream);
         analyserNode = audioCtx.createAnalyser();
@@ -302,8 +314,10 @@ const AudioVoice = (() => {
         };
         micSource.connect(captureNode);
 
+        canReconnect = false;
         resetCall();
         connectSocket(Math.round(audioCtx.sampleRate));
+        return true;
     }
 
     function onStopClick() {
@@ -327,24 +341,26 @@ const AudioVoice = (() => {
         clearTranscript();
         callStartedAt = Date.now();
         els.settings.open = false;
+        startTick();
+        tick();
+    }
+
+    /** Make sure the once-a-second tick is running; it stops itself when there is no live call and no notice left to expire. */
+    function startTick() {
         if (!tickTimer) {
             tickTimer = setInterval(tick, 1000);
         }
-        tick();
     }
 
     function endCallLocally(dropped) {
         ws = null;
         teardownAudio();
         flushAllScheduledAudio();
-        if (tickTimer) {
-            clearInterval(tickTimer);
-            tickTimer = null;
-        }
         canReconnect = !!dropped;
         setState(dropped ? 'ended' : 'idle');
         els.settings.open = true;
         refreshControls();
+        tick();
     }
 
     /** Once a second: the call timer, and old informational notices leaving. */
@@ -354,6 +370,10 @@ const AudioVoice = (() => {
         }
         if (AudioVoiceState.expireNotices(notices)) {
             renderNotices();
+        }
+        if (tickTimer && !AudioVoiceState.describeState(callState).live && !notices.list.some(n => n.severity !== 'error')) {
+            clearInterval(tickTimer);
+            tickTimer = null;
         }
     }
 
@@ -414,10 +434,12 @@ const AudioVoice = (() => {
                 inputRate: inputRate,
             }));
         };
-        socket.onmessage = onSocketMessage;
-        socket.onerror = () => {
-            pushNotice(translate('The voice connection reported an error.'), 'error');
+        socket.onmessage = (ev) => {
+            if (ws === socket) { // a socket the user stopped may still deliver frames while it closes
+                onSocketMessage(ev);
+            }
         };
+        // No onerror chip: the browser always follows an error with a close event, and that one explains it.
         socket.onclose = (ev) => {
             if (ws === socket) { // the user didn't request Stop; the server/connection ended the call
                 const why = AudioVoiceState.explainError('socket', ev);
@@ -440,6 +462,16 @@ const AudioVoice = (() => {
             return;
         }
         if (data.state) {
+            if (!AudioVoiceState.describeState(data.state).live && ws) {
+                // The server says the call is over (Ended/Idle): release the mic and the socket now instead of waiting for a close.
+                const closing = ws;
+                ws = null;
+                try {
+                    closing.close();
+                }
+                catch (e) { /* already closing */ }
+                endCallLocally(false);
+            }
             setState(data.state);
         }
         else if (data.transcript) {
@@ -653,11 +685,13 @@ const AudioVoice = (() => {
         const bubble = AudioVoiceState.addMetrics(transcript, metrics);
         if (bubble) {
             drawBubble(bubble);
+            scrollToLatest(false); // the latency line made the bubble taller
         }
     }
 
     function pushNotice(text, severity) {
         AudioVoiceState.pushNotice(notices, text, severity);
+        startTick();
         renderNotices();
     }
 

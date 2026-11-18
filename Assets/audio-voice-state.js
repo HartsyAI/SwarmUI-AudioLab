@@ -54,6 +54,11 @@ const AudioVoiceState = (() => {
         return null;
     }
 
+    /** Whether a tool call was added after this entry, so later text of the turn must start a new bubble to keep the order true. */
+    function toolSince(transcript, entry) {
+        return transcript.entries.slice(transcript.entries.indexOf(entry) + 1).some(e => e.kind === 'tool');
+    }
+
     /**
      * Add a `transcript` event. A second event for the same role and turn extends that bubble rather than starting a new one.
      * @returns {{entry: object, created: boolean}}
@@ -62,7 +67,8 @@ const AudioVoiceState = (() => {
         const kind = role === 'user' ? 'user' : 'assistant';
         const clean = String(text || '').trim();
         const id = Number.isFinite(turnId) ? turnId : 0;
-        const existing = id > 0 ? findBubble(transcript, kind, id) : null;
+        const found = id > 0 ? findBubble(transcript, kind, id) : null;
+        const existing = found && !toolSince(transcript, found) ? found : null;
         if (existing) {
             if (clean) existing.parts.push(clean);
             return { entry: existing, created: false };
@@ -222,7 +228,10 @@ const AudioVoiceState = (() => {
     /** The transcript as Markdown: bold speaker, the latency of each agent reply in italics. */
     function toMarkdown(transcript, labels = { user: 'You', assistant: 'Agent' }) {
         return transcript.entries.map(e => {
-            if (e.kind === 'tool') return `> Tool \`${e.name}\` \`${e.args}\`${e.result !== null ? ` → ${e.result}` : ''}`;
+            if (e.kind === 'tool') {
+                const flat = (v) => String(v).replace(/\s+/g, ' ').replace(/`/g, "'"); // one line, no stray backticks: keeps the inline code intact
+                return `> Tool \`${flat(e.name)}\` \`${flat(e.args)}\`${e.result !== null ? ` → ${flat(e.result)}` : ''}`;
+            }
             const lat = e.kind === 'assistant' && e.metrics ? `\n\n*${latencyOf(e.metrics).map(l => `${l.label} ${l.text}`).join(' · ')}*` : '';
             return `**${labels[e.kind]}** (${timeOfDay(e.time)}): ${textOf(e)}${lat}`;
         }).join('\n\n');
