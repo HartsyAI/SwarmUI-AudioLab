@@ -28,6 +28,12 @@ const AudioDawLyricsUi = (() => {
     /** A fill change smaller than this fraction is not repainted. */
     const FILL_STEP = 0.02;
 
+    /** The slot classes a strip line moves between: gone above, the line being sung, the line after it, and waiting below. */
+    const SLOTS = ['pos-prev', 'pos-current', 'pos-next', 'pos-after'];
+
+    /** Stands for "no line is laid out yet" while the anchor is compared. */
+    const NO_ANCHOR = -99;
+
     /** Read a stored JSON value, tolerating blocked or empty storage. */
     function readStored(key, fallback) {
         try {
@@ -47,6 +53,12 @@ const AudioDawLyricsUi = (() => {
         catch (_) {
             // Storage can be blocked (private window); the choice just is not remembered
         }
+    }
+
+    /** The status sentence for words flagged unsure: empty when there are none. */
+    function unsureNote(lyrics) {
+        const n = AudioDawLyrics.unsureCount(lyrics);
+        return n ? `. ${n} ` + translate('words look unsung (squeezed together by the aligner) and are left off the strip; use Transcribe instead if the singer left lines out') : '';
     }
 
     /** Hand text to the browser as a file. */
@@ -70,40 +82,83 @@ const AudioDawLyricsUi = (() => {
     function create(stripHost, before, host) {
         const strip = createDiv(null, 'daw-lyric-strip');
         strip.hidden = true;
-        const currentEl = createDiv(null, 'daw-lyric-line daw-lyric-current');
-        const nextEl = createDiv(null, 'daw-lyric-line daw-lyric-next');
-        strip.appendChild(currentEl);
-        strip.appendChild(nextEl);
         stripHost.insertBefore(strip, before);
 
         let timeline = { words: [], lines: [] };
         let shown = readStored(STRIP_KEY, true) !== false;
-        let renderedCurrent = -2; // the line indexes painted by `syncTime` (-2: nothing painted yet)
-        let renderedNext = -2;
+        let renderedAnchor = NO_ANCHOR; // the line in the "current" slot as last laid out (NO_ANCHOR: nothing laid out yet)
+        let renderedIdle = false;
         let renderedTime = NaN; // the time `syncTime` last worked out; the same time again does nothing
         let lastTime = 0;
-        let currentSpans = [];
-        let lastFills = [];
+        const lineEls = new Map(); // line index -> { el, spans, fills }: one element per line, moved between slots as the song goes on
         const at = { current: -1, next: -1 }; // reused every frame, so a frame that changes nothing allocates nothing
         const fills = [];
         let panel = null;
 
-        /** Fill one line element with a span per word; clicking a word seeks to it. */
-        function paintLine(el, line, wantClick) {
-            el.textContent = '';
+        /** Build the element for a timeline line: a span per word (clicking one seeks to it), every fill at 0. */
+        function buildLine(index) {
+            const el = createDiv(null, 'daw-lyric-line');
             const spans = [];
-            if (line) {
-                for (const word of AudioDawLyrics.wordsOfLine(timeline, line)) {
-                    const span = createSpan(null, 'daw-lyric-word');
-                    span.textContent = word.w + ' ';
-                    if (wantClick) {
-                        span.addEventListener('click', () => host.seek(word.start));
-                    }
-                    el.appendChild(span);
-                    spans.push(span);
+            for (const word of AudioDawLyrics.wordsOfLine(timeline, timeline.lines[index])) {
+                const span = createSpan(null, 'daw-lyric-word');
+                span.textContent = word.w + ' ';
+                span.addEventListener('click', () => host.seek(word.start));
+                el.appendChild(span);
+                spans.push(span);
+            }
+            return { el, spans, fills: spans.map(() => 0) };
+        }
+
+        /** Paint every word of a line to the same fill (a finished line is whole, a waiting one empty). */
+        function setAllFills(entry, value) {
+            for (let i = 0; i < entry.spans.length; i++) {
+                if (entry.fills[i] !== value) {
+                    entry.fills[i] = value;
+                    entry.spans[i].style.setProperty('--fill', `${value * 100}%`);
                 }
             }
-            return spans;
+        }
+
+        /** The slot class for the line `rel` places from the anchor: above (gone), current, next, or waiting below. */
+        function slotOf(rel, idle) {
+            if (rel < 0 || (rel === 0 && idle)) return 'pos-prev';
+            return rel === 0 ? 'pos-current' : (rel === 1 ? 'pos-next' : 'pos-after');
+        }
+
+        /**
+         * Put the lines in their slots around `anchor`. A line that is already on screen keeps its element and just changes slot,
+         * so it scrolls (and keeps its fill) instead of being redrawn; one entering starts in the slot below its target. A jump
+         * of more than one line (a seek) lays out without the slide.
+         */
+        function layoutLines(anchor, idle, instant) {
+            strip.classList.toggle('daw-lyric-jump', instant);
+            for (const [index, entry] of lineEls) {
+                if (index < anchor - 1 || index > anchor + 2 || instant) {
+                    entry.el.remove();
+                    lineEls.delete(index);
+                }
+            }
+            for (let index = Math.max(0, anchor - 1); index <= anchor + 2 && index < timeline.lines.length; index++) {
+                const rel = index - anchor;
+                let entry = lineEls.get(index);
+                if (!entry) {
+                    entry = buildLine(index);
+                    entry.el.classList.add(rel < 0 ? 'pos-prev' : 'pos-after');
+                    strip.appendChild(entry.el);
+                    lineEls.set(index, entry);
+                    entry.el.offsetWidth; // commit the starting slot so the move to the real one is animated
+                }
+                const slot = slotOf(rel, idle);
+                for (const name of SLOTS) {
+                    entry.el.classList.toggle(name, name === slot);
+                }
+                if (slot === 'pos-prev') setAllFills(entry, 1);
+                else if (slot !== 'pos-current') setAllFills(entry, 0);
+            }
+            if (instant) {
+                strip.offsetWidth;
+                strip.classList.remove('daw-lyric-jump');
+            }
         }
 
         /** Show the strip only when there are timed words and the user wants it. */
@@ -111,10 +166,12 @@ const AudioDawLyricsUi = (() => {
             strip.hidden = !(shown && timeline.words.length > 0);
         }
 
-        /** Drop what `syncTime` remembers, so its next call paints from scratch. */
+        /** Drop what `syncTime` remembers and every line on screen, so its next call lays out from scratch. */
         function forceRepaint() {
-            renderedCurrent = -2;
-            renderedNext = -2;
+            for (const entry of lineEls.values()) entry.el.remove();
+            lineEls.clear();
+            renderedAnchor = NO_ANCHOR;
+            renderedIdle = false;
             renderedTime = NaN;
         }
 
@@ -127,26 +184,29 @@ const AudioDawLyricsUi = (() => {
             panel?.update();
         }
 
-        /** Per-frame hook: show the lines around `time` and fill the sung part of the current line. */
+        /** Per-frame hook: scroll the lines to where `time` puts them and fill the sung part of the current one. */
         function syncTime(time) {
             lastTime = time;
             if (strip.hidden || time === renderedTime) return;
             renderedTime = time;
             AudioDawLyrics.lineAt(timeline, time, undefined, at);
-            if (at.current !== renderedCurrent || at.next !== renderedNext) {
-                renderedCurrent = at.current;
-                renderedNext = at.next;
-                currentSpans = paintLine(currentEl, at.current >= 0 ? timeline.lines[at.current] : null, true);
-                paintLine(nextEl, at.next >= 0 ? timeline.lines[at.next] : null, true);
-                lastFills = currentSpans.map(() => -1);
-                currentEl.classList.toggle('daw-lyric-idle', at.current < 0);
+            // Between lines the line just finished stays the anchor (scrolled up), so the next one waits below until it starts;
+            // before the first line there is none (-1), and after the last one it is the last line (there is no next to count back from)
+            const anchor = at.current >= 0 ? at.current : (at.next >= 0 ? at.next - 1 : timeline.lines.length - 1);
+            const idle = at.current < 0;
+            if (anchor !== renderedAnchor || idle !== renderedIdle) {
+                const instant = renderedAnchor === NO_ANCHOR || Math.abs(anchor - renderedAnchor) > 1;
+                renderedAnchor = anchor;
+                renderedIdle = idle;
+                layoutLines(anchor, idle, instant);
             }
-            if (at.current < 0) return;
-            AudioDawLyrics.fillOf(timeline, timeline.lines[at.current], time, fills);
-            for (let i = 0; i < currentSpans.length && i < fills.length; i++) {
-                if (Math.abs(fills[i] - lastFills[i]) >= FILL_STEP || (fills[i] === 0 || fills[i] === 1) && fills[i] !== lastFills[i]) {
-                    lastFills[i] = fills[i];
-                    currentSpans[i].style.setProperty('--fill', `${(fills[i] * 100).toFixed(0)}%`);
+            const entry = idle ? null : lineEls.get(anchor);
+            if (!entry) return;
+            AudioDawLyrics.fillOf(timeline, timeline.lines[anchor], time, fills);
+            for (let i = 0; i < entry.spans.length && i < fills.length; i++) {
+                if (Math.abs(fills[i] - entry.fills[i]) >= FILL_STEP || ((fills[i] === 0 || fills[i] === 1) && fills[i] !== entry.fills[i])) {
+                    entry.fills[i] = fills[i];
+                    entry.spans[i].style.setProperty('--fill', `${(fills[i] * 100).toFixed(0)}%`);
                 }
             }
         }
@@ -287,7 +347,7 @@ const AudioDawLyricsUi = (() => {
                         ? AudioDawLyrics.fromAlignment(text, apiWords, { ...opts, source: result.source })
                         : AudioDawLyrics.fromTranscript(apiWords, { ...opts, source: result.source });
                     host.commit(now.clip.id, lyrics, translate('Time lyrics'));
-                    status.textContent = translate('Timed') + ` ${lyrics.words.length} ` + translate('words') + ` (${result.source})`;
+                    status.textContent = translate('Timed') + ` ${lyrics.words.length - AudioDawLyrics.unsureCount(lyrics)} ` + translate('words') + ` (${result.source})` + unsureNote(lyrics);
                 }
                 catch (err) {
                     console.error('[AudioDaw] Lyric timing failed:', err);
@@ -400,7 +460,7 @@ const AudioDawLyricsUi = (() => {
             const renderWords = (clip) => {
                 table.textContent = '';
                 const lyrics = clip?.meta?.lyrics;
-                if (!AudioDawLyrics.isTimed(lyrics)) {
+                if (!lyrics?.words?.length) {
                     const empty = createDiv(null, 'daw-lyrics-empty');
                     empty.textContent = translate('No word times yet. Time the words, estimate them, or import an LRC file.');
                     table.appendChild(empty);
@@ -410,10 +470,10 @@ const AudioDawLyricsUi = (() => {
                 const toTimeline = (s) => clip.startTime + (s - offset);
                 const toSource = (t) => t - clip.startTime + offset;
                 lyrics.words.slice(0, MAX_ROWS).forEach((word, index) => {
-                    const row = createDiv(null, 'daw-lyrics-word-row');
+                    const row = createDiv(null, 'daw-lyrics-word-row' + (word.u ? ' daw-lyrics-unsure' : ''));
                     const name = createSpan(null, 'daw-lyrics-word-text');
                     name.textContent = word.w;
-                    name.title = translate('Click to jump here');
+                    name.title = word.u ? translate('Probably not sung here: the aligner had no audio to give this word, so the strip skips it. Set a time to keep it.') : translate('Click to jump here');
                     name.addEventListener('click', () => host.seek(toTimeline(word.s)));
                     row.appendChild(name);
                     for (const edge of ['s', 'e']) {
@@ -454,8 +514,8 @@ const AudioDawLyricsUi = (() => {
                 area.disabled = !sel;
                 for (const b of buttons.querySelectorAll('button')) b.disabled = !sel;
                 renderWords(sel?.clip);
-                const count = lyrics?.words?.length || 0;
-                status.textContent = count ? `${count} ` + translate('timed words') + (lyrics.source ? ` (${lyrics.source}${lyrics.model ? ', ' + lyrics.model : ''})` : '') : '';
+                const count = (lyrics?.words?.length || 0) - AudioDawLyrics.unsureCount(lyrics);
+                status.textContent = lyrics?.words?.length ? `${count} ` + translate('timed words') + (lyrics.source ? ` (${lyrics.source}${lyrics.model ? ', ' + lyrics.model : ''})` : '') + unsureNote(lyrics) : '';
             };
             panel = { update };
             update();

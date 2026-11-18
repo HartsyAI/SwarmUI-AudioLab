@@ -476,7 +476,9 @@ loaded by name. There is a master limiter on the output.
 ### Lyrics
 
 A clip carries its lyrics, and the **lyric strip** between the transport and the arrangement shows the line being sung with
-each word filled in as it is sung, and the line after it. Click a word to jump to it. The strip appears once a clip has timed
+each word filled in as it is sung, and the line after it. When a line ends the lines scroll up: the next line rises into the
+current slot as it grows, keeping its fill, the finished one slides out of the top, and the one after rises into place below.
+Click a word to jump to it. The strip appears once a clip has timed
 words, and **Show the lyric strip** on the Lyrics tab hides it.
 
 The **Lyrics** tab edits the selected clip's lyrics. Section tags like `[Verse 1]` are for you and are not sung. **Time the
@@ -489,7 +491,9 @@ times) and **Export SRT** read and write lyric files. The Generate tab keeps the
 
 Word times are stored in the clip's source audio, so moving, trimming or splitting a clip never rewrites them: each piece shows
 the words inside its own window, and a part a later take covers shows none. Lyrics save with the project, undo like any other edit, and follow the vocal when the Stems
-tab is used. Timing typed lyrics fits one 30 s window: split a longer clip into sections first, or let it transcribe.
+tab is used. Words the aligner had no audio for (lyrics the singer left out are pressed into whatever time is left, a few frames each) are
+flagged as unsure: the strip and the LRC and SRT exports leave them out, the word table strikes them through, and the status line says how many; setting
+a word's time by hand keeps it. Timing typed lyrics fits one 30 s window: split a longer clip into sections first, or let it transcribe.
 
 ### Stems
 
