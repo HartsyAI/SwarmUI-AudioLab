@@ -291,7 +291,7 @@ public static class AudioEngineBridge
                 await MaybeKeepResidentAsync(AudioEngineService.Transcribe, spec, cancel).ConfigureAwait(false);
                 TranscriptResult transcript = await Engine.Transcribe
                     .RunAsync(spec, AudioEngineRequests.Transcribe(args), cancel).ConfigureAwait(false);
-                return AudioIo.TranscriptionResult(transcript.Text, transcript.Language);
+                return AudioIo.TranscriptionResult(transcript.Text, transcript.Language, transcript.Words, transcript.Duration);
             }
             case AudioEngineService.Music:
                 return Audio(await Engine.Music.GenerateAsync(spec, AudioEngineRequests.Music(args), null, cancel).ConfigureAwait(false));

@@ -59,17 +59,20 @@ public static class AudioEngineRequests
     }
 
     /// <summary>Builds the transcription request. <c>task</c> comes from the Whisper provider (transcribe |
-    /// translate); other STT providers don't set it. AudioLab exposes no word-timestamp or diarization param,
-    /// so those Engine features stay off.</summary>
+    /// translate); other STT providers don't set it. <c>word_timestamps</c> asks for a time span per word, and
+    /// <c>align_text</c> (with it) times that known text instead of transcribing. Diarization stays off.</summary>
     public static AudioRequest Transcribe(IReadOnlyDictionary<string, object> args)
     {
         AudioClip audio = Clip(args, "audio_data")
             ?? throw new ArgumentException("No audio supplied to transcribe (the STT audio input is empty).");
+        string alignText = AudioIo.Str(args, "align_text");
         return new AudioRequest
         {
             Audio = audio,
             Language = AudioIo.Str(args, "language", "en"),
             Translate = AudioIo.Str(args, "task", "transcribe").Equals("translate", StringComparison.OrdinalIgnoreCase),
+            WordTimestamps = Flag(args, "word_timestamps", false),
+            AlignText = string.IsNullOrWhiteSpace(alignText) ? null : alignText,
         };
     }
 
