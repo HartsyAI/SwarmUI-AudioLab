@@ -56,6 +56,11 @@ const AudioDaw = (() => {
     const FOLLOW_STORAGE_KEY = 'audiolab_daw_follow';
     let followMode = loadFollowMode();
     let followHold = false;
+    // The whole-song overview strip (a viewer preference like follow): the component, and whether it shows
+    let overview = null;
+    let overviewOn = loadOverviewPref();
+    let overviewPending = false;
+    let overviewObserver = null;
 
     function getDefaultState() {
         return {
@@ -244,6 +249,7 @@ const AudioDaw = (() => {
 
         buildTransport();
         initTimeline();
+        initOverview();
         buildBottomPanel();
         updateLaneGrid();
         // The bottom tab strip is static markup (Audio Lab.html) carrying class="translate";
@@ -569,6 +575,7 @@ const AudioDaw = (() => {
         zoomGroup.appendChild(zoomSlider);
         mkBtn(zoomGroup, '+', translate('Zoom in (+)'), () => setZoom(state.zoom * 1.25), ' daw-zoom-step');
         mkBtn(zoomGroup, translate('FIT'), translate('Zoom to fit the whole song (Z)'), zoomToFit, ' daw-btn-text daw-zoom-fit');
+        mkText(zoomGroup, translate('MAP'), translate('The whole-song overview strip above the ruler'), toggleOverview, 'daw-btn-map', overviewOn);
 
         // ── Sound palette ──
         const togGroup = mkGroup();
@@ -930,6 +937,7 @@ const AudioDaw = (() => {
     /** Push markers to the ruler and draw their lines through the lanes. */
     function refreshMarkers() {
         sortMarkers();
+        refreshOverview();
         if (timeline) timeline.setMarkers(state.markers);
         if (!clipLanesEl) return;
         let layer = clipLanesEl.querySelector('.daw-marker-lines');
@@ -1006,6 +1014,7 @@ const AudioDaw = (() => {
      * @param {{ruler?: boolean}} [opts] - ruler: false when the ruler row was just rebuilt anyway (a zoom change)
      */
     function refreshSections({ ruler = true } = {}) {
+        refreshOverview();
         if (ruler && timeline) timeline.setSections(state.sections);
         if (!clipLanesEl) return;
         let layer = clipLanesEl.querySelector('.daw-section-bands');
@@ -3064,6 +3073,7 @@ const AudioDaw = (() => {
             if (syncing) return;
             syncing = true;
             state.scrollLeft = clipLanesEl.scrollLeft;
+            syncOverviewViewport();
             // The ruler follows (its canvas only draws the visible slice)
             if (timeline) timeline.setScrollLeft(clipLanesEl.scrollLeft);
             // Sync track headers vertical scroll
@@ -3813,6 +3823,7 @@ const AudioDaw = (() => {
         renderSelection();
         refreshMarkers();
         refreshSections();
+        refreshOverview();
         renderEmptyState();
     }
 
@@ -3873,6 +3884,7 @@ const AudioDaw = (() => {
         if (timeline) timeline.setDuration(state.totalDuration);
         updateClipLanesWidth();
         refreshGroupLanes();
+        refreshOverview();
         updateTimeDisplay();
     }
 
@@ -5393,6 +5405,7 @@ const AudioDaw = (() => {
         const x = state.currentTime * state.zoom;
         playheadEl.style.transform = `translateX(${x}px)`;
         if (timeline) timeline.setPlayheadTime(state.currentTime);
+        if (overview && overviewOn) overview.setPlayhead(state.currentTime);
     }
 
     function updatePlayButton(playing) {
@@ -5629,6 +5642,88 @@ const AudioDaw = (() => {
         window.addEventListener('pointermove', (e) => { if (e.buttons === 0) lanePointerDown = false; }, true);
     }
 
+    // ===== OVERVIEW STRIP =====
+    // The whole-song strip above the ruler (AudioDawOverview). A viewer preference like follow: on or off, kept in
+    // localStorage, not in the project. This is the wiring: build it, feed it the arrangement and the lanes' scroll,
+    // and turn its drags into scrolls and its double-click into a seek.
+
+    function loadOverviewPref() {
+        try {
+            return localStorage.getItem('audiolab_daw_overview') !== 'off';
+        }
+        catch (_) {
+            return true;
+        }
+    }
+
+    function initOverview() {
+        const el = document.getElementById('daw_overview');
+        if (!el) return;
+        const corner = document.querySelector('#daw_main .daw-overview-corner');
+        if (corner) corner.dataset.label = translate('Overview');
+        document.getElementById('daw_main')?.classList.toggle('overview-off', !overviewOn);
+        if (overview) overview.destroy();
+        el.innerHTML = '';
+        overview = AudioDawOverview.create(el);
+        overview.on('scroll', (scrollLeft) => {
+            if (!clipLanesEl) return;
+            followHold = true; // a hand on the overview steers the view, like a hand on the scrollbar
+            clipLanesEl.scrollLeft = scrollLeft;
+        });
+        overview.on('seek', (time) => seekTo(time));
+        // The strip's width follows the lanes' column (window, header splitter, show/hide), so it redraws on any resize
+        if (typeof ResizeObserver !== 'undefined') {
+            if (!overviewObserver) {
+                overviewObserver = new ResizeObserver(() => {
+                    if (!overview) return;
+                    overview.redraw();
+                    syncOverviewViewport();
+                });
+            }
+            overviewObserver.disconnect(); // observe the strip as it is now, never a stale one
+            overviewObserver.observe(el);
+        }
+        refreshOverview();
+    }
+
+    /** Feed the strip the arrangement. Batched to once per task: several refreshes in one edit draw once. */
+    function refreshOverview() {
+        if (!overview || !overviewOn || overviewPending) return;
+        overviewPending = true;
+        queueMicrotask(() => {
+            overviewPending = false;
+            if (!overview || !overviewOn || !state) return;
+            overview.setData({
+                tracks: state.tracks,
+                sections: state.sections,
+                markers: state.markers,
+                contentDuration: state.contentDuration,
+                midiLength: AudioDawInstruments.midiClipLength
+            });
+            overview.setPlayhead(state.currentTime);
+            syncOverviewViewport();
+        });
+    }
+
+    /** Tell the strip which part of the song the lanes show. */
+    function syncOverviewViewport() {
+        if (!overview || !overviewOn || !clipLanesEl || !state) return;
+        overview.setViewport({
+            scrollLeft: clipLanesEl.scrollLeft,
+            viewW: clipLanesEl.clientWidth,
+            zoom: state.zoom,
+            scrollWidth: clipLanesEl.scrollWidth
+        });
+    }
+
+    function toggleOverview() {
+        overviewOn = !overviewOn;
+        try { localStorage.setItem('audiolab_daw_overview', overviewOn ? 'on' : 'off'); } catch (_) {}
+        document.getElementById('daw_main')?.classList.toggle('overview-off', !overviewOn);
+        transportEl?.querySelector('.daw-btn-map')?.classList.toggle('active', overviewOn);
+        if (overviewOn) refreshOverview();
+    }
+
     // ===== ZOOM =====
 
     function setZoom(newZoom) {
@@ -5654,6 +5749,7 @@ const AudioDaw = (() => {
         refreshGroupLanes();
         renderSelection();
         if (keepScroll !== null) clipLanesEl.scrollLeft = Math.max(0, keepScroll);
+        syncOverviewViewport();
         // Keep the transport slider in sync (keyboard +/- also zooms)
         const slider = transportEl?.querySelector('.daw-transport-zoom');
         if (slider) slider.value = state.zoom;
@@ -10003,6 +10099,8 @@ const AudioDaw = (() => {
             }
         }
         if (timeline) { timeline.destroy(); timeline = null; }
+        if (overviewObserver) { overviewObserver.disconnect(); overviewObserver = null; }
+        if (overview) { overview.destroy(); overview = null; }
         if (audioCtx && audioCtx.state !== 'closed') {
             try { audioCtx.close(); } catch (_) {}
         }

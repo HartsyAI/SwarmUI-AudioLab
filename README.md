@@ -323,6 +323,12 @@ or **Off**; `G` toggles it. Scrolling sideways by hand, or dragging the horizont
 play or seek, and a drag in the lanes suspends it while you hold. Jumps (Home, End, markers, arrow keys) always scroll
 the playhead into view. The mode is a viewer preference and is not saved in projects.
 
+The **overview strip** above the rulers draws the whole song at once: a row of mini clip blocks per track (in the colors
+the lanes use), the sections as a colored band, the markers as ticks and the playhead. The framed window shows what the
+lanes are scrolled to. Drag the frame to scroll, click elsewhere to jump the view there, double-click to move the
+playhead. **MAP** in the transport hides or shows the strip, and the choice is kept for next time (it is not part of a
+project).
+
 Five rows sit above the lanes: Bars|Beats, Min:Secs, Tempo, Markers and Sections. Each track header shows the track number, record
 arm (R), input monitor (I), solo (S), mute (M) and automation (A), pan, volume, the input it records from, its inserts
 count, its level in dB and a meter. Right-click a header to rename, duplicate, recolor, give it an icon, group, move,
