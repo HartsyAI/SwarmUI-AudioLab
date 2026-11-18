@@ -244,7 +244,163 @@ const AudioVoiceState = (() => {
             : { kind: e.kind, turnId: e.turnId, time: e.time, text: textOf(e), metrics: e.metrics || undefined }), null, 2);
     }
 
+    // ===== Call settings and presets =====
+
+    /** The setup fields a call is started with, and what each defaults to. */
+    const DEFAULT_SETTINGS = { model: '', assistantId: '', voice: 'af_heart', systemPrompt: '', bargeIn: true };
+
+    /** Presets are capped so a runaway store cannot grow without bound; a name is trimmed and cut to this length. */
+    const MAX_PRESETS = 50;
+    const MAX_PRESET_NAME = 40;
+
+    /** Any value read from storage or a preset, made into a complete settings object: wrong types fall back to the defaults. */
+    function normalizeSettings(raw) {
+        const src = raw && typeof raw === 'object' ? raw : {};
+        const text = (value, fallback) => typeof value === 'string' ? value : fallback;
+        return {
+            model: text(src.model, DEFAULT_SETTINGS.model),
+            assistantId: text(src.assistantId, DEFAULT_SETTINGS.assistantId),
+            voice: text(src.voice, DEFAULT_SETTINGS.voice) || DEFAULT_SETTINGS.voice,
+            systemPrompt: text(src.systemPrompt, DEFAULT_SETTINGS.systemPrompt),
+            bargeIn: typeof src.bargeIn === 'boolean' ? src.bargeIn : DEFAULT_SETTINGS.bargeIn
+        };
+    }
+
+    /** A preset name as stored: trimmed, one line, length-limited. Empty when nothing usable is left. */
+    function cleanPresetName(name) {
+        return String(name ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_PRESET_NAME);
+    }
+
+    /** An empty store: the last-used settings and the named presets. */
+    function createPresetStore() {
+        return { last: normalizeSettings(null), presets: [] };
+    }
+
+    /** A store from its stored JSON text; anything unreadable gives an empty store instead of an error. */
+    function parsePresetStore(jsonText) {
+        const store = createPresetStore();
+        let data = null;
+        try {
+            data = jsonText ? JSON.parse(jsonText) : null;
+        }
+        catch (e) {
+            return store;
+        }
+        if (!data || typeof data !== 'object') {
+            return store;
+        }
+        store.last = normalizeSettings(data.last);
+        for (const item of Array.isArray(data.presets) ? data.presets : []) {
+            const name = cleanPresetName(item?.name);
+            if (name && store.presets.length < MAX_PRESETS && !findPreset(store, name)) {
+                store.presets.push({ name, settings: normalizeSettings(item.settings) });
+            }
+        }
+        return store;
+    }
+
+    /** The store as JSON text for storage. */
+    function serializePresetStore(store) {
+        return JSON.stringify({ last: store.last, presets: store.presets });
+    }
+
+    /** The preset with this name (names match without regard to case), or null. */
+    function findPreset(store, name) {
+        const key = cleanPresetName(name).toLowerCase();
+        return key ? store.presets.find(p => p.name.toLowerCase() === key) || null : null;
+    }
+
+    /**
+     * Save settings under a name; the same name (any case) is overwritten. Returns the preset, or null when the name is empty
+     * or the store is full of other names.
+     */
+    function savePreset(store, name, settings) {
+        const clean = cleanPresetName(name);
+        if (!clean) {
+            return null;
+        }
+        const found = findPreset(store, clean);
+        if (found) {
+            found.name = clean;
+            found.settings = normalizeSettings(settings);
+            return found;
+        }
+        if (store.presets.length >= MAX_PRESETS) {
+            return null;
+        }
+        const preset = { name: clean, settings: normalizeSettings(settings) };
+        store.presets.push(preset);
+        return preset;
+    }
+
+    /**
+     * Rename a preset. Fails (returns false) when the old name is missing, the new one is empty, or the new name belongs to a
+     * different preset; changing only the case of its own name is allowed.
+     */
+    function renamePreset(store, oldName, newName) {
+        const preset = findPreset(store, oldName);
+        const clean = cleanPresetName(newName);
+        if (!preset || !clean) {
+            return false;
+        }
+        const clash = findPreset(store, clean);
+        if (clash && clash !== preset) {
+            return false;
+        }
+        preset.name = clean;
+        return true;
+    }
+
+    /** Remove a preset by name; returns whether one was removed. */
+    function deletePreset(store, name) {
+        const preset = findPreset(store, name);
+        if (!preset) {
+            return false;
+        }
+        store.presets.splice(store.presets.indexOf(preset), 1);
+        return true;
+    }
+
+    /** Voices as `[{group, voices: [{id, name}]}]`, groups in first-seen order, so a long list reads as languages. */
+    function groupVoices(voices) {
+        const groups = [];
+        for (const voice of Array.isArray(voices) ? voices : []) {
+            if (!voice || !voice.id) {
+                continue;
+            }
+            const label = voice.group || 'Other';
+            let group = groups.find(g => g.group === label);
+            if (!group) {
+                group = { group: label, voices: [] };
+                groups.push(group);
+            }
+            group.voices.push({ id: voice.id, name: voice.name || voice.id });
+        }
+        return groups;
+    }
+
+    /**
+     * Why a call cannot start yet, or '' when it can.
+     * @param {{status: 'loading'|'ready'|'empty'|'missing'|'error', model: string}} llm - the language-model list's state and the chosen id
+     */
+    function startBlocker(llm) {
+        switch (llm?.status) {
+            case 'loading':
+                return 'Loading the language models…';
+            case 'missing':
+                return 'LLMAssistant is not installed, and the agent needs it to think. Install the LLMAssistant extension, then press Refresh.';
+            case 'empty':
+                return 'LLMAssistant has no language model. Start your provider (for example Ollama) or add a model in LLM Assistant, then press Refresh.';
+            case 'error':
+                return 'The language models could not be listed. Press Refresh to try again.';
+            default:
+                return llm?.model ? '' : 'Choose a language model to start.';
+        }
+    }
+
     return {
+        DEFAULT_SETTINGS, MAX_PRESETS, normalizeSettings, cleanPresetName, createPresetStore, parsePresetStore, serializePresetStore,
+        findPreset, savePreset, renamePreset, deletePreset, groupVoices, startBlocker,
         describeState, clock, createTranscript, addTranscript, textOf, addTool, addMetrics, takePendingMetrics, formatMs, latencyOf,
         createNotices, pushNotice, dismissNotice, expireNotices, explainError, smoothLevel, timeOfDay, toText, toMarkdown, toJson,
         NOTICE_LIFETIME_MS

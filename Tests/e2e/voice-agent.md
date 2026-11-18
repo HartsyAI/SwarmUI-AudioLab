@@ -31,6 +31,15 @@ Start, then drive the server side with `voiceFake.state(...)`, `say(...)`, `pcm(
 | 21 | Switch to another bottom tab and back during a call | The call, timer and transcript are unchanged |
 | 22 | Narrow the pane to about 900 px, short bottom panel | Header wraps cleanly, the transcript scrolls inside, nothing overflows horizontally, no console errors |
 | 23 | Light theme | Pills, bubbles, chips and the orb stay readable |
+| 24 | Open the tab with LLMAssistant reporting no model (`LLMAssistantGetModels` returns `models: []`) | The model list is empty; a red line says LLMAssistant has no language model and what to do; Refresh is shown; Start is disabled with the reason as its tooltip and in the idle hint |
+| 25 | Start a provider (or stub a model into the response), press Refresh | The list fills, the status line goes, Start enables, the idle hint returns to "Press Start to talk." |
+| 26 | Open the tab with the `LLMAssistantGetModels` route missing (`AudioLabVoiceAgentOptions` says `llm_available: false`) | "LLMAssistant is not installed" line, Refresh hidden, Start disabled |
+| 27 | Voice list | Every Kokoro voice, grouped by language in optgroups; the default is af_heart; **Preview** plays a short line (or a red chip says it needs the Kokoro model) and is disabled while loading |
+| 28 | Assistant list | "(default assistant)" plus LLMAssistant's assistants; an unknown saved assistant stays selectable |
+| 29 | Change settings, reload the page | The model, assistant, voice, prompt and barge-in come back; a saved model that is no longer offered falls back to the first with an info chip |
+| 30 | Name a preset and Save, change settings, pick the preset | Settings return to the saved ones; Save with an existing name (any case) overwrites; Rename and Delete follow the chosen preset; Rename onto another preset's name is refused with a chip |
+| 31 | `localStorage` blocked (`Storage.prototype.setItem` throws) | The tab still works; settings just do not persist; no console errors |
+| 32 | Start a call with a preset loaded | The setup frame (`voiceFake.setup`) holds that preset's model, assistantId, voice, systemPrompt and bargeIn |
 
 ## Run log
 Filled in per run below.
@@ -45,3 +54,8 @@ does not exist); the Export select ignored the theme; the transcript got too lit
 into the header row).
 Not covered here: a real call (needs Whisper small.en, Kokoro and an LLMAssistant model).
 Review round (PR 99): late frames after Stop no longer revive the live layout; a server `Ended`/`Idle` state now releases the mic and socket; a failed Start after a dropped call keeps Reconnect; double-clicking Start opens one socket; informational chips expire after the call ends; text after a tool call starts a new bubble (order stays true in copy and export); one error chip, not two, on a failed connect. Re-checked in the browser with the fake socket; Node checks of `AudioVoiceState` extended.
+
+### 2026-11-18, PR 2 (setup panel, options route, presets): dev server on 7801, built-in browser
+Rows 24, 25, 27 to 30, 31 and 32 passed with `LLMAssistantGetModels`/`GetAssistants` stubbed in the page (this machine's LLMAssistant has no model, which is row 24 as it really is) and the real `AudioLabVoiceAgentOptions` route (54 voices in 9 language groups, default af_heart). Row 27's Preview ran for real: `AudioLabSpeakRaw` with Kokoro, the raw clip fetched and played to the end, the button disabled while it loaded (first use downloaded Kokoro-82M and the dictionaries). Row 32: the setup frame carried the loaded preset's model, assistantId, voice and barge-in; an empty prompt is omitted. Row 31: a throwing `setItem` left the tab working. At 900 px there is no horizontal overflow.
+Not run: row 26 (`llm_available: false` needs the route absent), row 23 (light theme), a real call (needs Whisper small.en and an LLMAssistant model).
+Found and fixed: the idle hint stayed on "Loading the language models…" after the list came back; Refresh now reloads the assistants too; the setup inputs were white on the dark theme (`.form-control`), now themed like the other DAW selects.
