@@ -3093,6 +3093,7 @@ input[type="range"].daw-group-volume { width: 54px; flex: none; }
 .daw-lyric-line.pos-current { transform: translateY(0.25rem) scale(1); opacity: 1; }
 .daw-lyric-line.pos-next { transform: translateY(2.4rem) scale(0.73); opacity: 0.7; }
 .daw-lyric-line.pos-after { transform: translateY(3.6rem) scale(0.66); opacity: 0; }
+.daw-lyric-line.pos-prev, .daw-lyric-line.pos-after { pointer-events: none; } /* invisible, so not clickable (pos-after still shows its top edge in the strip) */
 .daw-lyric-strip.daw-lyric-jump .daw-lyric-line { transition: none; }
 @media (prefers-reduced-motion: reduce) {
     .daw-lyric-line { transition: none; }
@@ -3109,7 +3110,7 @@ input[type="range"].daw-group-volume { width: 54px; flex: none; }
     .daw-lyric-word { color: var(--text-soft); background: none; }
     .daw-lyric-line.pos-current .daw-lyric-word { color: var(--emphasis); }
 }
-.daw-lyric-word:hover { text-decoration: underline; }
+.daw-lyric-word:hover { text-decoration: underline; text-decoration-color: var(--emphasis); } /* the text is transparent, so the underline needs its own colour */
 
 .daw-lyrics-panel {
     display: flex;

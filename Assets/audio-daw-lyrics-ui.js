@@ -190,8 +190,9 @@ const AudioDawLyricsUi = (() => {
             if (strip.hidden || time === renderedTime) return;
             renderedTime = time;
             AudioDawLyrics.lineAt(timeline, time, undefined, at);
-            // Between lines the line just finished stays the anchor (scrolled up), so the next one waits below until it starts
-            const anchor = at.current >= 0 ? at.current : at.next - 1;
+            // Between lines the line just finished stays the anchor (scrolled up), so the next one waits below until it starts;
+            // before the first line there is none (-1), and after the last one it is the last line (there is no next to count back from)
+            const anchor = at.current >= 0 ? at.current : (at.next >= 0 ? at.next - 1 : timeline.lines.length - 1);
             const idle = at.current < 0;
             if (anchor !== renderedAnchor || idle !== renderedIdle) {
                 const instant = renderedAnchor === NO_ANCHOR || Math.abs(anchor - renderedAnchor) > 1;

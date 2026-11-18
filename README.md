@@ -492,7 +492,7 @@ times) and **Export SRT** read and write lyric files. The Generate tab keeps the
 Word times are stored in the clip's source audio, so moving, trimming or splitting a clip never rewrites them: each piece shows
 the words inside its own window, and a part a later take covers shows none. Lyrics save with the project, undo like any other edit, and follow the vocal when the Stems
 tab is used. Words the aligner had no audio for (lyrics the singer left out are pressed into whatever time is left, a few frames each) are
-flagged as unsure: the strip leaves them out, the word table strikes them through, and the status line says how many; setting
+flagged as unsure: the strip and the LRC and SRT exports leave them out, the word table strikes them through, and the status line says how many; setting
 a word's time by hand keeps it. Timing typed lyrics fits one 30 s window: split a longer clip into sections first, or let it transcribe.
 
 ### Stems

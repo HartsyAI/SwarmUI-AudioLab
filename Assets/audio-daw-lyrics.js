@@ -30,7 +30,7 @@ const AudioDawLyrics = (() => {
     /** This many collapsed words in a row are flagged unsure. */
     const COLLAPSED_RUN = 3;
 
-    /** This many words in a row packed into less than `DENSE_SPAN` seconds are flagged unsure (over 9 words a second). */
+    /** This many words in a row packed into less than `DENSE_SPAN` seconds are flagged unsure (about 9 or more words a second). */
     const DENSE_WORDS = 8;
     const DENSE_SPAN = 0.9;
 

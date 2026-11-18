@@ -30,6 +30,7 @@ Needs the timed-words routes (PR 96) and Whisper `base` in the engine's model ca
 | 22 | Time typed lyrics that include lines the clip never sings (a made-up extra stanza at the end) | Those words are flagged unsure: struck through in the table, left off the strip, counted in the status line; the sung words keep their times |
 | 23 | Seek across several lines while the strip is showing | The lines jump into place without a long slide; a seek of one line still scrolls |
 | 24 | Set a time on an unsure word, save and reload | The word is no longer unsure and shows on the strip; unsure flags survive a reload |
+| 25 | Play (or seek) past the last line, then back into it | The last line stays on screen scrolled out of the top (filled, faded), then slides back into the current slot when you seek back; the strip never goes blank with a stray line below |
 
 Pass criteria: every row behaves as stated and the console shows no errors.
 
