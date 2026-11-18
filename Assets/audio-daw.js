@@ -1166,6 +1166,19 @@ const AudioDaw = (() => {
         return null;
     }
 
+    /**
+     * A clip that was split into stems is muted and its vocal stem plays instead, so the stem carries the lyrics: the clip's
+     * words re-based to start at 0 (what the stem's audio is), or none when the lyrics were cleared. No-op for a clip with no stem.
+     */
+    function mirrorLyricsToStem(clip, lyrics) {
+        const stem = findVocalStemOf(clip.id);
+        if (!stem || stem.clip === clip) return;
+        const meta = { ...(stem.clip.meta || {}) };
+        if (lyrics) meta.lyrics = AudioDawLyrics.rebase(lyrics, -(clip.offset || 0));
+        else delete meta.lyrics;
+        stem.clip.meta = Object.keys(meta).length ? meta : null;
+    }
+
     function initLyrics() {
         const container = document.getElementById('daw_container');
         const main = document.getElementById('daw_main');
@@ -1173,6 +1186,16 @@ const AudioDaw = (() => {
         lyricsUi?.destroy();
         lyricsUi = AudioDawLyricsUi.create(container, main, {
             getClips: () => state.tracks.flatMap(t => t.clips),
+            /** Where each layered clip is heard: a take covered by a later one shows no lyrics under it. */
+            getAudible: () => {
+                const heard = new Map();
+                for (const track of state.tracks) {
+                    if (track.clips.length > 1) {
+                        for (const [id, segments] of trackAudibleSegments(track)) heard.set(id, segments);
+                    }
+                }
+                return heard;
+            },
             getSelectedClip: () => findClipById(state.selectedClipId),
             findClip: (id) => findClipById(id),
             seek: (seconds) => seekTo(seconds),
@@ -1190,6 +1213,7 @@ const AudioDaw = (() => {
                 if (lyrics) meta.lyrics = AudioDawLyrics.copy(lyrics);
                 else delete meta.lyrics;
                 found.clip.meta = Object.keys(meta).length ? meta : null;
+                mirrorLyricsToStem(found.clip, lyrics);
                 scheduleAutosave();
                 lyricsUi?.refresh();
             },

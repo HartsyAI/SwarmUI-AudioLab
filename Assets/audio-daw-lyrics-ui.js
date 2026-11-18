@@ -6,7 +6,7 @@
  * the timing, and reads and writes lyric files. Everything about words and times lives in `AudioDawLyrics` (pure); the DAW
  * state, undo and the network calls are the host's, reached through the callbacks passed to `create`.
  *
- * Callbacks: `getClips()` all clips; `getSelectedClip()` -> `{ clip, track }` or null; `findClip(id)` -> `{ clip, track }`;
+ * Callbacks: `getClips()` all clips; `getAudible()` (optional) a `Map` of clip id to the timeline intervals where it is heard; `getSelectedClip()` -> `{ clip, track }` or null; `findClip(id)` -> `{ clip, track }`;
  * `commit(clipId, lyrics|null, label)` (undo step + store + refresh); `align(request)` -> the API result;
  * `seek(seconds)`; `listSttEngines()` -> `[{ id, name, models: [{ id, name }] }]`; `notify(text, kind)`.
  */
@@ -61,12 +61,6 @@ const AudioDawLyricsUi = (() => {
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
-    /** Seconds as "m:ss.s" for the word table. */
-    function clock(t) {
-        const m = Math.floor(Math.max(0, t) / 60);
-        return `${m}:${(Math.max(0, t) - m * 60).toFixed(1).padStart(4, '0')}`;
-    }
-
     /**
      * Build the strip and the tab controller.
      * @param {HTMLElement} stripHost - where the strip element is inserted (before `before`)
@@ -84,10 +78,14 @@ const AudioDawLyricsUi = (() => {
 
         let timeline = { words: [], lines: [] };
         let shown = readStored(STRIP_KEY, true) !== false;
-        let renderedKey = '';
+        let renderedCurrent = -2; // the line indexes painted by `syncTime` (-2: nothing painted yet)
+        let renderedNext = -2;
+        let renderedTime = NaN; // the time `syncTime` last worked out; the same time again does nothing
         let lastTime = 0;
         let currentSpans = [];
         let lastFills = [];
+        const at = { current: -1, next: -1 }; // reused every frame, so a frame that changes nothing allocates nothing
+        const fills = [];
         let panel = null;
 
         /** Fill one line element with a span per word; clicking a word seeks to it. */
@@ -113,10 +111,17 @@ const AudioDawLyricsUi = (() => {
             strip.hidden = !(shown && timeline.words.length > 0);
         }
 
+        /** Drop what `syncTime` remembers, so its next call paints from scratch. */
+        function forceRepaint() {
+            renderedCurrent = -2;
+            renderedNext = -2;
+            renderedTime = NaN;
+        }
+
         /** Rebuild the timeline from the project's clips (call after any clip or lyric change). */
         function refresh() {
-            timeline = AudioDawLyrics.buildTimeline(host.getClips());
-            renderedKey = '';
+            timeline = AudioDawLyrics.buildTimeline(host.getClips(), host.getAudible?.() || null);
+            forceRepaint();
             applyVisibility();
             syncTime(lastTime);
             panel?.update();
@@ -125,18 +130,19 @@ const AudioDawLyricsUi = (() => {
         /** Per-frame hook: show the lines around `time` and fill the sung part of the current line. */
         function syncTime(time) {
             lastTime = time;
-            if (strip.hidden) return;
-            const at = AudioDawLyrics.lineAt(timeline, time);
-            const key = `${at.current}:${at.next}`;
-            if (key !== renderedKey) {
-                renderedKey = key;
+            if (strip.hidden || time === renderedTime) return;
+            renderedTime = time;
+            AudioDawLyrics.lineAt(timeline, time, undefined, at);
+            if (at.current !== renderedCurrent || at.next !== renderedNext) {
+                renderedCurrent = at.current;
+                renderedNext = at.next;
                 currentSpans = paintLine(currentEl, at.current >= 0 ? timeline.lines[at.current] : null, true);
                 paintLine(nextEl, at.next >= 0 ? timeline.lines[at.next] : null, true);
                 lastFills = currentSpans.map(() => -1);
                 currentEl.classList.toggle('daw-lyric-idle', at.current < 0);
             }
             if (at.current < 0) return;
-            const fills = AudioDawLyrics.fillOf(timeline, timeline.lines[at.current], time);
+            AudioDawLyrics.fillOf(timeline, timeline.lines[at.current], time, fills);
             for (let i = 0; i < currentSpans.length && i < fills.length; i++) {
                 if (Math.abs(fills[i] - lastFills[i]) >= FILL_STEP || (fills[i] === 0 || fills[i] === 1) && fills[i] !== lastFills[i]) {
                     lastFills[i] = fills[i];
@@ -149,7 +155,7 @@ const AudioDawLyricsUi = (() => {
         function setShown(on) {
             shown = !!on;
             writeStored(STRIP_KEY, shown);
-            renderedKey = '';
+            forceRepaint();
             applyVisibility();
             syncTime(lastTime);
             panel?.update();
@@ -160,7 +166,7 @@ const AudioDawLyricsUi = (() => {
             pane.textContent = '';
             const root = createDiv(null, 'daw-lyrics-panel');
             pane.appendChild(root);
-            const stored = readStored(MODELS_KEY, {});
+            const stored = readStored(MODELS_KEY, {}) || {};
             const choice = { sttProvider: stored.sttProvider || '', sttModel: stored.sttModel || '', alignProvider: stored.alignProvider || '', alignModel: stored.alignModel || '' };
 
             const head = createDiv(null, 'daw-lyrics-head');
@@ -201,6 +207,10 @@ const AudioDawLyricsUi = (() => {
                 row.append(label, providerSel, modelSel);
                 const fill = () => {
                     const engines = host.listSttEngines();
+                    // The engine list loads after the tab is built: until it is here, keep the remembered choice
+                    if (!engines.length) {
+                        return;
+                    }
                     providerSel.textContent = '';
                     for (const e of engines) providerSel.add(new Option(e.name, e.id));
                     if (!engines.some(e => e.id === choice[providerKey])) {
@@ -249,9 +259,12 @@ const AudioDawLyricsUi = (() => {
             const bound = () => (boundId ? host.findClip(boundId) : null);
 
             /** Run the time-the-words job: align the typed lyrics, or transcribe when there are none. */
+            let aligning = false;
             const runAlign = async (forceTranscribe) => {
                 const found = bound();
-                if (!found) return;
+                if (!found || aligning) return;
+                aligning = true;
+                const clipId = found.clip.id;
                 const text = forceTranscribe ? '' : area.value;
                 const hasText = AudioDawLyrics.wordsOf(text).length > 0;
                 status.textContent = hasText ? translate('Timing the lyrics…') : translate('Listening…');
@@ -259,12 +272,13 @@ const AudioDawLyricsUi = (() => {
                 try {
                     const result = await host.align({
                         // Section tags like [Chorus] are for the reader, not the singer: the aligner gets only the sung lines
-                        clipId: found.clip.id, lyrics: hasText ? AudioDawLyrics.linesOf(text).join('\n') : '',
+                        clipId, lyrics: hasText ? AudioDawLyrics.linesOf(text).join('\n') : '',
                         sttProvider: choice.sttProvider, sttModel: choice.sttModel,
                         alignProvider: choice.alignProvider, alignModel: choice.alignModel
                     });
                     if (!result?.success) throw new Error(result?.error || 'No result');
-                    const now = bound();
+                    // The clip that was timed, even when the selection has moved on while the model worked
+                    const now = host.findClip(clipId);
                     if (!now) return;
                     const opts = { offset: now.clip.offset || 0, model: result.model || '' };
                     const apiWords = result.words || [];
@@ -281,7 +295,8 @@ const AudioDawLyricsUi = (() => {
                     host.notify(translate('Timing failed:') + ' ' + err.message, 'notice-pop-red');
                 }
                 finally {
-                    alignBtn.disabled = transcribeBtn.disabled = false;
+                    aligning = false;
+                    alignBtn.disabled = transcribeBtn.disabled = !bound();
                 }
             };
             const alignBtn = mkBtn(translate('Time the words'), translate('Time the typed lyrics against the clip (or listen to the clip when none are typed)'), () => runAlign(false));
@@ -352,7 +367,8 @@ const AudioDawLyricsUi = (() => {
                 b.addEventListener('click', onClick);
                 fileRow.appendChild(b);
             };
-            const exportTimeline = () => AudioDawLyrics.buildTimeline(bound() ? [bound().clip] : []);
+            // A muted clip (its vocal stem plays instead) still exports its own lyrics
+            const exportTimeline = () => AudioDawLyrics.buildTimeline(bound() ? [{ ...bound().clip, muted: false }] : []);
             mkFile(translate('Import LRC…'), translate('Read timed lyric lines from an .lrc file; its times are on the project timeline'), () => fileInput.click());
             mkFile(translate('Export LRC'), translate('Save this clip\'s lyrics with word times as an .lrc file'), () => {
                 const tl = exportTimeline();

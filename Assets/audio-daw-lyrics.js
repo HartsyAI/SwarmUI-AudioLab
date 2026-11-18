@@ -56,17 +56,17 @@ const AudioDawLyrics = (() => {
 
     /** Whether any word has a time (the lyrics can drive the strip). */
     function isTimed(lyrics) {
-        return !!lyrics && lyrics.words.length > 0;
+        return !!lyrics && Array.isArray(lyrics.words) && lyrics.words.length > 0;
     }
 
     /**
      * Give each word the index of the line it sits on. A word is looked up in the text after the previous one, so a repeated word
-     * ("la la la") lands where it was written; a word that cannot be found keeps the previous word's line.
+     * ("la la la") lands where it was written; case is ignored, and a word that cannot be found keeps the previous word's line.
      * @param {Array<{w: string}>} words - in order
      * @param {string[]} lines
      */
     function assignLines(words, lines) {
-        const text = lines.join('\n');
+        const text = lines.join('\n').toLowerCase();
         const starts = [];
         let at = 0;
         for (const l of lines) {
@@ -76,7 +76,7 @@ const AudioDawLyrics = (() => {
         let pointer = 0;
         let last = 0;
         for (const word of words) {
-            const found = text.indexOf(word.w, pointer);
+            const found = text.indexOf(String(word.w).toLowerCase(), pointer);
             if (found >= 0) {
                 let line = 0;
                 while (line + 1 < starts.length && starts[line + 1] <= found) line++;
@@ -222,8 +222,10 @@ const AudioDawLyrics = (() => {
         const out = [];
         lyrics.words.forEach((word, index) => {
             if (word.e <= offset || word.s >= offset + visible) return;
-            const start = clip.startTime + (word.s - offset);
-            out.push({ w: word.w, start, end: clip.startTime + (word.e - offset), line: word.line, index });
+            // A word that straddles the clip's edge is cut to the clip, so it never reaches into a neighbour
+            const start = Math.max(clip.startTime, clip.startTime + (word.s - offset));
+            const end = Math.min(clip.startTime + visible, clip.startTime + (word.e - offset));
+            out.push({ w: word.w, start, end, line: word.line, index });
         });
         return out;
     }
@@ -232,12 +234,19 @@ const AudioDawLyrics = (() => {
      * The whole project's lyrics laid out for the strip. `clips` is a list of clips; muted clips are skipped. The result is
      * `{ words, lines }`: `words` sorted by start (each with `lineKey` and `clipId`), and `lines` sorted by start, each
      * `{ key, clipId, start, end, first, last }` with `first` and `last` indexing `words`.
+     * `audible` is an optional `Map` of clip id to the timeline intervals `[start, end]` where the clip is heard (a take
+     * covered by a later one is not): words whose middle falls outside them are left out. A clip not in the map is whole.
      */
-    function buildTimeline(clips) {
+    function buildTimeline(clips, audible = null) {
         const words = [];
         for (const clip of clips || []) {
             if (clip.muted) continue;
+            const heard = audible?.get(clip.id) || null;
             for (const p of placed(clip)) {
+                if (heard) {
+                    const mid = (p.start + p.end) / 2;
+                    if (!heard.some(([s, e]) => mid >= s - 1e-6 && mid <= e + 1e-6)) continue;
+                }
                 words.push({ ...p, clipId: clip.id, lineKey: `${clip.id}:${p.line}` });
             }
         }
@@ -261,9 +270,10 @@ const AudioDawLyrics = (() => {
 
     /**
      * Which lines the strip shows at `time`: the line being sung (held for `hold` seconds after its last word) and the one after.
+     * @param {{current: number, next: number}} [out] - reused for the result when given (the strip asks every frame)
      * @returns {{current: number, next: number}} indexes into `timeline.lines`, -1 for none
      */
-    function lineAt(timeline, time, hold = 1.5) {
+    function lineAt(timeline, time, hold = 1.5, out = null) {
         const lines = timeline.lines;
         let lo = 0;
         let hi = lines.length - 1;
@@ -278,15 +288,15 @@ const AudioDawLyrics = (() => {
                 hi = mid - 1;
             }
         }
-        if (at >= 0 && time <= lines[at].end + hold) {
-            return { current: at, next: at + 1 < lines.length ? at + 1 : -1 };
-        }
-        return { current: -1, next: at + 1 < lines.length ? at + 1 : -1 };
+        const result = out || { current: -1, next: -1 };
+        result.current = at >= 0 && time <= lines[at].end + hold ? at : -1;
+        result.next = at + 1 < lines.length ? at + 1 : -1;
+        return result;
     }
 
-    /** How much of each word of a line is sung at `time`, 0 to 1, in the line's word order. */
-    function fillOf(timeline, line, time) {
-        const out = [];
+    /** How much of each word of a line is sung at `time`, 0 to 1, in the line's word order. `out` is reused when given. */
+    function fillOf(timeline, line, time, out = []) {
+        out.length = 0;
         for (let i = line.first; i <= line.last; i++) {
             const word = timeline.words[i];
             if (word.lineKey !== line.key) continue;
@@ -307,10 +317,10 @@ const AudioDawLyrics = (() => {
 
     /** "mm:ss.xx" for LRC, from seconds. */
     function stamp(t, wordLevel = false) {
-        const total = Math.max(0, t);
-        const m = Math.floor(total / 60);
-        const s = total - m * 60;
-        const text = `${String(m).padStart(2, '0')}:${s.toFixed(2).padStart(5, '0')}`;
+        // Whole hundredths first, so 59.999 s is 01:00.00 and never 00:60.00
+        const cs = Math.round(Math.max(0, t) * 100);
+        const m = Math.floor(cs / 6000);
+        const text = `${String(m).padStart(2, '0')}:${((cs - m * 6000) / 100).toFixed(2).padStart(5, '0')}`;
         return wordLevel ? `<${text}>` : `[${text}]`;
     }
 
@@ -325,13 +335,12 @@ const AudioDawLyrics = (() => {
 
     /** "hh:mm:ss,mmm" for SRT. */
     function srtStamp(t) {
-        const total = Math.max(0, t);
-        const h = Math.floor(total / 3600);
-        const m = Math.floor((total % 3600) / 60);
-        const s = Math.floor(total % 60);
-        const milli = Math.round((total - Math.floor(total)) * 1000);
-        const carry = milli === 1000;
-        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(carry ? s + 1 : s).padStart(2, '0')},${String(carry ? 0 : milli).padStart(3, '0')}`;
+        // Whole milliseconds first, so a rounding carry moves the minute and hour too
+        const total = Math.round(Math.max(0, t) * 1000);
+        const h = Math.floor(total / 3600000);
+        const m = Math.floor((total % 3600000) / 60000);
+        const s = Math.floor((total % 60000) / 1000);
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(total % 1000).padStart(3, '0')}`;
     }
 
     /** The timeline as an SRT file, one cue per lyric line. */
@@ -369,12 +378,14 @@ const AudioDawLyrics = (() => {
      * `toSource` turns a timeline second into a source second (the clip's start and offset).
      */
     function fromLrc(lrc, { toSource = (t) => t, lastLine = 4 } = {}) {
-        const entries = parseLrc(lrc);
+        // A bare section tag ("[Chorus]") is not a sung line; keeping it would shift every later line's time
+        const entries = parseLrc(lrc).filter(e => !TAG_LINE.test(e.text));
         if (!entries.length) return null;
         const text = entries.map(e => e.text).join('\n');
         const starts = entries.map(e => toSource(e.time));
         const end = starts[starts.length - 1] + lastLine;
-        const words = estimate(text, starts[0], end, starts);
+        // Lines that start before the clip's source begins have no audio to sit on
+        const words = estimate(text, starts[0], end, starts).filter(w => w.e > 0).map(w => ({ ...w, s: Math.max(0, w.s) }));
         return create({ text, words, source: 'lrc' });
     }
 
@@ -387,7 +398,9 @@ const AudioDawLyrics = (() => {
             const s = Number(x.s);
             const e = Number(x.e);
             if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
-            words.push({ w: x.w, s: Math.max(0, s), e: Math.max(s, e), line: Number.isInteger(x.line) && x.line >= 0 ? x.line : 0 });
+            if (e < 0) continue;
+            const start = Math.max(0, s);
+            words.push({ w: x.w, s: start, e: Math.max(start, e), line: Number.isInteger(x.line) && x.line >= 0 ? x.line : 0 });
         }
         return create({
             text: typeof raw.text === 'string' ? raw.text : words.map(w => w.w).join(' '),

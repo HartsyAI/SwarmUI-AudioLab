@@ -24,7 +24,9 @@ Needs the timed-words routes (PR 96) and Whisper `base` in the engine's model ca
 | 16 | Stems with a vocals stem, then Time the words on the original | The vocals stem carries the lyrics (the muted original no longer shows them); timing uses the stem |
 | 17 | Generate with a lyric engine and typed lyrics | The new clip has the lyrics in its Lyrics tab, untimed |
 | 18 | Pick a different speech model for "Hears the words" | The choice is kept on reload; the request names it |
-| 19 | Narrow the pane to about 900 px | One column, scrollable; the strip fits; no console errors |
+| 19 | Drop a second clip with lyrics over half of the first (same track) | Words under the covering clip's span show once, from the covering clip only; the strip does not flicker between two copies of a line |
+| 20 | Stems, then Time the words on the muted original | The vocals stem gets the new words (the strip follows the stem); Export LRC on the muted original still writes its lines |
+| 21 | Narrow the pane to about 900 px | One column, scrollable; the strip fits; no console errors |
 
 Pass criteria: every row behaves as stated and the console shows no errors.
 
@@ -32,12 +34,12 @@ Pass criteria: every row behaves as stated and the console shows no errors.
 
 2026-11-18, Chromium (built-in browser pane), Debug build against a local build of the engine PR, GPU, `whisper_stt` `base`, a
 13-word clip (16.4 s) with each word spoken on its own.
-Rows 1-4 and 6-11 (split only; move and trim share the same source-time mapping, which a Node check covers), 12-14 and 19 passed.
+Rows 1-4 and 6-11 (split only; move and trim share the same source-time mapping, which a Node check covers), 12-14 and 21 (then numbered 19) passed.
 Row 2: the first run sent the section tags to the aligner and they came back as words; fixed by sending only the sung lines.
 Row 3: sampled at 450 ms during real playback, fills advance word by word (e.g. `100%,100%,71%,0%` then `100%,100%,100%,15%`) and the
 line switches at its end. Row 9: nudge and a word edit undone and redone in order. Row 14: autosave resume restored 13 timed words.
 Pure logic (`AudioDawLyrics`) checked in Node: line and tag handling, alignment to lines, source-time mapping under move and split,
 line lookup, fills, LRC and SRT, import, edits, restore from junk.
 Row 5: a half of the clip transcribed to 10 words, broken into lines at pauses, text box filled, status `stt`.
-Not run: rows 15 (covered by a Node check), 16, 17, 18 (16 and 17 need a separation model and a lyric music engine, neither installed here), row 11 move
+Not run: rows 19 and 20 (added in code review; only the pure logic and the strip's frame handling were checked in Node), 15 (covered by a Node check), 16, 17, 18 (16 and 17 need a separation model and a lyric music engine, neither installed here), row 11 move
 and trim in the browser, the light theme.
