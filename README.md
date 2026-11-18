@@ -773,6 +773,17 @@ What the call view shows:
 - Call settings fold away while a call is live. If you scroll up in a long conversation the view stays where it is
   and **Jump to latest** brings you back.
 
+Call settings:
+
+- **Language model**: the models LLMAssistant reports, with a **Refresh** button for a provider you started after the
+  page loaded. With no model (or no LLMAssistant) the tab says why and **Start** stays off until there is one.
+- **Assistant**: LLMAssistant's assistants, or its default. **Voice**: every Kokoro voice, grouped by language, with a
+  **Preview** button that speaks a short line in the chosen voice (needs the Kokoro model). **System prompt** folds
+  away; **Allow barge-in** is on by default.
+- **Presets**: type a name and **Save** to keep the current settings; pick one from the list to load it, **Rename** or
+  **Delete** it. The settings you used last come back when the tab opens. Presets live in this browser
+  (`localStorage`), not on the server, so they are per browser and per device.
+
 What is pinned per call and what is yours to pick:
 
 - **Speech recognition and synthesis are fixed**: Whisper `small.en` and Kokoro, one voice at a time, shared by

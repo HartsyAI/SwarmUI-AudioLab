@@ -97,8 +97,9 @@ public static class AudioLabParams
     public static T2IRegisteredParam<string> KokoroBlendVoice;
     public static T2IRegisteredParam<double> KokoroBlendWeight;
 
-    /// <summary>All 54 official Kokoro voices from the model card, as id///label.</summary>
-    private static readonly List<string> KokoroVoices =
+    /// <summary>All 54 official Kokoro voices from the model card, as id///label. Internal so the Voice Agent's
+    /// options route offers the same list the parameter does.</summary>
+    internal static readonly List<string> KokoroVoices =
     [
         "af_heart///American English: Heart (F)",
         "af_alloy///American English: Alloy (F)",

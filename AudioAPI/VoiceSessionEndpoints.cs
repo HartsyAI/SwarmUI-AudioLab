@@ -48,6 +48,19 @@ public static class VoiceSessionEndpoints
     public static void Register()
     {
         API.RegisterAPICall(AudioLabVoiceSession, false, AudioLabPermissions.PermProcessAudio);
+        API.RegisterAPICall(AudioLabVoiceAgentOptions, false, AudioLabPermissions.PermProcessAudio);
+    }
+
+    /// <summary>What the Voice Agent tab can offer: the speech voices and whether LLMAssistant is present. The language
+    /// models and assistants themselves come from LLMAssistant's own routes, which the tab calls directly.
+    ///
+    /// <para>Whether LLMAssistant is present is answered per request from the API registry, not at startup: extensions
+    /// initialise in directory order, so it may not have registered yet when AudioLab starts (same reasoning as
+    /// <c>AudioLabScoreCapabilities</c>).</para></summary>
+    public static async Task<JObject> AudioLabVoiceAgentOptions(Session session)
+    {
+        await Task.CompletedTask;
+        return VoiceOptionsCatalog.Build(AudioLabParams.KokoroVoices, API.APIHandlers.ContainsKey("llmassistantgetmodels"));
     }
 
     /// <summary>One call. The handshake frame core already parsed for every route (<see cref="rawInput"/>, with

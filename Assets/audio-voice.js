@@ -60,13 +60,84 @@ const AudioVoice = (() => {
     let canReconnect = false;
     let starting = false; // a Start or Reconnect attempt is waiting on the microphone or the worklet
 
+    // Setup: the language models LLMAssistant offers, the voices, and the saved settings
+    const STORAGE_KEY = 'audiolab.voiceagent.v1';
+    const PREVIEW_TEXT = 'Hello! This is how I sound.';
+    const llm = { status: 'loading', models: [], warnings: [] };
+    let store = AudioVoiceState.createPresetStore();
+    let previewCtx = null;
+    let previewSource = null;
+    let previewToken = 0; // a newer preview (or a stop) makes an older one's fetch result stale
+
     function render(container) {
         if (!container || rendered) {
             return;
         }
         rendered = true;
+        store = loadStore();
         buildUi(container);
-        loadModels();
+        applySettings(store.last);
+        loadOptions();
+        setState(callState);
+    }
+
+    // ===== Saved settings =====
+
+    /** The stored presets and last-used settings. Storage can be missing, blocked or full, so every access is guarded. */
+    function loadStore() {
+        try {
+            return AudioVoiceState.parsePresetStore(localStorage.getItem(STORAGE_KEY));
+        }
+        catch (e) {
+            return AudioVoiceState.createPresetStore();
+        }
+    }
+
+    function persistStore() {
+        try {
+            localStorage.setItem(STORAGE_KEY, AudioVoiceState.serializePresetStore(store));
+        }
+        catch (e) { /* storage unavailable: the settings simply do not persist */ }
+    }
+
+    /** What the setup fields hold now. */
+    function readSettings() {
+        return AudioVoiceState.normalizeSettings({
+            model: els.model.value,
+            assistantId: els.assistantId.value,
+            voice: els.voice.value,
+            systemPrompt: els.systemPrompt.value,
+            bargeIn: els.bargeIn.checked
+        });
+    }
+
+    /** Put settings into the fields. A model, assistant or voice the lists do not have is kept as an extra option so it is not lost. */
+    function applySettings(settings) {
+        // Once the model list is known, a model it does not offer (an old preset) is not selectable: it would start a call that cannot answer.
+        const unavailable = llm.status === 'ready' && settings.model && !llm.models.some(m => m.id === settings.model);
+        setSelect(els.model, unavailable ? '' : settings.model, settings.model);
+        if (unavailable) {
+            pushNotice(`${translate('Saved model')} "${settings.model}" ${translate('is not available; using')} "${els.model.value}".`, 'info');
+        }
+        setSelect(els.assistantId, settings.assistantId, settings.assistantId);
+        setSelect(els.voice, settings.voice, settings.voice);
+        els.systemPrompt.value = settings.systemPrompt;
+        els.promptDetails.open = !!settings.systemPrompt;
+        els.bargeIn.checked = settings.bargeIn;
+        refreshControls();
+    }
+
+    function setSelect(select, value, label) {
+        if (value && ![...select.options].some(o => o.value === value)) {
+            select.add(new Option(label, value));
+        }
+        select.value = value || (select.options.length ? select.options[0].value : '');
+    }
+
+    /** The fields changed: remember them as the last-used settings. */
+    function onSettingsChanged() {
+        store.last = readSettings();
+        persistStore();
         setState(callState);
     }
 
@@ -128,43 +199,88 @@ const AudioVoice = (() => {
         summary.className = 'voice-agent-settings-summary';
         summary.innerText = translate('Call settings');
         els.settings.appendChild(summary);
+
+        // Presets: load one from the list; Save stores the current settings under the name typed
+        const presetRow = createDiv(null, 'voice-agent-presets');
+        els.presetSel = document.createElement('select');
+        els.presetSel.className = 'form-control voice-agent-select voice-agent-preset-select';
+        els.presetSel.title = translate('Saved presets');
+        els.presetSel.addEventListener('change', onPresetPicked);
+        presetRow.appendChild(els.presetSel);
+        els.presetName = document.createElement('input');
+        els.presetName.type = 'text';
+        els.presetName.maxLength = 40;
+        els.presetName.className = 'form-control voice-agent-input voice-agent-preset-name';
+        els.presetName.placeholder = translate('Preset name');
+        els.presetName.addEventListener('input', refreshPresetButtons);
+        els.presetName.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                onPresetSave();
+            }
+        });
+        presetRow.appendChild(els.presetName);
+        els.presetSave = btn(presetRow, translate('Save'), 'basic-button voice-agent-tool', onPresetSave);
+        els.presetRename = btn(presetRow, translate('Rename'), 'basic-button voice-agent-tool', onPresetRename);
+        els.presetDelete = btn(presetRow, translate('Delete'), 'basic-button voice-agent-tool', onPresetDelete);
+        els.settings.appendChild(presetRow);
+
         const setup = createDiv(null, 'voice-agent-setup');
+
+        // The language model comes from LLMAssistant; Refresh asks again (a provider may have started since the page loaded)
         els.model = document.createElement('select');
         els.model.className = 'form-control voice-agent-select';
-        els.modelField = labeled(setup, 'Model', els.model);
+        els.model.addEventListener('change', onSettingsChanged);
+        const modelWrap = createDiv(null, 'voice-agent-with-button');
+        modelWrap.appendChild(els.model);
+        els.modelRefresh = btn(modelWrap, translate('Refresh'), 'basic-button voice-agent-tool', () => {
+            loadModels();
+            loadAssistants();
+        });
+        labeled(setup, 'Language model', modelWrap);
 
-        els.assistantId = document.createElement('input');
-        els.assistantId.type = 'text';
-        els.assistantId.className = 'form-control voice-agent-input';
-        els.assistantId.placeholder = translate('(default assistant)');
+        els.assistantId = document.createElement('select');
+        els.assistantId.className = 'form-control voice-agent-select';
+        els.assistantId.add(new Option(translate('(default assistant)'), ''));
+        els.assistantId.addEventListener('change', onSettingsChanged);
         labeled(setup, 'Assistant', els.assistantId);
 
         els.voice = document.createElement('select');
         els.voice.className = 'form-control voice-agent-select';
-        for (const voice of ['af_heart', 'af_bella', 'af_nicole', 'am_adam', 'am_michael']) {
-            const opt = document.createElement('option');
-            opt.value = voice;
-            opt.innerText = voice;
-            els.voice.appendChild(opt);
-        }
-        labeled(setup, 'Voice', els.voice);
+        els.voice.addEventListener('change', onSettingsChanged);
+        const voiceWrap = createDiv(null, 'voice-agent-with-button');
+        voiceWrap.appendChild(els.voice);
+        els.previewBtn = btn(voiceWrap, translate('Preview'), 'basic-button voice-agent-tool', onPreviewClick);
+        els.previewBtn.title = translate('Hear this voice');
+        labeled(setup, 'Voice', voiceWrap);
 
         els.bargeIn = document.createElement('input');
         els.bargeIn.type = 'checkbox';
         els.bargeIn.checked = true;
         els.bargeIn.className = 'voice-agent-checkbox';
+        els.bargeIn.addEventListener('change', onSettingsChanged);
         const bargeWrap = createDiv(null, 'voice-agent-field voice-agent-field-inline');
         bargeWrap.appendChild(els.bargeIn);
         bargeWrap.appendChild(createSpan(null, 'voice-agent-field-label', translate('Allow barge-in')));
         setup.appendChild(bargeWrap);
         els.settings.appendChild(setup);
+        els.modelStatus = createDiv(null, 'voice-agent-model-status');
+        els.settings.appendChild(els.modelStatus);
 
+        // The system prompt is long and rarely changed, so it folds
+        els.promptDetails = document.createElement('details');
+        els.promptDetails.className = 'voice-agent-prompt-details';
+        const promptSummary = document.createElement('summary');
+        promptSummary.innerText = translate('System prompt');
+        els.promptDetails.appendChild(promptSummary);
         els.systemPrompt = document.createElement('textarea');
         els.systemPrompt.className = 'form-control voice-agent-prompt';
-        els.systemPrompt.rows = 2;
-        els.systemPrompt.placeholder = translate('System prompt (leave blank for the assistant default)');
-        els.settings.appendChild(els.systemPrompt);
+        els.systemPrompt.rows = 3;
+        els.systemPrompt.placeholder = translate('Leave blank for the assistant default');
+        els.systemPrompt.addEventListener('input', onSettingsChanged);
+        els.promptDetails.appendChild(els.systemPrompt);
+        els.settings.appendChild(els.promptDetails);
         root.appendChild(els.settings);
+        renderPresetList('');
 
         // --- Notices: chips you can dismiss ---
         els.notices = createDiv(null, 'voice-agent-notices');
@@ -205,44 +321,239 @@ const AudioVoice = (() => {
         container.appendChild(root);
     }
 
-    /** A model list that failed to load becomes a free-text id; the dropdown is swapped in place, not orphaned. */
-    function useFreeTextModel() {
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'form-control voice-agent-input';
-        input.placeholder = translate('model id');
-        els.model.replaceWith(input);
-        els.model = input;
+    // ===== Options: voices, language models, assistants =====
+
+    /** Ask the server what the tab can offer (the voices, and whether LLMAssistant is there), then fill the lists. */
+    function loadOptions() {
+        genericRequest('AudioLabVoiceAgentOptions', {}, data => {
+            fillVoices(data.voices || [], data.default_voice);
+            if (data.llm_available === false) {
+                llm.status = 'missing';
+                llm.models = [];
+                showModelStatus();
+                setState(callState);
+                return;
+            }
+            loadModels();
+            loadAssistants();
+        }, 0, () => {
+            // The options route is this extension's own: if it fails the page is out of step with the server. Keep the
+            // voice the settings hold and still try the models, so the tab degrades instead of going blank.
+            loadModels();
+            loadAssistants();
+        });
     }
 
+    /** The voice list, grouped by language. The saved voice is kept; with none saved the server's default is used. */
+    function fillVoices(voices, defaultVoice) {
+        const wanted = els.voice.value || defaultVoice;
+        els.voice.textContent = '';
+        for (const { group, voices: list } of AudioVoiceState.groupVoices(voices)) {
+            const optgroup = document.createElement('optgroup');
+            optgroup.label = group;
+            for (const voice of list) {
+                optgroup.appendChild(new Option(voice.name, voice.id));
+            }
+            els.voice.appendChild(optgroup);
+        }
+        setSelect(els.voice, wanted, wanted);
+    }
+
+    /** Fetch LLMAssistant's models. Safe to call again (Refresh); the chosen model is kept when it is still offered. */
     function loadModels() {
+        llm.status = 'loading';
+        showModelStatus();
+        setState(callState);
+        els.modelRefresh.disabled = true;
         genericRequest('LLMAssistantGetModels', {}, data => {
-            els.model.innerHTML = '';
-            for (const model of (data.models || [])) {
-                const opt = document.createElement('option');
-                opt.value = model.id;
-                opt.innerText = model.title || model.name || model.id;
-                els.model.appendChild(opt);
+            els.modelRefresh.disabled = false;
+            const wanted = els.model.value || store.last.model; // the list may have been empty a moment ago, which cleared the field
+            llm.models = (data.models || []).filter(m => m && m.id);
+            llm.warnings = Array.isArray(data.warnings) ? data.warnings : [];
+            els.model.textContent = '';
+            for (const model of llm.models) {
+                els.model.add(new Option(model.title || model.name || model.id, model.id));
             }
-            if (els.model.options.length === 0) {
-                const opt = document.createElement('option');
-                opt.value = '';
-                opt.innerText = translate('(no models reported -- type one in Assistant above if needed)');
-                els.model.appendChild(opt);
+            llm.status = llm.models.length ? 'ready' : 'empty';
+            if (llm.models.length) {
+                const keep = llm.models.some(m => m.id === wanted);
+                els.model.value = keep ? wanted : llm.models[0].id;
+                if (wanted && !keep) {
+                    pushNotice(`${translate('Saved model')} "${wanted}" ${translate('is not available; using')} "${els.model.value}".`, 'info');
+                }
+                onSettingsChanged();
             }
-        }, 0, () => {
-            // LLMAssistant may not be installed, or the route name may have moved; degrade to a free-text
-            // model id rather than leaving a dead dropdown.
-            useFreeTextModel();
+            showModelStatus();
+            setState(callState);
+        }, 0, (error) => {
+            els.modelRefresh.disabled = false;
+            llm.status = 'error';
+            llm.warnings = typeof error === 'string' && error ? [error] : [];
+            showModelStatus();
+            setState(callState);
         });
+    }
+
+    /** Fetch LLMAssistant's assistants for the Assistant list; the default entry stays if there are none or it is not installed. */
+    function loadAssistants() {
+        genericRequest('LLMAssistantGetAssistants', {}, data => {
+            const wanted = els.assistantId.value;
+            els.assistantId.textContent = '';
+            els.assistantId.add(new Option(translate('(default assistant)'), ''));
+            for (const assistant of (data.assistants || [])) {
+                if (assistant && assistant.id) {
+                    els.assistantId.add(new Option(assistant.name || assistant.title || assistant.id, assistant.id));
+                }
+            }
+            setSelect(els.assistantId, wanted, wanted);
+        }, 0, () => { /* the list stays at "default assistant"; the model list reports the real problem */ });
+    }
+
+    /** The line under the setup fields: why there is no model, and any provider warnings. */
+    function showModelStatus() {
+        const reason = llm.status === 'ready' ? '' : AudioVoiceState.startBlocker({ status: llm.status, model: els.model.value });
+        const lines = [reason, ...llm.warnings.map(String)].filter(Boolean).map(translate);
+        els.modelStatus.textContent = lines.join(' ');
+        els.modelStatus.classList.toggle('voice-agent-model-status-bad', llm.status === 'empty' || llm.status === 'missing' || llm.status === 'error');
+        els.modelStatus.hidden = lines.length === 0;
+        els.modelRefresh.hidden = llm.status === 'missing';
+    }
+
+    // ===== Presets =====
+
+    /** The preset list: a "Presets" heading entry, then the saved names; `selected` is one to show chosen. */
+    function renderPresetList(selected) {
+        els.presetSel.textContent = '';
+        els.presetSel.add(new Option(store.presets.length ? translate('Presets…') : translate('No presets yet'), ''));
+        for (const preset of store.presets) {
+            els.presetSel.add(new Option(preset.name, preset.name));
+        }
+        els.presetSel.value = AudioVoiceState.findPreset(store, selected)?.name || '';
+        refreshPresetButtons();
+    }
+
+    /** Save needs a name, Rename a chosen preset and a name, Delete a chosen preset. */
+    function refreshPresetButtons() {
+        const chosen = els.presetSel.value;
+        const name = AudioVoiceState.cleanPresetName(els.presetName.value);
+        els.presetSave.disabled = !name;
+        els.presetRename.disabled = !chosen || !name || name === chosen;
+        els.presetDelete.disabled = !chosen;
+    }
+
+    function onPresetPicked() {
+        const preset = AudioVoiceState.findPreset(store, els.presetSel.value);
+        els.presetName.value = preset ? preset.name : '';
+        if (preset) {
+            applySettings(preset.settings);
+            onSettingsChanged();
+        }
+        refreshPresetButtons();
+    }
+
+    function onPresetSave() {
+        const saved = AudioVoiceState.savePreset(store, els.presetName.value, readSettings());
+        if (!saved) {
+            pushNotice(translate(els.presetName.value.trim() ? 'There is no room for another preset; delete one first.' : 'Type a name for the preset.'), 'info');
+            return;
+        }
+        persistStore();
+        renderPresetList(saved.name);
+        pushNotice(`${translate('Saved preset')} "${saved.name}".`, 'info');
+    }
+
+    function onPresetRename() {
+        const from = els.presetSel.value;
+        if (!AudioVoiceState.renamePreset(store, from, els.presetName.value)) {
+            pushNotice(translate('That name is already used by another preset.'), 'info');
+            return;
+        }
+        persistStore();
+        renderPresetList(els.presetName.value);
+    }
+
+    function onPresetDelete() {
+        const name = els.presetSel.value;
+        if (AudioVoiceState.deletePreset(store, name)) {
+            persistStore();
+            els.presetName.value = '';
+            renderPresetList('');
+            pushNotice(`${translate('Deleted preset')} "${name}".`, 'info');
+        }
+    }
+
+    // ===== Voice preview =====
+
+    /** Speak a short line in the chosen voice through the server's raw speech route (Kokoro), so the voice can be judged before a call. */
+    function onPreviewClick() {
+        if (AudioVoiceState.describeState(callState).live) {
+            return; // it would play into the open microphone
+        }
+        stopPreview();
+        const token = ++previewToken;
+        els.previewBtn.disabled = true;
+        previewCtx = previewCtx || new (window.AudioContext || window.webkitAudioContext)(); // made inside the click, so the browser lets it play
+        const ctx = previewCtx;
+        const finish = () => {
+            if (token === previewToken) {
+                els.previewBtn.disabled = false;
+            }
+        };
+        genericRequest('AudioLabSpeakRaw', { text: PREVIEW_TEXT, provider_id: 'kokoro_tts', voice: els.voice.value, sample_rate: OUTBOUND_SAMPLE_RATE }, async data => {
+            try {
+                const response = await fetch(new URL(data.url, document.baseURI));
+                if (!response.ok) {
+                    throw new Error(response.statusText);
+                }
+                const pcm = new Int16Array(await response.arrayBuffer());
+                if (token !== previewToken) {
+                    return;
+                }
+                if (pcm.length === 0) {
+                    finish();
+                    return;
+                }
+                await ctx.resume();
+                const buffer = ctx.createBuffer(1, pcm.length, data.sample_rate || OUTBOUND_SAMPLE_RATE);
+                const floats = buffer.getChannelData(0);
+                for (let i = 0; i < pcm.length; i++) {
+                    floats[i] = pcm[i] / 32768;
+                }
+                previewSource = ctx.createBufferSource();
+                previewSource.buffer = buffer;
+                previewSource.connect(ctx.destination);
+                previewSource.onended = finish;
+                previewSource.start();
+            }
+            catch (e) {
+                pushNotice(`${translate('The voice preview could not play.')} ${e?.message || ''}`.trim(), 'error');
+                finish();
+            }
+        }, 0, (error) => {
+            pushNotice(`${translate('The voice preview needs the Kokoro voice model.')} ${error || ''}`.trim(), 'error');
+            finish();
+        });
+    }
+
+    function stopPreview() {
+        previewToken++;
+        if (previewSource) {
+            previewSource.onended = null;
+            try { previewSource.stop(); } catch (e) { /* already finished */ }
+            previewSource = null;
+        }
+        els.previewBtn.disabled = false;
     }
 
     /** Which buttons make sense for the call as it is now. */
     function refreshControls() {
         const live = AudioVoiceState.describeState(callState).live;
+        const blocked = AudioVoiceState.startBlocker({ status: llm.status, model: els.model.value });
         els.startBtn.hidden = live || canReconnect;
-        els.startBtn.disabled = false;
-        els.reconnectBtn.disabled = false;
+        els.startBtn.disabled = !!blocked;
+        els.startBtn.title = blocked ? translate(blocked) : '';
+        els.reconnectBtn.disabled = !!blocked;
+        els.reconnectBtn.title = els.startBtn.title;
         els.reconnectBtn.hidden = live || !canReconnect;
         els.stopBtn.hidden = !live;
         els.copyBtn.disabled = els.clearBtn.disabled = transcript.entries.length === 0;
@@ -253,9 +564,10 @@ const AudioVoice = (() => {
 
     /** Start (or reconnect) a call; one attempt at a time, since the mic and the worklet load are asynchronous. */
     async function onStartClick() {
-        if (starting || (callState !== 'idle' && callState !== 'ended')) {
+        if (starting || (callState !== 'idle' && callState !== 'ended') || AudioVoiceState.startBlocker({ status: llm.status, model: els.model.value })) {
             return;
         }
+        stopPreview();
         starting = true;
         const hadReconnect = canReconnect;
         els.startBtn.disabled = true;
@@ -424,13 +736,14 @@ const AudioVoice = (() => {
         ws = socket;
         socket.binaryType = 'arraybuffer';
         socket.onopen = () => {
+            const settings = readSettings();
             socket.send(JSON.stringify({
                 session_id: session_id,
-                model: els.model.value,
-                assistantId: els.assistantId.value.trim() || undefined,
-                voice: els.voice.value,
-                systemPrompt: els.systemPrompt.value.trim() || undefined,
-                bargeIn: els.bargeIn.checked,
+                model: settings.model,
+                assistantId: settings.assistantId.trim() || undefined,
+                voice: settings.voice,
+                systemPrompt: settings.systemPrompt.trim() || undefined,
+                bargeIn: settings.bargeIn,
                 inputRate: inputRate,
             }));
         };
@@ -589,7 +902,8 @@ const AudioVoice = (() => {
         els.state.innerText = translate(info.label);
         els.state.className = `voice-agent-state voice-agent-state-${info.key}`;
         els.orb.className = `voice-agent-orb voice-agent-tone-${info.tone}`;
-        els.hint.innerText = translate(info.hint);
+        const blocked = info.live ? '' : AudioVoiceState.startBlocker({ status: llm.status, model: els.model.value });
+        els.hint.innerText = translate(blocked || info.hint); // when idle and not ready to call, say what is missing
         if (!info.live) {
             els.timer.innerText = '';
         }
