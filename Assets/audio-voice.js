@@ -64,6 +64,8 @@ const AudioVoice = (() => {
     const STORAGE_KEY = 'audiolab.voiceagent.v1';
     const PREVIEW_TEXT = 'Hello! This is how I sound.';
     const llm = { status: 'loading', models: [], warnings: [] };
+    // What the server offers to hear and speak with: { stt: [{id, name, note}], tts: [{engine, name, note, provider_id, default_voice, voices}], defaultStt, defaultTts }
+    let engines = { stt: [], tts: [], defaultStt: '', defaultTts: '' };
     let store = AudioVoiceState.createPresetStore();
     let previewCtx = null;
     let previewSource = null;
@@ -107,7 +109,9 @@ const AudioVoice = (() => {
             assistantId: els.assistantId.value,
             voice: els.voice.value,
             systemPrompt: els.systemPrompt.value,
-            bargeIn: els.bargeIn.checked
+            bargeIn: els.bargeIn.checked,
+            sttModel: els.stt.value,
+            ttsEngine: els.engine.value
         });
     }
 
@@ -120,10 +124,16 @@ const AudioVoice = (() => {
             pushNotice(`${translate('Saved model')} "${settings.model}" ${translate('is not available; using')} "${els.model.value}".`, 'info');
         }
         setSelect(els.assistantId, settings.assistantId, settings.assistantId);
-        setSelect(els.voice, settings.voice, settings.voice);
+        // Once the server's lists are known a recognizer or engine it does not offer (an old preset) is replaced by the default: the server would refuse it.
+        const stt = engines.stt.length ? AudioVoiceState.pickOption(engines.stt.map(c => c.id), settings.sttModel, engines.defaultStt) : settings.sttModel;
+        const engine = engines.tts.length ? AudioVoiceState.pickOption(engines.tts.map(c => c.engine), settings.ttsEngine, engines.defaultTts) : settings.ttsEngine;
+        setSelect(els.stt, stt, stt);
+        setSelect(els.engine, engine, engine);
+        fillVoices(settings.voice); // after the engine: the voice list is the engine's
         els.systemPrompt.value = settings.systemPrompt;
         els.promptDetails.open = !!settings.systemPrompt;
         els.bargeIn.checked = settings.bargeIn;
+        showEngineNote();
         refreshControls();
     }
 
@@ -244,6 +254,21 @@ const AudioVoice = (() => {
         els.assistantId.addEventListener('change', onSettingsChanged);
         labeled(setup, 'Assistant', els.assistantId);
 
+        els.stt = document.createElement('select');
+        els.stt.className = 'form-control voice-agent-select';
+        els.stt.addEventListener('change', onSettingsChanged);
+        els.stt.addEventListener('change', showEngineNote);
+        labeled(setup, 'Hears you', els.stt);
+
+        els.engine = document.createElement('select');
+        els.engine.className = 'form-control voice-agent-select';
+        els.engine.addEventListener('change', () => {
+            fillVoices(''); // the new engine's own voices; its default is picked
+            onSettingsChanged();
+            showEngineNote();
+        });
+        labeled(setup, 'Speaks with', els.engine);
+
         els.voice = document.createElement('select');
         els.voice.className = 'form-control voice-agent-select';
         els.voice.addEventListener('change', onSettingsChanged);
@@ -265,6 +290,8 @@ const AudioVoice = (() => {
         els.settings.appendChild(setup);
         els.modelStatus = createDiv(null, 'voice-agent-model-status');
         els.settings.appendChild(els.modelStatus);
+        els.engineNote = createDiv(null, 'voice-agent-model-status');
+        els.settings.appendChild(els.engineNote);
 
         // The system prompt is long and rarely changed, so it folds
         els.promptDetails = document.createElement('details');
@@ -326,7 +353,7 @@ const AudioVoice = (() => {
     /** Ask the server what the tab can offer (the voices, and whether LLMAssistant is there), then fill the lists. */
     function loadOptions() {
         genericRequest('AudioLabVoiceAgentOptions', {}, data => {
-            fillVoices(data.voices || [], data.default_voice);
+            fillEngines(data);
             if (data.llm_available === false) {
                 llm.status = 'missing';
                 llm.models = [];
@@ -338,17 +365,51 @@ const AudioVoice = (() => {
             loadAssistants();
         }, 0, () => {
             // The options route is this extension's own: if it fails the page is out of step with the server. Keep the
-            // voice the settings hold and still try the models, so the tab degrades instead of going blank.
+            // choices the settings hold and still try the models, so the tab degrades instead of going blank.
             loadModels();
             loadAssistants();
         });
     }
 
-    /** The voice list, grouped by language. The saved voice is kept; with none saved the server's default is used. */
-    function fillVoices(voices, defaultVoice) {
-        const wanted = els.voice.value || defaultVoice;
+    /** Fill the recognizer and speech-engine lists from the server's options. A saved choice the server no longer lists, or none saved, becomes its default. */
+    function fillEngines(data) {
+        engines = {
+            stt: data.stt || [],
+            tts: data.tts || [],
+            defaultStt: data.default_stt || '',
+            defaultTts: data.default_tts || ''
+        };
+        const wantedStt = els.stt.value;
+        els.stt.textContent = '';
+        for (const choice of engines.stt) {
+            els.stt.add(new Option(choice.name, choice.id));
+        }
+        els.stt.value = AudioVoiceState.pickOption(engines.stt.map(c => c.id), wantedStt, engines.defaultStt);
+        const wantedEngine = els.engine.value;
+        els.engine.textContent = '';
+        for (const choice of engines.tts) {
+            els.engine.add(new Option(choice.name, choice.engine));
+        }
+        els.engine.value = AudioVoiceState.pickOption(engines.tts.map(c => c.engine), wantedEngine, engines.defaultTts);
+        fillVoices(els.voice.value);
+        showEngineNote();
+        onSettingsChanged();
+    }
+
+    /** The chosen engine's offer, or null before the options arrive. */
+    function currentEngine() {
+        return engines.tts.find(c => c.engine === els.engine.value) || null;
+    }
+
+    /** The voice list of the chosen engine, grouped by language. `wanted` is kept when that engine has it; otherwise the engine's default. */
+    function fillVoices(wanted) {
+        const engine = currentEngine();
+        if (!engine) {
+            setSelect(els.voice, wanted, wanted); // options not here yet: keep what the settings hold
+            return;
+        }
         els.voice.textContent = '';
-        for (const { group, voices: list } of AudioVoiceState.groupVoices(voices)) {
+        for (const { group, voices: list } of AudioVoiceState.groupVoices(engine.voices)) {
             const optgroup = document.createElement('optgroup');
             optgroup.label = group;
             for (const voice of list) {
@@ -356,7 +417,19 @@ const AudioVoice = (() => {
             }
             els.voice.appendChild(optgroup);
         }
-        setSelect(els.voice, wanted, wanted);
+        els.voice.value = AudioVoiceState.pickOption(engine.voices.map(v => v.id), wanted, engine.default_voice);
+    }
+
+    /** What the chosen recognizer and engine are good for, and that a model used for the first time is fetched. */
+    function showEngineNote() {
+        const stt = engines.stt.find(c => c.id === els.stt.value);
+        const engine = currentEngine();
+        const parts = [stt?.note, engine?.note].filter(Boolean).map(translate);
+        if (parts.length) {
+            parts.push(translate('The first call with a model not used before downloads it, which takes longer.'));
+        }
+        els.engineNote.textContent = parts.join(' ');
+        els.engineNote.hidden = parts.length === 0;
     }
 
     /** Fetch LLMAssistant's models. Safe to call again (Refresh); the chosen model is kept when it is still offered. */
@@ -499,7 +572,7 @@ const AudioVoice = (() => {
                 els.previewBtn.disabled = false;
             }
         };
-        genericRequest('AudioLabSpeakRaw', { text: PREVIEW_TEXT, provider_id: 'kokoro_tts', voice: els.voice.value, sample_rate: OUTBOUND_SAMPLE_RATE }, async data => {
+        genericRequest('AudioLabSpeakRaw', { text: PREVIEW_TEXT, provider_id: currentEngine()?.provider_id || 'kokoro_tts', voice: els.voice.value, sample_rate: OUTBOUND_SAMPLE_RATE }, async data => {
             try {
                 const response = await fetch(new URL(data.url, document.baseURI));
                 if (!response.ok) {
@@ -530,7 +603,7 @@ const AudioVoice = (() => {
                 finish();
             }
         }, 0, (error) => {
-            pushNotice(`${translate('The voice preview needs the Kokoro voice model.')} ${error || ''}`.trim(), 'error');
+            pushNotice(`${translate('The voice preview needs this voice model downloaded.')} ${error || ''}`.trim(), 'error');
             finish();
         });
     }
@@ -744,6 +817,8 @@ const AudioVoice = (() => {
                 voice: settings.voice,
                 systemPrompt: settings.systemPrompt.trim() || undefined,
                 bargeIn: settings.bargeIn,
+                sttModel: settings.sttModel || undefined,
+                ttsEngine: settings.ttsEngine || undefined,
                 inputRate: inputRate,
             }));
         };

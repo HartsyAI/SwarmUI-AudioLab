@@ -40,17 +40,34 @@ internal static class VoiceOptionsCatalog
         return choices;
     }
 
-    /// <summary>The route's response. <paramref name="llmAvailable"/> is whether LLMAssistant's routes are registered
-    /// (its models and assistants are listed by the tab through those routes, not copied here).</summary>
-    public static JObject Build(IEnumerable<string> kokoroEntries, bool llmAvailable)
+    /// <summary>The route's response: the recognizers, the speech engines with their voices, the defaults, and whether LLMAssistant
+    /// is present (<paramref name="llmAvailable"/>; its models and assistants are listed by the tab through its own routes, not
+    /// copied here).</summary>
+    public static JObject Build(bool llmAvailable)
     {
-        List<VoiceChoice> voices = ParseVoices(kokoroEntries);
-        string defaultVoice = voices.Any(v => v.Id == DefaultVoice) ? DefaultVoice : voices.FirstOrDefault().Id ?? DefaultVoice;
+        JArray stt = new(VoiceEngineCatalog.Stt.Select(s => new JObject { ["id"] = s.Id, ["name"] = s.Name, ["note"] = s.Note }));
+        JArray tts = [];
+        foreach (TtsEngineChoice engine in VoiceEngineCatalog.TtsEngines)
+        {
+            List<VoiceChoice> voices = ParseVoices(VoiceEngineCatalog.VoiceEntries(engine.Engine));
+            string defaultVoice = voices.Any(v => v.Id == engine.DefaultVoice) ? engine.DefaultVoice : voices.FirstOrDefault().Id ?? engine.DefaultVoice;
+            tts.Add(new JObject
+            {
+                ["engine"] = engine.Engine,
+                ["name"] = engine.Name,
+                ["note"] = engine.Note,
+                ["provider_id"] = engine.ProviderId,
+                ["default_voice"] = defaultVoice,
+                ["voices"] = new JArray(voices.Select(v => new JObject { ["id"] = v.Id, ["name"] = v.Name, ["group"] = v.Group })),
+            });
+        }
         return new JObject
         {
             ["success"] = true,
-            ["voices"] = new JArray(voices.Select(v => new JObject { ["id"] = v.Id, ["name"] = v.Name, ["group"] = v.Group })),
-            ["default_voice"] = defaultVoice,
+            ["stt"] = stt,
+            ["default_stt"] = VoiceEngineCatalog.DefaultStt,
+            ["tts"] = tts,
+            ["default_tts"] = VoiceEngineCatalog.DefaultTtsEngine,
             ["llm_available"] = llmAvailable,
         };
     }
