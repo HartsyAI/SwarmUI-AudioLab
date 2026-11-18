@@ -24,6 +24,16 @@ const AudioDawLyrics = (() => {
     /** Longest a word is stretched when timing is only estimated, in seconds. */
     const MAX_ESTIMATED_WORD = 1.2;
 
+    /** A word shorter than this, in seconds, is collapsed: the aligner gave it a frame or two. */
+    const COLLAPSED_WORD = 0.06;
+
+    /** This many collapsed words in a row are flagged unsure. */
+    const COLLAPSED_RUN = 3;
+
+    /** This many words in a row packed into less than `DENSE_SPAN` seconds are flagged unsure (over 9 words a second). */
+    const DENSE_WORDS = 8;
+    const DENSE_SPAN = 0.9;
+
     /** Round to milliseconds, so stored times stay short and stable. */
     function ms(t) {
         return Math.round(t * 1000) / 1000;
@@ -54,9 +64,57 @@ const AudioDawLyrics = (() => {
         return lyrics ? create(lyrics) : null;
     }
 
-    /** Whether any word has a time (the lyrics can drive the strip). */
+    /** Whether any word has a time the strip can use (words flagged unsure do not count). */
     function isTimed(lyrics) {
-        return !!lyrics && Array.isArray(lyrics.words) && lyrics.words.length > 0;
+        return !!lyrics && Array.isArray(lyrics.words) && lyrics.words.some(w => !w.u);
+    }
+
+    /** How many words are flagged unsure (probably not sung). */
+    function unsureCount(lyrics) {
+        return Array.isArray(lyrics?.words) ? lyrics.words.reduce((n, w) => n + (w.u ? 1 : 0), 0) : 0;
+    }
+
+    /**
+     * Flag the words a forced alignment most likely invented. The aligner is given text and has to put every word somewhere:
+     * lyrics the singer left out (a chorus that was never sung) are pressed into whatever stretch is left, as words a frame or
+     * two long, or as far more words per second than anyone sings. Those words are marked `u` (unsure) so the strip leaves them
+     * out and the tab can say so, instead of showing them in the wrong place. A run of `COLLAPSED_RUN` or more words under
+     * `COLLAPSED_WORD` seconds each is flagged, and so is any `DENSE_WORDS` consecutive words that span less than `DENSE_SPAN`.
+     * @param {Array<{s: number, e: number}>} words - in order; flagged in place
+     * @returns {Array} the same array
+     */
+    function markUnsure(words) {
+        const n = words.length;
+        for (const w of words) delete w.u;
+        let runStart = -1;
+        for (let i = 0; i <= n; i++) {
+            const collapsed = i < n && words[i].e - words[i].s < COLLAPSED_WORD;
+            if (collapsed && runStart < 0) {
+                runStart = i;
+            }
+            else if (!collapsed && runStart >= 0) {
+                if (i - runStart >= COLLAPSED_RUN) {
+                    for (let k = runStart; k < i; k++) words[k].u = true;
+                }
+                runStart = -1;
+            }
+        }
+        for (let i = 0; i + DENSE_WORDS <= n; i++) {
+            if (words[i + DENSE_WORDS - 1].e - words[i].s < DENSE_SPAN) {
+                for (let k = i; k < i + DENSE_WORDS; k++) words[k].u = true;
+            }
+        }
+        // A squeeze rarely ends cleanly: the word that stretches over the leftover audio, or one a frame long, sits at its
+        // edge. A word beside a flagged run is flagged too when it is collapsed itself or the next one in is, which carries
+        // the flag to the end of the squeeze without eating real words that merely follow it.
+        const collapsed = (k) => k >= 0 && k < n && words[k].e - words[k].s < COLLAPSED_WORD;
+        for (let i = 1; i < n; i++) {
+            if (!words[i].u && words[i - 1].u && (collapsed(i) || collapsed(i + 1))) words[i].u = true;
+        }
+        for (let i = n - 2; i >= 0; i--) {
+            if (!words[i].u && words[i + 1].u && (collapsed(i) || collapsed(i - 1))) words[i].u = true;
+        }
+        return words;
     }
 
     /**
@@ -100,6 +158,7 @@ const AudioDawLyrics = (() => {
             words.push({ w, s: ms(x.start + offset), e: ms(Math.max(x.end, x.start) + offset), line: 0 });
         }
         assignLines(words, linesOf(text));
+        markUnsure(words);
         return create({ text, words, source, model });
     }
 
@@ -207,6 +266,7 @@ const AudioDawLyrics = (() => {
         const hi = next ? next.e : Infinity;
         if (Number.isFinite(s)) w.s = ms(Math.min(Math.max(s, lo), w.e));
         if (Number.isFinite(e)) w.e = ms(Math.max(Math.min(e, hi), w.s));
+        delete w.u; // a time set by hand is a time the user stands behind
         return create({ ...lyrics, words });
     }
 
@@ -221,7 +281,7 @@ const AudioDawLyrics = (() => {
         const visible = (clip.duration || 0) - offset - (clip.trimEnd || 0);
         const out = [];
         lyrics.words.forEach((word, index) => {
-            if (word.e <= offset || word.s >= offset + visible) return;
+            if (word.u || word.e <= offset || word.s >= offset + visible) return;
             // A word that straddles the clip's edge is cut to the clip, so it never reaches into a neighbour
             const start = Math.max(clip.startTime, clip.startTime + (word.s - offset));
             const end = Math.min(clip.startTime + visible, clip.startTime + (word.e - offset));
@@ -400,7 +460,9 @@ const AudioDawLyrics = (() => {
             if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
             if (e < 0) continue;
             const start = Math.max(0, s);
-            words.push({ w: x.w, s: start, e: Math.max(start, e), line: Number.isInteger(x.line) && x.line >= 0 ? x.line : 0 });
+            const word = { w: x.w, s: start, e: Math.max(start, e), line: Number.isInteger(x.line) && x.line >= 0 ? x.line : 0 };
+            if (x.u === true) word.u = true;
+            words.push(word);
         }
         return create({
             text: typeof raw.text === 'string' ? raw.text : words.map(w => w.w).join(' '),
@@ -411,7 +473,7 @@ const AudioDawLyrics = (() => {
     }
 
     return {
-        linesOf, wordsOf, create, copy, isTimed, assignLines, fromAlignment, fromTranscript, estimate, setText, shift,
+        linesOf, wordsOf, create, copy, isTimed, unsureCount, markUnsure, assignLines, fromAlignment, fromTranscript, estimate, setText, shift,
         setWordTime, rebase, placed, buildTimeline, lineAt, fillOf, wordsOfLine, toLrc, toSrt, parseLrc, fromLrc, restore
     };
 })();

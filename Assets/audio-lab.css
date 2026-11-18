@@ -3062,43 +3062,52 @@ input[type="range"].daw-group-volume { width: 54px; flex: none; }
 
 /* ===== LYRICS: strip and tab ===== */
 .daw-lyric-strip {
+    position: relative;
     flex-shrink: 0;
-    padding: 0.3rem 1.4rem 0.4rem;
+    height: 4.3rem;
+    overflow: hidden;
     border-bottom: 1px solid var(--border-color);
     background: var(--background-soft);
-    text-align: center;
 }
 .daw-lyric-strip[hidden] { display: none; }
+/* Every line is one element that glides between four slots, so a line scrolls up from "next" to "current" and out the top
+   with its fill intact, and the one behind it rises from below. Scale rather than font size keeps the move on the compositor. */
 .daw-lyric-line {
-    line-height: 1.45;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    padding: 0 1.4rem;
+    text-align: center;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-}
-.daw-lyric-current {
-    min-height: 2rem;
     font-size: 1.3rem;
     font-weight: 600;
+    line-height: 1.5;
+    transform-origin: 50% 0;
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.4s ease;
+    will-change: transform, opacity;
 }
-.daw-lyric-next {
-    min-height: 1.4rem;
-    font-size: 0.95rem;
-    color: var(--text-soft);
+.daw-lyric-line.pos-prev { transform: translateY(-1.5rem) scale(0.72); opacity: 0; }
+.daw-lyric-line.pos-current { transform: translateY(0.25rem) scale(1); opacity: 1; }
+.daw-lyric-line.pos-next { transform: translateY(2.4rem) scale(0.73); opacity: 0.7; }
+.daw-lyric-line.pos-after { transform: translateY(3.6rem) scale(0.66); opacity: 0; }
+.daw-lyric-strip.daw-lyric-jump .daw-lyric-line { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+    .daw-lyric-line { transition: none; }
 }
-.daw-lyric-idle { opacity: 0.4; }
 .daw-lyric-word {
     --fill: 0%;
     cursor: pointer;
-    color: var(--text-soft);
-}
-.daw-lyric-current .daw-lyric-word {
     color: transparent;
     background: linear-gradient(90deg, var(--emphasis) var(--fill), var(--text-soft) var(--fill));
     -webkit-background-clip: text;
     background-clip: text;
 }
 @supports not ((background-clip: text) or (-webkit-background-clip: text)) {
-    .daw-lyric-current .daw-lyric-word { color: var(--emphasis); background: none; }
+    .daw-lyric-word { color: var(--text-soft); background: none; }
+    .daw-lyric-line.pos-current .daw-lyric-word { color: var(--emphasis); }
 }
 .daw-lyric-word:hover { text-decoration: underline; }
 
@@ -3173,5 +3182,6 @@ input[type="range"].daw-group-volume { width: 54px; flex: none; }
 }
 @media (max-width: 900px) {
     .daw-lyrics-body { grid-template-columns: 1fr; overflow-y: auto; }
-    .daw-lyric-current { font-size: 1.05rem; }
+    .daw-lyric-line { font-size: 1.05rem; }
 }
+.daw-lyrics-unsure .daw-lyrics-word-text { opacity: 0.5; text-decoration: line-through; }
