@@ -759,6 +759,20 @@ LLMAssistant's own streaming route on the same SwarmUI process, so your reply co
 assistant, its tools, and its permissions. **Installing LLMAssistant is required for this tab to answer** (the
 mic, transport and transcript still work without it; you will just get an error instead of a reply).
 
+What the call view shows:
+
+- A header with a state pill (Connecting, Warming up, Listening, Thinking, Using a tool, Speaking, Call ended), a call
+  timer, and an orb that swells with your microphone while you talk and with the reply while the agent talks.
+- The conversation as chat bubbles (you on the right, the agent on the left) with a time on each, and under each
+  agent reply how long the turn took: heard, thought, first sound, whole turn. Tool calls appear as collapsible
+  rows. Several transcript events for one turn grow one bubble.
+- Notices as chips you can dismiss: repeats count up (×2), informational ones leave after a few seconds, errors stay
+  until dismissed. A blocked or missing microphone, or a dropped connection, says what happened and what to do next;
+  after a dropped call, **Reconnect** starts a fresh one.
+- **Copy**, **Clear** and **Export** (Markdown, text or JSON, with the raw latency numbers) for the transcript.
+- Call settings fold away while a call is live. If you scroll up in a long conversation the view stays where it is
+  and **Jump to latest** brings you back.
+
 What is pinned per call and what is yours to pick:
 
 - **Speech recognition and synthesis are fixed**: Whisper `small.en` and Kokoro, one voice at a time, shared by

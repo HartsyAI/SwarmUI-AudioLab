@@ -2411,56 +2411,135 @@ input[type="range"].daw-beats-swing { width: 6rem; accent-color: var(--emphasis)
 .daw-keys-gap { visibility: hidden; }
 
 /* ===== Voice Agent tab ===== */
-.voice-agent-root { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.6rem; height: 100%; overflow-y: auto; }
-.voice-agent-setup { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+.voice-agent-root { display: flex; flex-direction: column; gap: 0.45rem; padding: 0.6rem; height: 100%; min-height: 0; box-sizing: border-box; overflow-y: auto; }
+.voice-agent-head { display: flex; align-items: center; gap: 0.8rem; flex: 0 0 auto; }
+.voice-agent-status { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.voice-agent-state-row { display: flex; align-items: center; gap: 0.6rem; }
+.voice-agent-hint { font-size: 0.75rem; color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.voice-agent-timer { font-family: var(--font-monospace); font-size: 0.8rem; color: var(--text-soft); }
+.voice-agent-buttons { display: flex; gap: 0.4rem; flex: 0 0 auto; }
+.voice-agent-buttons button[hidden] { display: none; }
+.voice-agent-state {
+    padding: 0.2rem 0.7rem;
+    border-radius: 1rem;
+    font-size: 0.8rem;
+    border: 1px solid var(--shadow);
+    color: var(--text-soft);
+    white-space: nowrap;
+}
+.voice-agent-state-connecting, .voice-agent-state-warming { border-color: var(--yellow); color: var(--yellow); }
+.voice-agent-state-listening { border-color: var(--emphasis); color: var(--emphasis); }
+.voice-agent-state-thinking, .voice-agent-state-toolrunning { border-color: var(--yellow); color: var(--yellow); }
+.voice-agent-state-speaking { border-color: var(--green); color: var(--green); }
+
+/* The orb: swells with the microphone while you talk and with the reply while the agent talks. */
+.voice-agent-orb {
+    --mic: 0;
+    --out: 0;
+    --tone: var(--text-soft);
+    position: relative;
+    flex: 0 0 auto;
+    width: 2.8rem;
+    height: 2.8rem;
+}
+.voice-agent-orb-core {
+    position: absolute;
+    inset: 0.55rem;
+    border-radius: 50%;
+    background: var(--tone);
+    opacity: 0.85;
+    transition: background 0.2s;
+}
+.voice-agent-orb-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 2px solid var(--tone);
+    opacity: 0.45;
+    transform: scale(calc(0.7 + var(--mic) * 0.3 + var(--out) * 0.3));
+    transition: border-color 0.2s;
+}
+.voice-agent-tone-listen { --tone: var(--emphasis); }
+.voice-agent-tone-think, .voice-agent-tone-busy { --tone: var(--yellow); }
+.voice-agent-tone-speak { --tone: var(--green); }
+.voice-agent-tone-think .voice-agent-orb-core, .voice-agent-tone-busy .voice-agent-orb-core { animation: voice-agent-pulse 1.2s ease-in-out infinite; }
+@keyframes voice-agent-pulse { 0%, 100% { transform: scale(0.85); } 50% { transform: scale(1.05); } }
+@media (prefers-reduced-motion: reduce) {
+    .voice-agent-tone-think .voice-agent-orb-core, .voice-agent-tone-busy .voice-agent-orb-core { animation: none; }
+}
+
+/* Settings fold away during a call */
+.voice-agent-settings { flex: 0 0 auto; border: 1px solid var(--shadow); border-radius: 0.3rem; padding: 0.25rem 0.5rem; }
+.voice-agent-settings-summary { cursor: pointer; font-size: 0.8rem; color: var(--text-soft); }
+.voice-agent-settings[open] .voice-agent-settings-summary { margin-bottom: 0.35rem; }
+.voice-agent-setup { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-bottom: 0.4rem; }
 .voice-agent-field { display: flex; flex-direction: column; gap: 0.15rem; min-width: 8rem; }
 .voice-agent-field-inline { flex-direction: row; align-items: center; gap: 0.35rem; min-width: auto; }
 .voice-agent-field-label { font-size: 0.75rem; color: var(--text-soft); }
 .voice-agent-select, .voice-agent-input { font: inherit; }
-.voice-agent-prompt { width: 100%; resize: vertical; font: inherit; }
-.voice-agent-transport { display: flex; align-items: center; gap: 0.6rem; }
-.voice-agent-start, .voice-agent-stop { flex: 0 0 auto; }
-.voice-agent-state {
-    padding: 0.2rem 0.6rem;
+.voice-agent-prompt { width: 100%; resize: vertical; font: inherit; box-sizing: border-box; }
+
+/* Notices: chips you can dismiss */
+.voice-agent-notices { display: flex; flex-wrap: wrap; gap: 0.3rem; flex: 0 0 auto; }
+.voice-agent-notices:empty { display: none; }
+.voice-agent-notice {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    max-width: 100%;
+    padding: 0.15rem 0.2rem 0.15rem 0.6rem;
     border-radius: 1rem;
-    font-size: 0.78rem;
+    font-size: 0.75rem;
     border: 1px solid var(--shadow);
+    background: var(--background-soft);
     color: var(--text-soft);
 }
-.voice-agent-state-listening { border-color: var(--emphasis); color: var(--emphasis); }
-.voice-agent-state-thinking, .voice-agent-state-toolrunning { border-color: var(--yellow); color: var(--yellow); }
-.voice-agent-state-speaking { border-color: var(--green); color: var(--green); }
-.voice-agent-meter-track {
-    flex: 1 1 8rem;
-    max-width: 12rem;
-    height: 0.5rem;
-    border-radius: 0.3rem;
-    background: var(--background-soft);
-    border: 1px solid var(--shadow);
-    overflow: hidden;
-}
-.voice-agent-meter-fill { height: 100%; width: 0; background: var(--emphasis); transition: width 0.05s linear; }
-.voice-agent-notices { display: flex; flex-direction: column; gap: 0.1rem; max-height: 4.5rem; overflow-y: auto; font-size: 0.78rem; }
-.voice-agent-notice { color: var(--text-soft); }
-.voice-agent-notice-error { color: var(--red); }
+.voice-agent-notice-error { border-color: var(--red); color: var(--red); }
+.voice-agent-notice-text { min-width: 0; overflow-wrap: anywhere; }
+.voice-agent-notice-close { background: none; border: none; color: inherit; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 0.3rem; }
+
+/* Conversation */
+.voice-agent-flow-wrap { position: relative; flex: 1 1 auto; min-height: 5rem; display: flex; }
 .voice-agent-transcript {
     flex: 1 1 auto;
-    min-height: 8rem;
+    min-height: 0;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 0.3rem;
-    padding: 0.4rem;
+    gap: 0.4rem;
+    padding: 0.5rem;
     border: 1px solid var(--shadow);
     border-radius: 0.3rem;
     background: var(--background-soft);
 }
-.voice-agent-line { line-height: 1.4; }
-.voice-agent-line-role { font-weight: 600; }
-.voice-agent-line-user .voice-agent-line-role { color: var(--emphasis); }
-.voice-agent-line-assistant .voice-agent-line-role { color: var(--green); }
-.voice-agent-metrics { display: flex; flex-direction: column; gap: 0.15rem; max-height: 5rem; overflow-y: auto; }
-.voice-agent-metrics-row { display: flex; gap: 0.8rem; font-size: 0.72rem; font-family: var(--font-monospace); color: var(--text-soft); }
+.voice-agent-empty { margin: auto; font-size: 0.8rem; color: var(--text-soft); text-align: center; }
+.voice-agent-empty[hidden] { display: none; }
+.voice-agent-bubble {
+    max-width: min(34rem, 85%);
+    padding: 0.35rem 0.6rem;
+    border-radius: 0.6rem;
+    border: 1px solid var(--shadow);
+    background: var(--background);
+    line-height: 1.4;
+}
+.voice-agent-bubble-user { align-self: flex-end; border-color: var(--emphasis); }
+.voice-agent-bubble-assistant { align-self: flex-start; }
+.voice-agent-bubble-head { display: flex; gap: 0.5rem; font-size: 0.7rem; color: var(--text-soft); }
+.voice-agent-bubble-who { font-weight: 600; }
+.voice-agent-bubble-user .voice-agent-bubble-who { color: var(--emphasis); }
+.voice-agent-bubble-assistant .voice-agent-bubble-who { color: var(--green); }
+.voice-agent-bubble-text { overflow-wrap: anywhere; white-space: pre-wrap; }
+.voice-agent-bubble-latency { display: flex; flex-wrap: wrap; gap: 0.6rem; font-size: 0.68rem; font-family: var(--font-monospace); color: var(--text-soft); }
+.voice-agent-bubble-latency:empty { display: none; }
+.voice-agent-tool-row { align-self: stretch; font-size: 0.75rem; color: var(--text-soft); border-left: 2px solid var(--yellow); padding-left: 0.5rem; }
+.voice-agent-tool-row summary { cursor: pointer; }
+.voice-agent-tool-body { font-family: var(--font-monospace); white-space: pre-wrap; overflow-wrap: anywhere; padding-top: 0.2rem; }
+.voice-agent-jump { position: absolute; right: 0.8rem; bottom: 0.6rem; }
+.voice-agent-jump[hidden] { display: none; }
+.voice-agent-tools { display: flex; gap: 0.4rem; align-items: center; flex: 0 0 auto; }
+.voice-agent-tool { padding: 0.15rem 0.5rem; }
+.voice-agent-head { flex-wrap: wrap; }
+.voice-agent-export { width: auto; font: inherit; font-size: 0.8rem; padding: 0.15rem 0.4rem; border: 1px solid var(--shadow); border-radius: 0.25rem; background: var(--background); color: var(--text); }
 
 /* ===== INPUTS, RECORDING, TRACK HEADER I/O ===== */
 .daw-track-header { gap: 0.2rem; padding: 0.35rem 0.5rem; }

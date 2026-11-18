@@ -87,6 +87,7 @@ public class AudioLab : Extension
             ScriptFiles.Add("Assets/audio-daw-instruments.js");
             ScriptFiles.Add("Assets/audio-daw-score.js");
             ScriptFiles.Add("Assets/audio-daw-lyrics-ui.js");
+            ScriptFiles.Add("Assets/audio-voice-state.js");
             ScriptFiles.Add("Assets/audio-voice.js");
             ScriptFiles.Add("Assets/audio-daw.js");
             ScriptFiles.Add("Assets/audio-editor.js");
