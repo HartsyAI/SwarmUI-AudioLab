@@ -18,6 +18,19 @@ const AudioDawTrack = (() => {
         '#ff922b', '#22b8cf', '#e64980', '#82c91e', '#7950f2'
     ];
 
+    /** Tracks shorter than this draw a one-row header and a plain lane (name, icon, mute and solo only). */
+    const COMPACT_BELOW = 56;
+
+    /** Whether a track draws the one-row compact header and plain lane. */
+    function isCompact(track) {
+        return track.height < COMPACT_BELOW;
+    }
+
+    /** The color a clip draws in: its own, else its group's tint when the group has one, else its track's. */
+    function clipColor(clip, track) {
+        return clip.color || track.displayColor || track.color;
+    }
+
     // ===== CLIP DATA MODEL =====
 
     /**
@@ -93,6 +106,7 @@ const AudioDawTrack = (() => {
             muted: false,
             soloed: false,
             groupId: null,                           // the AudioDawGroups group this track belongs to, or null
+            icon: null,                              // an emoji or a small image data URL (AudioDawIcons), or null
             armed: false,                            // R: records on the transport's Record
             monitor: false,                          // I: hear the live input through this track
             input: { deviceId: null, channels: 'mono' }, // device (null = system default); 'mono', 'stereo' or a 1-based channel
@@ -106,7 +120,8 @@ const AudioDawTrack = (() => {
             automationParam: 'volume',
             automationMode: 'read',                  // 'read', 'touch', 'latch', 'write' or 'off'
             sends: [],                               // [{busId, level, pre, muted}] to aux bus tracks
-            // Runtime DOM refs (not serialized)
+            // Runtime state (not serialized)
+            displayColor: null,      // the color its clips draw in when a group tints them (set each render), else null
             headerEl: null,
             laneEl: null,
             clipElements: new Map()  // clipId -> { el, ws }
@@ -151,6 +166,7 @@ const AudioDawTrack = (() => {
         header.dataset.trackId = track.id;
         header.style.height = track.height + 'px';
         header.style.borderLeft = `3px solid ${track.color}`;
+        header.classList.toggle('compact', isCompact(track));
         header.title = translate('Right-click for track options');
         header.addEventListener('contextmenu', (e) => {
             e.preventDefault();
@@ -164,6 +180,17 @@ const AudioDawTrack = (() => {
         const num = createSpan(null, 'daw-track-num');
         num.textContent = String(index + 1);
         topRow.appendChild(num);
+
+        const iconEl = createSpan(null, 'daw-track-icon');
+        iconEl.dataset.role = 'icon';
+        iconEl.title = translate('Track icon (click to change)');
+        iconEl.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (callbacks.onIcon) callbacks.onIcon(track, e);
+        });
+        if (typeof AudioDawIcons !== 'undefined') AudioDawIcons.fill(iconEl, track.icon);
+        iconEl.classList.toggle('empty', !track.icon);
+        topRow.appendChild(iconEl);
 
         const nameEl = document.createElement('span');
         nameEl.className = 'daw-track-name';
@@ -371,6 +398,7 @@ const AudioDawTrack = (() => {
         const lane = createDiv(null, 'daw-track-lane');
         lane.dataset.trackId = track.id;
         lane.style.height = track.height + 'px';
+        lane.classList.toggle('compact', isCompact(track));
         track.laneEl = lane;
         return lane;
     }
@@ -498,7 +526,7 @@ const AudioDawTrack = (() => {
                     ws = WaveSurfer.create({
                         container: wsContainer,
                         height: track.height - 8,
-                        waveColor: clip.color || track.color,
+                        waveColor: clipColor(clip, track),
                         progressColor: 'transparent',
                         cursorWidth: 0,
                         barWidth: 1,
@@ -539,11 +567,13 @@ const AudioDawTrack = (() => {
 
             // Update position, size, waveform alignment, and colors (track may be recolored)
             applyClipLayout(entry.el, clip);
+            const nameEl = entry.el.querySelector('.daw-clip-label');
+            if (nameEl && nameEl.textContent !== clip.name) nameEl.textContent = clip.name;
             // Opaque, so a later clip visibly covers the one below it (it is also the one heard)
-            entry.el.style.backgroundColor = `color-mix(in srgb, ${clip.color || track.color} 28%, var(--background-soft))`;
+            entry.el.style.backgroundColor = `color-mix(in srgb, ${clipColor(clip, track)} 28%, var(--background-soft))`;
             entry.el.style.zIndex = String(2 + track.clips.indexOf(clip));
             if (entry.ws) {
-                try { entry.ws.setOptions({ waveColor: clip.color || track.color }); } catch (_) {}
+                try { entry.ws.setOptions({ waveColor: clipColor(clip, track) }); } catch (_) {}
             }
 
             // Selected state
@@ -1099,6 +1129,7 @@ const AudioDawTrack = (() => {
             muted: track.muted,
             soloed: track.soloed,
             groupId: track.groupId || null,
+            icon: track.icon || null,
             armed: track.armed,
             monitor: !!track.monitor,
             input: { deviceId: track.input?.deviceId || null, channels: track.input?.channels ?? 'mono' },
@@ -1160,6 +1191,9 @@ const AudioDawTrack = (() => {
 
     return {
         COLORS: TRACK_COLORS,
+        COMPACT_BELOW,
+        isCompact,
+        clipColor,
         createClip,
         decodeClip,
         createTrack,

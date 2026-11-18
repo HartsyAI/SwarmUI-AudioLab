@@ -552,7 +552,7 @@ const AudioDawInstruments = (() => {
             el.style.left = (clip.startTime * zoom) + 'px';
             el.style.width = Math.max(4, midiClipLength(clip) * zoom) + 'px';
             el.style.zIndex = String(2 + idx);
-            el.style.backgroundColor = `color-mix(in srgb, ${clip.color || track.color} 28%, var(--background-soft))`;
+            el.style.backgroundColor = `color-mix(in srgb, ${AudioDawTrack.clipColor(clip, track)} 28%, var(--background-soft))`;
             const label = createSpan(null, 'daw-clip-label');
             label.textContent = clip.name;
             el.appendChild(label);
@@ -566,7 +566,7 @@ const AudioDawInstruments = (() => {
                 b.style.left = (n.start * zoom) + 'px';
                 b.style.width = Math.max(2, Math.min(n.dur, midiClipLength(clip) - n.start) * zoom - 1) + 'px';
                 b.style.top = ((hi - n.pitch) / (hi - lo) * 100) + '%';
-                b.style.background = track.color;
+                b.style.background = track.displayColor || track.color;
                 notesBox.appendChild(b);
             }
             el.appendChild(notesBox);

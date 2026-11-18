@@ -616,14 +616,43 @@ input[type="range"].daw-transport-zoom { width: 11rem; flex-shrink: 0; }
     min-height: 0;
     display: grid;
     grid-template-columns: var(--daw-header-width, 220px) 5px 1fr;
-    grid-template-rows: var(--daw-ruler-h, 52px) 1fr;
+    grid-template-rows: var(--daw-overview-h, 0px) var(--daw-ruler-h, 52px) 1fr;
+    --daw-overview-h: 40px;
     overflow: hidden;
     position: relative;
 }
+/* The overview strip is a viewer preference: off, its row collapses to nothing */
+.daw-main.overview-off { --daw-overview-h: 0px; }
+.daw-main.overview-off .daw-overview, .daw-main.overview-off .daw-overview-corner { display: none; }
+
+.daw-overview-corner {
+    grid-column: 1;
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    padding: 0 0.5rem;
+    font-size: 0.66rem;
+    font-weight: 600;
+    color: var(--text-soft);
+    background: var(--background);
+    border-bottom: 1px solid var(--border-color);
+    border-right: 1px solid var(--border-color);
+}
+.daw-overview-corner::before { content: attr(data-label); }
+
+.daw-overview {
+    grid-column: 3;
+    grid-row: 1;
+    overflow: hidden;
+    position: relative;
+    background: var(--background-soft);
+    border-bottom: 1px solid var(--border-color);
+}
+.daw-overview-canvas { display: block; cursor: pointer; touch-action: none; }
 
 .daw-ruler-corner {
     grid-column: 1;
-    grid-row: 1;
+    grid-row: 2;
     background: var(--background);
     border-bottom: 1px solid var(--border-color);
     border-right: 1px solid var(--border-color);
@@ -646,7 +675,7 @@ input[type="range"].daw-transport-zoom { width: 11rem; flex-shrink: 0; }
 
 .daw-ruler {
     grid-column: 3;
-    grid-row: 1;
+    grid-row: 2;
     overflow: hidden;
     position: relative;
     background: var(--background);
@@ -728,7 +757,7 @@ input[type="range"].daw-transport-zoom { width: 11rem; flex-shrink: 0; }
 /* Track headers column */
 .daw-track-headers {
     grid-column: 1;
-    grid-row: 2;
+    grid-row: 3;
     overflow: hidden;
     border-right: 1px solid var(--border-color);
     background: var(--background);
@@ -737,7 +766,7 @@ input[type="range"].daw-transport-zoom { width: 11rem; flex-shrink: 0; }
 /* Clip lanes area */
 .daw-clip-lanes {
     grid-column: 3;
-    grid-row: 2;
+    grid-row: 3;
     overflow: auto;
     position: relative;
     background: var(--background-soft);
@@ -2962,6 +2991,52 @@ input[type="range"].daw-group-volume { width: 54px; flex: none; }
     overflow: hidden !important;
     visibility: hidden !important;
 }
+
+/* Track icons: an emoji or a small cropped image, in the header, the mixer strip and the picker */
+.daw-track-icon {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.95rem;
+    line-height: 1;
+    border-radius: 4px;
+    overflow: hidden;
+    cursor: pointer;
+}
+.daw-track-icon img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.daw-track-icon.empty { display: none; }
+.daw-strip-name .daw-track-icon { width: 16px; height: 16px; font-size: 0.8rem; margin-right: 0.25rem; vertical-align: middle; cursor: default; }
+.daw-icon-menu { padding: 0.4rem; }
+.daw-icon-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+.daw-icon-btn {
+    border: 1px solid transparent;
+    background: transparent;
+    border-radius: 4px;
+    font-size: 1.05rem;
+    line-height: 1;
+    padding: 0.25rem;
+    cursor: pointer;
+}
+.daw-icon-btn:hover { background: var(--background-soft); }
+.daw-icon-btn.selected { border-color: var(--emphasis); }
+.daw-icon-actions { display: flex; flex-direction: column; margin-top: 0.3rem; padding-top: 0.2rem; border-top: 1px solid var(--shadow); }
+
+/* Compact tracks (Tiny and Compact heights): a one-row header with icon, name, solo and mute; a plain lane */
+.daw-track-header.compact { flex-direction: row; align-items: center; justify-content: flex-start; gap: 0.3rem; padding: 0 0.4rem; }
+.daw-track-header.compact.in-group { padding-left: calc(0.4rem + 7px); }
+.daw-track-header.compact .daw-track-name-row { flex: 1; min-width: 0; }
+.daw-track-header.compact .daw-track-name { max-width: none; font-size: 0.78rem; }
+.daw-track-header.compact .daw-track-remove,
+.daw-track-header.compact .daw-track-io,
+.daw-track-header.compact .daw-track-meter-pair { display: none; }
+.daw-track-header.compact .daw-track-controls { flex: none; }
+.daw-track-header.compact .daw-track-controls > :not([data-role="mute"]):not([data-role="solo"]) { display: none; }
+.daw-track-header.compact .daw-track-btn { width: 20px; height: 20px; line-height: 18px; font-size: 0.65rem; }
+.daw-track-lane.compact .daw-clip-gain,
+.daw-track-lane.compact .daw-clip-fade-handle { display: none; }
 
 /* Tempo ruler row */
 .daw-ruler-name-tempo { background: var(--background-soft); }
