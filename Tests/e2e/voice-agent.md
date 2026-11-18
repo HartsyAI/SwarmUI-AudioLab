@@ -40,6 +40,11 @@ Start, then drive the server side with `voiceFake.state(...)`, `say(...)`, `pcm(
 | 30 | Name a preset and Save, change settings, pick the preset | Settings return to the saved ones; Save with an existing name (any case) overwrites; Rename and Delete follow the chosen preset; Rename onto another preset's name is refused with a chip |
 | 31 | `localStorage` blocked (`Storage.prototype.setItem` throws) | The tab still works; settings just do not persist; no console errors |
 | 32 | Start a call with a preset loaded | The setup frame (`voiceFake.setup`) holds that preset's model, assistantId, voice, systemPrompt and bargeIn |
+| 33 | Open the tab | **Hears you** lists the 7 recognizers (Whisper small.en selected); **Speaks with** lists Kokoro and Piper (Kokoro selected); a note line says what they are good for and that a new model downloads on first call |
+| 34 | Choose Piper | The voice list becomes Piper's English voices, grouped by locale, with en_US-lessac-medium selected; Preview uses the Piper provider |
+| 35 | Choose a recognizer, then reload | The recognizer and engine come back; a preset made before this change (no recognizer or engine) loads with the defaults |
+| 36 | Start a call with Moonshine tiny and Piper chosen | `voiceFake.setup` holds `sttModel: 'moonshine:tiny'`, `ttsEngine: 'piper'` and a Piper voice; with the defaults chosen it holds the default tokens |
+| 37 | Options route fails (old page against a new server) | The pickers stay empty, the call still starts and the setup frame omits `sttModel` and `ttsEngine` (server defaults) |
 
 ## Run log
 Filled in per run below.
@@ -59,3 +64,7 @@ Review round (PR 99): late frames after Stop no longer revive the live layout; a
 Rows 24, 25, 27 to 30, 31 and 32 passed with `LLMAssistantGetModels`/`GetAssistants` stubbed in the page (this machine's LLMAssistant has no model, which is row 24 as it really is) and the real `AudioLabVoiceAgentOptions` route (54 voices in 9 language groups, default af_heart). Row 27's Preview ran for real: `AudioLabSpeakRaw` with Kokoro, the raw clip fetched and played to the end, the button disabled while it loaded (first use downloaded Kokoro-82M and the dictionaries). Row 32: the setup frame carried the loaded preset's model, assistantId, voice and barge-in; an empty prompt is omitted. Row 31: a throwing `setItem` left the tab working. At 900 px there is no horizontal overflow.
 Not run: row 26 (`llm_available: false` needs the route absent), row 23 (light theme), a real call (needs Whisper small.en and an LLMAssistant model).
 Found and fixed: the idle hint stayed on "Loading the language models…" after the list came back; Refresh now reloads the assistants too; the setup inputs were white on the dark theme (`.form-control`), now themed like the other DAW selects.
+
+### 2026-11-18, PR 3 (recognizer and speech engine choice): dev server on 7801, built-in browser
+Rows 33 to 36 passed with LLMAssistant stubbed and the real options route: 7 recognizers and Kokoro/Piper listed with the defaults selected, Piper's 37 voices grouped by locale with en_US-lessac-medium selected, a pre-PR-3 saved state and a preset naming an engine and recognizer the server does not list both fall back to the defaults, and the setup frame (stubbed socket) carried `sttModel: 'moonshine:tiny'`, `ttsEngine: 'piper'`, `voice: 'en_US-amy-low'`. Against the real route, a setup frame with an unlisted `sttModel` (a path), an unlisted `ttsEngine`, or a Kokoro voice with Piper was refused with a readable error.
+Not run: row 37, a Piper voice preview (it downloads a voice), and any real call: Whisper, Moonshine, Distil-Whisper and Piper through the voice package are unverified live on this machine (xunit covers the catalog, the allow-list and the policy only).

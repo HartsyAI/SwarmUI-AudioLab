@@ -52,32 +52,39 @@ public class VoiceOptionsCatalogTests
     }
 
     [Fact]
-    public void Build_ReportsVoicesDefaultAndLlmFlag()
+    public void Build_ListsRecognizersAndEnginesWithTheirVoices()
     {
-        JObject result = VoiceOptionsCatalog.Build(["am_adam///American English: Adam (M)", "af_heart///American English: Heart (F)"], llmAvailable: true);
+        JObject result = VoiceOptionsCatalog.Build(llmAvailable: true);
         Assert.True(result["success"].Value<bool>());
         Assert.True(result["llm_available"].Value<bool>());
-        Assert.Equal("af_heart", result["default_voice"].ToString());
-        JArray voices = (JArray)result["voices"];
-        Assert.Equal(2, voices.Count);
-        Assert.Equal("am_adam", voices[0]["id"].ToString());
-        Assert.Equal("Adam (M)", voices[0]["name"].ToString());
-        Assert.Equal("American English", voices[0]["group"].ToString());
+        Assert.Equal(VoiceEngineCatalog.DefaultStt, result["default_stt"].ToString());
+        Assert.Equal(VoiceEngineCatalog.DefaultTtsEngine, result["default_tts"].ToString());
+        Assert.Equal(VoiceEngineCatalog.Stt.Count, ((JArray)result["stt"]).Count);
+        JArray engines = (JArray)result["tts"];
+        Assert.Equal(VoiceEngineCatalog.TtsEngines.Count, engines.Count);
+        JToken kokoro = engines.First(e => e["engine"].ToString() == "kokoro");
+        Assert.Equal("af_heart", kokoro["default_voice"].ToString());
+        Assert.Equal(AudioLabParams.KokoroVoices.Count, ((JArray)kokoro["voices"]).Count);
+        JToken piper = engines.First(e => e["engine"].ToString() == "piper");
+        Assert.Equal("en_US-lessac-medium", piper["default_voice"].ToString());
+        Assert.Equal(AudioLabParams.PiperVoices.Length, ((JArray)piper["voices"]).Count);
+        Assert.Equal("piper_tts", piper["provider_id"].ToString());
     }
 
     [Fact]
-    public void Build_DefaultVoiceMissing_FallsBackToTheFirstListedVoice()
+    public void Build_LlmFlagFollowsTheArgument()
     {
-        JObject result = VoiceOptionsCatalog.Build(["am_adam///American English: Adam (M)"], llmAvailable: false);
-        Assert.Equal("am_adam", result["default_voice"].ToString());
-        Assert.False(result["llm_available"].Value<bool>());
+        Assert.False(VoiceOptionsCatalog.Build(llmAvailable: false)["llm_available"].Value<bool>());
     }
 
     [Fact]
-    public void Build_NoVoices_StillNamesTheDefault()
+    public void Build_EveryEngineDefaultVoiceIsOneOfItsVoices()
     {
-        JObject result = VoiceOptionsCatalog.Build([], llmAvailable: false);
-        Assert.Empty((JArray)result["voices"]);
-        Assert.Equal(VoiceOptionsCatalog.DefaultVoice, result["default_voice"].ToString());
+        JArray engines = (JArray)VoiceOptionsCatalog.Build(llmAvailable: false)["tts"];
+        foreach (JToken engine in engines)
+        {
+            string defaultVoice = engine["default_voice"].ToString();
+            Assert.Contains(((JArray)engine["voices"]).Select(v => v["id"].ToString()), id => id == defaultVoice);
+        }
     }
 }

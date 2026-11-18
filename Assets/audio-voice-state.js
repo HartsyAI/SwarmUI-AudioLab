@@ -247,7 +247,7 @@ const AudioVoiceState = (() => {
     // ===== Call settings and presets =====
 
     /** The setup fields a call is started with, and what each defaults to. */
-    const DEFAULT_SETTINGS = { model: '', assistantId: '', voice: 'af_heart', systemPrompt: '', bargeIn: true };
+    const DEFAULT_SETTINGS = { model: '', assistantId: '', voice: 'af_heart', systemPrompt: '', bargeIn: true, sttModel: '', ttsEngine: '' };
 
     /** Presets are capped so a runaway store cannot grow without bound; a name is trimmed and cut to this length. */
     const MAX_PRESETS = 50;
@@ -262,8 +262,15 @@ const AudioVoiceState = (() => {
             assistantId: text(src.assistantId, DEFAULT_SETTINGS.assistantId),
             voice: text(src.voice, DEFAULT_SETTINGS.voice) || DEFAULT_SETTINGS.voice,
             systemPrompt: text(src.systemPrompt, DEFAULT_SETTINGS.systemPrompt),
-            bargeIn: typeof src.bargeIn === 'boolean' ? src.bargeIn : DEFAULT_SETTINGS.bargeIn
+            bargeIn: typeof src.bargeIn === 'boolean' ? src.bargeIn : DEFAULT_SETTINGS.bargeIn,
+            sttModel: text(src.sttModel, DEFAULT_SETTINGS.sttModel), // '' = the server's default recognizer
+            ttsEngine: text(src.ttsEngine, DEFAULT_SETTINGS.ttsEngine) // '' = the server's default speech engine
         };
+    }
+
+    /** `wanted` when the list offers it, else `fallback`: how a saved recognizer, engine or voice that no longer exists is replaced. */
+    function pickOption(ids, wanted, fallback) {
+        return Array.isArray(ids) && ids.includes(wanted) ? wanted : fallback;
     }
 
     /** A preset name as stored: trimmed, one line, length-limited. Empty when nothing usable is left. */
@@ -400,7 +407,7 @@ const AudioVoiceState = (() => {
 
     return {
         DEFAULT_SETTINGS, MAX_PRESETS, normalizeSettings, cleanPresetName, createPresetStore, parsePresetStore, serializePresetStore,
-        findPreset, savePreset, renamePreset, deletePreset, groupVoices, startBlocker,
+        findPreset, savePreset, renamePreset, deletePreset, groupVoices, startBlocker, pickOption,
         describeState, clock, createTranscript, addTranscript, textOf, addTool, addMetrics, takePendingMetrics, formatMs, latencyOf,
         createNotices, pushNotice, dismissNotice, expireNotices, explainError, smoothLevel, timeOfDay, toText, toMarkdown, toJson,
         NOTICE_LIFETIME_MS

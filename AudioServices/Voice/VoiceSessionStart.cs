@@ -3,10 +3,15 @@ using Newtonsoft.Json.Linq;
 namespace Hartsy.Extensions.AudioLab.AudioServices.Voice;
 
 /// <summary>The parsed, validated <c>start</c> message every <c>AudioLabVoiceSession</c> connection opens with:
-/// <c>{model, assistantId?, voice?, systemPrompt?, bargeIn?, inputRate}</c>. Core hands the raw frame to the route
+/// <c>{model, assistantId?, voice?, systemPrompt?, bargeIn?, inputRate, sttModel?, ttsEngine?}</c>. Core hands the raw frame to the route
 /// handler as a <see cref="JObject"/> (the same shape <c>AudioLabWakeSaveSettings</c> takes it in) -- this is the
 /// WebSocket handshake frame itself, not a second message.</summary>
-internal sealed record VoiceSessionStartRequest(string Model, string AssistantId, string Voice, string SystemPrompt, bool BargeIn, int InputRate);
+///
+/// <para><c>SttModel</c> and <c>TtsEngine</c> are null when the frame names none (the default recognizer and engine are used,
+/// see <see cref="VoiceEngineCatalog.KeyFor"/>); when present they have passed <see cref="VoiceEngineCatalog"/>'s allow-list.
+/// <c>Voice</c> is null for the engine's default voice.</para>
+internal sealed record VoiceSessionStartRequest(string Model, string AssistantId, string Voice, string SystemPrompt, bool BargeIn, int InputRate,
+    string SttModel = null, string TtsEngine = null);
 
 /// <summary>Parses and validates a <c>start</c> message, independent of any socket -- so the rules (which fields
 /// are required, which rates are usable) are unit-testable without a WebSocket at all.</summary>
@@ -59,13 +64,33 @@ internal static class VoiceSessionStart
             error = "'bargeIn' must be a boolean.";
             return false;
         }
+        string sttModel = NullIfBlank(rawInput["sttModel"]?.ToString())?.Trim();
+        if (sttModel is not null && !VoiceEngineCatalog.IsKnownStt(sttModel))
+        {
+            error = $"'sttModel' must be one of the listed recognizers; '{sttModel}' is not.";
+            return false;
+        }
+        string ttsEngine = NullIfBlank(rawInput["ttsEngine"]?.ToString())?.Trim().ToLowerInvariant();
+        if (ttsEngine is not null && VoiceEngineCatalog.FindEngine(ttsEngine) is null)
+        {
+            error = $"'ttsEngine' must be one of the listed speech engines; '{ttsEngine}' is not.";
+            return false;
+        }
+        string voice = NullIfBlank(rawInput["voice"]?.ToString());
+        if (voice is not null && !VoiceEngineCatalog.IsKnownVoice(ttsEngine ?? VoiceEngineCatalog.DefaultTtsEngine, voice))
+        {
+            error = $"'voice' '{voice}' is not a voice of the '{ttsEngine ?? VoiceEngineCatalog.DefaultTtsEngine}' speech engine.";
+            return false;
+        }
         request = new VoiceSessionStartRequest(
             model.Trim(),
             NullIfBlank(rawInput["assistantId"]?.ToString()),
-            NullIfBlank(rawInput["voice"]?.ToString()),
+            voice,
             NullIfBlank(rawInput["systemPrompt"]?.ToString()),
             bargeIn,
-            inputRate);
+            inputRate,
+            sttModel,
+            ttsEngine);
         error = null;
         return true;
     }

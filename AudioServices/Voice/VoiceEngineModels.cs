@@ -8,29 +8,29 @@ using SwarmUI.Utils;
 
 namespace Hartsy.Extensions.AudioLab.AudioServices.Voice;
 
-/// <summary>What voice a new <c>AudioLabVoiceSession</c> should use against the currently loaded
-/// <see cref="VoiceModelSet"/> (fixed at load, one Kokoro voice for every session sharing it -- see
+/// <summary>Which models a new <c>AudioLabVoiceSession</c> should use against the currently loaded
+/// <see cref="VoiceModelSet"/> (fixed at load: one recognizer and one speech model for every session sharing it -- see
 /// <c>VoiceAgentSession</c>'s own <c>RequireSameModels</c> check). Pure decision, independent of
 /// <see cref="VoiceModelSet"/> itself, so it is unit-testable without a live engine.</summary>
-internal readonly record struct VoiceSelection(string VoiceToUse, bool NeedsRebuild, string Notice);
+internal readonly record struct VoiceSelection(VoiceModelKey KeyToUse, bool NeedsRebuild, string Notice);
 
 internal static class VoiceSelectionPolicy
 {
-    /// <summary>No set loaded yet, or it already matches: use the requested voice, no rebuild. A mismatch with
-    /// nothing else using the set: rebuild for the new voice. A mismatch while calls are active: keep the loaded
-    /// voice and say so, rather than tear down a set calls are using.</summary>
-    public static VoiceSelection Decide(string loadedVoice, string requestedVoice, int activeSessions)
+    /// <summary>No set loaded yet, or it already matches: use the requested models, no rebuild. A mismatch with
+    /// nothing else using the set: rebuild for the new models. A mismatch while calls are active: keep the loaded
+    /// models and say so, rather than tear down a set calls are using.</summary>
+    public static VoiceSelection Decide(VoiceModelKey? loaded, VoiceModelKey requested, int activeSessions)
     {
-        if (loadedVoice is null || loadedVoice == requestedVoice)
+        if (loaded is null || loaded.Value == requested)
         {
-            return new VoiceSelection(requestedVoice, NeedsRebuild: false, Notice: null);
+            return new VoiceSelection(requested, NeedsRebuild: false, Notice: null);
         }
         if (activeSessions == 0)
         {
-            return new VoiceSelection(requestedVoice, NeedsRebuild: true, Notice: null);
+            return new VoiceSelection(requested, NeedsRebuild: true, Notice: null);
         }
-        return new VoiceSelection(loadedVoice, NeedsRebuild: false,
-            Notice: $"Voice '{requestedVoice}' is unavailable while another call is using '{loadedVoice}'; continuing with '{loadedVoice}'.");
+        return new VoiceSelection(loaded.Value, NeedsRebuild: false,
+            Notice: $"{requested.Describe()} is unavailable while another call is using {loaded.Value.Describe()}; continuing with {loaded.Value.Describe()}.");
     }
 }
 
@@ -59,7 +59,7 @@ internal sealed class VoiceEngineModels
     private readonly AcquireTeardownGate _gate = new();
     private readonly ConcurrentDictionary<VoiceAgentSession, LazyIdleResource<VoiceModelSet>> _activeSessions = new();
     private LazyIdleResource<VoiceModelSet> _resource;
-    private string _loadedVoice;
+    private VoiceModelKey? _loadedKey;
     private int _hooked;
 
     private VoiceEngineModels()
@@ -80,7 +80,7 @@ internal sealed class VoiceEngineModels
     }
 
     /// <summary>Gets (creating or rebuilding as needed) the model set for <paramref name="start"/>'s requested
-    /// voice, and warms it with <paramref name="text"/> the first time it is actually created. Pairs with
+    /// recognizer and speech model, and warms it with <paramref name="text"/> the first time it is actually created. Pairs with
     /// <see cref="ReleaseSessionAsync"/>, which must be called exactly once for every session this returns a lease
     /// for.
     ///
@@ -93,19 +93,19 @@ internal sealed class VoiceEngineModels
     public Task<VoiceModelLease> AcquireAsync(VoiceSessionStartRequest start, RemoteTextService text, CancellationToken cancel)
     {
         EnsureHooked();
-        string requestedVoice = string.IsNullOrWhiteSpace(start.Voice) ? "af_heart" : start.Voice;
+        VoiceModelKey requestedKey = VoiceEngineCatalog.KeyFor(start);
         return _gate.AcquireAsync(async () =>
         {
-            VoiceSelection selection = VoiceSelectionPolicy.Decide(_loadedVoice, requestedVoice, _resource?.ActiveCount ?? 0);
+            VoiceSelection selection = VoiceSelectionPolicy.Decide(_loadedKey, requestedKey, _resource?.ActiveCount ?? 0);
             if (_resource is null || selection.NeedsRebuild)
             {
                 if (_resource is not null)
                 {
                     await _resource.ForceDisposeAsync().ConfigureAwait(false);
                 }
-                string capturedVoice = selection.VoiceToUse;
-                _resource = new LazyIdleResource<VoiceModelSet>(ct => CreateSetAsync(capturedVoice, text, ct), DisposeSetAsync, IdleDelay);
-                _loadedVoice = capturedVoice;
+                VoiceModelKey capturedKey = selection.KeyToUse;
+                _resource = new LazyIdleResource<VoiceModelSet>(ct => CreateSetAsync(capturedKey, text, ct), DisposeSetAsync, IdleDelay);
+                _loadedKey = capturedKey;
             }
             LazyIdleResource<VoiceModelSet> resource = _resource;
             VoiceModelSet set = await resource.GetOrCreateAsync(cancel).ConfigureAwait(false);
@@ -113,7 +113,7 @@ internal sealed class VoiceEngineModels
             {
                 SystemPrompt = start.SystemPrompt ?? VoiceAgentOptions.DefaultSystemPrompt,
                 BargeInEnabled = start.BargeIn,
-                OutboundSampleRate = 24000, // Kokoro's own rate: no outbound resample (see VoiceSessionEndpoints).
+                OutboundSampleRate = 24000, // Kokoro's own rate, so it is not resampled; another engine's rate is converted to it by the session.
             };
             return new VoiceModelLease(set, sessionOptions, selection.Notice, resource);
         }, cancel);
@@ -191,7 +191,7 @@ internal sealed class VoiceEngineModels
         if (_resource is not null)
         {
             await _resource.ForceDisposeAsync().ConfigureAwait(false);
-            _loadedVoice = null;
+            _loadedKey = null;
         }
     });
 
@@ -207,7 +207,7 @@ internal sealed class VoiceEngineModels
         }
     }
 
-    private static async Task<VoiceModelSet> CreateSetAsync(string voice, ITextService warmText, CancellationToken cancel)
+    private static async Task<VoiceModelSet> CreateSetAsync(VoiceModelKey key, ITextService warmText, CancellationToken cancel)
     {
         InferenceEngine engine = ResolveConcreteEngine();
         string audioDevice = engine.ComputeBackend.Device.ToString();
@@ -221,8 +221,11 @@ internal sealed class VoiceEngineModels
             await WakeWordService.InstallVadAsync(_ => Task.CompletedTask, cancel).ConfigureAwait(false);
         }
         await RnnoiseInstaller.EnsureAsync(wakeRoot, cancel, RnnoisePrecision.Int8).ConfigureAwait(false);
-        // Kokoro comes from its Hartsy card when it is not on disk yet; whisper-small.en has no card, so the engine fetches it.
-        await HartsyInstaller.EnsureOnFirstUseAsync("kokoro_tts", "default", cancel).ConfigureAwait(false);
+        // The speech engine comes from its Hartsy card when it has one and is not on disk yet (Kokoro does); a recognizer, and
+        // an engine with no card, are fetched by the engine itself. EnsureOnFirstUseAsync never fails a call over this.
+        string engineName = VoiceEngineCatalog.EngineOf(key.Tts);
+        TtsEngineChoice engineChoice = VoiceEngineCatalog.FindEngine(engineName) ?? throw new InvalidOperationException($"No speech engine '{engineName}'.");
+        await HartsyInstaller.EnsureOnFirstUseAsync(engineChoice.ProviderId, engineName == "kokoro" ? "default" : VoiceEngineCatalog.VoiceOf(key.Tts), cancel).ConfigureAwait(false);
         VoiceAgentOptions options = new()
         {
             // Inert locally: RemoteTextService ignores both the resolved ModelSpec and TextRequest.Device, so
@@ -230,8 +233,8 @@ internal sealed class VoiceEngineModels
             LlmModel = "remote",
             LlmDevice = audioDevice,
             AudioDevice = audioDevice,
-            SttModel = "whisper:openai/whisper-small.en",
-            TtsModel = $"kokoro:{voice}",
+            SttModel = key.Stt,
+            TtsModel = key.Tts,
             Denoise = true,
         };
         VoiceModelSet set = await VoiceModelSet.LoadAsync(engine, options, wakeRoot, cancel).ConfigureAwait(false);

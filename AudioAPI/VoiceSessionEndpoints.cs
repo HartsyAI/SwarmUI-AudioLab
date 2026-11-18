@@ -51,7 +51,7 @@ public static class VoiceSessionEndpoints
         API.RegisterAPICall(AudioLabVoiceAgentOptions, false, AudioLabPermissions.PermProcessAudio);
     }
 
-    /// <summary>What the Voice Agent tab can offer: the speech voices and whether LLMAssistant is present. The language
+    /// <summary>What the Voice Agent tab can offer: the recognizers, the speech engines with their voices, and whether LLMAssistant is present. The language
     /// models and assistants themselves come from LLMAssistant's own routes, which the tab calls directly.
     ///
     /// <para>Whether LLMAssistant is present is answered per request from the API registry, not at startup: extensions
@@ -60,7 +60,7 @@ public static class VoiceSessionEndpoints
     public static async Task<JObject> AudioLabVoiceAgentOptions(Session session)
     {
         await Task.CompletedTask;
-        return VoiceOptionsCatalog.Build(AudioLabParams.KokoroVoices, API.APIHandlers.ContainsKey("llmassistantgetmodels"));
+        return VoiceOptionsCatalog.Build(API.APIHandlers.ContainsKey("llmassistantgetmodels"));
     }
 
     /// <summary>One call. The handshake frame core already parsed for every route (<see cref="rawInput"/>, with
@@ -150,9 +150,12 @@ public static class VoiceSessionEndpoints
         // Tool dispatch has exactly one owner, LLMAssistant: an empty registry means VoiceAgentSession's own
         // ToolLoop never has anything to dispatch even if it were somehow reached. See RemoteTextService's remarks.
         ToolRegistry emptyTools = new();
-        VoiceAgentSession voiceSession = new(lease.Set, text, emptyTools, lease.SessionOptions);
+        VoiceAgentSession voiceSession = null;
         try
         {
+            // The constructor checks that the speech model's rate converts to the outbound rate in whole 20 ms frames, which
+            // an engine other than Kokoro can fail, so it is inside this try: the lease is released and the caller told.
+            voiceSession = new(lease.Set, text, emptyTools, lease.SessionOptions);
             // Construction above only stores references (StartAsync below is where the session actually touches
             // audio/engine resources), so building it against a lease an engine release raced past is harmless on
             // its own; RegisterSession is what re-checks that race and rejects a lease it caught stale, before
@@ -167,13 +170,16 @@ public static class VoiceSessionEndpoints
             // by session) would be a no-op; release the hold AcquireAsync's GetOrCreateAsync took directly instead,
             // the same one RegisterSession would have attached to this session had it succeeded.
             await lease.Resource.ReleaseAsync().ConfigureAwait(false);
-            try
+            if (voiceSession is not null)
             {
-                await voiceSession.DisposeAsync().ConfigureAwait(false);
-            }
-            catch (Exception disposeEx)
-            {
-                Logs.Debug($"[AudioLab][Voice] Disposing a session rejected at registration threw: {disposeEx.Message}");
+                try
+                {
+                    await voiceSession.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception disposeEx)
+                {
+                    Logs.Debug($"[AudioLab][Voice] Disposing a session rejected at registration threw: {disposeEx.Message}");
+                }
             }
             return null;
         }

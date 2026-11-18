@@ -786,10 +786,15 @@ Call settings:
 
 What is pinned per call and what is yours to pick:
 
-- **Speech recognition and synthesis are fixed**: Whisper `small.en` and Kokoro, one voice at a time, shared by
-  every concurrent call on this server (`HartsyInference.Voice`'s own model set, loaded once and kept warm).
-  Switching the voice picker while a call is already using a different voice gets you a notice instead of a
-  switch -- the model set is rebuilt for a new voice only once every call using the old one has ended.
+- **What hears you and what speaks are yours to pick**, from the models that work as a live call: **Hears you** is
+  Whisper tiny.en, base.en, small.en (the default), medium.en, Distil-Whisper large v3.5, or Moonshine tiny or base;
+  **Speaks with** is Kokoro (54 voices, the default engine and voice) or Piper (the English voices, light enough for a
+  CPU; each Piper voice is its own small download). Recognition is English. A call uses one recognizer and one speech
+  model, shared by every concurrent call on this server (`HartsyInference.Voice`'s own model set, loaded once and
+  kept warm). Choosing a different recognizer, engine or voice while another call is using the loaded ones gets you a
+  notice instead of a switch -- the model set is rebuilt only once every call using the old ones has ended. The first
+  call with a model not used before downloads it. Other speech models (the cloning and music-style ones) are left
+  out: they need a reference clip or are too slow to answer a sentence at a time.
 - **The language model is yours to pick** per call: an LLMAssistant model and, optionally, a specific assistant
   id and a system prompt override.
 - **Barge-in** is on by default; the toggle turns it off for a call that should finish speaking uninterrupted.
@@ -810,7 +815,8 @@ frame is the call's setup, and everything else streams after it:
 
 ```jsonc
 // client -> server, first frame
-{ "model": "...", "assistantId": "...", "voice": "af_heart", "systemPrompt": "...", "bargeIn": true, "inputRate": 48000 }
+{ "model": "...", "assistantId": "...", "voice": "af_heart", "systemPrompt": "...", "bargeIn": true, "inputRate": 48000,
+  "sttModel": "whisper:openai/whisper-small.en", "ttsEngine": "kokoro" }   // sttModel and ttsEngine are optional; unlisted values are refused
 // client -> server, after that: binary mono PCM16 frames at inputRate, then a final
 { "end": true }
 ```
