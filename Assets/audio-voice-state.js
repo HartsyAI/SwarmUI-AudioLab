@@ -247,7 +247,7 @@ const AudioVoiceState = (() => {
     // ===== Call settings and presets =====
 
     /** The setup fields a call is started with, and what each defaults to. */
-    const DEFAULT_SETTINGS = { model: '', assistantId: '', voice: 'af_heart', systemPrompt: '', bargeIn: true, sttModel: '', ttsEngine: '' };
+    const DEFAULT_SETTINGS = { model: '', assistantId: '', voice: 'af_heart', systemPrompt: '', bargeIn: true, sttModel: '', ttsEngine: '', pushToTalk: false, pttKey: 'KeyH' };
 
     /** Presets are capped so a runaway store cannot grow without bound; a name is trimmed and cut to this length. */
     const MAX_PRESETS = 50;
@@ -264,8 +264,46 @@ const AudioVoiceState = (() => {
             systemPrompt: text(src.systemPrompt, DEFAULT_SETTINGS.systemPrompt),
             bargeIn: typeof src.bargeIn === 'boolean' ? src.bargeIn : DEFAULT_SETTINGS.bargeIn,
             sttModel: text(src.sttModel, DEFAULT_SETTINGS.sttModel), // '' = the server's default recognizer
-            ttsEngine: text(src.ttsEngine, DEFAULT_SETTINGS.ttsEngine) // '' = the server's default speech engine
+            ttsEngine: text(src.ttsEngine, DEFAULT_SETTINGS.ttsEngine), // '' = the server's default speech engine
+            pushToTalk: typeof src.pushToTalk === 'boolean' ? src.pushToTalk : DEFAULT_SETTINGS.pushToTalk,
+            pttKey: isUsablePttKey(src.pttKey) ? src.pttKey : DEFAULT_SETTINGS.pttKey
         };
+    }
+
+    /** Keys that cannot be the push-to-talk key: the modifiers, and the ones that leave a field or cancel an action. */
+    const PTT_RESERVED = new Set(['Escape', 'Tab', 'Enter', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight', 'ContextMenu', 'CapsLock']);
+
+    /** Whether a `KeyboardEvent.code` can be the push-to-talk key. */
+    function isUsablePttKey(code) {
+        return typeof code === 'string' && code.length > 0 && code.length <= 20 && !PTT_RESERVED.has(code);
+    }
+
+    /** A key code in words for a button: `KeyH` is "H", `Digit5` is "5", `Space` stays "Space". */
+    function keyLabel(code) {
+        const c = String(code || '');
+        if (/^Key[A-Z]$/.test(c)) {
+            return c.slice(3);
+        }
+        if (/^Digit[0-9]$/.test(c)) {
+            return c.slice(5);
+        }
+        return c.replace(/^Numpad/, 'Num ').replace(/^Arrow/, '');
+    }
+
+    /** Whether the microphone should be heard right now: not muted, and with push-to-talk on only while the key is held. */
+    function micOpen({ muted, pushToTalk, talking }) {
+        return !muted && (!pushToTalk || !!talking);
+    }
+
+    /** What the header says about the microphone: a label, and a tone class suffix. */
+    function micLabel({ muted, pushToTalk, talking, pttKey }) {
+        if (muted) {
+            return { text: 'Muted', tone: 'muted' };
+        }
+        if (pushToTalk) {
+            return talking ? { text: 'Talking', tone: 'talking' } : { text: `Hold ${keyLabel(pttKey)} to talk`, tone: 'ptt' };
+        }
+        return { text: '', tone: 'open' };
     }
 
     /** `wanted` when the list offers it, else `fallback`: how a saved recognizer, engine or voice that no longer exists is replaced. */
@@ -407,7 +445,7 @@ const AudioVoiceState = (() => {
 
     return {
         DEFAULT_SETTINGS, MAX_PRESETS, normalizeSettings, cleanPresetName, createPresetStore, parsePresetStore, serializePresetStore,
-        findPreset, savePreset, renamePreset, deletePreset, groupVoices, startBlocker, pickOption,
+        findPreset, savePreset, renamePreset, deletePreset, groupVoices, startBlocker, pickOption, isUsablePttKey, keyLabel, micOpen, micLabel,
         describeState, clock, createTranscript, addTranscript, textOf, addTool, addMetrics, takePendingMetrics, formatMs, latencyOf,
         createNotices, pushNotice, dismissNotice, expireNotices, explainError, smoothLevel, timeOfDay, toText, toMarkdown, toJson,
         NOTICE_LIFETIME_MS
