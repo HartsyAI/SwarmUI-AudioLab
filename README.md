@@ -809,6 +809,24 @@ curl -s -H "Content-Type: application/json" -X POST http://localhost:7801/API/Pr
 # {"success":true,"transcription":"hello from audiolab", ...}
 ```
 
+#### Word timing
+
+`ProcessSTT` with `"word_timestamps": true` adds `words: [{word, start, end}]` (seconds from the start of the audio) when the
+chosen model can time words, and `duration`. Whisper and Distil-Whisper can; other speech models return an empty list. With
+`"align_text": "..."` the model times that known text (lyrics, a script) instead of transcribing; it fits one 30 s window.
+
+`AudioLabAlignLyrics` times a vocal clip and keeps the two model choices separate, so either can be swapped for another model:
+
+- With `lyrics`, only the aligner runs (`align_provider_id`, `align_model`; Whisper by default).
+- Without them, the transcriber runs (`stt_provider_id`, `stt_model`; it defaults to the aligner). If it times the words itself, those
+  are returned (`source: "stt"`); if not, its text is handed to the aligner (`source: "stt+aligned"`). Given lyrics, `source` is `"aligned"`.
+
+```bash
+curl -s -H "Content-Type: application/json" -X POST http://localhost:7801/API/AudioLabAlignLyrics \
+  -d '{"session_id":"<ID>","audio_data":"<base64 wav>","lyrics":"hold on let go","align_model":"base"}'
+# {"success":true,"source":"aligned","text":"hold on let go","words":[{"word":"hold","start":0.0,"end":0.5}, ...],"duration":12.3}
+```
+
 Voice cloning engines take `reference_audio` (base64 WAV) and, where the model needs it, `ref_text` alongside the
 usual `ProcessTTS` fields.
 
@@ -823,7 +841,8 @@ same turns are saved in the output's `speech_turns` metadata, and the "Drama 3 H
 | Route | Kind | Permission | Parameters |
 | --- | --- | --- | --- |
 | `ProcessTTS` | POST | `audio_process` | `provider_id`, `text`, `voice`, `language`, `volume`, `options`, `reference_audio`, `ref_text` |
-| `ProcessSTT` | POST | `audio_process` | `provider_id`, `audio_data`, `language`, `options` |
+| `ProcessSTT` | POST | `audio_process` | `provider_id`, `model`, `audio_data`, `language`, `task`, `word_timestamps`, `align_text`, `options` |
+| `AudioLabAlignLyrics` | POST | `audio_process` | `audio_data`, `lyrics`, `language`, `stt_provider_id`, `stt_model`, `align_provider_id`, `align_model` |
 | `AudioLabTranscribeScore` | POST | `audio_process` | `audio_data` (mono 24 kHz WAV), `provider_id`, `model` |
 | `AudioLabPlanScore` | POST | `audio_process` | `style`, `lyrics`, `duration`, `seed`, `cot`, `abc`, `budget_only` |
 | `ProcessAudio` | POST | `audio_process` | `provider_id`, `args` |

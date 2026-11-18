@@ -139,6 +139,12 @@ public class STTResponse : BaseResponse
     /// <summary>Alternative transcriptions</summary>
     public string[] Alternatives { get; set; } = [];
 
+    /// <summary>Per-word spans <c>[{word, start, end}]</c> in seconds, when word timestamps were asked for and the model produced them; empty otherwise.</summary>
+    public JArray Words { get; set; } = [];
+
+    /// <summary>Length of the transcribed audio in seconds (0 when the engine did not report it).</summary>
+    public double Duration { get; set; }
+
     /// <summary>Session identifier</summary>
     public string SessionId { get; set; } = string.Empty;
 
@@ -150,6 +156,8 @@ public class STTResponse : BaseResponse
         JObject result = base.ToJObject();
         result["transcription"] = Transcription;
         result["confidence"] = Confidence;
+        result["words"] = Words;
+        result["duration"] = Duration;
         result["language"] = Language;
         result["alternatives"] = JArray.FromObject(Alternatives);
         result["session_id"] = SessionId;

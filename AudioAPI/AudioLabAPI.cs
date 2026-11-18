@@ -51,6 +51,7 @@ public static class AudioLabAPI
         {
             API.RegisterAPICall(ProcessAudio, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(ProcessSTT, false, AudioLabPermissions.PermProcessAudio);
+            API.RegisterAPICall(AudioLabAlignLyrics, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(ProcessTTS, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(AudioLabSpeakRaw, false, AudioLabPermissions.PermProcessAudio);
             API.RegisterAPICall(ProcessWorkflow, false, AudioLabPermissions.PermProcessAudio);
@@ -537,55 +538,17 @@ public static class AudioLabAPI
 
     #region Backward-Compatible Endpoints
 
-    /// <summary>Process Speech-to-Text.</summary>
+    /// <summary>Process Speech-to-Text. <c>word_timestamps</c> adds a time span per word to the response, and
+    /// <c>align_text</c> (with it) times that known text instead of transcribing.</summary>
     public static async Task<JObject> ProcessSTT(Session session, JObject input)
     {
         try
         {
             STTRequest request = ParseSTTRequest(input, session.ID);
-
-            string requestedProvider = input["provider_id"]?.ToString();
-            AudioProviderDefinition sttProvider = !string.IsNullOrEmpty(requestedProvider)
-                ? AudioProviderRegistry.GetById(requestedProvider)
-                : AudioProviderRegistry.GetByCategory(AudioCategory.STT).FirstOrDefault();
-
-            if (sttProvider == null)
-            {
-                return AudioLab.CreateErrorResponse("No STT provider available", "no_provider");
-            }
-
-            Dictionary<string, object> args = new()
-            {
-                ["audio_data"] = request.AudioData,
-                ["language"] = request.Language
-            };
-            // Whisper's task (transcribe or translate), under the key the generate path sends it as
-            if (input["task"]?.ToString() is string sttTask && !string.IsNullOrWhiteSpace(sttTask))
-            {
-                args["task"] = sttTask;
-            }
-            // A requested model used to be read off the request and then dropped on the floor: whatever the
-            // caller asked for, the engine got no variant and loaded the provider's default. Tiny and turbo are
-            // a factor of twenty apart in cost, so silently ignoring the choice is not a small thing — it is
-            // the difference between a transcription that keeps up with a conversation and one that does not.
-            // The variant travels as __model_id, the same key the generate path injects.
-            string requestedModel = input["model"]?.ToString();
-            if (!string.IsNullOrWhiteSpace(requestedModel))
-            {
-                AudioModelDefinition chosen = sttProvider.Models
-                    .FirstOrDefault(m => m.Id.Equals(requestedModel, StringComparison.OrdinalIgnoreCase));
-                if (chosen is null)
-                {
-                    return AudioLab.CreateErrorResponse(
-                        $"'{requestedModel}' is not a model of '{sttProvider.Id}'. Available: "
-                        + string.Join(", ", sttProvider.Models.Select(m => m.Id)) + ".",
-                        "unknown_model");
-                }
-                args["__model_id"] = chosen.Id;
-            }
-
             long sttStart = Environment.TickCount64;
-            JObject result = await AudioServerManager.Instance.ProcessAsync(sttProvider, args, session?.User);
+            JObject result = await TranscribeAsync(session, request.AudioData, request.Language,
+                input["task"]?.ToString(), input["provider_id"]?.ToString(), input["model"]?.ToString(),
+                input["word_timestamps"]?.Value<bool>() ?? false, input["align_text"]?.ToString());
 
             if (result["success"]?.Value<bool>() == true)
             {
@@ -594,6 +557,8 @@ public static class AudioLabAPI
                     Success = true,
                     Transcription = result["text"]?.ToString() ?? "",
                     Confidence = result["confidence"]?.Value<float>() ?? 0f,
+                    Words = result["words"] as JArray ?? [],
+                    Duration = result["duration"]?.Value<double>() ?? 0,
                     Language = request.Language,
                     ProcessingTime = (Environment.TickCount64 - sttStart) / 1000.0,
                     SessionId = session.ID
@@ -610,6 +575,87 @@ public static class AudioLabAPI
         {
             return AudioLab.CreateErrorResponse("STT processing failed", "processing_error", ex);
         }
+    }
+
+    /// <summary>Times the words of a vocal clip with whichever speech models the caller names: with <c>lyrics</c>
+    /// only the aligner (<c>align_provider_id</c>, <c>align_model</c>; Whisper by default) runs; without them
+    /// <c>stt_provider_id</c> and <c>stt_model</c> transcribe, and a transcriber that cannot time words has its text
+    /// timed by the aligner. See <see cref="LyricsAlignment"/>.</summary>
+    public static async Task<JObject> AudioLabAlignLyrics(Session session, JObject input)
+    {
+        try
+        {
+            string audio = input["audio_data"]?.ToString() ?? "";
+            string language = input["language"]?.ToString() ?? AudioConfiguration.DefaultLanguage;
+            if (string.IsNullOrEmpty(audio))
+            {
+                return AudioLab.CreateErrorResponse("No audio supplied to align", "invalid_request");
+            }
+            return await LyricsAlignment.RunAsync(input, call =>
+                TranscribeAsync(session, audio, language, null, call.ProviderId, call.Model, call.WordTimestamps, call.AlignText));
+        }
+        catch (ArgumentException ex)
+        {
+            return AudioLab.CreateErrorResponse("Invalid lyrics alignment request", "invalid_request", ex);
+        }
+        catch (Exception ex)
+        {
+            return AudioLab.CreateErrorResponse("Lyrics alignment failed", "processing_error", ex);
+        }
+    }
+
+    /// <summary>One speech-to-text call through the provider registry: the named provider (the first STT provider
+    /// when none is named) and its model variant, returning the provider's result or an error response.</summary>
+    private static async Task<JObject> TranscribeAsync(Session session, string audioData, string language, string task,
+        string providerId, string model, bool wordTimestamps, string alignText)
+    {
+        AudioProviderDefinition sttProvider = !string.IsNullOrEmpty(providerId)
+            ? AudioProviderRegistry.GetById(providerId)
+            : AudioProviderRegistry.GetByCategory(AudioCategory.STT).FirstOrDefault();
+
+        if (sttProvider == null)
+        {
+            return AudioLab.CreateErrorResponse("No STT provider available", "no_provider");
+        }
+
+        Dictionary<string, object> args = new()
+        {
+            ["audio_data"] = audioData,
+            ["language"] = language
+        };
+        // Whisper's task (transcribe or translate), under the key the generate path sends it as
+        if (!string.IsNullOrWhiteSpace(task))
+        {
+            args["task"] = task;
+        }
+        if (wordTimestamps)
+        {
+            args["word_timestamps"] = true;
+        }
+        if (!string.IsNullOrWhiteSpace(alignText))
+        {
+            args["align_text"] = alignText;
+        }
+        // A requested model used to be read off the request and then dropped on the floor: whatever the
+        // caller asked for, the engine got no variant and loaded the provider's default. Tiny and turbo are
+        // a factor of twenty apart in cost, so silently ignoring the choice is not a small thing — it is
+        // the difference between a transcription that keeps up with a conversation and one that does not.
+        // The variant travels as __model_id, the same key the generate path injects.
+        if (!string.IsNullOrWhiteSpace(model))
+        {
+            AudioModelDefinition chosen = sttProvider.Models
+                .FirstOrDefault(m => m.Id.Equals(model, StringComparison.OrdinalIgnoreCase));
+            if (chosen is null)
+            {
+                return AudioLab.CreateErrorResponse(
+                    $"'{model}' is not a model of '{sttProvider.Id}'. Available: "
+                    + string.Join(", ", sttProvider.Models.Select(m => m.Id)) + ".",
+                    "unknown_model");
+            }
+            args["__model_id"] = chosen.Id;
+        }
+
+        return await AudioServerManager.Instance.ProcessAsync(sttProvider, args, session?.User);
     }
 
     /// <summary>Process Text-to-Speech (backward compatible).</summary>

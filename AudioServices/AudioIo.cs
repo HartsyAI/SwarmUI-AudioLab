@@ -294,12 +294,30 @@ public static class AudioIo
     };
 
     /// <summary>Success result for a transcription (STT) request.</summary>
-    public static JObject TranscriptionResult(string text, string language) => new()
+    public static JObject TranscriptionResult(string text, string language, IReadOnlyList<WordSegment> words = null, double duration = 0) => new()
     {
         ["success"] = true,
         ["text"] = text ?? "",
         ["language"] = language,
+        ["duration"] = duration,
+        ["words"] = Words(words),
     };
+
+    /// <summary>The per-word spans as <c>[{word, start, end}]</c> in seconds from the start of the audio; an empty
+    /// array when the model produced none (a model with no word timing, or no speech).</summary>
+    public static JArray Words(IReadOnlyList<WordSegment> words)
+    {
+        JArray array = [];
+        if (words is null)
+        {
+            return array;
+        }
+        foreach (WordSegment word in words)
+        {
+            array.Add(new JObject { ["word"] = word.Word, ["start"] = word.Start, ["end"] = word.End });
+        }
+        return array;
+    }
 
     /// <summary>Failure result. AudioLab surfaces <c>error</c> to the user.</summary>
     public static JObject Error(string message) => new()

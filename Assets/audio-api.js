@@ -52,6 +52,8 @@ const AudioLabAPI = (() => {
      * @param {string} [options.providerId]
      * @param {string} [options.model] - model variant id (e.g. Whisper "turbo"); server default when omitted
      * @param {string} [options.task] - Whisper: "transcribe" or "translate"
+     * @param {boolean} [options.wordTimestamps] - add `words: [{word, start, end}]` (seconds) when the model can time words
+     * @param {string} [options.alignText] - with wordTimestamps, time this known text instead of transcribing
      */
     async function processSTT(audioData, options = {}) {
         const payload = { audio_data: audioData };
@@ -59,7 +61,34 @@ const AudioLabAPI = (() => {
         if (options.providerId) payload.provider_id = options.providerId;
         if (options.model) payload.model = options.model;
         if (options.task) payload.task = options.task;
+        if (options.wordTimestamps) payload.word_timestamps = true;
+        if (options.alignText) payload.align_text = options.alignText;
         return await callAPI('ProcessSTT', payload);
+    }
+
+    /**
+     * Time the words of a vocal clip. The model that transcribes and the model that times words are separate
+     * choices: with `lyrics` only the aligner runs; without them the transcriber runs, and a transcriber that
+     * cannot time words has its text timed by the aligner.
+     * @param {string} audioData - base64 encoded vocal audio (at most one 30 s window when lyrics are given)
+     * @param {Object} [options]
+     * @param {string} [options.lyrics] - the words sung, when known
+     * @param {string} [options.language]
+     * @param {string} [options.sttProviderId] - transcriber provider (defaults to the aligner)
+     * @param {string} [options.sttModel] - transcriber model variant
+     * @param {string} [options.alignProviderId] - aligner provider (defaults to Whisper)
+     * @param {string} [options.alignModel] - aligner model variant
+     * @returns {Promise<{success: boolean, source: string, text: string, words: Array<{word: string, start: number, end: number}>, duration: number}>}
+     */
+    async function alignLyrics(audioData, options = {}) {
+        const payload = { audio_data: audioData };
+        if (options.lyrics) payload.lyrics = options.lyrics;
+        if (options.language) payload.language = options.language;
+        if (options.sttProviderId) payload.stt_provider_id = options.sttProviderId;
+        if (options.sttModel) payload.stt_model = options.sttModel;
+        if (options.alignProviderId) payload.align_provider_id = options.alignProviderId;
+        if (options.alignModel) payload.align_model = options.alignModel;
+        return await callAPI('AudioLabAlignLyrics', payload);
     }
 
     /**
@@ -147,6 +176,7 @@ const AudioLabAPI = (() => {
         getInstallationStatus,
         processAudio,
         processSTT,
+        alignLyrics,
         processTTS,
         processWorkflow,
         combineVideoAudio,
