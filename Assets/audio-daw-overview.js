@@ -20,11 +20,12 @@ const AudioDawOverview = (() => {
     const BAND_H = 5;
 
     /**
-     * How many seconds the strip spans: the content, or the visible part of the lanes if that reaches further (zoomed
-     * out past the end), and never less than a second so an empty project still has a scale.
+     * How many seconds the strip spans: the content, or the width of the lanes' view in seconds if that is longer
+     * (zoomed out past the end), and never less than a second so an empty project still has a scale. It uses the
+     * view's width, not where the view ends, so scrolling never changes the scale.
      */
-    function span(contentDuration, viewEnd) {
-        return Math.max(1, contentDuration || 0, viewEnd || 0);
+    function span(contentDuration, viewSeconds) {
+        return Math.max(1, contentDuration || 0, viewSeconds || 0);
     }
 
     /** Pixel for a time on a strip `width` wide covering `spanSeconds`. */
@@ -129,7 +130,9 @@ const AudioDawOverview = (() => {
             drag: null,
             callbacks: {},
             baseDirty: true,
-            baseSpan: 0              // the span the cached blocks were drawn for
+            baseSpan: 0,             // the span the cached blocks were drawn for
+            colors: null,            // the theme colors, read when the blocks are redrawn, not on every frame
+            raf: 0                   // a pending animation-frame paint (scroll and playhead updates share one per frame)
         };
         const colors = () => {
             const cs = getComputedStyle(document.documentElement);
@@ -141,11 +144,11 @@ const AudioDawOverview = (() => {
             const width = container.clientWidth;
             const viewStart = st.view.scrollLeft / st.view.zoom;
             const viewEnd = (st.view.scrollLeft + st.view.viewW) / st.view.zoom;
-            const spanSeconds = span(st.data.contentDuration, viewEnd);
+            const spanSeconds = span(st.data.contentDuration, st.view.viewW / st.view.zoom);
             return { width, spanSeconds, rect: viewportRect({ viewStart, viewEnd, span: spanSeconds, width }) };
         };
 
-        function paintBase() {
+        function paintBase(spanSeconds) {
             const dpr = window.devicePixelRatio || 1;
             const w = container.clientWidth;
             const h = container.clientHeight;
@@ -156,11 +159,10 @@ const AudioDawOverview = (() => {
             }
             const ctx = base.getContext('2d');
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            const c = colors();
+            const c = st.colors = colors();
             ctx.clearRect(0, 0, w, h);
             ctx.fillStyle = c.soft;
             ctx.fillRect(0, 0, w, h);
-            const { spanSeconds } = geometry();
             st.baseSpan = spanSeconds;
             // Sections: a colored band along the top
             for (const s of st.data.sections) {
@@ -190,9 +192,10 @@ const AudioDawOverview = (() => {
             const w = container.clientWidth;
             const h = container.clientHeight;
             if (!(w > 0 && h > 0)) return;
+            const { width, spanSeconds, rect } = geometry();
             // The blocks only move when the data, the size or the scale changes, not on every scroll
-            if (st.baseDirty || st.baseSpan !== geometry().spanSeconds || base.width !== Math.round(w * dpr)) {
-                if (!paintBase()) return;
+            if (st.baseDirty || st.baseSpan !== spanSeconds || base.width !== Math.round(w * dpr)) {
+                if (!paintBase(spanSeconds)) return;
             }
             if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
                 canvas.width = Math.round(w * dpr);
@@ -205,8 +208,7 @@ const AudioDawOverview = (() => {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(base, 0, 0);
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            const c = colors();
-            const { width, spanSeconds, rect } = geometry();
+            const c = st.colors;
             // The window: the part of the song the lanes show, with the rest dimmed
             ctx.fillStyle = 'rgba(0, 0, 0, 0.32)';
             ctx.fillRect(0, 0, rect.x, h);
@@ -224,6 +226,16 @@ const AudioDawOverview = (() => {
             ctx.stroke();
         }
 
+        /** Paint on the next animation frame: a scroll and a playhead move in the same frame draw once. */
+        const schedulePaint = () => {
+            if (st.raf) {
+                return;
+            }
+            st.raf = requestAnimationFrame(() => {
+                st.raf = 0;
+                paint();
+            });
+        };
         const localX = (e) => e.clientX - container.getBoundingClientRect().left;
         const scrollTo = (x, grab) => {
             const { width, spanSeconds } = geometry();
@@ -266,11 +278,11 @@ const AudioDawOverview = (() => {
             /** The lanes' scroll state: { scrollLeft, viewW, zoom, scrollWidth }. */
             setViewport(view) {
                 st.view = { ...st.view, ...view };
-                paint();
+                schedulePaint();
             },
             setPlayhead(seconds) {
                 st.playhead = seconds;
-                paint();
+                schedulePaint();
             },
             /** Re-measure and redraw (container resize, theme change). */
             redraw() {
@@ -282,8 +294,13 @@ const AudioDawOverview = (() => {
                 (st.callbacks[event] = st.callbacks[event] || []).push(callback);
             },
             destroy() {
+                if (st.raf) {
+                    cancelAnimationFrame(st.raf);
+                    st.raf = 0;
+                }
                 container.innerHTML = '';
                 st.callbacks = {};
+                st.data = { tracks: [], sections: [], markers: [], contentDuration: 0, midiLength: null };
             }
         };
     }

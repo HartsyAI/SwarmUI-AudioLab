@@ -5606,6 +5606,7 @@ const AudioDaw = (() => {
         const corner = document.querySelector('#daw_main .daw-overview-corner');
         if (corner) corner.dataset.label = translate('Overview');
         document.getElementById('daw_main')?.classList.toggle('overview-off', !overviewOn);
+        if (overview) overview.destroy();
         el.innerHTML = '';
         overview = AudioDawOverview.create(el);
         overview.on('scroll', (scrollLeft) => {
@@ -5615,12 +5616,15 @@ const AudioDaw = (() => {
         });
         overview.on('seek', (time) => seekTo(time));
         // The strip's width follows the lanes' column (window, header splitter, show/hide), so it redraws on any resize
-        if (!overviewObserver && typeof ResizeObserver !== 'undefined') {
-            overviewObserver = new ResizeObserver(() => {
-                if (!overview) return;
-                overview.redraw();
-                syncOverviewViewport();
-            });
+        if (typeof ResizeObserver !== 'undefined') {
+            if (!overviewObserver) {
+                overviewObserver = new ResizeObserver(() => {
+                    if (!overview) return;
+                    overview.redraw();
+                    syncOverviewViewport();
+                });
+            }
+            overviewObserver.disconnect(); // observe the strip as it is now, never a stale one
             overviewObserver.observe(el);
         }
         refreshOverview();
@@ -9952,6 +9956,8 @@ const AudioDaw = (() => {
             }
         }
         if (timeline) { timeline.destroy(); timeline = null; }
+        if (overviewObserver) { overviewObserver.disconnect(); overviewObserver = null; }
+        if (overview) { overview.destroy(); overview = null; }
         if (audioCtx && audioCtx.state !== 'closed') {
             try { audioCtx.close(); } catch (_) {}
         }

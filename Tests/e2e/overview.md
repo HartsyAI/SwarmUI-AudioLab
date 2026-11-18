@@ -4,8 +4,8 @@ Run in the browser against a Debug dev build of SwarmUI with this branch (new sc
 Seed with `Tests/e2e/daw-fixture.js`: `await dawFixture({ tracks: 4, seconds: 120 })`.
 
 The strip is a canvas, so the checks read pixels: the window frame is drawn in `--emphasis`, the playhead in red, the
-sections in their own colors. Convert with the strip's CSS width W and the span (the content length, or the view's end if
-that is further): x = seconds / span * W.
+sections in their own colors. Convert with the strip's CSS width W and the span (the content length, or the width of the
+lanes' view in seconds if that is longer, so scrolling never changes it): x = seconds / span * W.
 
 | # | Step | Expect |
 |---|------|--------|
@@ -14,7 +14,7 @@ that is further): x = seconds / span * W.
 | 3 | Drag the frame 300 px right | The lanes scroll by 300 / W * span * zoom (2618 px for W = 1375, 120 s, zoom 100) and the ruler follows |
 | 4 | Click the strip outside the frame | The view recenters on the click |
 | 5 | Double-click the strip | The playhead moves to that time and the view shows it |
-| 6 | Scroll the lanes (wheel, scrollbar, scrollLeft) | The frame follows |
+| 6 | Scroll the lanes (wheel, scrollbar, scrollLeft), all the way to the right end | The frame follows; the blocks do not shift or rescale, and at the far right the frame rests against the strip's right edge |
 | 7 | Zoom in and out | The frame narrows and widens; zooming out past the end keeps the frame inside the strip |
 | 8 | Add a section and a marker | The section band shows in its color along the top of the strip; the marker tick appears |
 | 9 | Duplicate a track | A new row of blocks appears |
@@ -25,6 +25,7 @@ that is further): x = seconds / span * W.
 | 14 | Reload with MAP off | It stays off; the preference is not in the project |
 | 15 | Resize the pane, drag the header splitter | The canvas resizes with the strip and the frame is recomputed |
 | 16 | Narrow the pane to about 900 px | The strip still fits; no console errors |
+| 17 | Close the DAW (X), reopen it from a file, then drag the frame and press MAP off and on | One strip, one canvas in `#daw_overview`; the drag scrolls once (not twice per move); it still redraws when the pane is resized |
 
 Pass criteria: every row behaves as stated, and the console shows no errors.
 
