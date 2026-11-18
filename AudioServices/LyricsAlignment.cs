@@ -11,7 +11,7 @@ public static class LyricsAlignment
     /// <summary>The provider that times words when the caller names none: Whisper, the model family whose attention yields word times.</summary>
     public const string DefaultAlignerProviderId = "whisper_stt";
 
-    /// <summary>Runs the alignment. <paramref name="input"/> carries <c>lyrics</c> (optional), <c>stt_provider_id</c> and <c>stt_model</c> (the transcriber, defaulting to the aligner), <c>align_provider_id</c> and <c>align_model</c> (the aligner, defaulting to Whisper's default model). The result has <c>source</c>: <c>aligned</c> (the given lyrics were timed), <c>stt</c> (the transcriber timed its own words) or <c>stt+aligned</c> (the transcriber's text was timed by the aligner). A failed call is returned as it came.</summary>
+    /// <summary>Runs the alignment. <paramref name="input"/> carries <c>lyrics</c> (optional), <c>stt_provider_id</c> and <c>stt_model</c> (the transcriber, defaulting to the aligner), <c>align_provider_id</c> and <c>align_model</c> (the aligner, defaulting to Whisper's default model). The result has <c>source</c>: <c>aligned</c> (the given lyrics were timed), <c>stt</c> (the transcriber timed its own words) or <c>stt+aligned</c> (the transcriber's text was timed by the aligner). A failed call is returned as it came; an aligner that returns no word times at all is an error (<c>no_word_timing</c>), not an empty success.</summary>
     public static async Task<JObject> RunAsync(JObject input, Func<SttCall, Task<JObject>> transcribe)
     {
         string lyrics = input["lyrics"]?.ToString();
@@ -45,6 +45,17 @@ public static class LyricsAlignment
         {
             return aligned;
         }
+        if (aligned["words"] is not JArray alignedWords || alignedWords.Count == 0)
+        {
+            // A model with no word timing (Moonshine, a cloud transcriber) ignores the known text and just
+            // transcribes, so "success" with nothing timed would read as if the lyrics had been aligned.
+            return new JObject
+            {
+                ["success"] = false,
+                ["error"] = $"'{alignerId}' returned no word times for the text. Pick an aligner that can time words (Whisper or Distil-Whisper).",
+                ["error_code"] = "no_word_timing",
+            };
+        }
         aligned["text"] = lyrics.Trim();
         return Result(aligned, source, alignerId, alignerModel);
     }
@@ -57,9 +68,9 @@ public static class LyricsAlignment
     {
         ["success"] = true,
         ["source"] = source,
-        ["text"] = engine["text"] ?? "",
-        ["words"] = engine["words"] ?? new JArray(),
-        ["duration"] = engine["duration"] ?? 0,
+        ["text"] = engine["text"]?.ToString() ?? "",
+        ["words"] = engine["words"] as JArray ?? new JArray(),
+        ["duration"] = (double?)engine["duration"] ?? 0,
         ["language"] = engine["language"],
         ["provider_id"] = providerId,
         ["model"] = model,

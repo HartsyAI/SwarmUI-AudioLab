@@ -303,6 +303,19 @@ public static class AudioIo
         ["words"] = Words(words),
     };
 
+    /// <summary>Reads a boolean request field leniently: a JSON bool, a number (non-zero is true), or the strings
+    /// "true"/"false"/"1"/"0". Missing, null or anything unreadable is false, never an exception.</summary>
+    public static bool ReadFlag(JToken token)
+    {
+        return token?.Type switch
+        {
+            JTokenType.Boolean => (bool)token,
+            JTokenType.Integer or JTokenType.Float => (double)token != 0,
+            JTokenType.String => bool.TryParse((string)token, out bool parsed) ? parsed : (string)token == "1",
+            _ => false,
+        };
+    }
+
     /// <summary>The per-word spans as <c>[{word, start, end}]</c> in seconds from the start of the audio; an empty
     /// array when the model produced none (a model with no word timing, or no speech).</summary>
     public static JArray Words(IReadOnlyList<WordSegment> words)

@@ -76,6 +76,8 @@ public class AudioLab : Extension
             ScriptFiles.Add("Assets/audio-daw-sections.js");
             ScriptFiles.Add("Assets/audio-daw-groups.js");
             ScriptFiles.Add("Assets/audio-daw-lyrics.js");
+            ScriptFiles.Add("Assets/audio-daw-overview.js");
+            ScriptFiles.Add("Assets/audio-daw-icons.js");
             ScriptFiles.Add("Assets/audio-daw-timeline.js");
             ScriptFiles.Add("Assets/audio-daw-track.js");
             ScriptFiles.Add("Assets/audio-daw-mixer.js");

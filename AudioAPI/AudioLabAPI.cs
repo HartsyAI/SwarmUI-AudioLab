@@ -44,6 +44,10 @@ public static class AudioLabAPI
     /// realistic reference clip while still rejecting a runaway payload.</summary>
     public const int MaxArgStringLength = 64 * 1024 * 1024;
 
+    /// <summary>Cap on the known text handed to a word aligner (lyrics, a script): the clip it is timed against
+    /// has to fit a single 30-second model window, so anything near this is already far past useful.</summary>
+    public const int MaxAlignTextLength = 20_000;
+
     /// <summary>Registers all API endpoints.</summary>
     public static void Register()
     {
@@ -548,7 +552,7 @@ public static class AudioLabAPI
             long sttStart = Environment.TickCount64;
             JObject result = await TranscribeAsync(session, request.AudioData, request.Language,
                 input["task"]?.ToString(), input["provider_id"]?.ToString(), input["model"]?.ToString(),
-                input["word_timestamps"]?.Value<bool>() ?? false, input["align_text"]?.ToString());
+                AudioIo.ReadFlag(input["word_timestamps"]), input["align_text"]?.ToString());
 
             if (result["success"]?.Value<bool>() == true)
             {
@@ -558,7 +562,7 @@ public static class AudioLabAPI
                     Transcription = result["text"]?.ToString() ?? "",
                     Confidence = result["confidence"]?.Value<float>() ?? 0f,
                     Words = result["words"] as JArray ?? [],
-                    Duration = result["duration"]?.Value<double>() ?? 0,
+                    Duration = (double?)result["duration"] ?? 0,
                     Language = request.Language,
                     ProcessingTime = (Environment.TickCount64 - sttStart) / 1000.0,
                     SessionId = session.ID
@@ -587,9 +591,19 @@ public static class AudioLabAPI
         {
             string audio = input["audio_data"]?.ToString() ?? "";
             string language = input["language"]?.ToString() ?? AudioConfiguration.DefaultLanguage;
-            if (string.IsNullOrEmpty(audio))
+            if (string.IsNullOrWhiteSpace(audio))
             {
                 return AudioLab.CreateErrorResponse("No audio supplied to align", "invalid_request");
+            }
+            if (audio.Length > MaxArgStringLength)
+            {
+                return AudioLab.CreateErrorResponse(
+                    $"The audio is {audio.Length / (1024 * 1024)} MB encoded, over the {MaxArgStringLength / (1024 * 1024)} MB limit. Align a shorter section.",
+                    "arg_too_large");
+            }
+            if (string.IsNullOrWhiteSpace(language))
+            {
+                language = AudioConfiguration.DefaultLanguage;
             }
             return await LyricsAlignment.RunAsync(input, call =>
                 TranscribeAsync(session, audio, language, null, call.ProviderId, call.Model, call.WordTimestamps, call.AlignText));
@@ -609,6 +623,12 @@ public static class AudioLabAPI
     private static async Task<JObject> TranscribeAsync(Session session, string audioData, string language, string task,
         string providerId, string model, bool wordTimestamps, string alignText)
     {
+        if (alignText is not null && alignText.Length > MaxAlignTextLength)
+        {
+            return AudioLab.CreateErrorResponse(
+                $"The text to align is {alignText.Length} characters, over the {MaxAlignTextLength} limit. It has to fit one 30-second window anyway.",
+                "arg_too_large");
+        }
         AudioProviderDefinition sttProvider = !string.IsNullOrEmpty(providerId)
             ? AudioProviderRegistry.GetById(providerId)
             : AudioProviderRegistry.GetByCategory(AudioCategory.STT).FirstOrDefault();
@@ -628,13 +648,16 @@ public static class AudioLabAPI
         {
             args["task"] = task;
         }
-        if (wordTimestamps)
-        {
-            args["word_timestamps"] = true;
-        }
+        // Known text is only used by the engine alongside word timestamps (it ignores it otherwise and would
+        // silently transcribe instead), so asking to align it asks for word timestamps too.
         if (!string.IsNullOrWhiteSpace(alignText))
         {
             args["align_text"] = alignText;
+            wordTimestamps = true;
+        }
+        if (wordTimestamps)
+        {
+            args["word_timestamps"] = true;
         }
         // A requested model used to be read off the request and then dropped on the floor: whatever the
         // caller asked for, the engine got no variant and loaded the provider's default. Tiny and turbo are

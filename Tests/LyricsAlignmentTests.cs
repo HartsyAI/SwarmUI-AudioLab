@@ -116,4 +116,80 @@ public class LyricsAlignmentTests
 
         Assert.Same(failure, result);
     }
+
+    [Fact]
+    public async Task GivenLyrics_AnAlignerThatTimesNothingIsAnErrorNotAnEmptySuccess()
+    {
+        JObject result = await LyricsAlignment.RunAsync(new JObject { ["lyrics"] = "hold on", ["align_provider_id"] = "moonshine_stt" },
+            _ => Task.FromResult(Ok("hold on")));
+
+        Assert.False((bool)result["success"]);
+        Assert.Equal("no_word_timing", (string)result["error_code"]);
+    }
+
+    [Fact]
+    public async Task AResultWithNullWordsAndNullText_IsTreatedAsNoWordsAndNoText()
+    {
+        JObject nullWords = new() { ["success"] = true, ["text"] = null, ["words"] = JValue.CreateNull(), ["duration"] = null };
+        int calls = 0;
+
+        JObject result = await LyricsAlignment.RunAsync(new JObject(), _ => { calls++; return Task.FromResult(nullWords); });
+
+        Assert.Equal(1, calls);
+        Assert.True((bool)result["success"]);
+        Assert.Equal("", (string)result["text"]);
+        Assert.Empty((JArray)result["words"]);
+        Assert.Equal(0.0, (double)result["duration"]);
+    }
+
+    [Fact]
+    public async Task ATranscriberWithNullWords_StillHandsItsTextToTheAligner()
+    {
+        List<SttCall> calls = [];
+        JObject untimed = new() { ["success"] = true, ["text"] = "hold on", ["words"] = JValue.CreateNull() };
+
+        JObject result = await LyricsAlignment.RunAsync(new JObject { ["stt_provider_id"] = "moonshine_stt" }, call =>
+        {
+            calls.Add(call);
+            return Task.FromResult(call.AlignText is null ? untimed : Ok("x", OneWord));
+        });
+
+        Assert.Equal(2, calls.Count);
+        Assert.Equal("stt+aligned", (string)result["source"]);
+    }
+
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData("false", false)]
+    [InlineData("1", true)]
+    [InlineData("0", false)]
+    [InlineData("yes", false)]
+    [InlineData("", false)]
+    public void ReadFlag_AcceptsBoolStringAndNumberForms(string text, bool expected)
+    {
+        Assert.Equal(expected, AudioIo.ReadFlag(JValue.CreateString(text)));
+    }
+
+    [Fact]
+    public void ReadFlag_ReadsJsonBoolsAndNumbers_AndNeverThrowsOnNullOrMissing()
+    {
+        Assert.True(AudioIo.ReadFlag(new JValue(true)));
+        Assert.False(AudioIo.ReadFlag(new JValue(false)));
+        Assert.True(AudioIo.ReadFlag(new JValue(1)));
+        Assert.False(AudioIo.ReadFlag(new JValue(0)));
+        Assert.True(AudioIo.ReadFlag(new JValue(1.5)));
+        Assert.False(AudioIo.ReadFlag(JValue.CreateNull()));
+        Assert.False(AudioIo.ReadFlag(null));
+        Assert.False(AudioIo.ReadFlag(new JArray()));
+    }
+
+    [Fact]
+    public void TranscriptionResult_WithNullTextAndNoWords_IsStillWellFormed()
+    {
+        JObject result = AudioIo.TranscriptionResult(null, "en", null);
+
+        Assert.Equal("", (string)result["text"]);
+        Assert.Empty((JArray)result["words"]);
+        Assert.Equal(0.0, (double)result["duration"]);
+    }
 }
