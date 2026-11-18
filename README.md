@@ -1015,6 +1015,11 @@ Known and planned, so you can tell missing from broken:
 - **Performance.** The large autoregressive music models are slow on consumer GPUs and are an active optimization
   target. See BENCHMARKS.md for measured numbers.
 - **LLM assisted music metadata.** ACE-Step's planner parameters exist but wait on SwarmUI's `AbstractLLMBackend`.
+- **Typed messages in the Voice Agent.** A text box under the transcript to type into a live call. It needs a typed user
+  turn in the engine's `HartsyInference.Voice` (`VoiceAgentSession` has audio in and `SpeakAsync` out, but no way to
+  run a turn from text); the tab then sends an inbound `{ "text": "..." }` frame. Undecided: wait for that engine
+  method (turn with barge-in rules and latency numbers), or send the text to LLMAssistant and speak the reply from
+  the extension (no barge-in, no latency numbers).
 
 ## Troubleshooting
 
