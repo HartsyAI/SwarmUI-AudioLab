@@ -138,4 +138,44 @@ public class VoiceEngineCatalogTests
         Assert.Null(request.SttModel);
         Assert.Null(request.TtsEngine);
     }
+
+    [Fact]
+    public void EveryListedLanguage_IsOneOfWhispersCodes()
+    {
+        Assert.All(VoiceEngineCatalog.Languages, l => Assert.Contains(l.Id, HartsyInference.ModelAssets.Tokenizers.WhisperTokenizer.Languages));
+        Assert.Equal(VoiceEngineCatalog.Languages.Count, VoiceEngineCatalog.Languages.Select(l => l.Id).Distinct().Count());
+        Assert.Equal(VoiceEngineCatalog.DefaultLanguage, VoiceEngineCatalog.Languages[0].Id);
+    }
+
+    [Fact]
+    public void OnlyTheMultilingualWhisperSizes_AreMultilingual()
+    {
+        string[] multilingual = [.. VoiceEngineCatalog.Stt.Where(s => s.Multilingual).Select(s => s.Id)];
+        Assert.NotEmpty(multilingual);
+        Assert.All(multilingual, id => Assert.False(id.EndsWith(".en", StringComparison.Ordinal) || !id.StartsWith("whisper:", StringComparison.Ordinal)));
+        Assert.False(VoiceEngineCatalog.IsMultilingual(VoiceEngineCatalog.DefaultStt));
+        Assert.False(VoiceEngineCatalog.IsMultilingual("moonshine:base"));
+        Assert.False(VoiceEngineCatalog.IsMultilingual("not-a-model"));
+    }
+
+    [Fact]
+    public void KeyFor_MultilingualRecognizer_CarriesTheLanguage()
+    {
+        VoiceSessionStartRequest start = new("m", null, null, null, true, 16000, "whisper:openai/whisper-small", null, "fr");
+        Assert.Equal(new VoiceModelKey("whisper:openai/whisper-small", "kokoro:af_heart", "fr"), VoiceEngineCatalog.KeyFor(start));
+    }
+
+    [Fact]
+    public void KeyFor_EnglishOnlyRecognizer_IsAlwaysEnglish()
+    {
+        VoiceSessionStartRequest start = new("m", null, null, null, true, 16000, "moonshine:base", null, "fr");
+        Assert.Equal("en", VoiceEngineCatalog.KeyFor(start).Language);
+    }
+
+    [Fact]
+    public void Describe_NamesTheLanguageOnlyWhenItIsNotEnglish()
+    {
+        Assert.DoesNotContain("listening", new VoiceModelKey("whisper:openai/whisper-small", "kokoro:af_heart").Describe());
+        Assert.Contains("listening in French", new VoiceModelKey("whisper:openai/whisper-small", "kokoro:af_heart", "fr").Describe());
+    }
 }

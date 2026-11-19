@@ -58,6 +58,14 @@ Start, then drive the server side with `voiceFake.state(...)`, `say(...)`, `pcm(
 | 48 | Type a message and press Enter (or click Send) | One `{ text }` frame, trimmed, on the socket; the box clears and keeps focus; Enter on an empty box sends nothing |
 | 49 | The server echoes the typed turn as a user transcript | A "You" bubble appears once (no local duplicate); the box stays enabled while the agent thinks, uses a tool or speaks |
 | 50 | The socket drops | The box and Send disable with the rest of the call controls |
+| 51 | Open the setup panel with the options route reachable | A **Language** select follows **Hears you**: English selected and disabled for an English-only recognizer (default Whisper small.en, Distil, Moonshine) |
+| 52 | Pick a multilingual Whisper size (tiny, base, small or medium, no `.en`) | The Language select enables and lists the languages; the recognizer note shows |
+| 53 | Pick French with a multilingual recognizer | The voice list is unchanged; a line says the agent speaks in its voice's language and to pick a voice that speaks French |
+| 54 | Start a call with a multilingual recognizer and French | The setup frame carries `sttModel` and `language: "fr"`; with an English-only recognizer it carries no `language` |
+| 55 | Switch back to an English-only recognizer | Language returns to English and disables; the note's language line goes |
+| 56 | Save a preset with a multilingual recognizer and French, change both, load it | Both come back; a preset saved before this PR (no language) loads as English |
+| 57 | A saved language the server no longer lists | Replaced by English (the server would refuse it) |
+| 58 | Reload the page with French and a multilingual recognizer saved | Language is still French once the options arrive (it is not reset while the recognizer kind is unknown) |
 
 ## Run log
 Filled in per run below.
@@ -85,3 +93,7 @@ Not run: row 37, a Piper voice preview (it downloads a voice), and any real call
 ### 2026-11-18, PR 4 (mute and push-to-talk): dev server on 7801, built-in browser, fake socket and a 330 Hz oscillator as the microphone
 Rows 38 to 45 passed except row 43 (checked as: the held key is prevented and a document bubble-phase listener never sees it; the DAW's own listener is such a listener). Frames were read from the fake socket: open peak 32767, muted or key-up peak 0, frames kept flowing while muted.
 Not covered: a real call, a real keyboard (synthetic events were dispatched), light theme. Typed messages are not part of this PR: they need an engine method (`VoiceAgentSession` has no typed user turn) and that engine session could not be started from the remote session.
+
+### 2026-11-19, language picker: dev server on 7801, built-in browser, stubbed WebSocket, microphone and LLM model list
+Rows 51 to 58 passed with the real options route (11 recognizers, 36 languages): the Language select is English and disabled for English-only recognizers, enables for the four multilingual Whisper sizes, shows the voice-language note for a non-English choice, and the setup frame carries `language` only with a multilingual recognizer (read from the stub). A preset round trip restored recognizer and language; a saved unlisted language became English after a real reload; a preset saved before this change loaded as English.
+Not run: a real call in another language (needs a multilingual Whisper download and an LLMAssistant model), light theme.

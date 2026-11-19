@@ -235,6 +235,7 @@ internal sealed class VoiceEngineModels
             AudioDevice = audioDevice,
             SttModel = key.Stt,
             TtsModel = key.Tts,
+            Language = key.Language,
             Denoise = true,
         };
         VoiceModelSet set = await VoiceModelSet.LoadAsync(engine, options, wakeRoot, cancel).ConfigureAwait(false);

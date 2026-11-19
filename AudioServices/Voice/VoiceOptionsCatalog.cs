@@ -45,7 +45,7 @@ internal static class VoiceOptionsCatalog
     /// copied here).</summary>
     public static JObject Build(bool llmAvailable)
     {
-        JArray stt = new(VoiceEngineCatalog.Stt.Select(s => new JObject { ["id"] = s.Id, ["name"] = s.Name, ["note"] = s.Note }));
+        JArray stt = new(VoiceEngineCatalog.Stt.Select(s => new JObject { ["id"] = s.Id, ["name"] = s.Name, ["note"] = s.Note, ["multilingual"] = s.Multilingual }));
         JArray tts = [];
         foreach (TtsEngineChoice engine in VoiceEngineCatalog.TtsEngines)
         {
@@ -66,6 +66,8 @@ internal static class VoiceOptionsCatalog
             ["success"] = true,
             ["stt"] = stt,
             ["default_stt"] = VoiceEngineCatalog.DefaultStt,
+            ["languages"] = new JArray(VoiceEngineCatalog.Languages.Select(l => new JObject { ["id"] = l.Id, ["name"] = l.Name })),
+            ["default_language"] = VoiceEngineCatalog.DefaultLanguage,
             ["tts"] = tts,
             ["default_tts"] = VoiceEngineCatalog.DefaultTtsEngine,
             ["llm_available"] = llmAvailable,

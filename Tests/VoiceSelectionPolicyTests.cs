@@ -62,4 +62,20 @@ public class VoiceSelectionPolicyTests
         Assert.Contains("Moonshine tiny", selection.Notice);
         Assert.Contains("Whisper small.en", selection.Notice);
     }
+
+    [Fact]
+    public void DifferentLanguage_WhenIdle_Rebuilds_AndWithActiveSessions_KeepsTheLoadedOneAndNames()
+    {
+        VoiceModelKey english = new("whisper:openai/whisper-small", "kokoro:af_heart");
+        VoiceModelKey french = english with { Language = "fr" };
+
+        VoiceSelection idle = VoiceSelectionPolicy.Decide(english, french, activeSessions: 0);
+        Assert.Equal(french, idle.KeyToUse);
+        Assert.True(idle.NeedsRebuild);
+
+        VoiceSelection busy = VoiceSelectionPolicy.Decide(english, french, activeSessions: 1);
+        Assert.Equal(english, busy.KeyToUse);
+        Assert.False(busy.NeedsRebuild);
+        Assert.Contains("French", busy.Notice);
+    }
 }

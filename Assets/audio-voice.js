@@ -68,7 +68,7 @@ const AudioVoice = (() => {
     const PREVIEW_TEXT = 'Hello! This is how I sound.';
     const llm = { status: 'loading', models: [], warnings: [] };
     // What the server offers to hear and speak with: { stt: [{id, name, note}], tts: [{engine, name, note, provider_id, default_voice, voices}], defaultStt, defaultTts }
-    let engines = { stt: [], tts: [], defaultStt: '', defaultTts: '' };
+    let engines = { stt: [], tts: [], languages: [], defaultStt: '', defaultTts: '', defaultLanguage: 'en' };
     let store = AudioVoiceState.createPresetStore();
     let previewCtx = null;
     let previewSource = null;
@@ -129,6 +129,7 @@ const AudioVoice = (() => {
             bargeIn: els.bargeIn.checked,
             sttModel: els.stt.value,
             ttsEngine: els.engine.value,
+            language: els.language.value,
             pushToTalk: els.ptt.checked,
             pttKey: els.pttKeyBtn.dataset.code
         });
@@ -148,6 +149,9 @@ const AudioVoice = (() => {
         const engine = engines.tts.length ? AudioVoiceState.pickOption(engines.tts.map(c => c.engine), settings.ttsEngine, engines.defaultTts) : settings.ttsEngine;
         setSelect(els.stt, stt, stt);
         setSelect(els.engine, engine, engine);
+        const language = engines.languages.length ? AudioVoiceState.pickOption(engines.languages.map(c => c.id), settings.language, engines.defaultLanguage) : settings.language;
+        setSelect(els.language, language, language);
+        syncLanguage(); // after the recognizer: only a multilingual one takes a language
         fillVoices(settings.voice); // after the engine: the voice list is the engine's
         els.systemPrompt.value = settings.systemPrompt;
         els.promptDetails.open = !!settings.systemPrompt;
@@ -284,9 +288,20 @@ const AudioVoice = (() => {
 
         els.stt = document.createElement('select');
         els.stt.className = 'form-control voice-agent-select';
-        els.stt.addEventListener('change', onSettingsChanged);
-        els.stt.addEventListener('change', showEngineNote);
+        els.stt.addEventListener('change', () => {
+            syncLanguage();
+            onSettingsChanged();
+            showEngineNote();
+        });
         labeled(setup, 'Hears you', els.stt);
+
+        els.language = document.createElement('select');
+        els.language.className = 'form-control voice-agent-select';
+        els.language.addEventListener('change', () => {
+            onSettingsChanged();
+            showEngineNote();
+        });
+        labeled(setup, 'Language', els.language);
 
         els.engine = document.createElement('select');
         els.engine.className = 'form-control voice-agent-select';
@@ -438,8 +453,10 @@ const AudioVoice = (() => {
         engines = {
             stt: data.stt || [],
             tts: data.tts || [],
+            languages: data.languages || [],
             defaultStt: data.default_stt || '',
-            defaultTts: data.default_tts || ''
+            defaultTts: data.default_tts || '',
+            defaultLanguage: data.default_language || 'en'
         };
         const wantedStt = els.stt.value;
         els.stt.textContent = '';
@@ -447,6 +464,13 @@ const AudioVoice = (() => {
             els.stt.add(new Option(choice.name, choice.id));
         }
         els.stt.value = AudioVoiceState.pickOption(engines.stt.map(c => c.id), wantedStt, engines.defaultStt);
+        const wantedLanguage = els.language.value;
+        els.language.textContent = '';
+        for (const choice of engines.languages) {
+            els.language.add(new Option(choice.name, choice.id));
+        }
+        els.language.value = AudioVoiceState.pickOption(engines.languages.map(c => c.id), wantedLanguage, engines.defaultLanguage);
+        syncLanguage();
         const wantedEngine = els.engine.value;
         els.engine.textContent = '';
         for (const choice of engines.tts) {
@@ -456,6 +480,23 @@ const AudioVoice = (() => {
         fillVoices(els.voice.value);
         showEngineNote();
         onSettingsChanged();
+    }
+
+    /** Whether the chosen recognizer hears a language other than English. False until the options arrive (the language is then not sent). */
+    function sttIsMultilingual() {
+        return !!engines.stt.find(c => c.id === els.stt.value)?.multilingual;
+    }
+
+    /** The language list follows the recognizer: an English-only one is shown as English and cannot be changed. */
+    function syncLanguage() {
+        if (!engines.stt.length) {
+            return; // the options have not arrived: the recognizer's kind is unknown, so a saved language must not be reset to English yet
+        }
+        const multilingual = sttIsMultilingual();
+        els.language.disabled = !multilingual;
+        if (!multilingual) {
+            els.language.value = engines.defaultLanguage;
+        }
     }
 
     /** The chosen engine's offer, or null before the options arrive. */
@@ -487,6 +528,10 @@ const AudioVoice = (() => {
         const stt = engines.stt.find(c => c.id === els.stt.value);
         const engine = currentEngine();
         const parts = [stt?.note, engine?.note].filter(Boolean).map(translate);
+        if (sttIsMultilingual() && els.language.value && els.language.value !== engines.defaultLanguage) {
+            // The speech engine speaks its voice's language, not the one it hears: the reply is only in that language if the voice is.
+            parts.push(translate('The agent speaks in its voice\'s language: pick a voice that speaks') + ' ' + els.language.selectedOptions[0].text + '.');
+        }
         if (parts.length) {
             parts.push(translate('The first call with a model not used before downloads it, which takes longer.'));
         }
@@ -890,6 +935,7 @@ const AudioVoice = (() => {
                 bargeIn: settings.bargeIn,
                 sttModel: settings.sttModel || undefined,
                 ttsEngine: settings.ttsEngine || undefined,
+                language: sttIsMultilingual() && settings.language ? settings.language : undefined,
                 inputRate: inputRate,
             }));
         };

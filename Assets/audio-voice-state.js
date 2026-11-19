@@ -247,7 +247,7 @@ const AudioVoiceState = (() => {
     // ===== Call settings and presets =====
 
     /** The setup fields a call is started with, and what each defaults to. */
-    const DEFAULT_SETTINGS = { model: '', assistantId: '', voice: 'af_heart', systemPrompt: '', bargeIn: true, sttModel: '', ttsEngine: '', pushToTalk: false, pttKey: 'KeyH' };
+    const DEFAULT_SETTINGS = { model: '', assistantId: '', voice: 'af_heart', systemPrompt: '', bargeIn: true, sttModel: '', ttsEngine: '', language: '', pushToTalk: false, pttKey: 'KeyH' };
 
     /** Presets are capped so a runaway store cannot grow without bound; a name is trimmed and cut to this length. */
     const MAX_PRESETS = 50;
@@ -265,6 +265,7 @@ const AudioVoiceState = (() => {
             bargeIn: typeof src.bargeIn === 'boolean' ? src.bargeIn : DEFAULT_SETTINGS.bargeIn,
             sttModel: text(src.sttModel, DEFAULT_SETTINGS.sttModel), // '' = the server's default recognizer
             ttsEngine: text(src.ttsEngine, DEFAULT_SETTINGS.ttsEngine), // '' = the server's default speech engine
+            language: text(src.language, DEFAULT_SETTINGS.language), // '' = English; only a multilingual recognizer hears another
             pushToTalk: typeof src.pushToTalk === 'boolean' ? src.pushToTalk : DEFAULT_SETTINGS.pushToTalk,
             pttKey: isUsablePttKey(src.pttKey) ? src.pttKey : DEFAULT_SETTINGS.pttKey
         };
