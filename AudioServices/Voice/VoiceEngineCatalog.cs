@@ -1,19 +1,28 @@
 namespace Hartsy.Extensions.AudioLab.AudioServices.Voice;
 
 /// <summary>One speech recognizer a call can use. <see cref="Id"/> is the engine's model token, which is also what the
-/// browser sends as <c>sttModel</c>.</summary>
-internal readonly record struct SttChoice(string Id, string Name, string Note);
+/// browser sends as <c>sttModel</c>. <see cref="Multilingual"/> recognizers hear the language the call names; the others
+/// hear English only.</summary>
+internal readonly record struct SttChoice(string Id, string Name, string Note, bool Multilingual = false);
+
+/// <summary>One language a call can listen in: Whisper's language code and its name.</summary>
+internal readonly record struct LanguageChoice(string Id, string Name);
 
 /// <summary>One speech engine a call can use: <see cref="Engine"/> is the engine's family id (the part of the model
 /// token before the voice), <see cref="ProviderId"/> the AudioLab provider that owns its weights and voice previews.</summary>
 internal readonly record struct TtsEngineChoice(string Engine, string Name, string ProviderId, string DefaultVoice, string Note);
 
 /// <summary>The model set a call needs: the recognizer and the speech model, as engine tokens. Two calls can share a loaded
-/// <see cref="HartsyInference.Voice.VoiceModelSet"/> only when their keys are equal.</summary>
-internal readonly record struct VoiceModelKey(string Stt, string Tts)
+/// <see cref="HartsyInference.Voice.VoiceModelSet"/> only when their keys are equal. The language is part of the key because
+/// the engine fixes it per set; it is always <see cref="VoiceEngineCatalog.DefaultLanguage"/> for an English-only recognizer.</summary>
+internal readonly record struct VoiceModelKey(string Stt, string Tts, string Language = VoiceEngineCatalog.DefaultLanguage)
 {
     /// <summary>The key in words, for the notice a caller gets when another call holds a different set.</summary>
-    public string Describe() => $"{VoiceEngineCatalog.NameOfStt(Stt)} with {VoiceEngineCatalog.NameOfTts(Tts)}";
+    public string Describe()
+    {
+        string words = $"{VoiceEngineCatalog.NameOfStt(Stt)} with {VoiceEngineCatalog.NameOfTts(Tts)}";
+        return Language == VoiceEngineCatalog.DefaultLanguage ? words : $"{words} listening in {VoiceEngineCatalog.NameOfLanguage(Language)}";
+    }
 }
 
 /// <summary>What the Voice Agent can run: the recognizers and speech engines that work as a live call, which is a smaller
@@ -32,8 +41,12 @@ internal static class VoiceEngineCatalog
     /// <summary>What a call uses when the setup frame names no speech engine.</summary>
     public const string DefaultTtsEngine = "kokoro";
 
-    /// <summary>The recognizers, smallest first. All of them hear English: the call asks for English (an English-only
-    /// checkpoint drops the language token itself, and a multilingual one with none loops).</summary>
+    /// <summary>The language a call listens in when the setup frame names none, and the only one an English-only recognizer hears.</summary>
+    public const string DefaultLanguage = "en";
+
+    /// <summary>The recognizers, smallest first. The <c>.en</c> checkpoints, Distil-Whisper and Moonshine hear English only;
+    /// the multilingual Whisper sizes hear the language the call names (a multilingual checkpoint with no language loops, so
+    /// the call always names one).</summary>
     public static IReadOnlyList<SttChoice> Stt { get; } =
     [
         new("whisper:openai/whisper-tiny.en", "Whisper tiny.en", "Fastest Whisper, least accurate. About 75 MB."),
@@ -43,6 +56,24 @@ internal static class VoiceEngineCatalog
         new("distilwhisper:large-v3.5", "Distil-Whisper large v3.5", "Near large-model accuracy at a fraction of the time. About 1.5 GB."),
         new("moonshine:tiny", "Moonshine tiny", "Built for short live utterances, very fast. About 200 MB."),
         new("moonshine:base", "Moonshine base", "Moonshine with better accuracy. About 400 MB."),
+        new("whisper:openai/whisper-tiny", "Whisper tiny (multilingual)", "Fastest, least accurate; hears the chosen language. About 75 MB.", Multilingual: true),
+        new("whisper:openai/whisper-base", "Whisper base (multilingual)", "Fast and light; hears the chosen language. About 150 MB.", Multilingual: true),
+        new("whisper:openai/whisper-small", "Whisper small (multilingual)", "A good balance in another language. About 480 MB.", Multilingual: true),
+        new("whisper:openai/whisper-medium", "Whisper medium (multilingual)", "The most accurate here, slower to hear you. About 1.5 GB.", Multilingual: true),
+    ];
+
+    /// <summary>The languages a multilingual recognizer can be asked to hear: the commonly used ones of Whisper's list, English
+    /// first. Every id is one of Whisper's language codes (a test holds the list to that).</summary>
+    public static IReadOnlyList<LanguageChoice> Languages { get; } =
+    [
+        new("en", "English"), new("es", "Spanish"), new("fr", "French"), new("de", "German"), new("it", "Italian"),
+        new("pt", "Portuguese"), new("nl", "Dutch"), new("pl", "Polish"), new("ru", "Russian"), new("uk", "Ukrainian"),
+        new("tr", "Turkish"), new("ar", "Arabic"), new("he", "Hebrew"), new("fa", "Persian"), new("hi", "Hindi"),
+        new("bn", "Bengali"), new("ur", "Urdu"), new("ta", "Tamil"), new("zh", "Chinese"), new("yue", "Cantonese"),
+        new("ja", "Japanese"), new("ko", "Korean"), new("vi", "Vietnamese"), new("th", "Thai"), new("id", "Indonesian"),
+        new("ms", "Malay"), new("tl", "Tagalog"), new("sv", "Swedish"), new("no", "Norwegian"), new("da", "Danish"),
+        new("fi", "Finnish"), new("el", "Greek"), new("cs", "Czech"), new("ro", "Romanian"), new("hu", "Hungarian"),
+        new("sw", "Swahili"),
     ];
 
     /// <summary>The speech engines. Kokoro has one weights file and many voices; for Piper every voice is its own small
@@ -55,6 +86,15 @@ internal static class VoiceEngineCatalog
 
     /// <summary>Whether <paramref name="id"/> is one of <see cref="Stt"/>.</summary>
     public static bool IsKnownStt(string id) => Stt.Any(s => s.Id == id);
+
+    /// <summary>Whether recognizer <paramref name="id"/> hears the language a call names (false for an unknown one).</summary>
+    public static bool IsMultilingual(string id) => Stt.Any(s => s.Id == id && s.Multilingual);
+
+    /// <summary>Whether <paramref name="code"/> is one of <see cref="Languages"/> (exact id; the setup frame's value is lower-cased first).</summary>
+    public static bool IsKnownLanguage(string code) => Languages.Any(l => l.Id == code);
+
+    /// <summary>A language in words, or its code when it is not a listed one.</summary>
+    public static string NameOfLanguage(string code) => Languages.FirstOrDefault(l => l.Id == code).Name ?? code;
 
     /// <summary>The engine named <paramref name="engine"/> (any case), or null.</summary>
     public static TtsEngineChoice? FindEngine(string engine)
@@ -94,7 +134,9 @@ internal static class VoiceEngineCatalog
     {
         string engine = FindEngine(start.TtsEngine ?? DefaultTtsEngine)?.Engine ?? DefaultTtsEngine;
         string voice = string.IsNullOrWhiteSpace(start.Voice) ? FindEngine(engine)!.Value.DefaultVoice : start.Voice;
-        return new VoiceModelKey(start.SttModel ?? DefaultStt, $"{engine}:{voice}");
+        string stt = start.SttModel ?? DefaultStt;
+        string language = IsMultilingual(stt) && start.Language is not null ? start.Language : DefaultLanguage;
+        return new VoiceModelKey(stt, $"{engine}:{voice}", language);
     }
 
     /// <summary>The engine family of a speech model token (<c>kokoro:af_heart</c> gives <c>kokoro</c>).</summary>

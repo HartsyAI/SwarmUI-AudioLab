@@ -120,4 +120,56 @@ public class VoiceSessionStartTests
         Assert.Null(request.Voice);
         Assert.Null(request.SystemPrompt);
     }
+
+    private static JObject LanguageFrame(string stt, string language)
+    {
+        JObject input = FullValid();
+        input["voice"] = "af_heart";
+        if (stt is not null)
+        {
+            input["sttModel"] = stt;
+        }
+        input["language"] = language;
+        return input;
+    }
+
+    [Theory]
+    [InlineData("fr", "fr")]
+    [InlineData("FR", "fr")]
+    [InlineData("fr-CA", "fr")]
+    [InlineData("en_US", "en")]
+    public void ParseStart_MultilingualRecognizer_TakesALanguageAndNormalizesIt(string sent, string expected)
+    {
+        Assert.True(VoiceSessionStart.TryParse(LanguageFrame("whisper:openai/whisper-small", sent), out VoiceSessionStartRequest request, out string error), error);
+        Assert.Equal(expected, request.Language);
+    }
+
+    [Fact]
+    public void ParseStart_NoLanguage_LeavesItNull()
+    {
+        Assert.True(VoiceSessionStart.TryParse(FullValid(), out VoiceSessionStartRequest request, out string error), error);
+        Assert.Null(request.Language);
+    }
+
+    [Theory]
+    [InlineData("klingon")]
+    [InlineData("zz")]
+    [InlineData("../en")]
+    public void ParseStart_UnlistedLanguage_Fails(string language)
+    {
+        Assert.False(VoiceSessionStart.TryParse(LanguageFrame("whisper:openai/whisper-small", language), out _, out string error));
+        Assert.Contains("language", error);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("moonshine:base")]
+    [InlineData("whisper:openai/whisper-small.en")]
+    public void ParseStart_EnglishOnlyRecognizer_RefusesAnotherLanguageButAcceptsEnglish(string stt)
+    {
+        Assert.False(VoiceSessionStart.TryParse(LanguageFrame(stt, "fr"), out _, out string error));
+        Assert.Contains("multilingual", error);
+        Assert.True(VoiceSessionStart.TryParse(LanguageFrame(stt, "en"), out VoiceSessionStartRequest request, out string okError), okError);
+        Assert.Equal("en", request.Language);
+    }
 }

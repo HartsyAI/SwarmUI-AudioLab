@@ -87,4 +87,15 @@ public class VoiceOptionsCatalogTests
             Assert.Contains(((JArray)engine["voices"]).Select(v => v["id"].ToString()), id => id == defaultVoice);
         }
     }
+
+    [Fact]
+    public void Build_ListsLanguagesAndMarksTheMultilingualRecognizers()
+    {
+        JObject result = VoiceOptionsCatalog.Build(llmAvailable: true);
+        Assert.Equal(VoiceEngineCatalog.DefaultLanguage, result["default_language"].ToString());
+        Assert.Equal(VoiceEngineCatalog.Languages.Count, ((JArray)result["languages"]).Count);
+        JArray stt = (JArray)result["stt"];
+        Assert.False(stt.First(s => s["id"].ToString() == VoiceEngineCatalog.DefaultStt)["multilingual"].Value<bool>());
+        Assert.True(stt.First(s => s["id"].ToString() == "whisper:openai/whisper-small")["multilingual"].Value<bool>());
+    }
 }

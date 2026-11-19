@@ -797,7 +797,10 @@ What is pinned per call and what is yours to pick:
 - **What hears you and what speaks are yours to pick**, from the models that work as a live call: **Hears you** is
   Whisper tiny.en, base.en, small.en (the default), medium.en, Distil-Whisper large v3.5, or Moonshine tiny or base;
   **Speaks with** is Kokoro (54 voices, the default engine and voice) or Piper (the English voices, light enough for a
-  CPU; each Piper voice is its own small download). Recognition is English. A call uses one recognizer and one speech
+  CPU; each Piper voice is its own small download). The `.en` Whisper sizes, Distil-Whisper and Moonshine hear English;
+  the four multilingual Whisper sizes (tiny, base, small, medium) hear the **Language** you pick (36 common ones, from
+  Whisper's 99). The speech engine speaks its voice's language, so pick a voice to match; the tab says so when the
+  language is not English. A call uses one recognizer, one language and one speech
   model, shared by every concurrent call on this server (`HartsyInference.Voice`'s own model set, loaded once and
   kept warm). Choosing a different recognizer, engine or voice while another call is using the loaded ones gets you a
   notice instead of a switch -- the model set is rebuilt only once every call using the old ones has ended. The first
@@ -824,7 +827,8 @@ frame is the call's setup, and everything else streams after it:
 ```jsonc
 // client -> server, first frame
 { "model": "...", "assistantId": "...", "voice": "af_heart", "systemPrompt": "...", "bargeIn": true, "inputRate": 48000,
-  "sttModel": "whisper:openai/whisper-small.en", "ttsEngine": "kokoro" }   // sttModel and ttsEngine are optional; unlisted values are refused
+  "sttModel": "whisper:openai/whisper-small.en", "ttsEngine": "kokoro", "language": "en" }   // the last three are optional; unlisted values are refused,
+                                                                                            // and a language other than "en" needs a multilingual sttModel
 // client -> server, after that: binary mono PCM16 frames at inputRate, then a final
 { "end": true }
 ```
