@@ -489,6 +489,9 @@ const AudioVoice = (() => {
 
     /** The language list follows the recognizer: an English-only one is shown as English and cannot be changed. */
     function syncLanguage() {
+        if (!engines.stt.length) {
+            return; // the options have not arrived: the recognizer's kind is unknown, so a saved language must not be reset to English yet
+        }
         const multilingual = sttIsMultilingual();
         els.language.disabled = !multilingual;
         if (!multilingual) {

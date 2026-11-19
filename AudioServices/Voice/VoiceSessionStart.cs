@@ -10,7 +10,7 @@ namespace Hartsy.Extensions.AudioLab.AudioServices.Voice;
 /// <para><c>SttModel</c> and <c>TtsEngine</c> are null when the frame names none (the default recognizer and engine are used,
 /// see <see cref="VoiceEngineCatalog.KeyFor"/>); when present they have passed <see cref="VoiceEngineCatalog"/>'s allow-list.
 /// <c>Voice</c> is null for the engine's default voice. <c>Language</c> is null for English; when present it is one of
-/// <see cref="VoiceEngineCatalog.Languages"/> and the recognizer is a multilingual one.</para>
+/// <see cref="VoiceEngineCatalog.Languages"/>, and unless it is English the recognizer is a multilingual one.</para>
 internal sealed record VoiceSessionStartRequest(string Model, string AssistantId, string Voice, string SystemPrompt, bool BargeIn, int InputRate,
     string SttModel = null, string TtsEngine = null, string Language = null);
 
