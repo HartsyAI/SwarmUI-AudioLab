@@ -254,7 +254,9 @@ public static class VoiceSessionEndpoints
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {
-            await sendJsonAsync(new JObject { ["notice"] = $"The message was not sent: {ex.Message}" }).ConfigureAwait(false);
+            // ArgumentException appends " (Parameter 'text')", which means nothing to the person typing.
+            int suffix = ex.Message.IndexOf(" (Parameter", StringComparison.Ordinal);
+            await sendJsonAsync(new JObject { ["notice"] = $"The message was not sent: {(suffix > 0 ? ex.Message[..suffix] : ex.Message)}" }).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
