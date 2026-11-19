@@ -95,4 +95,61 @@ public class VoiceSessionEndpointsReceiveTests
 
         Assert.Null(socket.ClosedWith);
     }
+
+    private static FakeInboundWebSocket.ScriptedMessage Text(string json) => new(WebSocketMessageType.Text, System.Text.Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task ReceiveInboundAsync_TextFrame_GoesToTheSubmitDelegate_InOrder_AndTheLoopContinues()
+    {
+        FakeInboundWebSocket socket = new([Text("{\"text\":\"first\"}"), Text("{\"text\":\"second é\"}"), Text("{\"end\":true}")]);
+        List<string> typed = [];
+
+        await VoiceSessionEndpoints.ReceiveInboundAsync(socket, _ => { }, Passthrough(), CancellationToken.None, typed.Add);
+
+        Assert.Equal(["first", "second é"], typed);
+        Assert.Null(socket.ClosedWith);
+    }
+
+    [Fact]
+    public async Task ReceiveInboundAsync_TextFrame_WithNoDelegate_IsIgnored_LikeAnyOtherFrame()
+    {
+        FakeInboundWebSocket socket = new([Text("{\"text\":\"hello\"}"), Text("{\"end\":true}")]);
+
+        await VoiceSessionEndpoints.ReceiveInboundAsync(socket, _ => { }, Passthrough(), CancellationToken.None);
+
+        Assert.Null(socket.ClosedWith);
+    }
+
+    [Theory]
+    [InlineData("{\"text\":5}")]
+    [InlineData("{\"text\":null}")]
+    [InlineData("{\"text\":{\"a\":1}}")]
+    public async Task ReceiveInboundAsync_TextFrame_ThatIsNotAString_IsIgnored(string json)
+    {
+        FakeInboundWebSocket socket = new([Text(json), Text("{\"end\":true}")]);
+        List<string> typed = [];
+
+        await VoiceSessionEndpoints.ReceiveInboundAsync(socket, _ => { }, Passthrough(), CancellationToken.None, typed.Add);
+
+        Assert.Empty(typed);
+    }
+
+    [Fact]
+    public async Task ReceiveInboundAsync_TypedMessageBetweenAudioFrames_DoesNotDisturbTheAudio()
+    {
+        byte[] pcm16 = Pcm16.ToBytes(new float[320]);
+        FakeInboundWebSocket socket = new([
+            new FakeInboundWebSocket.ScriptedMessage(WebSocketMessageType.Binary, pcm16),
+            Text("{\"text\":\"between\"}"),
+            new FakeInboundWebSocket.ScriptedMessage(WebSocketMessageType.Binary, pcm16),
+            Text("{\"end\":true}"),
+        ]);
+        List<float[]> pushed = [];
+        List<string> typed = [];
+
+        await VoiceSessionEndpoints.ReceiveInboundAsync(socket, s => pushed.Add(s.ToArray()), Passthrough(), CancellationToken.None, typed.Add);
+
+        Assert.Equal(2, pushed.Count);
+        Assert.Equal(["between"], typed);
+    }
 }

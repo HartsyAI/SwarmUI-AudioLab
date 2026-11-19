@@ -24,6 +24,9 @@ const AudioVoice = (() => {
     const OUTBOUND_SAMPLE_RATE = 24000; // Kokoro's own rate; the server sends it unresampled (see the PR).
     const CAPTURE_FRAME_MS = 20;
 
+    /** The longest typed message the server accepts (the engine's own limit). */
+    const TYPED_MAX_CHARS = 2000;
+
     /** How close to the bottom the transcript counts as "following" the conversation, in pixels. */
     const STICK_SLACK_PX = 40;
 
@@ -370,6 +373,24 @@ const AudioVoice = (() => {
         els.jump.hidden = true;
         root.appendChild(flowWrap);
 
+        // --- Typed messages: answered like speech; the server echoes them back as a "You" bubble ---
+        const typeRow = createDiv(null, 'voice-agent-type');
+        els.typeInput = document.createElement('input');
+        els.typeInput.type = 'text';
+        els.typeInput.maxLength = TYPED_MAX_CHARS;
+        els.typeInput.className = 'form-control voice-agent-input voice-agent-type-input';
+        els.typeInput.placeholder = translate('Type a message to the agent (Enter to send)');
+        els.typeInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.isComposing) {
+                e.preventDefault();
+                onSendTyped();
+            }
+        });
+        els.typeInput.addEventListener('input', refreshControls);
+        typeRow.appendChild(els.typeInput);
+        els.typeSend = btn(typeRow, translate('Send'), 'basic-button voice-agent-tool', onSendTyped);
+        root.appendChild(typeRow);
+
         // --- Transcript tools ---
         const tools = createDiv(null, 'voice-agent-tools');
         els.copyBtn = btn(tools, translate('Copy'), 'basic-button voice-agent-tool', onCopyClick);
@@ -671,6 +692,9 @@ const AudioVoice = (() => {
         els.reconnectBtn.hidden = live || !canReconnect;
         els.stopBtn.hidden = !live;
         els.muteBtn.hidden = !live;
+        const canType = AudioVoiceState.canType(callState, !!ws && ws.readyState === WebSocket.OPEN);
+        els.typeInput.disabled = !canType;
+        els.typeSend.disabled = !canType || !els.typeInput.value.trim();
         els.copyBtn.disabled = els.clearBtn.disabled = transcript.entries.length === 0;
         els.exportSel.disabled = transcript.entries.length === 0;
     }
@@ -986,6 +1010,20 @@ const AudioVoice = (() => {
         }
         scheduledSources = [];
         nextPlayTime = 0;
+    }
+
+    // ===== Typed messages =====
+
+    /** Send the typed message over the call's socket and clear the box; the server's own transcript event draws the bubble. */
+    function onSendTyped() {
+        const message = els.typeInput.value.trim();
+        if (!message || !AudioVoiceState.canType(callState, !!ws && ws.readyState === WebSocket.OPEN)) {
+            return;
+        }
+        ws.send(JSON.stringify({ text: message }));
+        els.typeInput.value = '';
+        refreshControls();
+        els.typeInput.focus();
     }
 
     // ===== Microphone gating: mute and push-to-talk =====
