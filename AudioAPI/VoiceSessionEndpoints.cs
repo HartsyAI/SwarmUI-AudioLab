@@ -214,7 +214,7 @@ public static class VoiceSessionEndpoints
             await voiceSession.StartAsync(Program.GlobalProgramCancel).ConfigureAwait(false);
             pumpTask = PumpOutboundAsync(voiceSession.ReadOutbound, lease.SessionOptions.OutboundSampleRate,
                 () => Volatile.Read(ref lastFlushedTurnId), SendBinaryAsync, pumpCancel.Token);
-            await ReceiveInboundAsync(ws, voiceSession.PushInbound, inbound, Program.GlobalProgramCancel).ConfigureAwait(false);
+            await ReceiveInboundAsync(ws, voiceSession.PushInbound, inbound, Program.GlobalProgramCancel, typed => _ = SubmitTypedAsync(voiceSession, typed, SendJsonAsync)).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -241,6 +241,29 @@ public static class VoiceSessionEndpoints
             await VoiceEngineModels.Shared.ReleaseSessionAsync(voiceSession).ConfigureAwait(false);
         }
         return null;
+    }
+
+    /// <summary>Gives a typed message to the session and tells the client why when the engine refuses it (no letters, too long,
+    /// a call that is not answering). Never throws: it runs unawaited from the receive loop, and its task completes when the reply
+    /// has played, which the loop must not wait for.</summary>
+    internal static async Task SubmitTypedAsync(VoiceAgentSession session, string text, Func<JObject, Task> sendJsonAsync)
+    {
+        try
+        {
+            await session.SubmitUserTextAsync(text, Program.GlobalProgramCancel).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            await sendJsonAsync(new JObject { ["notice"] = $"The message was not sent: {ex.Message}" }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // The call ended before the reply finished; nothing to report.
+        }
+        catch (Exception ex)
+        {
+            Logs.Warning($"[AudioLab][Voice] A typed message failed: {ex.ReadableString()}");
+        }
     }
 
     /// <summary>Reads client frames until the socket closes or a JSON <c>{"end":true}</c> arrives: binary frames
