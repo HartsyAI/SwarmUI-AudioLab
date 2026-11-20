@@ -93,6 +93,11 @@ public static class HartsyRepacks
         {
             ["default"] = "9a5d0d0e-4afb-4fe1-9976-9a5ad6a8ac85", // GPT-SoVITS
         },
+        ["haru_s2s"] = new(StringComparer.OrdinalIgnoreCase)
+        {
+            // The card holds the native BF16 weights; the engine converts them to Q8 on first use.
+            ["q8"] = "43e17e1b-baa6-45f7-bf16-aef937530e05", // Haru-4B
+        },
         ["heartlib_music"] = new(StringComparer.OrdinalIgnoreCase)
         {
             // Q8 and Q4 are converted on-device from the base weights, so they install the base card.
@@ -255,7 +260,6 @@ public static class HartsyRepacks
     {
         "fishaudio_drama3_tts/native",
         "fishaudio_drama3_tts/int4",
-        "haru_s2s/q8",
         "rvc_clone/v2",
         // Withheld: these cards still link Whisper Base's config.json, vocab.json, added_tokens.json and generation_config.json.
         "whisper_stt/large-v3",
