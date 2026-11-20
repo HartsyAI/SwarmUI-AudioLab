@@ -36,7 +36,7 @@ public sealed class HaruProvider : IAudioProviderSource
         {
             Id = "q8",
             Name = "Haru-4B (Q8)",
-            Description = "A full-duplex speech-to-speech model: it listens and answers at once, one 133 ms frame at a time. Qwen3.5-4B with the language model's matrices in Q8_0, converted once on first use (about 4 minutes). "
+            Description = "A full-duplex speech-to-speech model: it listens and answers at once, one 133 ms frame at a time. Qwen3.5-4B with the language model's matrices in Q8_0, converted once at install (a minute or several). "
                 + "A base model: it holds a natural conversation but does not follow instructions, call tools or transcribe you. Use headphones live. The voice reference must be a voice you have consent to use.",
             SourceUrl = "https://huggingface.co/higurashi-ai/Haru-4B",
             License = "Apache-2.0 (weights and code); the VibeVoice acoustic codec is MIT and forbids voice impersonation without consent",

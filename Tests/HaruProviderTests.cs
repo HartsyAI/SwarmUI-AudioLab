@@ -213,12 +213,13 @@ public class HaruProviderTests
         Directory.CreateDirectory(cache);
         try
         {
-            foreach (string name in new[] { "higurashi-ai_Haru-4B-q8-v1.gguf", "higurashi-ai_Haru-4B-q8-v2.gguf", "higurashi-ai_Haru-4B-q4-v1.gguf", "other_Model-q8-v1.gguf" })
+            foreach (string name in new[] { "higurashi-ai_Haru-4B-q8_0-v1.gguf", "higurashi-ai_Haru-4B-q8_0-v2.gguf", "higurashi-ai_Haru-4B-q4_k-v1.gguf", "higurashi-ai_Haru-4B-q8-v3.gguf", "other_Model-q8_0-v1.gguf" })
             {
                 File.WriteAllBytes(Path.Combine(cache, name), [1]);
             }
             string[] found = [.. AudioEngineBridge.ConvertedWeightFiles(root, "higurashi-ai/Haru-4B", "q8").Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal)];
-            Assert.Equal(["higurashi-ai_Haru-4B-q8-v1.gguf", "higurashi-ai_Haru-4B-q8-v2.gguf"], found);
+            // The engine writes the precision's full name (q8 is q8_0); a live Swarm run found the file named that way.
+            Assert.Equal(["higurashi-ai_Haru-4B-q8-v3.gguf", "higurashi-ai_Haru-4B-q8_0-v1.gguf", "higurashi-ai_Haru-4B-q8_0-v2.gguf"], found);
             Assert.Empty(AudioEngineBridge.ConvertedWeightFiles(Path.Combine(root, "missing"), "higurashi-ai/Haru-4B", "q8"));
             // Only a duplex provider that converts its weights has any; nothing else's files are ever named.
             Assert.Empty(AudioEngineBridge.GetConvertedWeightFiles("kokoro_tts", "default"));

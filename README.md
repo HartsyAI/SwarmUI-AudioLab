@@ -260,7 +260,7 @@ whether the engine downloads on first use or exposes per model installs.
 
 | Engine | Models | VRAM | License | Weights |
 | --- | --- | --- | --- | --- |
-| [Haru-4B](https://huggingface.co/higurashi-ai/Haru-4B) | 1 (Q8) | ~8GB | Apache-2.0; the VibeVoice acoustic codec is MIT and forbids voice impersonation without consent | download on install, converted once (about 4 minutes) |
+| [Haru-4B](https://huggingface.co/higurashi-ai/Haru-4B) | 1 (Q8) | ~8GB | Apache-2.0; the VibeVoice acoustic codec is MIT and forbids voice impersonation without consent | download on install, converted once at install (a minute or several) |
 
 Haru listens and speaks at once, one 133 ms frame at a time, so it takes **a recording of you** instead of text to read. In the Generate tab the Prompt box
 holds its character card (who it is; it may be empty), **Conversation Audio** is what it answers, and **Reference Audio** is the voice it speaks with (one speaker,
