@@ -2165,7 +2165,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
                 }
                 args["user_audio"] = userRecording;
                 args["card"] = input.Get(T2IParamTypes.Prompt, "");
-                string haruRef = GetBase64Audio(input, AudioLabParams.ReferenceAudio);
+                string haruRef = GetBase64Audio(input, AudioLabParams.HaruReferenceVoice);
                 if (!string.IsNullOrEmpty(haruRef))
                     args["reference_audio"] = haruRef;
                 if (input.TryGet(AudioLabParams.HaruGuidance, out double haruGuidance))

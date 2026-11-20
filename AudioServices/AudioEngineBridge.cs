@@ -46,6 +46,27 @@ public enum AudioEngineService
 /// <param name="ManagesOwnWeights">True when the Engine HF-auto-downloads the weights on first load.</param>
 public sealed record AudioEngineBinding(string EngineId, AudioEngineService Service, bool ManagesOwnWeights);
 
+/// <summary>Runs full-duplex conversations one at a time. The engine allows one open conversation per loaded model and refuses a second, so two answers asked
+/// for at once (a batch, two users) would fail the second with "a conversation is already open"; here the second waits its turn.</summary>
+internal static class DuplexRunGate
+{
+    private static readonly SemaphoreSlim _gate = new(1, 1);
+
+    /// <summary>Runs <paramref name="work"/> when no other conversation is running; a caller that is cancelled while waiting never starts.</summary>
+    public static async Task<T> RunAsync<T>(Func<Task<T>> work, CancellationToken cancel)
+    {
+        await _gate.WaitAsync(cancel).ConfigureAwait(false);
+        try
+        {
+            return await work().ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+}
+
 /// <summary>AudioLab's thin adapter over <see cref="IInferenceEngine"/>: owns one engine instance, maps a provider
 /// id to an Engine model token, converts AudioLab's request args to the Engine's typed audio requests, and shapes
 /// the typed results back into the JObject AudioLab's generation path parses.
@@ -330,8 +351,9 @@ public static class AudioEngineBridge
             case AudioEngineService.Duplex:
             {
                 DuplexRespondArgs respond = AudioEngineRequests.DuplexRespond(args);
-                DuplexResult result = await Engine.Speech
-                    .RespondAsync(spec, respond.Request, respond.User, respond.TailSeconds, cancel).ConfigureAwait(false);
+                // One conversation per loaded model: a second request waits for the first instead of being refused.
+                DuplexResult result = await DuplexRunGate.RunAsync(() => Engine.Speech
+                    .RespondAsync(spec, respond.Request, respond.User, respond.TailSeconds, cancel), cancel).ConfigureAwait(false);
                 return DuplexAudio(result, respond.Stereo);
             }
             default:

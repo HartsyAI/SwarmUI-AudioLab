@@ -411,10 +411,12 @@ public static class AudioLabParams
 
     #endregion
 
-    #region Speech to Speech - Haru (flags: audiolab_s2s, haru_s2s_params)
+    #region Speech-to-Speech - Haru (flags: audiolab_s2s, haru_s2s_params)
 
     /// <summary>The recording the model answers. Feature flag: <c>audiolab_s2s</c>.</summary>
     public static T2IRegisteredParam<AudioFile> ConversationAudio;
+    /// <summary>The voice the model speaks with. Feature flag: <c>audiolab_s2s</c>.</summary>
+    public static T2IRegisteredParam<AudioFile> HaruReferenceVoice;
     /// <summary>Audio guidance weight, 1 to 2. Feature flag: <c>haru_s2s_params</c>.</summary>
     public static T2IRegisteredParam<double> HaruGuidance;
     /// <summary>Text sampling temperature. Feature flag: <c>haru_s2s_params</c>.</summary>
@@ -854,7 +856,7 @@ public static class AudioLabParams
         AudioProcGroup = new("Audio Processing", Open: true, OrderPriority: -23, Toggles: false,
             Description: "Audio processing parameters. Upload audio to process (stem separation, denoising, enhancement).");
 
-        ConversationGroup = new("Speech to Speech", Open: true, OrderPriority: -22, Toggles: false,
+        ConversationGroup = new("Speech-to-Speech", Open: true, OrderPriority: -22, Toggles: false,
             Description: "Speech-to-speech parameters. Upload a recording for the model to answer; the Prompt box holds its character card (who it is), which may be empty.");
 
         OutputGroup = new("Output Format", Open: false, OrderPriority: -20, Toggles: false,
@@ -1446,11 +1448,16 @@ public static class AudioLabParams
 
         #endregion
 
-        #region Speech to Speech - Haru
+        #region Speech-to-Speech - Haru
         ConversationAudio = T2IParamTypes.Register<AudioFile>(new("Conversation Audio",
             "The recording the model answers: you speaking to it. Any common format; it is mixed to mono.",
             null,
             OrderPriority: -10, Group: ConversationGroup, FeatureFlag: "audiolab_s2s"));
+
+        HaruReferenceVoice = T2IParamTypes.Register<AudioFile>(new("Haru Reference Voice",
+            "The voice the model speaks with: one speaker, 3 seconds to 3 minutes of clean speech, a voice you have consent to use. Empty uses the model's own voice.",
+            null,
+            OrderPriority: -9.5, Group: ConversationGroup, FeatureFlag: "audiolab_s2s"));
 
         HaruGuidance = T2IParamTypes.Register<double>(new("Haru Guidance",
             "Audio guidance weight (1 to 2). Higher follows the voice reference more closely.",
