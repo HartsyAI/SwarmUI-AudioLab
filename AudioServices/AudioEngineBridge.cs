@@ -175,6 +175,14 @@ public static class AudioEngineBridge
         ["demucs_fx"] = ("fx", "demucs"),
     };
 
+    /// <summary>Engine-managed providers whose weights are only whole once this file is in the repo directory. The download writes each file under a
+    /// <c>.partial</c> name and renames it when it is complete, so the file's presence means the download finished; "any file over 1 MB" would call a model
+    /// installed once the small tokenizer had landed, before its 10 GB of weights.</summary>
+    private static readonly Dictionary<string, string> _engineRequiredFiles = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["haru_s2s"] = "model.safetensors",
+    };
+
     private static IInferenceEngine _engine;
     private static readonly object _engineLock = new();
 
@@ -1331,6 +1339,34 @@ public static class AudioEngineBridge
         }
     }
 
+    /// <summary>The converted-weights files the engine built from a model's download, which sit outside its repo directory (Haru: the Q8 file in the
+    /// engine's <c>_gguf-cache</c>, about 5 GB). Every cache version of the model's variant is returned, so a stale one goes with it. Empty for a provider that
+    /// converts nothing, and for a model not yet converted.</summary>
+    public static IReadOnlyList<string> GetConvertedWeightFiles(string providerId, string modelId)
+        => !string.IsNullOrEmpty(modelId) && _bindings.TryGetValue(providerId ?? "", out AudioEngineBinding binding) && binding.Service == AudioEngineService.Duplex
+            && _engineWeightRepos.TryGetValue(providerId, out string repo)
+            ? ConvertedWeightFiles(AudioModelCache.CacheRoot, repo, modelId)
+            : [];
+
+    /// <summary>The engine names a converted file <c>{repo with / as _}-{variant}-v{version}.gguf</c> under <c>{cache}/tts/_gguf-cache</c>.</summary>
+    internal static IReadOnlyList<string> ConvertedWeightFiles(string cacheRoot, string repo, string modelId)
+    {
+        string directory = Path.Combine(cacheRoot, "tts", "_gguf-cache");
+        if (!Directory.Exists(directory))
+        {
+            return [];
+        }
+        try
+        {
+            return [.. Directory.EnumerateFiles(directory, $"{repo.Replace('/', '_')}-{modelId.ToLowerInvariant()}-v*.gguf")];
+        }
+        catch (Exception ex)
+        {
+            Logs.Debug($"[AudioLab] Listing the converted weights of '{repo}' threw: {ex.Message}");
+            return [];
+        }
+    }
+
     /// <summary>The <c>owner/name</c> repo id inside a huggingface.co model URL, or null when it isn't one.</summary>
     private static string HuggingFaceRepo(string sourceUrl)
     {
@@ -1366,6 +1402,11 @@ public static class AudioEngineBridge
             return true;
         }
         if (!locations.Any(PathHoldsWeights))
+        {
+            return false;
+        }
+        if (_engineRequiredFiles.TryGetValue(providerId ?? "", out string required)
+            && !locations.Any(location => File.Exists(Path.Combine(location, required))))
         {
             return false;
         }

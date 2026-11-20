@@ -114,9 +114,12 @@ public class HaruProviderTests
         Assert.Equal(defaults.Guidance, plain.Request.Guidance);
         Assert.Equal(defaults.TopK, plain.Request.TopK);
         Assert.Equal(defaults.RepetitionPenalty, plain.Request.RepetitionPenalty);
-        Assert.Equal(defaults.MaxFrames, plain.Request.MaxFrames);
+        // A recorded answer is capped at 10 minutes (not the hour a live conversation may run), and ends with the Generate tab's own reply time.
+        Assert.Equal(AudioEngineRequests.MaxRespondFrames, plain.Request.MaxFrames);
+        Assert.Equal(4500, AudioEngineRequests.MaxRespondFrames);
         Assert.Null(plain.Request.Reference);
-        Assert.Equal(0, plain.TailSeconds);
+        Assert.Equal(AudioEngineRequests.DefaultTailSeconds, plain.TailSeconds);
+        Assert.Equal(10, plain.TailSeconds);
         // Swarm's -1 ("random") is not a seed: the engine's own default stands in.
         Assert.Equal(defaults.Seed, AudioEngineRequests.DuplexRespond(Args(("seed", -1L))).Request.Seed);
 
@@ -127,7 +130,7 @@ public class HaruProviderTests
         Assert.Equal(1f, wild.Request.TopP);
         Assert.Equal(0f, wild.Request.Temperature);
         Assert.Equal(8f, wild.Request.EopBias);
-        Assert.Equal(defaults.MaxFrames, wild.Request.MaxFrames);
+        Assert.Equal(AudioEngineRequests.MaxRespondFrames, wild.Request.MaxFrames);
         Assert.Equal(AudioEngineRequests.MaxTailSeconds, wild.TailSeconds);
     }
 
@@ -191,13 +194,48 @@ public class HaruProviderTests
         Assert.Equal(defaults.Guidance, knobs["guidance"]!["default"]!.Value<float>());
         Assert.Equal(defaults.TopK, knobs["top_k"]!["default"]!.Value<int>());
         Assert.Equal(defaults.RepetitionPenalty, knobs["repetition_penalty"]!["default"]!.Value<bool>());
-        Assert.Equal(defaults.MaxFrames, knobs["max_frames"]!["max"]!.Value<int>());
+        Assert.Equal(AudioEngineRequests.MaxRespondFrames, knobs["max_frames"]!["max"]!.Value<int>());
+        // The options advertise the same reply time the Generate tab uses, not a truncating zero.
+        Assert.Equal(AudioEngineRequests.DefaultTailSeconds, knobs["tail_seconds"]!["default"]!.Value<double>());
         Assert.Equal(1, knobs["guidance"]!["min"]!.Value<int>());
         Assert.Equal(2, knobs["guidance"]!["max"]!.Value<int>());
         Assert.NotEmpty((JArray)installed["limitations"]!);
 
         JObject missing = DuplexOptionsCatalog.Build(HaruProvider.Instance.GetProvider(), (_, _) => false);
         Assert.False(((JArray)missing["models"]!)[0]["installed"]!.Value<bool>());
+    }
+
+    [Fact]
+    public void ConvertedWeights_AreFoundForTheModelsVariantOnly_AtEveryCacheVersion()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "audiolab-haru-" + Guid.NewGuid().ToString("N"));
+        string cache = Path.Combine(root, "tts", "_gguf-cache");
+        Directory.CreateDirectory(cache);
+        try
+        {
+            foreach (string name in new[] { "higurashi-ai_Haru-4B-q8-v1.gguf", "higurashi-ai_Haru-4B-q8-v2.gguf", "higurashi-ai_Haru-4B-q4-v1.gguf", "other_Model-q8-v1.gguf" })
+            {
+                File.WriteAllBytes(Path.Combine(cache, name), [1]);
+            }
+            string[] found = [.. AudioEngineBridge.ConvertedWeightFiles(root, "higurashi-ai/Haru-4B", "q8").Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal)];
+            Assert.Equal(["higurashi-ai_Haru-4B-q8-v1.gguf", "higurashi-ai_Haru-4B-q8-v2.gguf"], found);
+            Assert.Empty(AudioEngineBridge.ConvertedWeightFiles(Path.Combine(root, "missing"), "higurashi-ai/Haru-4B", "q8"));
+            // Only a duplex provider that converts its weights has any; nothing else's files are ever named.
+            Assert.Empty(AudioEngineBridge.GetConvertedWeightFiles("kokoro_tts", "default"));
+            Assert.Empty(AudioEngineBridge.GetConvertedWeightFiles("haru_s2s", ""));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void EngineManager_ListsTheSpeechToSpeechCategory()
+    {
+        // Without its category the Engine Manager has no card for the engine, so it cannot be installed or removed from the UI.
+        string script = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Assets", "audio-integration.js"));
+        Assert.Contains("key: 'SpeechToSpeech'", script);
     }
 
     [Fact]

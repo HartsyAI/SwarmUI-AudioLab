@@ -86,15 +86,22 @@ public static class AudioEngineRequests
             RepetitionPenalty = Flag(args, "repetition_penalty", defaults.RepetitionPenalty),
             EopBias = (float)Math.Clamp(Double(args, "eop_bias", defaults.EopBias), -8.0, 8.0),
             SpeakFirst = Flag(args, "speak_first", defaults.SpeakFirst),
-            MaxFrames = Math.Clamp(Integer(args, "max_frames") ?? defaults.MaxFrames, 1, defaults.MaxFrames),
+            MaxFrames = Math.Clamp(Integer(args, "max_frames") ?? MaxRespondFrames, 1, MaxRespondFrames),
             Seed = seed == 0 ? defaults.Seed : seed,
         };
-        double tail = Math.Clamp(Double(args, "tail_seconds", 0), 0.0, MaxTailSeconds);
+        double tail = Math.Clamp(Double(args, "tail_seconds", DefaultTailSeconds), 0.0, MaxTailSeconds);
         return new DuplexRespondArgs(request, user, tail, Flag(args, "stereo", false));
     }
 
     /// <summary>The longest character card, in characters.</summary>
     public const int MaxCardCharacters = 8000;
+
+    /// <summary>The most frames one recorded answer may run: 10 minutes at 133.3 ms. The engine also refuses a recording longer than this before playing it, so
+    /// the cap bounds the recording as well as the reply.</summary>
+    public const int MaxRespondFrames = 4500;
+
+    /// <summary>The silence appended after a recording when none is asked for: the Generate tab's own default, long enough for the model to finish a short answer.</summary>
+    public const double DefaultTailSeconds = 10;
 
     /// <summary>The longest silence appended after a recording, in seconds (the engine's own limit).</summary>
     public const double MaxTailSeconds = 60;

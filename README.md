@@ -950,7 +950,7 @@ curl -s -H "Content-Type: application/json" -X POST http://localhost:7801/API/Au
 # {"success":true,"audio_data":"<base64 wav, 24 kHz>","text":"<what the model said>","duration":14.4,"frames":108,"median_frame_ms":59.1,"max_frame_ms":86.8,...}
 ```
 
-`stereo` returns your recording on the left channel and the model on the right. The first call after an install converts the weights if the install did not.
+`stereo` returns your recording on the left channel and the model on the right. A recording may run up to 10 minutes (`max_frames` 4,500), and `tail_seconds` defaults to 10. The first call after an install converts the weights if the install did not.
 
 ### Routes
 

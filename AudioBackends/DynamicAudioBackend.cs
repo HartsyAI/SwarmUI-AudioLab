@@ -1564,6 +1564,14 @@ public class DynamicAudioBackend : AbstractT2IBackend
             }
         }
         HashSet<string> mine = WeightLocationsForProvider(providerId, definition);
+        // A model the engine converts on first use leaves the converted file outside its repo directory.
+        foreach (AudioModelDefinition modelDef in definition?.Models ?? [])
+        {
+            foreach (string converted in AudioEngineBridge.GetConvertedWeightFiles(providerId, modelDef.Id))
+            {
+                try { mine.Add(Path.GetFullPath(converted)); } catch { /* unparseable path — skip */ }
+            }
+        }
         // The locations above are derived from catalog metadata, which can name a different repo than the one
         // the engine actually downloaded from. Anything the artifact index admitted is ground truth, so fold in
         // the directory each admitted artifact really lives in.
@@ -1649,6 +1657,10 @@ public class DynamicAudioBackend : AbstractT2IBackend
             {
                 try { mine.Add(Path.GetFullPath(loc)); } catch { /* unparseable path — skip */ }
             }
+        }
+        foreach (string converted in AudioEngineBridge.GetConvertedWeightFiles(providerId, modelId))
+        {
+            try { mine.Add(Path.GetFullPath(converted)); } catch { /* unparseable path — skip */ }
         }
         if (mine.Count == 0)
         {

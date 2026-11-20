@@ -48,7 +48,7 @@ public static class DuplexEndpoints
             {
                 return AudioLab.CreateErrorResponse(error, errorCode);
             }
-            return await AudioServerManager.Instance.ProcessAsync(provider, args, session?.User);
+            return await AudioServerManager.Instance.ProcessAsync(provider, args, session?.User, Program.GlobalProgramCancel);
         }
         catch (Exception ex)
         {
@@ -176,9 +176,9 @@ internal static class DuplexOptionsCatalog
                 ["repetition_penalty"] = Knob("boolean", defaults.RepetitionPenalty, null, null, "Penalize repeating a phrase already said."),
                 ["eop_bias"] = Knob("number", defaults.EopBias, -8, 8, "Added to the logit that makes the model start speaking; above 0 it answers sooner."),
                 ["speak_first"] = Knob("boolean", defaults.SpeakFirst, null, null, "The model opens the conversation."),
-                ["max_frames"] = Knob("integer", defaults.MaxFrames, 1, defaults.MaxFrames, "Frames after which the conversation ends; 27,000 is an hour."),
+                ["max_frames"] = Knob("integer", AudioEngineRequests.MaxRespondFrames, 1, AudioEngineRequests.MaxRespondFrames, "Frames after which the answer ends, and so the longest recording accepted: 4,500 is 10 minutes."),
                 ["seed"] = Knob("integer", defaults.Seed, null, null, "Sampler seed; the same seed and audio repeat the conversation."),
-                ["tail_seconds"] = Knob("number", 0, 0, AudioEngineRequests.MaxTailSeconds, "Silence appended after a recording so the model can finish (AudioLabDuplexRespond only)."),
+                ["tail_seconds"] = Knob("number", AudioEngineRequests.DefaultTailSeconds, 0, AudioEngineRequests.MaxTailSeconds, "Silence appended after a recording so the model can finish (AudioLabDuplexRespond only)."),
                 ["stereo"] = Knob("boolean", false, null, null, "Return the user on the left channel and the model on the right (AudioLabDuplexRespond only)."),
                 ["reference_audio"] = Knob("base64 audio", null, null, null, "The voice the model speaks with: one speaker, 3 seconds to 3 minutes of clean speech you have consent to use. Omit for the model's own voice."),
                 ["user_audio"] = Knob("base64 audio", null, null, null, "The recording the model answers (AudioLabDuplexRespond only; required)."),

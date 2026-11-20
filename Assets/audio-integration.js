@@ -488,7 +488,8 @@ const ENGINE_CATEGORIES = [
     { key: 'STT', label: 'Speech-to-Text' },
     { key: 'AudioGeneration', label: 'Audio Generation' },
     { key: 'VoiceConversion', label: 'Voice Conversion' },
-    { key: 'AudioProcessing', label: 'Audio Processing' }
+    { key: 'AudioProcessing', label: 'Audio Processing' },
+    { key: 'SpeechToSpeech', label: 'Speech to Speech' }
 ];
 
 let audioLabEngineData = null;
