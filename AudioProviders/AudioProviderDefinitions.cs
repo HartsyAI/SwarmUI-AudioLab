@@ -30,6 +30,7 @@ public static class AudioProviderDefinitions
         FishSpeechProvider.Instance,
         FishAudioS2Provider.Instance,
         FishAudioDrama3Provider.Instance,
+        HaruProvider.Instance,
         BreezeProvider.Instance,
         Qwen3TTSProvider.Instance,
         PiperProvider.Instance,

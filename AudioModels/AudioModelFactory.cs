@@ -206,6 +206,7 @@ public static class AudioModelFactory
         AudioCategory.AudioGeneration => "Gen",
         AudioCategory.VoiceConversion => "Clone",
         AudioCategory.AudioProcessing => "Proc",
+        AudioCategory.SpeechToSpeech => "S2S",
         _ => "Audio"
     };
 

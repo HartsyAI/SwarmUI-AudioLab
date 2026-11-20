@@ -34,6 +34,8 @@ public enum AudioEngineService
     Separate,
     /// <summary>Speech enhancement (<see cref="IFxService.EnhanceAsync"/>).</summary>
     Enhance,
+    /// <summary>Full-duplex speech-to-speech (<see cref="ISpeechService.RespondAsync"/>, <see cref="ISpeechService.OpenDuplexAsync"/>).</summary>
+    Duplex,
 }
 
 /// <summary>One AudioLab provider's binding to the Engine: which typed service runs it, which Engine catalog id
@@ -78,6 +80,8 @@ public static class AudioEngineBridge
         ["fishaudio_tts"] = new AudioEngineBinding("fishaudio", AudioEngineService.Speech, true),
         // Each model id is an engine variant token (native, int4); each model's SourceUrl names its own weights repo.
         ["fishaudio_drama3_tts"] = new AudioEngineBinding("fishaudio-drama3", AudioEngineService.Speech, true),
+        // Full-duplex speech to speech: it answers a recording of the user (or a live microphone), so the engine runs it through its duplex entry points.
+        ["haru_s2s"] = new AudioEngineBinding("haru", AudioEngineService.Duplex, true),
         ["breeze_tts"] = new AudioEngineBinding("breeze", AudioEngineService.Speech, true),
         ["cosyvoice_tts"] = new AudioEngineBinding("cosyvoice", AudioEngineService.Speech, true),
         ["f5_tts"] = new AudioEngineBinding("f5", AudioEngineService.Speech, true),
@@ -139,6 +143,7 @@ public static class AudioEngineBridge
         ["hurston_tts"] = "Hartsy/hurston-1-safetensors",
         ["stableaudio_music"] = "FastVideo/stable-audio-open-small-Diffusers",
         ["vibevoice_tts"] = "microsoft/VibeVoice-1.5B",
+        ["haru_s2s"] = "higurashi-ai/Haru-4B",
     };
 
     /// <summary>Extra HuggingFace repos an engine-managed provider cannot run without, beyond the repo named by its
@@ -168,6 +173,14 @@ public static class AudioEngineBridge
     private static readonly Dictionary<string, (string Category, string Folder)> _engineWeightFolders = new(StringComparer.OrdinalIgnoreCase)
     {
         ["demucs_fx"] = ("fx", "demucs"),
+    };
+
+    /// <summary>Engine-managed providers whose weights are only whole once this file is in the repo directory. The download writes each file under a
+    /// <c>.partial</c> name and renames it when it is complete, so the file's presence means the download finished; "any file over 1 MB" would call a model
+    /// installed once the small tokenizer had landed, before its 10 GB of weights.</summary>
+    private static readonly Dictionary<string, string> _engineRequiredFiles = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["haru_s2s"] = "model.safetensors",
     };
 
     private static IInferenceEngine _engine;
@@ -280,6 +293,10 @@ public static class AudioEngineBridge
     private static async Task<JObject> DispatchAsync(string providerId, AudioEngineBinding binding,
         IReadOnlyDictionary<string, object> args, CancellationToken cancel)
     {
+        if (binding.Service == AudioEngineService.Duplex)
+        {
+            args = WithDuplexModel(providerId, args);
+        }
         ModelSpec spec = BuildSpec(providerId, binding, args);
         switch (binding.Service)
         {
@@ -310,6 +327,13 @@ public static class AudioEngineBridge
             }
             case AudioEngineService.Enhance:
                 return Audio(await Engine.Fx.EnhanceAsync(spec, AudioEngineRequests.Enhance(args), cancel).ConfigureAwait(false));
+            case AudioEngineService.Duplex:
+            {
+                DuplexRespondArgs respond = AudioEngineRequests.DuplexRespond(args);
+                DuplexResult result = await Engine.Speech
+                    .RespondAsync(spec, respond.Request, respond.User, respond.TailSeconds, cancel).ConfigureAwait(false);
+                return DuplexAudio(result, respond.Stereo);
+            }
             default:
                 return AudioIo.Error($"Provider '{providerId}' has no Engine service wired.");
         }
@@ -616,6 +640,40 @@ public static class AudioEngineBridge
     /// <summary>Shapes an Engine audio result into AudioLab's success JObject. The Engine already returns encoded
     /// container bytes, so this is just base64. A speech model that revises takes (Fish Audio Drama 3) also returns the
     /// take's turns, which a caller sends back as <c>history</c> to revise it.</summary>
+    /// <summary>A copy of <paramref name="args"/> whose <c>__model_id</c> is one of the provider's own model ids (the default when none is given). A bare engine id
+    /// would load the native 10.5 GB checkpoint, and the engine treats a token that names an existing file or folder as a local model path, so a client string never
+    /// reaches it.</summary>
+    internal static IReadOnlyDictionary<string, object> WithDuplexModel(string providerId, IReadOnlyDictionary<string, object> args)
+    {
+        AudioProviderDefinition provider = AudioProviderRegistry.GetById(providerId)
+            ?? throw new ArgumentException($"Provider '{providerId}' is not registered.");
+        string requested = AudioIo.Str(args, "__model_id").Trim();
+        AudioModelDefinition model = string.IsNullOrEmpty(requested)
+            ? provider.Models.FirstOrDefault()
+            : provider.Models.FirstOrDefault(m => string.Equals(m.Id, requested, StringComparison.OrdinalIgnoreCase));
+        if (model is null)
+        {
+            throw new ArgumentException($"'{requested}' is not a model of {provider.Name}; use one of: {string.Join(", ", provider.Models.Select(m => m.Id))}.");
+        }
+        Dictionary<string, object> copy = new(args, StringComparer.Ordinal) { ["__model_id"] = model.Id };
+        return copy;
+    }
+
+    /// <summary>Shapes a recorded conversation: the model's reply (or, with <paramref name="stereo"/>, the user on the left and the model on the right) as a
+    /// WAV, plus the words the model spoke and how long its frames took.</summary>
+    internal static JObject DuplexAudio(DuplexResult result, bool stereo)
+    {
+        byte[] wav = stereo ? result.ToStereoWav() : result.ToModelWav();
+        JObject json = AudioIo.AudioResult(Convert.ToBase64String(wav), "wav", result.ModelAudio.Length / (double)result.SampleRate);
+        json["text"] = result.Text;
+        json["sample_rate"] = result.SampleRate;
+        json["frames"] = result.Frames;
+        json["median_frame_ms"] = Math.Round(result.MedianFrameSeconds * 1000, 1);
+        json["max_frame_ms"] = Math.Round(result.MaxFrameSeconds * 1000, 1);
+        json["stereo"] = stereo;
+        return json;
+    }
+
     private static JObject Audio(AudioResult result)
     {
         JObject json = AudioIo.AudioResult(Convert.ToBase64String(result.Data), result.Format, result.DurationSeconds, result.Meta);
@@ -759,6 +817,54 @@ public static class AudioEngineBridge
         {
             Logs.Error($"[AudioLab] Prefetch failed for '{providerId}/{modelId}': {ex.Message}");
             return AudioIo.Error($"Download failed for '{modelId ?? binding.EngineId}': {ex.Message}");
+        }
+    }
+
+    /// <summary>Whether a provider's weights are converted on first use, so the install should do that once while the user is watching it: a speech-to-speech
+    /// model (Haru) converts its checkpoint to Q8_0, about 4 minutes, which a first conversation or request would otherwise spend in silence.</summary>
+    public static bool NeedsPrepare(string providerId)
+        => providerId is not null && _bindings.TryGetValue(providerId, out AudioEngineBinding binding) && binding.Service == AudioEngineService.Duplex;
+
+    /// <summary>Loads the model once and lets it go, so the engine builds its converted-weights cache. Not fatal: the weights are already on disk, and a card with too
+    /// little free VRAM simply converts on first use instead (the reason is reported). Releases the engine's resident audio models afterwards, as the idle release does,
+    /// so an install does not leave 8 GB held.</summary>
+    /// <returns>True when the model loaded and the cache was built.</returns>
+    public static async Task<bool> PrepareAsync(string providerId, string modelId, Func<string, Task> onProgress, CancellationToken cancel)
+    {
+        if (!_bindings.TryGetValue(providerId ?? "", out AudioEngineBinding binding) || binding.Service != AudioEngineService.Duplex)
+        {
+            return true;
+        }
+        try
+        {
+            if (onProgress is not null)
+            {
+                await onProgress("Converting the weights once (about 4 minutes); later starts take about 40 seconds...").ConfigureAwait(false);
+            }
+            ModelSpec spec = BuildSpec(providerId, binding, WithDuplexModel(providerId, new Dictionary<string, object> { ["__model_id"] = modelId ?? "" }));
+            using IDisposable idleHold = await IdleRelease.BeginAsync(cancel).ConfigureAwait(false);
+            using (IDuplexSpeechSession session = await Engine.Speech.OpenDuplexAsync(spec, new DuplexSpeechRequest(), cancel).ConfigureAwait(false))
+            {
+            }
+            FreeMemory();
+            if (onProgress is not null)
+            {
+                await onProgress("Weights converted and ready.").ConfigureAwait(false);
+            }
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Logs.Warning($"[AudioLab] Preparing '{providerId}/{modelId}' failed: {ex.Message}");
+            if (onProgress is not null)
+            {
+                await onProgress($"Downloaded, but the one-time conversion did not run ({ex.Message}); it will run the first time the model is used.").ConfigureAwait(false);
+            }
+            return false;
         }
     }
 
@@ -1233,6 +1339,34 @@ public static class AudioEngineBridge
         }
     }
 
+    /// <summary>The converted-weights files the engine built from a model's download, which sit outside its repo directory (Haru: the Q8 file in the
+    /// engine's <c>_gguf-cache</c>, about 5 GB). Every cache version of the model's variant is returned, so a stale one goes with it. Empty for a provider that
+    /// converts nothing, and for a model not yet converted.</summary>
+    public static IReadOnlyList<string> GetConvertedWeightFiles(string providerId, string modelId)
+        => !string.IsNullOrEmpty(modelId) && _bindings.TryGetValue(providerId ?? "", out AudioEngineBinding binding) && binding.Service == AudioEngineService.Duplex
+            && _engineWeightRepos.TryGetValue(providerId, out string repo)
+            ? ConvertedWeightFiles(AudioModelCache.CacheRoot, repo, modelId)
+            : [];
+
+    /// <summary>The engine names a converted file <c>{repo with / as _}-{variant}-v{version}.gguf</c> under <c>{cache}/tts/_gguf-cache</c>.</summary>
+    internal static IReadOnlyList<string> ConvertedWeightFiles(string cacheRoot, string repo, string modelId)
+    {
+        string directory = Path.Combine(cacheRoot, "tts", "_gguf-cache");
+        if (!Directory.Exists(directory))
+        {
+            return [];
+        }
+        try
+        {
+            return [.. Directory.EnumerateFiles(directory, $"{repo.Replace('/', '_')}-{modelId.ToLowerInvariant()}-v*.gguf")];
+        }
+        catch (Exception ex)
+        {
+            Logs.Debug($"[AudioLab] Listing the converted weights of '{repo}' threw: {ex.Message}");
+            return [];
+        }
+    }
+
     /// <summary>The <c>owner/name</c> repo id inside a huggingface.co model URL, or null when it isn't one.</summary>
     private static string HuggingFaceRepo(string sourceUrl)
     {
@@ -1268,6 +1402,11 @@ public static class AudioEngineBridge
             return true;
         }
         if (!locations.Any(PathHoldsWeights))
+        {
+            return false;
+        }
+        if (_engineRequiredFiles.TryGetValue(providerId ?? "", out string required)
+            && !locations.Any(location => File.Exists(Path.Combine(location, required))))
         {
             return false;
         }

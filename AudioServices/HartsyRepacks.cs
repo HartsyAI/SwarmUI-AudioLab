@@ -255,6 +255,7 @@ public static class HartsyRepacks
     {
         "fishaudio_drama3_tts/native",
         "fishaudio_drama3_tts/int4",
+        "haru_s2s/q8",
         "rvc_clone/v2",
         // Withheld: these cards still link Whisper Base's config.json, vocab.json, added_tokens.json and generation_config.json.
         "whisper_stt/large-v3",

@@ -3,6 +3,9 @@ using HartsyInference.Engine.Requests;
 
 namespace Hartsy.Extensions.AudioLab.AudioServices;
 
+/// <summary>A recorded full-duplex conversation to run: the engine request, the user's recording, the silence after it and whether to return both channels.</summary>
+public sealed record DuplexRespondArgs(DuplexSpeechRequest Request, AudioClip User, double TailSeconds, bool Stereo);
+
 /// <summary>Maps AudioLab's untyped request args (built by <c>DynamicAudioBackend.BuildEngineArgs</c> and by the
 /// <c>AudioAPI</c> endpoints) onto the Engine's typed audio requests. This is the ONLY translation layer between
 /// AudioLab and HartsyInference — everything past it is Engine-owned.
@@ -57,6 +60,51 @@ public static class AudioEngineRequests
             Seed = Seed(args),
         };
     }
+
+    /// <summary>Builds the full-duplex request: the character card, the voice reference and how the model samples, plus the user's recording and the silence to
+    /// append after it. Every range is the engine's own; an out-of-range value is clamped here so a slider or an API client cannot reach a refusal after a long load.
+    /// Args: <c>card</c>, <c>user_audio</c> (base64, required), <c>reference_audio</c>, <c>guidance</c>, <c>temperature</c>, <c>top_k</c>, <c>top_p</c>,
+    /// <c>repetition_penalty</c> (bool), <c>eop_bias</c>, <c>speak_first</c>, <c>max_frames</c>, <c>seed</c>, <c>tail_seconds</c>, <c>stereo</c>.</summary>
+    public static DuplexRespondArgs DuplexRespond(IReadOnlyDictionary<string, object> args)
+    {
+        AudioClip user = Clip(args, "user_audio") ?? throw new ArgumentException("No recording of the user was supplied: add the audio the model should answer.");
+        DuplexSpeechRequest defaults = new();
+        string card = AudioIo.Str(args, "card");
+        if (card.Length > MaxCardCharacters)
+        {
+            throw new ArgumentException($"The character card is {card.Length} characters; the most is {MaxCardCharacters}.");
+        }
+        int seed = Seed(args);
+        DuplexSpeechRequest request = new()
+        {
+            Card = card,
+            Reference = Clip(args, "reference_audio"),
+            Guidance = (float)Math.Clamp(Double(args, "guidance", defaults.Guidance), 1.0, 2.0),
+            Temperature = (float)Math.Max(0.0, Double(args, "temperature", defaults.Temperature)),
+            TopK = Math.Clamp(Integer(args, "top_k") ?? defaults.TopK, 1, 1000),
+            TopP = (float)Math.Clamp(Double(args, "top_p", defaults.TopP), 0.0, 1.0),
+            RepetitionPenalty = Flag(args, "repetition_penalty", defaults.RepetitionPenalty),
+            EopBias = (float)Math.Clamp(Double(args, "eop_bias", defaults.EopBias), -8.0, 8.0),
+            SpeakFirst = Flag(args, "speak_first", defaults.SpeakFirst),
+            MaxFrames = Math.Clamp(Integer(args, "max_frames") ?? MaxRespondFrames, 1, MaxRespondFrames),
+            Seed = seed == 0 ? defaults.Seed : seed,
+        };
+        double tail = Math.Clamp(Double(args, "tail_seconds", DefaultTailSeconds), 0.0, MaxTailSeconds);
+        return new DuplexRespondArgs(request, user, tail, Flag(args, "stereo", false));
+    }
+
+    /// <summary>The longest character card, in characters.</summary>
+    public const int MaxCardCharacters = 8000;
+
+    /// <summary>The most frames one recorded answer may run: 10 minutes at 133.3 ms. The engine also refuses a recording longer than this before playing it, so
+    /// the cap bounds the recording as well as the reply.</summary>
+    public const int MaxRespondFrames = 4500;
+
+    /// <summary>The silence appended after a recording when none is asked for: the Generate tab's own default, long enough for the model to finish a short answer.</summary>
+    public const double DefaultTailSeconds = 10;
+
+    /// <summary>The longest silence appended after a recording, in seconds (the engine's own limit).</summary>
+    public const double MaxTailSeconds = 60;
 
     /// <summary>Builds the transcription request. <c>task</c> comes from the Whisper provider (transcribe |
     /// translate); other STT providers don't set it. <c>word_timestamps</c> asks for a time span per word, and
