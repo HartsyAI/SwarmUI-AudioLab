@@ -34,7 +34,7 @@ public static class DuplexEndpoints
     /// <summary>Answers a recording of the user, as the model would in a conversation: the recording is played to it frame by frame and its reply is returned.
     /// Fields: <c>user_audio</c> (base64, required), <c>model</c>, <c>card</c>, <c>reference_audio</c> (base64), <c>guidance</c>, <c>temperature</c>, <c>top_k</c>,
     /// <c>top_p</c>, <c>repetition_penalty</c>, <c>eop_bias</c>, <c>speak_first</c>, <c>max_frames</c>, <c>seed</c>, <c>tail_seconds</c>, <c>stereo</c>. The first call after
-    /// an install converts the weights once (about 4 minutes).</summary>
+    /// an install converts the weights once (about a minute on a warm disk, several on a cold one).</summary>
     public static async Task<JObject> AudioLabDuplexRespond(Session session, JObject input)
     {
         try
@@ -188,7 +188,7 @@ internal static class DuplexOptionsCatalog
                 "No echo cancellation in the engine: a live conversation needs headphones.",
                 "Real time needs a free GPU: about 59 ms of compute per 133 ms frame on an RTX 3060, and another GPU job on the card breaks it.",
                 "Only the Q8 build is offered: lower-bit builds are unintelligible.",
-                "The weights are converted once on first use (about 4 minutes).",
+                "The weights are converted once, at install or on first use (a minute or several).",
                 "The voice reference is subject to the codec licence: no voice impersonation without consent."),
         };
     }

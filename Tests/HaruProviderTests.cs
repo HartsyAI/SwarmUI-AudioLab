@@ -30,7 +30,8 @@ public class HaruProviderTests
         Assert.Equal("haru_s2s", def.Id);
         Assert.Equal("Haru", def.ModelPrefix);
         Assert.Equal(AudioCategory.SpeechToSpeech, def.Category);
-        Assert.Contains("tts_voice_ref", def.FeatureFlags, StringComparer.OrdinalIgnoreCase);
+        // Its reference voice is its own param (the shared one also shows a Reference Text the model does not use).
+        Assert.DoesNotContain("tts_voice_ref", def.FeatureFlags, StringComparer.OrdinalIgnoreCase);
         Assert.Contains("haru_s2s_params", def.FeatureFlags, StringComparer.OrdinalIgnoreCase);
         // The shared sampling params would replace the model's own defaults.
         Assert.DoesNotContain("tts_sampling", def.FeatureFlags, StringComparer.OrdinalIgnoreCase);
@@ -213,12 +214,13 @@ public class HaruProviderTests
         Directory.CreateDirectory(cache);
         try
         {
-            foreach (string name in new[] { "higurashi-ai_Haru-4B-q8-v1.gguf", "higurashi-ai_Haru-4B-q8-v2.gguf", "higurashi-ai_Haru-4B-q4-v1.gguf", "other_Model-q8-v1.gguf" })
+            foreach (string name in new[] { "higurashi-ai_Haru-4B-q8_0-v1.gguf", "higurashi-ai_Haru-4B-q8_0-v2.gguf", "higurashi-ai_Haru-4B-q4_k-v1.gguf", "higurashi-ai_Haru-4B-q8-v3.gguf", "other_Model-q8_0-v1.gguf" })
             {
                 File.WriteAllBytes(Path.Combine(cache, name), [1]);
             }
             string[] found = [.. AudioEngineBridge.ConvertedWeightFiles(root, "higurashi-ai/Haru-4B", "q8").Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal)];
-            Assert.Equal(["higurashi-ai_Haru-4B-q8-v1.gguf", "higurashi-ai_Haru-4B-q8-v2.gguf"], found);
+            // The engine writes the precision's full name (q8 is q8_0); a live Swarm run found the file named that way.
+            Assert.Equal(["higurashi-ai_Haru-4B-q8-v3.gguf", "higurashi-ai_Haru-4B-q8_0-v1.gguf", "higurashi-ai_Haru-4B-q8_0-v2.gguf"], found);
             Assert.Empty(AudioEngineBridge.ConvertedWeightFiles(Path.Combine(root, "missing"), "higurashi-ai/Haru-4B", "q8"));
             // Only a duplex provider that converts its weights has any; nothing else's files are ever named.
             Assert.Empty(AudioEngineBridge.GetConvertedWeightFiles("kokoro_tts", "default"));
@@ -236,6 +238,80 @@ public class HaruProviderTests
         // Without its category the Engine Manager has no card for the engine, so it cannot be installed or removed from the UI.
         string script = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Assets", "audio-integration.js"));
         Assert.Contains("key: 'SpeechToSpeech'", script);
+    }
+
+    private static byte[] Wav(double seconds, int rate = 8000)
+    {
+        int samples = (int)(seconds * rate);
+        byte[] data = new byte[44 + samples * 2];
+        System.Text.Encoding.ASCII.GetBytes("RIFF").CopyTo(data, 0);
+        BitConverter.GetBytes(36 + samples * 2).CopyTo(data, 4);
+        System.Text.Encoding.ASCII.GetBytes("WAVEfmt ").CopyTo(data, 8);
+        BitConverter.GetBytes(16).CopyTo(data, 16);
+        BitConverter.GetBytes((short)1).CopyTo(data, 20);
+        BitConverter.GetBytes((short)1).CopyTo(data, 22);
+        BitConverter.GetBytes(rate).CopyTo(data, 24);
+        BitConverter.GetBytes(rate * 2).CopyTo(data, 28);
+        BitConverter.GetBytes((short)2).CopyTo(data, 32);
+        BitConverter.GetBytes((short)16).CopyTo(data, 34);
+        System.Text.Encoding.ASCII.GetBytes("data").CopyTo(data, 36);
+        BitConverter.GetBytes(samples * 2).CopyTo(data, 40);
+        return data;
+    }
+
+    [Fact]
+    public void WavSeconds_ReadsTheHeader_AndGivesUpOnWhatIsNotAWav()
+    {
+        Assert.Equal(11.0, AudioEngineRequests.WavSeconds(Wav(11.0))!.Value, 3);
+        Assert.Equal(2.5, AudioEngineRequests.WavSeconds(Wav(2.5, 24000))!.Value, 3);
+        Assert.Null(AudioEngineRequests.WavSeconds([1, 2, 3]));
+        Assert.Null(AudioEngineRequests.WavSeconds(new byte[100]));
+        Assert.Null(AudioEngineRequests.WavSeconds(null));
+        // A streamed header that says 0 bytes of data: the bytes that follow are the clip.
+        byte[] streamed = Wav(4.0);
+        BitConverter.GetBytes(0).CopyTo(streamed, 40);
+        Assert.Equal(4.0, AudioEngineRequests.WavSeconds(streamed)!.Value, 3);
+    }
+
+    [Fact]
+    public void DuplexRespond_RefusesAReferenceVoiceTooShortToSpeakIn_AndKeepsOneLongEnough()
+    {
+        ArgumentException tooShort = Assert.Throws<ArgumentException>(() => AudioEngineRequests.DuplexRespond(Args(("reference_audio", Convert.ToBase64String(Wav(1.0))))));
+        Assert.Contains("1.0 seconds", tooShort.Message);
+        Assert.NotNull(AudioEngineRequests.DuplexRespond(Args(("reference_audio", Convert.ToBase64String(Wav(3.0))))).Request.Reference);
+        // Bytes that are not a readable WAV are the engine's to refuse (with its own message); the clip is not guessed at here.
+        Assert.NotNull(AudioEngineRequests.DuplexRespond(Args(("reference_audio", Convert.ToBase64String([9, 9])))).Request.Reference);
+    }
+
+    [Fact]
+    public async Task RunGate_RunsOneConversationAtATime_InTheOrderAsked()
+    {
+        List<string> events = [];
+        TaskCompletionSource releaseFirst = new();
+        Task<int> first = DuplexRunGate.RunAsync(async () => { events.Add("first start"); await releaseFirst.Task; events.Add("first end"); return 1; }, default);
+        Task<int> second = DuplexRunGate.RunAsync(() => { events.Add("second start"); return Task.FromResult(2); }, default);
+        await Task.Delay(100);
+        Assert.Equal(["first start"], events);
+        releaseFirst.SetResult();
+        Assert.Equal([1, 2], await Task.WhenAll(first, second));
+        Assert.Equal(["first start", "first end", "second start"], events);
+    }
+
+    [Fact]
+    public async Task RunGate_ACallerCancelledWhileWaitingNeverStarts_AndTheGateIsFreedWhenWorkThrows()
+    {
+        TaskCompletionSource releaseFirst = new();
+        Task<int> first = DuplexRunGate.RunAsync(async () => { await releaseFirst.Task; return 1; }, default);
+        using CancellationTokenSource cancel = new();
+        bool started = false;
+        Task<int> waiting = DuplexRunGate.RunAsync(() => { started = true; return Task.FromResult(2); }, cancel.Token);
+        cancel.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+        releaseFirst.SetResult();
+        await first;
+        Assert.False(started);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => DuplexRunGate.RunAsync<int>(() => throw new InvalidOperationException("boom"), default));
+        Assert.Equal(3, await DuplexRunGate.RunAsync(() => Task.FromResult(3), default));
     }
 
     [Fact]

@@ -22,7 +22,6 @@ public sealed class HaruProvider : IAudioProviderSource
         .WithCategory(AudioCategory.SpeechToSpeech)
         .WithModelPrefix("Haru")
         .WithModelClass(ProviderId, "Haru Speech-to-Speech")
-        .AddFeatureFlag("tts_voice_ref")
         .AddFeatureFlag("haru_s2s_params")
         .AddModels(Models)
         .WithEngineGroup("main")
@@ -36,10 +35,9 @@ public sealed class HaruProvider : IAudioProviderSource
         {
             Id = "q8",
             Name = "Haru-4B (Q8)",
-            Description = "A full-duplex speech-to-speech model: it listens and answers at once, one 133 ms frame at a time. Qwen3.5-4B with the language model's matrices in Q8_0, converted once on first use (about 4 minutes). "
-                + "A base model: it holds a natural conversation but does not follow instructions, call tools or transcribe you. Use headphones live. The voice reference must be a voice you have consent to use.",
+            Description = "Listens and answers at once, one 133 ms frame at a time. A base model: no instructions or tools. Use headphones live.",
             SourceUrl = "https://huggingface.co/higurashi-ai/Haru-4B",
-            License = "Apache-2.0 (weights and code); the VibeVoice acoustic codec is MIT and forbids voice impersonation without consent",
+            License = "Apache 2.0 (codec MIT: no voice impersonation)",
             EstimatedSize = "~10.5GB",
             EstimatedVram = "~8GB",
         },

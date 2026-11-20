@@ -256,14 +256,14 @@ whether the engine downloads on first use or exposes per model installs.
 | [Demucs Separation](https://github.com/facebookresearch/demucs) | 2 | ~2GB | MIT | on first use |
 | [Resemble Enhance](https://github.com/resemble-ai/resemble-enhance) | 2 | ~2GB | MIT | on first use |
 
-#### Speech to Speech (1 engine, 1 model)
+#### Speech-to-Speech (1 engine, 1 model)
 
 | Engine | Models | VRAM | License | Weights |
 | --- | --- | --- | --- | --- |
-| [Haru-4B](https://huggingface.co/higurashi-ai/Haru-4B) | 1 (Q8) | ~8GB | Apache-2.0; the VibeVoice acoustic codec is MIT and forbids voice impersonation without consent | download on install, converted once (about 4 minutes) |
+| [Haru-4B](https://huggingface.co/higurashi-ai/Haru-4B) | 1 (Q8) | ~8GB | Apache-2.0; the VibeVoice acoustic codec is MIT and forbids voice impersonation without consent | download on install, converted once at install (a minute or several) |
 
 Haru listens and speaks at once, one 133 ms frame at a time, so it takes **a recording of you** instead of text to read. In the Generate tab the Prompt box
-holds its character card (who it is; it may be empty), **Conversation Audio** is what it answers, and **Reference Audio** is the voice it speaks with (one speaker,
+holds its character card (who it is; it may be empty), **Conversation Audio** is what it answers, and **Haru Reference Voice** is the voice it speaks with (one speaker,
 3 seconds to 3 minutes, a voice you have consent to use). The output is the model's reply, as long as your recording plus **Haru Reply Time**; the words it
 spoke are saved in the output's `speech_text` metadata. It is a pretrained base model: it holds a natural conversation but does not follow instructions, call tools
 or transcribe you. Only the Q8 build is offered; lower-bit builds are unintelligible. A live conversation over a WebSocket is not in this version of AudioLab yet.

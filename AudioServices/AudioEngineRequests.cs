@@ -74,11 +74,17 @@ public static class AudioEngineRequests
         {
             throw new ArgumentException($"The character card is {card.Length} characters; the most is {MaxCardCharacters}.");
         }
+        AudioClip reference = Clip(args, "reference_audio");
+        if (reference is not null && WavSeconds(reference.Data) is double referenceSeconds && referenceSeconds < MinReferenceSeconds)
+        {
+            // The engine accepts a clip this short and speaks in a voice made from almost nothing; say so before a load and a run.
+            throw new ArgumentException($"The reference voice is {referenceSeconds:0.0} seconds long; use {MinReferenceSeconds:0} seconds to 3 minutes of one clean speaker.");
+        }
         int seed = Seed(args);
         DuplexSpeechRequest request = new()
         {
             Card = card,
-            Reference = Clip(args, "reference_audio"),
+            Reference = reference,
             Guidance = (float)Math.Clamp(Double(args, "guidance", defaults.Guidance), 1.0, 2.0),
             Temperature = (float)Math.Max(0.0, Double(args, "temperature", defaults.Temperature)),
             TopK = Math.Clamp(Integer(args, "top_k") ?? defaults.TopK, 1, 1000),
@@ -95,6 +101,37 @@ public static class AudioEngineRequests
 
     /// <summary>The longest character card, in characters.</summary>
     public const int MaxCardCharacters = 8000;
+
+    /// <summary>The shortest voice reference, in seconds (the model's own guidance: 3 seconds to 3 minutes; the engine uses the last 3 minutes of a longer clip).</summary>
+    public const double MinReferenceSeconds = 3;
+
+    /// <summary>The length of a RIFF/WAVE PCM clip in seconds from its header, or null when the bytes are not a WAV the header can be read from (the engine then decides).</summary>
+    internal static double? WavSeconds(byte[] data)
+    {
+        if (data is null || data.Length < 44 || data[0] != 'R' || data[1] != 'I' || data[2] != 'F' || data[3] != 'F')
+        {
+            return null;
+        }
+        int byteRate = 0;
+        int position = 12;
+        while (position + 8 <= data.Length)
+        {
+            string id = System.Text.Encoding.ASCII.GetString(data, position, 4);
+            long size = BitConverter.ToUInt32(data, position + 4);
+            if (id == "fmt " && position + 20 <= data.Length)
+            {
+                byteRate = BitConverter.ToInt32(data, position + 16);
+            }
+            else if (id == "data")
+            {
+                // A streamed file can carry 0 or 0xFFFFFFFF here; the bytes that are there are the answer.
+                long bytes = size == 0 || size == 0xFFFFFFFF || position + 8 + size > data.Length ? data.Length - position - 8 : size;
+                return byteRate > 0 ? bytes / (double)byteRate : null;
+            }
+            position += 8 + (int)Math.Min(size + (size & 1), int.MaxValue - position - 8);
+        }
+        return null;
+    }
 
     /// <summary>The most frames one recorded answer may run: 10 minutes at 133.3 ms. The engine also refuses a recording longer than this before playing it, so
     /// the cap bounds the recording as well as the reply.</summary>

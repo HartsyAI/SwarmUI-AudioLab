@@ -46,6 +46,27 @@ public enum AudioEngineService
 /// <param name="ManagesOwnWeights">True when the Engine HF-auto-downloads the weights on first load.</param>
 public sealed record AudioEngineBinding(string EngineId, AudioEngineService Service, bool ManagesOwnWeights);
 
+/// <summary>Runs full-duplex conversations one at a time. The engine allows one open conversation per loaded model and refuses a second, so two answers asked
+/// for at once (a batch, two users) would fail the second with "a conversation is already open"; here the second waits its turn.</summary>
+internal static class DuplexRunGate
+{
+    private static readonly SemaphoreSlim _gate = new(1, 1);
+
+    /// <summary>Runs <paramref name="work"/> when no other conversation is running; a caller that is cancelled while waiting never starts.</summary>
+    public static async Task<T> RunAsync<T>(Func<Task<T>> work, CancellationToken cancel)
+    {
+        await _gate.WaitAsync(cancel).ConfigureAwait(false);
+        try
+        {
+            return await work().ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+}
+
 /// <summary>AudioLab's thin adapter over <see cref="IInferenceEngine"/>: owns one engine instance, maps a provider
 /// id to an Engine model token, converts AudioLab's request args to the Engine's typed audio requests, and shapes
 /// the typed results back into the JObject AudioLab's generation path parses.
@@ -330,8 +351,9 @@ public static class AudioEngineBridge
             case AudioEngineService.Duplex:
             {
                 DuplexRespondArgs respond = AudioEngineRequests.DuplexRespond(args);
-                DuplexResult result = await Engine.Speech
-                    .RespondAsync(spec, respond.Request, respond.User, respond.TailSeconds, cancel).ConfigureAwait(false);
+                // One conversation per loaded model: a second request waits for the first instead of being refused.
+                DuplexResult result = await DuplexRunGate.RunAsync(() => Engine.Speech
+                    .RespondAsync(spec, respond.Request, respond.User, respond.TailSeconds, cancel), cancel).ConfigureAwait(false);
                 return DuplexAudio(result, respond.Stereo);
             }
             default:
@@ -821,7 +843,7 @@ public static class AudioEngineBridge
     }
 
     /// <summary>Whether a provider's weights are converted on first use, so the install should do that once while the user is watching it: a speech-to-speech
-    /// model (Haru) converts its checkpoint to Q8_0, about 4 minutes, which a first conversation or request would otherwise spend in silence.</summary>
+    /// model (Haru) converts its checkpoint to Q8_0 (about a minute on a warm disk, several on a cold one), which a first conversation or request would otherwise spend in silence.</summary>
     public static bool NeedsPrepare(string providerId)
         => providerId is not null && _bindings.TryGetValue(providerId, out AudioEngineBinding binding) && binding.Service == AudioEngineService.Duplex;
 
@@ -839,7 +861,7 @@ public static class AudioEngineBridge
         {
             if (onProgress is not null)
             {
-                await onProgress("Converting the weights once (about 4 minutes); later starts take about 40 seconds...").ConfigureAwait(false);
+                await onProgress("Converting the weights once (this can take several minutes); later starts take about 30 seconds...").ConfigureAwait(false);
             }
             ModelSpec spec = BuildSpec(providerId, binding, WithDuplexModel(providerId, new Dictionary<string, object> { ["__model_id"] = modelId ?? "" }));
             using IDisposable idleHold = await IdleRelease.BeginAsync(cancel).ConfigureAwait(false);
@@ -1348,7 +1370,8 @@ public static class AudioEngineBridge
             ? ConvertedWeightFiles(AudioModelCache.CacheRoot, repo, modelId)
             : [];
 
-    /// <summary>The engine names a converted file <c>{repo with / as _}-{variant}-v{version}.gguf</c> under <c>{cache}/tts/_gguf-cache</c>.</summary>
+    /// <summary>The engine names a converted file <c>{repo with / as _}-{precision}-v{version}.gguf</c> under <c>{cache}/tts/_gguf-cache</c>, where the precision is
+    /// the variant's full name (<c>q8</c> is written <c>q8_0</c>), so the variant is matched as a prefix of it.</summary>
     internal static IReadOnlyList<string> ConvertedWeightFiles(string cacheRoot, string repo, string modelId)
     {
         string directory = Path.Combine(cacheRoot, "tts", "_gguf-cache");
@@ -1358,7 +1381,7 @@ public static class AudioEngineBridge
         }
         try
         {
-            return [.. Directory.EnumerateFiles(directory, $"{repo.Replace('/', '_')}-{modelId.ToLowerInvariant()}-v*.gguf")];
+            return [.. Directory.EnumerateFiles(directory, $"{repo.Replace('/', '_')}-{modelId.ToLowerInvariant()}*-v*.gguf")];
         }
         catch (Exception ex)
         {
