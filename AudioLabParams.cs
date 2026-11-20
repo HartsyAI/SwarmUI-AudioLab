@@ -23,6 +23,9 @@ public static class AudioLabParams
     /// <summary>Audio processing parameter group (stem separation, enhancement).</summary>
     public static T2IParamGroup AudioProcGroup;
 
+    /// <summary>Speech-to-speech parameter group (Haru): the recording to answer and how the model answers.</summary>
+    public static T2IParamGroup ConversationGroup;
+
     /// <summary>Output format parameter group (shared across all audio-producing categories).</summary>
     public static T2IParamGroup OutputGroup;
 
@@ -405,6 +408,31 @@ public static class AudioLabParams
 
     /// <summary>Voice selection for Kyutai TTS from the tts-voices repo. Feature flag: <c>kyutaitts_tts_params</c>.</summary>
     public static T2IRegisteredParam<string> KyutaiTTSVoice;
+
+    #endregion
+
+    #region Speech to Speech - Haru (flags: audiolab_s2s, haru_s2s_params)
+
+    /// <summary>The recording the model answers. Feature flag: <c>audiolab_s2s</c>.</summary>
+    public static T2IRegisteredParam<AudioFile> ConversationAudio;
+    /// <summary>Audio guidance weight, 1 to 2. Feature flag: <c>haru_s2s_params</c>.</summary>
+    public static T2IRegisteredParam<double> HaruGuidance;
+    /// <summary>Text sampling temperature. Feature flag: <c>haru_s2s_params</c>.</summary>
+    public static T2IRegisteredParam<double> HaruTemperature;
+    /// <summary>Text top-k. Feature flag: <c>haru_s2s_params</c>.</summary>
+    public static T2IRegisteredParam<int> HaruTopK;
+    /// <summary>Text top-p. Feature flag: <c>haru_s2s_params</c>.</summary>
+    public static T2IRegisteredParam<double> HaruTopP;
+    /// <summary>Penalize repeating a phrase already said. Feature flag: <c>haru_s2s_params</c>.</summary>
+    public static T2IRegisteredParam<bool> HaruNoRepeat;
+    /// <summary>Added to the logit that makes the model start to speak. Feature flag: <c>haru_s2s_params</c>.</summary>
+    public static T2IRegisteredParam<double> HaruAnswerSooner;
+    /// <summary>The model opens the conversation. Feature flag: <c>haru_s2s_params</c>.</summary>
+    public static T2IRegisteredParam<bool> HaruSpeakFirst;
+    /// <summary>Seconds of silence after the recording so the model can finish. Feature flag: <c>haru_s2s_params</c>.</summary>
+    public static T2IRegisteredParam<int> HaruTailSeconds;
+    /// <summary>Return the user's recording on the left channel and the model on the right. Feature flag: <c>haru_s2s_params</c>.</summary>
+    public static T2IRegisteredParam<bool> HaruIncludeMyAudio;
 
     #endregion
 
@@ -825,6 +853,9 @@ public static class AudioLabParams
             Description: "Voice conversion parameters. Provide source audio to convert and target voice reference.");
         AudioProcGroup = new("Audio Processing", Open: true, OrderPriority: -23, Toggles: false,
             Description: "Audio processing parameters. Upload audio to process (stem separation, denoising, enhancement).");
+
+        ConversationGroup = new("Speech to Speech", Open: true, OrderPriority: -22, Toggles: false,
+            Description: "Speech-to-speech parameters. Upload a recording for the model to answer; the Prompt box holds its character card (who it is), which may be empty.");
 
         OutputGroup = new("Output Format", Open: false, OrderPriority: -20, Toggles: false,
             Description: "Audio output format and quality settings. Applies to all generated audio.");
@@ -1412,6 +1443,65 @@ public static class AudioLabParams
             "Voice file path within the kyutai/tts-voices repo.\nFolders: expresso/ (emotive), ears/ (per-speaker emotion), vctk/ (speaker ids), voice-donations/ (named).\nExamples: expresso/ex03-ex01_happy_001_channel1_334s.wav, vctk/p225_023.wav, voice-donations/James.wav",
             "expresso/ex03-ex01_happy_001_channel1_334s.wav",
             OrderPriority: -5, Group: TTSGroup, FeatureFlag: "kyutaitts_tts_params"));
+
+        #endregion
+
+        #region Speech to Speech - Haru
+        ConversationAudio = T2IParamTypes.Register<AudioFile>(new("Conversation Audio",
+            "The recording the model answers: you speaking to it. Any common format; it is mixed to mono.",
+            null,
+            OrderPriority: -10, Group: ConversationGroup, FeatureFlag: "audiolab_s2s"));
+
+        HaruGuidance = T2IParamTypes.Register<double>(new("Haru Guidance",
+            "Audio guidance weight (1 to 2). Higher follows the voice reference more closely.",
+            "1.5",
+            Min: 1.0, Max: 2.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -9, Group: ConversationGroup, FeatureFlag: "haru_s2s_params", IsAdvanced: true));
+
+        HaruTemperature = T2IParamTypes.Register<double>(new("Haru Temperature",
+            "Sampling temperature of the words the model speaks. 0 always takes the most likely word.",
+            "0.7",
+            Min: 0.0, Max: 1.5, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -8, Group: ConversationGroup, FeatureFlag: "haru_s2s_params", IsAdvanced: true));
+
+        HaruTopK = T2IParamTypes.Register<int>(new("Haru Top K",
+            "Limits the words the model samples from to the K most likely.",
+            "25",
+            Min: 1, Max: 200, Step: 1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -7, Group: ConversationGroup, FeatureFlag: "haru_s2s_params", IsAdvanced: true));
+
+        HaruTopP = T2IParamTypes.Register<double>(new("Haru Top P",
+            "Nucleus sampling threshold of the words the model speaks. 1.0 means no filtering.",
+            "1.0",
+            Min: 0.0, Max: 1.0, Step: 0.05, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -6, Group: ConversationGroup, FeatureFlag: "haru_s2s_params", IsAdvanced: true));
+
+        HaruNoRepeat = T2IParamTypes.Register<bool>(new("Haru Avoid Repeating",
+            "Penalize repeating a phrase the model has already said. Recommended: without it a base model tends to loop.",
+            "true",
+            OrderPriority: -5, Group: ConversationGroup, FeatureFlag: "haru_s2s_params", IsAdvanced: true));
+
+        HaruAnswerSooner = T2IParamTypes.Register<double>(new("Haru Answer Sooner",
+            "Added to the logit that makes the model start speaking. Above 0 it answers sooner (and may talk over you); below 0 it waits longer.",
+            "0",
+            Min: -4.0, Max: 4.0, Step: 0.25, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -4, Group: ConversationGroup, FeatureFlag: "haru_s2s_params", IsAdvanced: true));
+
+        HaruSpeakFirst = T2IParamTypes.Register<bool>(new("Haru Speak First",
+            "The model opens the conversation instead of waiting for you.",
+            "false",
+            OrderPriority: -3, Group: ConversationGroup, FeatureFlag: "haru_s2s_params", IsAdvanced: true));
+
+        HaruTailSeconds = T2IParamTypes.Register<int>(new("Haru Reply Time",
+            "Seconds of silence added after your recording so the model can finish its answer. The reply is as long as the recording plus this.",
+            "10",
+            Min: 0, Max: 60, Step: 1, ViewType: ParamViewType.SLIDER,
+            OrderPriority: -2, Group: ConversationGroup, FeatureFlag: "haru_s2s_params"));
+
+        HaruIncludeMyAudio = T2IParamTypes.Register<bool>(new("Haru Include My Audio",
+            "Return a stereo file: your recording on the left channel and the model on the right.",
+            "false",
+            OrderPriority: -1, Group: ConversationGroup, FeatureFlag: "haru_s2s_params", IsAdvanced: true));
 
         #endregion
 

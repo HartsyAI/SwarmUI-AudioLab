@@ -23,6 +23,7 @@ const AudioLabConfig = {
         pockettts_tts: { category: 'audiolab_tts', providerFlag: 'pockettts_tts_params', extraFlags: ['tts_voice_ref'] },
         kyutaitts_tts: { category: 'audiolab_tts', providerFlag: 'kyutaitts_tts_params', extraFlags: ['tts_voice_ref', 'tts_streaming'] },
         fishspeech_tts: { category: 'audiolab_tts', providerFlag: 'fishspeech_tts_params' }, // no tts_voice_ref: the engine cannot clone with Fish Speech
+        haru_s2s: { category: 'audiolab_s2s', providerFlag: 'haru_s2s_params', extraFlags: ['tts_voice_ref'] },
         fishaudio_drama3_tts: { category: 'audiolab_tts', providerFlag: 'fishaudio_drama3_tts_params', extraFlags: ['tts_voice_ref', 'tts_streaming'] },
         qwen3_tts_clone: { category: 'audiolab_tts', providerFlag: 'qwen3tts_tts_params', extraFlags: ['tts_voice_ref'] },
         qwen3_tts_custom: { category: 'audiolab_tts', providerFlag: 'qwen3tts_tts_params', extraFlags: ['qwen3tts_speaker_params', 'qwen3tts_instruct_params'] },
@@ -94,7 +95,7 @@ const AudioLabConfig = {
 
     // `audiolab_output` belongs here: the backend advertises it for every non-STT provider, so without it in
     // the remove list the Audio Output Format params render on image models too.
-    categoryFlags: ['audiolab_tts', 'audiolab_stt', 'audiolab_audiogen', 'audiolab_clone', 'audiolab_audioproc', 'audiolab_output', 'audiolab_duration'],
+    categoryFlags: ['audiolab_tts', 'audiolab_stt', 'audiolab_audiogen', 'audiolab_clone', 'audiolab_audioproc', 'audiolab_s2s', 'audiolab_output', 'audiolab_duration'],
 
     /** Flags core owns and grants itself. Never add or remove these — core's own grant wins either way. */
     coreOwnedFlags: ['text2audio', 'audio_ace_inputs'],

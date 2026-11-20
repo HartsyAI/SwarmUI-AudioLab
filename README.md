@@ -32,7 +32,7 @@ Docker, and nothing to install beyond the extension itself.
 
 | | |
 | --- | --- |
-| **38 local engines, 79 models** | 20 text to speech, 6 speech to text, 7 music and sound effect, 3 voice conversion, 2 audio processing |
+| **39 local engines, 80 models** | 20 text to speech, 6 speech to text, 7 music and sound effect, 3 voice conversion, 2 audio processing, 1 speech to speech |
 | **No Python** | Models load and run inside the SwarmUI process on the HartsyInference C# engine |
 | **Install only what you want** | Per model Install and Remove, with Download All for multi variant engines |
 | **Multi track DAW** | Multitrack recording from mics and interfaces, instrument tracks with a piano roll, markers and range editing, mixer, effect chains, stem separation, drum machine, in place generation, saved sessions |
@@ -255,6 +255,18 @@ whether the engine downloads on first use or exposes per model installs.
 | --- | --- | --- | --- | --- |
 | [Demucs Separation](https://github.com/facebookresearch/demucs) | 2 | ~2GB | MIT | on first use |
 | [Resemble Enhance](https://github.com/resemble-ai/resemble-enhance) | 2 | ~2GB | MIT | on first use |
+
+#### Speech to Speech (1 engine, 1 model)
+
+| Engine | Models | VRAM | License | Weights |
+| --- | --- | --- | --- | --- |
+| [Haru-4B](https://huggingface.co/higurashi-ai/Haru-4B) | 1 (Q8) | ~8GB | Apache-2.0; the VibeVoice acoustic codec is MIT and forbids voice impersonation without consent | download on install, converted once (about 4 minutes) |
+
+Haru listens and speaks at once, one 133 ms frame at a time, so it takes **a recording of you** instead of text to read. In the Generate tab the Prompt box
+holds its character card (who it is; it may be empty), **Conversation Audio** is what it answers, and **Reference Audio** is the voice it speaks with (one speaker,
+3 seconds to 3 minutes, a voice you have consent to use). The output is the model's reply, as long as your recording plus **Haru Reply Time**; the words it
+spoke are saved in the output's `speech_text` metadata. It is a pretrained base model: it holds a natural conversation but does not follow instructions, call tools
+or transcribe you. Only the Q8 build is offered; lower-bit builds are unintelligible. A live conversation over a WebSocket is not in this version of AudioLab yet.
 
 ### Verification status
 
@@ -926,6 +938,20 @@ Fish Audio Drama 3 (`fishaudio_drama3_tts`) also takes, through `ProcessAudio` a
 in the second form: send them back as `history` with a changed `[cue]` in the text to revise the take. On the Generate tab the
 same turns are saved in the output's `speech_turns` metadata, and the "Drama 3 History" parameter takes them back.
 
+#### Speech to speech
+
+`AudioLabDuplexOptions` lists the model, whether it is installed, every knob with its default and range, the frame length and the limits, and loads nothing.
+`AudioLabDuplexRespond` plays a recording to the model as a conversation and returns its reply; `ProcessAudio` with `provider_id: haru_s2s` takes the same fields in `args`.
+
+```bash
+curl -s -H "Content-Type: application/json" -X POST http://localhost:7801/API/AudioLabDuplexRespond \
+  -d '{"session_id":"<ID>","user_audio":"<base64 wav>","card":"","reference_audio":"<base64 wav, optional>",
+       "temperature":0.7,"top_k":25,"guidance":1.5,"speak_first":false,"tail_seconds":10,"seed":1,"stereo":false}'
+# {"success":true,"audio_data":"<base64 wav, 24 kHz>","text":"<what the model said>","duration":14.4,"frames":108,"median_frame_ms":59.1,"max_frame_ms":86.8,...}
+```
+
+`stereo` returns your recording on the left channel and the model on the right. The first call after an install converts the weights if the install did not.
+
 ### Routes
 
 | Route | Kind | Permission | Parameters |
@@ -937,6 +963,8 @@ same turns are saved in the output's `speech_turns` metadata, and the "Drama 3 H
 | `AudioLabPlanScore` | POST | `audio_process` | `style`, `lyrics`, `duration`, `seed`, `cot`, `abc`, `budget_only` |
 | `ProcessAudio` | POST | `audio_process` | `provider_id`, `args` |
 | `ProcessWorkflow` | POST | `audio_process` | workflow steps |
+| `AudioLabDuplexOptions` | POST | `audio_check_status` | none |
+| `AudioLabDuplexRespond` | POST | `audio_process` | `user_audio`, `model`, `card`, `reference_audio`, `guidance`, `temperature`, `top_k`, `top_p`, `repetition_penalty`, `eop_bias`, `speak_first`, `max_frames`, `seed`, `tail_seconds`, `stereo` |
 | `ConvertAudioFormat` | POST | `audio_process` | `audio_data`, `format` |
 | `AudioLabTimeStretch` | POST | `audio_process` | `audio_data`, `rate`, `semitones` |
 | `CombineVideoAudio` | POST | `audio_process` | `video_data`, `audio_data`, `mode` |

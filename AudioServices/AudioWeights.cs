@@ -26,6 +26,8 @@ public static class AudioWeights
         AudioCategory.AudioGeneration => "music",
         AudioCategory.VoiceConversion => "clone",
         AudioCategory.AudioProcessing => "fx",
+        // The engine caches a speech-to-speech model with the speech models (category "tts").
+        AudioCategory.SpeechToSpeech => "tts",
         _ => "misc",
     };
 

@@ -259,6 +259,7 @@ public class DynamicAudioBackend : AbstractT2IBackend
         [AudioCategory.AudioGeneration] = "audiolab_audiogen",
         [AudioCategory.VoiceConversion] = "audiolab_clone",
         [AudioCategory.AudioProcessing] = "audiolab_audioproc",
+        [AudioCategory.SpeechToSpeech] = "audiolab_s2s",
     };
 
     /// <summary>Runtime state for initialized providers, keyed by provider ID. Concurrent: reached from Init,
@@ -798,6 +799,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     ReportTruncation(result, takeOutput, user_input, provider.Id);
                     RecordPlannedScore(result, user_input);
                     RecordSpeechTurns(result["turns"], user_input);
+                    // A speech-to-speech reply: the words the model spoke, in the one place that persists and reaches API callers.
+                    if (provider.Category == AudioCategory.SpeechToSpeech)
+                    {
+                        user_input.ExtraMeta["speech_text"] = result["text"]?.ToString() ?? "";
+                    }
                     AudioFile audio = new(audioBytes, mediaType);
                     takeOutput(audio);
                 }
@@ -1342,6 +1348,11 @@ public class DynamicAudioBackend : AbstractT2IBackend
                             await AudioWeights.Report(onProgress, $"Failed to fetch weights for {definition.Name}: {err}");
                             Logs.Error($"[AudioLab] Weight prefetch failed for '{definition.Id}'/'{modelDef.Id}': {err}");
                             return false;
+                        }
+                        // A speech-to-speech model converts its weights on first use; do it now, with progress, instead of in silence later.
+                        if (AudioEngineBridge.NeedsPrepare(definition.Id))
+                        {
+                            await AudioEngineBridge.PrepareAsync(definition.Id, modelDef.Id, onProgress, cancel);
                         }
                         // Release the prefetched pipeline so installing many models doesn't pin RAM/VRAM.
                         AudioEngineBridge.Unload(definition.Id, modelDef.Id);
@@ -2131,6 +2142,39 @@ public class DynamicAudioBackend : AbstractT2IBackend
                     args["top_k"] = genTopK;
                 if (input.TryGet(AudioLabParams.AudioCraftTopP, out double genTopP))
                     args["top_p"] = genTopP;
+                break;
+
+            case AudioCategory.SpeechToSpeech:
+                // The Prompt box is the character card; the recording is what the model answers.
+                string userRecording = GetBase64Audio(input, AudioLabParams.ConversationAudio);
+                if (string.IsNullOrEmpty(userRecording))
+                {
+                    throw new SwarmReadableErrorException($"[AudioLab] {provider.Name} answers a recording: add your audio in 'Conversation Audio'.");
+                }
+                args["user_audio"] = userRecording;
+                args["card"] = input.Get(T2IParamTypes.Prompt, "");
+                string haruRef = GetBase64Audio(input, AudioLabParams.ReferenceAudio);
+                if (!string.IsNullOrEmpty(haruRef))
+                    args["reference_audio"] = haruRef;
+                if (input.TryGet(AudioLabParams.HaruGuidance, out double haruGuidance))
+                    args["guidance"] = haruGuidance;
+                if (input.TryGet(AudioLabParams.HaruTemperature, out double haruTemp))
+                    args["temperature"] = haruTemp;
+                if (input.TryGet(AudioLabParams.HaruTopK, out int haruTopK))
+                    args["top_k"] = haruTopK;
+                if (input.TryGet(AudioLabParams.HaruTopP, out double haruTopP))
+                    args["top_p"] = haruTopP;
+                if (input.TryGet(AudioLabParams.HaruNoRepeat, out bool haruNoRepeat))
+                    args["repetition_penalty"] = haruNoRepeat;
+                if (input.TryGet(AudioLabParams.HaruAnswerSooner, out double haruSooner))
+                    args["eop_bias"] = haruSooner;
+                if (input.TryGet(AudioLabParams.HaruSpeakFirst, out bool haruFirst))
+                    args["speak_first"] = haruFirst;
+                if (input.TryGet(AudioLabParams.HaruTailSeconds, out int haruTail))
+                    args["tail_seconds"] = haruTail;
+                if (input.TryGet(AudioLabParams.HaruIncludeMyAudio, out bool haruStereo))
+                    args["stereo"] = haruStereo;
+                args["seed"] = input.TryGet(T2IParamTypes.Seed, out long haruSeed) ? haruSeed : -1L;
                 break;
 
             case AudioCategory.VoiceConversion:

@@ -144,6 +144,7 @@ public class AudioLab : Extension
             VideoAudioEndpoints.Register();
             WakeWordEndpoints.Register();
             VoiceSessionEndpoints.Register();
+            DuplexEndpoints.Register();
             Logs.Info("[AudioLab] Registered wake-word and voice-agent endpoints");
         }
         catch (Exception ex)

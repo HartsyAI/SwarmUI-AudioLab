@@ -16,5 +16,8 @@ public enum AudioCategory
     VoiceConversion,
 
     /// <summary>Audio processing — transforms existing audio (stem separation, denoising, enhancement).</summary>
-    AudioProcessing
+    AudioProcessing,
+
+    /// <summary>Speech-to-speech — a full-duplex model that listens and answers in audio (Haru-4B): a recording of the user in, the model's spoken reply out.</summary>
+    SpeechToSpeech
 }
